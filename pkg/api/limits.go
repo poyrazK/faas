@@ -10971,6 +10971,58 @@ const (
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
 
+// Bounded scheduler work for legacy execution-ledger reconciliation.
+const EventExecutionReconciliationBatch = 100
+
+const EventExecutionLineageRepairBatch = 100
+
+const EventExecutionLineageCasesPageDefault = 50
+const EventExecutionLineageCasesPageMax = 200
+
+// Bulk lineage retries persist a bounded fixed selection and evaluate at most this many cases per sweep.
+const EventExecutionLineageRetryJobMaxCases = 200
+const EventExecutionLineageRetryJobBatch = 100
+const EventExecutionLineageRetryJobBodyMaxBytes = 65536
+const EventExecutionLineageRetryReasonMaxBytes = 128
+
+// Diagnostic lineage case backfills share a global bounded receipt budget per sweep.
+const EventExecutionLineageCaseBackfillBatch = 100
+
+// Retained bulk lineage retry job discovery is bounded independently of case selections.
+const EventExecutionLineageRetryJobsPageDefault = 50
+const EventExecutionLineageRetryJobsPageMax = 200
+const EventExecutionLineageRetryJobsCursorMaxBytes = 128
+
+// Control receipts live until the parent retry job expires; repeated command IDs spend no new slot.
+const EventExecutionLineageRetryControlMaxReceipts = 128
+const EventExecutionLineageRetryControlPageDefault = 50
+const EventExecutionLineageRetryControlPageMax = 200
+
+// Local control-history artifacts contain bounded receipt metadata, not event payloads.
+const EventExecutionLineageRetryControlExportMaxBytes = 256 * 1024
+
+// Retry-job health is bounded separately from retained execution roots and windows.
+const EventExecutionLineageRetryHealthJobsMax = 500
+const EventExecutionLineageRetryHealthSampleMax = 10
+const EventExecutionLineageRetryInactivityWarning = 15 * time.Minute
+const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour
+
+// Reviewed CLI control plans are fixed selections, independent of health sampling.
+const EventExecutionLineageControlPlanMaxJobs = 200
+const EventExecutionLineageControlPlanMaxBytes = 128 * 1024
+const EventExecutionLineageControlReportMaxBytes = 1024 * 1024
+
+// Capacity command evidence is bounded independently of delivery slots.
+const EventSubscriptionCapacityCommandPageDefault = 25
+const EventSubscriptionCapacityCommandPageMax = 100
+const EventSubscriptionCapacityCommandCursorMaxBytes = 512
+
+const EventSubscriptionCapacityCommandMaxReceipts = 128
+const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second
+const EventSubscriptionCapacityCommandRecoverySustainDefault = 30 * time.Second
+const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
+const EventSubscriptionCapacityCommandPruneBatch = 500
+
 // WorkflowInitialRecoveryReviewLifetime bounds first-recovery approval freshness.
 const WorkflowInitialRecoveryReviewLifetime = EventRecoveryJobLifetime
 

@@ -1,0 +1,169 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "transaction_workflow",
+      "requests": [
+        {
+          "name": "Late shortage rolls back",
+          "method": "POST",
+          "path": "/rest/v1/rpc/__OP__",
+          "identity": "alice",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "00000000-0000-4000-8000-000000000001",
+            "skus": [
+              "a_widget",
+              "z_widget"
+            ],
+            "quantities": [
+              2,
+              2
+            ]
+          }
+        },
+        {
+          "name": "No partial orders",
+          "method": "GET",
+          "path": "/rest/v1/__OP___orders?select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Stock restored after shortage",
+          "method": "GET",
+          "path": "/rest/v1/__OP___inventory?sku=eq.a_widget&select=stock",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "stock": 10
+              }
+            ]
+          }
+        },
+        {
+          "name": "Commit order",
+          "method": "POST",
+          "path": "/rest/v1/rpc/__OP__?select=total_cents",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "total_cents": 1000
+              }
+            ]
+          },
+          "body": {
+            "request_key": "00000000-0000-4000-8000-000000000001",
+            "skus": [
+              "a_widget"
+            ],
+            "quantities": [
+              2
+            ]
+          }
+        },
+        {
+          "name": "Retry returns same total",
+          "method": "POST",
+          "path": "/rest/v1/rpc/__OP__?select=total_cents",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "total_cents": 1000
+              }
+            ]
+          },
+          "body": {
+            "request_key": "00000000-0000-4000-8000-000000000001",
+            "skus": [
+              "a_widget"
+            ],
+            "quantities": [
+              2
+            ]
+          }
+        },
+        {
+          "name": "Retry does not consume stock twice",
+          "method": "GET",
+          "path": "/rest/v1/__OP___inventory?sku=eq.a_widget&select=stock",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "stock": 8
+              }
+            ]
+          }
+        },
+        {
+          "name": "Changed retry payload rejected",
+          "method": "POST",
+          "path": "/rest/v1/rpc/__OP__",
+          "identity": "alice",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "00000000-0000-4000-8000-000000000001",
+            "skus": [
+              "a_widget"
+            ],
+            "quantities": [
+              1
+            ]
+          }
+        },
+        {
+          "name": "Bob cannot read Alice receipt",
+          "method": "GET",
+          "path": "/rest/v1/__OP___orders?request_key=eq.00000000-0000-4000-8000-000000000001&select=id",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Direct inventory mutation blocked",
+          "method": "PATCH",
+          "path": "/rest/v1/__OP___inventory?sku=eq.a_widget&select=stock",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "stock": 999
+          }
+        },
+        {
+          "name": "Stock remains unchanged",
+          "method": "GET",
+          "path": "/rest/v1/__OP___inventory?sku=eq.a_widget&select=stock",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "stock": 8
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

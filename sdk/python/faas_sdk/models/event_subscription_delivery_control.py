@@ -11,6 +11,8 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_circuit_breaker_response import EventCircuitBreakerResponse
+    from ..models.event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
+    from ..models.event_subscription_capacity_command_receipt import EventSubscriptionCapacityCommandReceipt
 
 
 T = TypeVar("T", bound="EventSubscriptionDeliveryControl")
@@ -23,6 +25,12 @@ class EventSubscriptionDeliveryControl:
 
     """
 
+    max_pending_deliveries: int
+    """Configured live-delivery ceiling; zero uses the current plan limit."""
+    effective_max_pending_deliveries: int
+    """Effective ceiling after applying the current plan limit."""
+    live_deliveries: int
+    """Current pending plus dispatching invocations with trusted delivery slots; excludes untagged legacy work."""
     subscription_id: UUID
     app_id: UUID
     paused: bool
@@ -30,6 +38,14 @@ class EventSubscriptionDeliveryControl:
     pending_recipients: int
     processing_recipients: int
     oldest_age_seconds: float
+    capacity_command_budget: EventSubscriptionCapacityCommandBudget | Unset = UNSET
+    """Complete scoped advisory observation of all unexpired successful capacity-command receipts. Neither reserves
+    receipt slots nor modifies retention. Known unchanged-input command repeats remain available when full; commands
+    without UUIDs have no idempotent receipt evidence."""
+    capacity_command_receipt: EventSubscriptionCapacityCommandReceipt | Unset = UNSET
+    """Immutable acknowledgment of a successful capacity command. The surrounding control response reports current
+    state; this receipt preserves the original outcome. Retained for 30 days without extension on repeat. No event
+    payloads or credentials."""
     circuit_breaker: EventCircuitBreakerResponse | Unset = UNSET
     """Captured circuit policy and current breaker state for one application event subscription."""
     oldest_pending_at: datetime.datetime | Unset = UNSET
@@ -37,6 +53,12 @@ class EventSubscriptionDeliveryControl:
     """Updated at in the event subscription delivery control: absent until an operator sets a control."""
 
     def to_dict(self) -> dict[str, Any]:
+        max_pending_deliveries = self.max_pending_deliveries
+
+        effective_max_pending_deliveries = self.effective_max_pending_deliveries
+
+        live_deliveries = self.live_deliveries
+
         subscription_id = str(self.subscription_id)
 
         app_id = str(self.app_id)
@@ -50,6 +72,14 @@ class EventSubscriptionDeliveryControl:
         processing_recipients = self.processing_recipients
 
         oldest_age_seconds = self.oldest_age_seconds
+
+        capacity_command_budget: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.capacity_command_budget, Unset):
+            capacity_command_budget = self.capacity_command_budget.to_dict()
+
+        capacity_command_receipt: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.capacity_command_receipt, Unset):
+            capacity_command_receipt = self.capacity_command_receipt.to_dict()
 
         circuit_breaker: dict[str, Any] | Unset = UNSET
         if not isinstance(self.circuit_breaker, Unset):
@@ -67,6 +97,9 @@ class EventSubscriptionDeliveryControl:
 
         field_dict.update(
             {
+                "max_pending_deliveries": max_pending_deliveries,
+                "effective_max_pending_deliveries": effective_max_pending_deliveries,
+                "live_deliveries": live_deliveries,
                 "subscription_id": subscription_id,
                 "app_id": app_id,
                 "paused": paused,
@@ -76,6 +109,10 @@ class EventSubscriptionDeliveryControl:
                 "oldest_age_seconds": oldest_age_seconds,
             }
         )
+        if capacity_command_budget is not UNSET:
+            field_dict["capacity_command_budget"] = capacity_command_budget
+        if capacity_command_receipt is not UNSET:
+            field_dict["capacity_command_receipt"] = capacity_command_receipt
         if circuit_breaker is not UNSET:
             field_dict["circuit_breaker"] = circuit_breaker
         if oldest_pending_at is not UNSET:
@@ -88,8 +125,16 @@ class EventSubscriptionDeliveryControl:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.event_circuit_breaker_response import EventCircuitBreakerResponse
+        from ..models.event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
+        from ..models.event_subscription_capacity_command_receipt import EventSubscriptionCapacityCommandReceipt
 
         d = dict(src_dict)
+        max_pending_deliveries = d.pop("max_pending_deliveries")
+
+        effective_max_pending_deliveries = d.pop("effective_max_pending_deliveries")
+
+        live_deliveries = d.pop("live_deliveries")
+
         subscription_id = UUID(d.pop("subscription_id"))
 
         app_id = UUID(d.pop("app_id"))
@@ -103,6 +148,20 @@ class EventSubscriptionDeliveryControl:
         processing_recipients = d.pop("processing_recipients")
 
         oldest_age_seconds = d.pop("oldest_age_seconds")
+
+        _capacity_command_budget = d.pop("capacity_command_budget", UNSET)
+        capacity_command_budget: EventSubscriptionCapacityCommandBudget | Unset
+        if isinstance(_capacity_command_budget, Unset):
+            capacity_command_budget = UNSET
+        else:
+            capacity_command_budget = EventSubscriptionCapacityCommandBudget.from_dict(_capacity_command_budget)
+
+        _capacity_command_receipt = d.pop("capacity_command_receipt", UNSET)
+        capacity_command_receipt: EventSubscriptionCapacityCommandReceipt | Unset
+        if isinstance(_capacity_command_receipt, Unset):
+            capacity_command_receipt = UNSET
+        else:
+            capacity_command_receipt = EventSubscriptionCapacityCommandReceipt.from_dict(_capacity_command_receipt)
 
         _circuit_breaker = d.pop("circuit_breaker", UNSET)
         circuit_breaker: EventCircuitBreakerResponse | Unset
@@ -126,6 +185,9 @@ class EventSubscriptionDeliveryControl:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
         event_subscription_delivery_control = cls(
+            max_pending_deliveries=max_pending_deliveries,
+            effective_max_pending_deliveries=effective_max_pending_deliveries,
+            live_deliveries=live_deliveries,
             subscription_id=subscription_id,
             app_id=app_id,
             paused=paused,
@@ -133,6 +195,8 @@ class EventSubscriptionDeliveryControl:
             pending_recipients=pending_recipients,
             processing_recipients=processing_recipients,
             oldest_age_seconds=oldest_age_seconds,
+            capacity_command_budget=capacity_command_budget,
+            capacity_command_receipt=capacity_command_receipt,
             circuit_breaker=circuit_breaker,
             oldest_pending_at=oldest_pending_at,
             updated_at=updated_at,

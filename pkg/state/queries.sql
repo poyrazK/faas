@@ -15816,6 +15816,23 @@ WHERE managed_postgres_creation_receipts.account_id=EXCLUDED.account_id
 -- name: ReadManagedPostgresCreationReceipt :one
 SELECT * FROM managed_postgres_creation_receipts WHERE kind=$1 AND backend_id=$2 AND resource_id=$3;
 
+-- ADR-1259: append-once; a replay must describe the same verified lineage.
+-- name: RecordManagedPostgresRestoreVerification :one
+INSERT INTO managed_postgres_restore_verifications(database_id,account_id,backend_id,backend_fingerprint,generation,
+    provider_resource_id,source_resource_id,point_in_time,evidence)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (database_id) DO UPDATE SET database_id=EXCLUDED.database_id
+WHERE managed_postgres_restore_verifications.account_id=EXCLUDED.account_id
+    AND managed_postgres_restore_verifications.backend_id=EXCLUDED.backend_id
+    AND managed_postgres_restore_verifications.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_restore_verifications.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_restore_verifications.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_restore_verifications.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_restore_verifications.evidence=EXCLUDED.evidence RETURNING *;
+
+-- name: ReadManagedPostgresRestoreVerification :one
+SELECT * FROM managed_postgres_restore_verifications WHERE account_id=$1 AND database_id=$2;
+
 -- name: ValidateManagedPostgresSnapshotCreationIntent :one
 SELECT o.account_id FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
 WHERE ('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)=sqlc.arg(resource_id)::text

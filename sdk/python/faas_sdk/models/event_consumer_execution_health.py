@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -24,6 +24,10 @@ from ..models.event_consumer_execution_health_window_history_status import (
     check_event_consumer_execution_health_window_history_status,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.event_execution_lineage_retry_job_health import EventExecutionLineageRetryJobHealth
+
 
 T = TypeVar("T", bound="EventConsumerExecutionHealth")
 
@@ -70,6 +74,13 @@ class EventConsumerExecutionHealth:
     handler_failure_pct: float
     dead_letter_rate_per_second: float
     completion_latency_p95_seconds: float
+    lineage_retry_jobs: EventExecutionLineageRetryJobHealth | Unset = UNSET
+    """Bounded retained pending and paused lineage retry jobs at observed_at. Independent of the execution window
+    and handler outcome completeness. Earliest retention deadlines are observed first. When counts_complete is false
+    counts are lower bounds and oldest/next timestamps describe only observed jobs. Stalled pending is an advisory
+    inactivity warning; pause/resume activity can reset inactivity without changing last progress. Legacy evaluated
+    jobs without a progress timestamp report unknown progress. No handler payloads or case selections are included.
+   """
     window_coverage: EventConsumerExecutionHealthWindowCoverage | Unset = UNSET
     """Evidence scope for attempt rates and completion latency; current invocation states retain their separate
     bounded scope."""
@@ -154,6 +165,10 @@ class EventConsumerExecutionHealth:
 
         completion_latency_p95_seconds = self.completion_latency_p95_seconds
 
+        lineage_retry_jobs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.lineage_retry_jobs, Unset):
+            lineage_retry_jobs = self.lineage_retry_jobs.to_dict()
+
         window_coverage: str | Unset = UNSET
         if not isinstance(self.window_coverage, Unset):
             window_coverage = self.window_coverage
@@ -232,6 +247,8 @@ class EventConsumerExecutionHealth:
                 "completion_latency_p95_seconds": completion_latency_p95_seconds,
             }
         )
+        if lineage_retry_jobs is not UNSET:
+            field_dict["lineage_retry_jobs"] = lineage_retry_jobs
         if window_coverage is not UNSET:
             field_dict["window_coverage"] = window_coverage
         if window_history_complete is not UNSET:
@@ -263,6 +280,8 @@ class EventConsumerExecutionHealth:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_execution_lineage_retry_job_health import EventExecutionLineageRetryJobHealth
+
         d = dict(src_dict)
         subscription_id = UUID(d.pop("subscription_id"))
 
@@ -319,6 +338,13 @@ class EventConsumerExecutionHealth:
         dead_letter_rate_per_second = d.pop("dead_letter_rate_per_second")
 
         completion_latency_p95_seconds = d.pop("completion_latency_p95_seconds")
+
+        _lineage_retry_jobs = d.pop("lineage_retry_jobs", UNSET)
+        lineage_retry_jobs: EventExecutionLineageRetryJobHealth | Unset
+        if isinstance(_lineage_retry_jobs, Unset):
+            lineage_retry_jobs = UNSET
+        else:
+            lineage_retry_jobs = EventExecutionLineageRetryJobHealth.from_dict(_lineage_retry_jobs)
 
         _window_coverage = d.pop("window_coverage", UNSET)
         window_coverage: EventConsumerExecutionHealthWindowCoverage | Unset
@@ -420,6 +446,7 @@ class EventConsumerExecutionHealth:
             handler_failure_pct=handler_failure_pct,
             dead_letter_rate_per_second=dead_letter_rate_per_second,
             completion_latency_p95_seconds=completion_latency_p95_seconds,
+            lineage_retry_jobs=lineage_retry_jobs,
             window_coverage=window_coverage,
             window_history_complete=window_history_complete,
             window_history_status=window_history_status,

@@ -341,6 +341,8 @@ func init() {
 var dtoExclude = map[string]bool{
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
+	// Capacity command history uses URL query parameters, not a JSON request body.
+	"EventSubscriptionCapacityCommandsQuery": true,
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
 	// Edge-protection summary parts are inline objects of

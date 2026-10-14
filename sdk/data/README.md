@@ -545,3 +545,69 @@ another write; never automatically replay on a validation failure. Raw request
 failure results may still contain private database errors. Use curated UI messages.
 The helper does not mutate the original response itself, but parsers receive its
 data by reference and are responsible for any mutation they perform.
+
+### Encrypted continuation tokens for server routes
+
+Existing `cursorPage`/`cursorFrom` helpers use raw ordering values. For routes that
+accept an untrusted continuation token, use `createCursorPager` on the server:
+
+```ts
+import { createCursorPager } from '@gregale/data'
+
+// Load a stable 32-byte random key from server-side configuration. Never send it
+// to a browser or commit it. Reuse the pager across requests on this server.
+const pager = await createCursorPager({ key: cursorKeyBytes, ttlMs: 15 * 60_000, maxPageSize: 100 })
+const order = [
+  { column: 'created_at' },
+  { column: 'id', unique: true },
+] as const
+
+// Derive scope from verified application identity/tenant/permission claims.
+const page = await pager.page(
+  db.from('orders').select('id,created_at,total').eq('team_id', authenticatedTeamId),
+  {
+    order, size: 50,
+    scope: { identity: trustedIdentityScope, schemaFingerprint: currentSchemaFingerprint },
+    after: incomingContinuation,
+  },
+)
+// Return page.result and page.nextCursor to the caller. API errors remain in result.
+```
+
+Ordering columns must appear in the selected projection and have scalar types.
+A single primary key works with `[{ column: 'id', unique: true }]`; timestamp-plus-ID
+ordering uses the example above. The final column must actually be non-null and
+unique within the filtered result. The helper validates the declaration and values,
+but does not inspect database constraints. Use a fresh GET array query with no root
+order, limit, offset or range applied beforehand. Nested projection types are preserved.
+
+Tokens use authenticated AES-GCM encryption with fresh random nonces. They bind the
+actual query endpoint, schema, filter/projection parameters, ordering, page size,
+identity scope and schema fingerprint. Refreshing a JWT need not change the scope;
+include tenant and relevant permission/version claims in a server-derived scope.
+Create the data client with `expectedSchemaFingerprint` matching the scope so the
+gateway also rejects schema changes before executing a read. The scope alone does
+not detect an unannounced gateway migration. The helper does not authenticate callers,
+read claims from JWTs or replace RLS.
+Keep the key exclusively on trusted servers. A browser should submit issued tokens
+to your route; browser-only clients can continue using the raw keyset helpers.
+
+The default TTL is 15 minutes (maximum one day), and default maximum page size is
+999. One additional row is fetched to determine continuation within Gregale's
+1,000-row response cap. Each page returns at most the requested size, with
+`nextCursor`, `previousCursor`, `hasMore` and `direction`. `hasMore` describes the
+current traversal direction. `before` returns nearest preceding rows in reverse
+order, as with `cursorPage`; use `previousCursor` to continue backward and reverse
+rows for normal display. Empty/error results return no continuations. First forward
+pages have no previous cursor. Continuations describe boundaries, not guaranteed
+nonempty pages if records are subsequently deleted.
+
+Malformed/tampered tokens fail with `CursorPaginationError.code = 'invalid_cursor'`.
+Expired tokens use `expired_cursor`; changed query, scope, ordering, page size or
+schema uses `incompatible_cursor`. These failures occur before query execution.
+Invalid options or malformed successful responses have separate codes. Key rotation
+invalidates existing tokens; restart pagination rather than attempting an automatic
+fallback. Tokens are bounded to 16 KiB and ordering to 16 columns. Cursor values
+and filters are not exposed in plaintext tokens. Pagination does not provide a
+snapshot across requests, and changing ordered values can still move rows between
+pages. Index the filter and ordering columns and review plans with representative data.

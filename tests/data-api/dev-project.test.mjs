@@ -59,3 +59,10 @@ test('types cannot overwrite project sources or verification through hardlinks',
   f.definition.output = 'alias.json'; await link(join(f.directory, 'checks.json'), join(f.directory, 'alias.json')); await f.save()
   await assert.rejects(projectModule.loadDevProject(f), /must not replace/)
 })
+
+test('read-only identities preserve defaults and cannot forge the reserved read-only JWT claim', {skip:!runtime},async t=>{
+ const f=await fixture(t);f.definition.identities.buyer.read_only=true;await f.save()
+ const project=await projectModule.loadDevProject(f);assert.equal(project.identities.buyer.read_only,true);assert.equal(project.identities.other.read_only,undefined)
+ for(const value of ['true',1,null]){f.definition.identities.buyer.read_only=value;await f.save();await assert.rejects(projectModule.loadDevProject(f))}
+ f.definition.identities.buyer.read_only=true;f.definition.identities.buyer.claims={gregale_read_only:false};await f.save();await assert.rejects(projectModule.loadDevProject(f))
+})
