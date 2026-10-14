@@ -17,7 +17,7 @@ preview deployments, which the latest-revision promotion fence had silently
 superseded. The metal drill suite (`cmd/e2e/safe_release_drill_metal_test.go`)
 passed on the n2 node on 2026-10-13: safe default, low-traffic advance on
 probe evidence (132–182 s), probe-backed abort of a quiet release that fails
-after its smoke (72–148 s), 5xx abort, crash-loop abort, canary-worker
+after its smoke (72–176 s), 5xx abort, crash-loop abort, canary-worker
 fallback, and rollback recovery in 6.8–13.5 s with a verified `complete`
 rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
 are `beta` in the product registry.
