@@ -23,7 +23,7 @@
       error unwinds: `POST http://169.254.169.254/v1/crash-snapshots:capture`
       on the guest metadata endpoint (helpers in the Node, Python and Go
       SDKs). guest-init forwards it on a new request/response vsock port
-      (1032, `pkg/crashcapturewire`) and vmmd writes the request row with
+      (1033, `pkg/crashcapturewire`) and vmmd writes the request row with
       `trigger='sdk'`, an optional `reason` (≤256 bytes) and `route`, under
       the 5xx rules (opt-in, running non-fork instance, one in flight,
       cooldown). vmmd names the instance from the vsock listener that

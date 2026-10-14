@@ -25,7 +25,7 @@ import (
 
 // Port is the host vsock port guest-init dials (Firecracker forwards it to
 // the per-instance Unix listener vmmd binds).
-const Port uint32 = 1032
+const Port uint32 = 1033
 
 // MaxFrame bounds every frame in both directions.
 const MaxFrame = 4096
