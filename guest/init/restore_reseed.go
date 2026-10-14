@@ -227,31 +227,52 @@ func (b *restoreReseedBarrier) registered() int {
 // answers garbage fails the barrier, because its generators may still
 // replay the snapshot's values.
 func (b *restoreReseedBarrier) Reseed(timeout time.Duration) error {
+	_, err := b.ReseedWithStats(timeout)
+	return err
+}
+
+// restoreReseedStats says what one barrier pass waited for: how many
+// processes answered and which one answered last.
+type restoreReseedStats struct {
+	Clients        int
+	Slowest        time.Duration
+	SlowestRuntime string
+}
+
+// ReseedWithStats is Reseed plus the per-process latency the resume hook
+// reports to vmmd (resumetimingproto).
+func (b *restoreReseedBarrier) ReseedWithStats(timeout time.Duration) (restoreReseedStats, error) {
 	b.mu.Lock()
 	clients := make([]*restoreReseedClient, 0, len(b.clients))
 	for c := range b.clients {
 		clients = append(clients, c)
 	}
 	b.mu.Unlock()
+	stats := restoreReseedStats{Clients: len(clients)}
 	if len(clients) == 0 {
-		return nil
+		return stats, nil
 	}
 	deadline := time.Now().Add(timeout)
 	type outcome struct {
-		client *restoreReseedClient
-		gone   bool
-		err    error
+		client  *restoreReseedClient
+		gone    bool
+		err     error
+		elapsed time.Duration
 	}
 	results := make(chan outcome, len(clients))
 	for _, c := range clients {
 		go func(c *restoreReseedClient) {
+			start := time.Now()
 			gone, err := c.reseed(deadline)
-			results <- outcome{client: c, gone: gone, err: err}
+			results <- outcome{client: c, gone: gone, err: err, elapsed: time.Since(start)}
 		}(c)
 	}
 	var failures []string
 	for range clients {
 		r := <-results
+		if r.elapsed > stats.Slowest {
+			stats.Slowest, stats.SlowestRuntime = r.elapsed, r.client.runtime
+		}
 		if r.gone {
 			b.mu.Lock()
 			delete(b.clients, r.client)
@@ -264,10 +285,10 @@ func (b *restoreReseedBarrier) Reseed(timeout time.Duration) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("restore reseed: %d of %d processes did not reseed: %s",
+		return stats, fmt.Errorf("restore reseed: %d of %d processes did not reseed: %s",
 			len(failures), len(clients), strings.Join(failures, "; "))
 	}
-	return nil
+	return stats, nil
 }
 
 func (c *restoreReseedClient) reseed(deadline time.Time) (gone bool, err error) {
