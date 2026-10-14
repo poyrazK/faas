@@ -1,6 +1,6 @@
 # ADR-1237 · Explained rollout decisions
 
-- **Status:** proposed
+- **Status:** proposed; n2 drill passed 2026-10-14 (see Rollout)
 - **Date:** 2026-10-14
 - **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (rollback outcome notifications were a follow-up), [ADR-224](224-account-scoped-release-webhooks.md) release payloads
 - **Follows:** [ADR-122](122-safe-releases.md) deployment audit, [ADR-456](456-saved-canary-route-health-decisions.md) saved route health decisions
@@ -54,3 +54,5 @@ The audit timeline keeps its existing 90-day retention.
 ## Rollout
 
 Ship with the record written and shown everywhere at once. The safe-release drill asserts that a quiet canary's completion carries an `advance_probe_evidence` record with probe counts for both revisions, that a probe-backed abort carries an `abort_5xx` record with `probes_included`, that the bad release carries `abort_5xx` with the candidate's 5xx, and that the crash loop carries `abort_crash_loop` with its restarts. It logs the quiet canary's hold rows; whether a hold occurs depends on how many probes arrived by the stage boundary.
+
+The drill passed on the n2 node on 2026-10-14 (all six cases, leakcheck clean): the quiet canary completed on `advance_probe_evidence` with 20 probes on each side at the decision and no hold at the boundary; the late-failing release aborted on `abort_5xx` with `probes_included` and candidate probe 5xx 20/20 ("5xx regression (candidate 95.2%, stable 0.0%; 20/21 vs 0/21 requests; synthetic probes included)"); the bad release aborted on `abort_5xx` and the crash loop on `abort_crash_loop`. The same run's Postgres test caught the hold insert's untyped time parameter, which made every hold fail; holds are covered by `TestRolloutDecisionsPG`.

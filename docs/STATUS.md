@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Explained rollout decisions — 2026-10-14
+
+[ADR-1237](adr/1237-explained-rollout-decisions.md) records the evidence behind
+every decision the safe-release circuit breaker makes: why a canary stage
+advanced, is held, or was aborted, with the request, 5xx, probe, latency, OOM
+and restart counts for both revisions. It is stored with the transition
+(`deployments.rollout_decision` and the deployment audit row), holds are
+deduplicated `deploy.rollout_held` audit rows, and the API, `gregale deployment
+wait --rollout`, `deployment summary`, and the `rollout.completed` /
+`rollout.aborted` webhooks show it. The safe-release drill passed on the n2
+node with the new assertions: the quiet canary completed on an
+`advance_probe_evidence` record (20 probes each side at the decision), the
+late-failing release aborted on `abort_5xx` with `probes_included` (candidate
+probe 5xx 20/20), the bad release on `abort_5xx` and the crash loop on
+`abort_crash_loop`; leakcheck clean. The Postgres state tests, conformance,
+spec parity, and the apidserver Safe Deploy tests pass on the node.
+
 ## Safe releases by default — 2026-10-13
 
 [ADR-1160](adr/1160-safe-releases-by-default.md) makes the balanced health-gated
