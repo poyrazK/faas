@@ -23773,6 +23773,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/companions:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentCompanions
+      summary: Inspect owned deployment companion declarations.
+      description: |
+        Returns bounded declared configuration from this exact deployment.
+        The deployment identifies its environment scope; query scope is not
+        supported. Empty declarations are distinct from unavailable retained
+        metadata. No environment values, ciphertext, secret references or
+        commands are returned. No workload is probed and no execution health
+        is inferred; absent telemetry is Unverified. Managed preset availability
+        requires separate runtime qualification and does not imply that all
+        custom helpers are unavailable. Requires deployment-read scope and MFA.
+      responses:
+        '200':
+          description: Owned declaration metadata, including known empty or unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentCompanionsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/deployments/{id}:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -67240,6 +67269,51 @@ components:
         status: { type: string, enum: [disabled, unavailable, ready] }
         source: { type: string, enum: [registry, object_storage] }
         sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    CompanionDeclaration:
+      type: object
+      additionalProperties: false
+      description: Declared companion configuration only; no commands, environment values or observed health.
+      required: [name, type, ram_mb, cpu_millicores, scratch_mb, port, primary_ingress, depends_on, environment_keys]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        image: { type: string, description: 'Declared immutable OCI reference, when returned.' }
+        preset: { type: string, enum: [opentelemetry, sentry, datadog-dogstatsd] }
+        type: { type: string, enum: [init, sidecar] }
+        ram_mb: { type: integer, minimum: 0, description: 'Declared memory ceiling. Zero inherits the platform default; not observed effective usage.' }
+        cpu_millicores: { type: integer, minimum: 0, description: 'Declared CPU ceiling. Zero inherits the platform default.' }
+        scratch_mb: { type: integer, minimum: 0, description: 'Declared scratch ceiling. Zero derives the runtime default.' }
+        disk_io_profile: { type: string, enum: [low, standard, high] }
+        port: { type: integer, minimum: 0, maximum: 65535, description: 'Declared port. Zero is not an observed listener.' }
+        primary_ingress: { type: boolean }
+        essential: { type: boolean, description: 'Declared essential policy. Omitted uses the default true; not runtime health.' }
+        depends_on:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/WorkloadDependency' }
+        environment_keys:
+          type: array
+          description: Sorted unique names only, including explicit secret-binding environment names. Values and secret references are never returned.
+          items: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
+
+    DeploymentCompanionsResponse:
+      type: object
+      description: Account-owned declarations for one exact deployment; metadata availability is separate from execution health.
+      additionalProperties: false
+      required: [account_id, app_id, app_slug, deployment_id, scope, state, companions]
+      properties:
+        account_id: { type: string }
+        app_id: { type: string }
+        app_slug: { type: string }
+        deployment_id: { type: string }
+        scope: { type: string, description: 'Returned deployment scope; not inferred from a query parameter.' }
+        state: { type: string, enum: [available, unavailable], description: 'Declaration metadata availability only, never execution health.' }
+        reason: { type: string, enum: [declaration_metadata_unavailable] }
+        companions:
+          type: array
+          maxItems: 5
+          description: Known empty is an available empty array. Unavailable metadata is explicitly labelled and must not be presented as no configured helpers.
+          items: { $ref: '#/components/schemas/CompanionDeclaration' }
 
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
