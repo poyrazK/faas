@@ -550,3 +550,7 @@ type ListIssueTeamsResponse = api.ListIssueTeamsResponse
 type PutIssueTrackerLinkRequest = api.PutIssueTrackerLinkRequest
 type IssueTrackerLink = api.IssueTrackerLink
 type ListIssueTrackerLinksResponse = api.ListIssueTrackerLinksResponse
+
+type IssueTrackerProviderStatus = api.IssueTrackerProviderStatus
+type NativeIssueTrackerStatus = api.NativeIssueTrackerStatus
+type UpdateNativeIssueTrackerStatusRequest = api.UpdateNativeIssueTrackerStatusRequest

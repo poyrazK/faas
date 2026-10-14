@@ -240,3 +240,14 @@ func (c *Client) PutIssueTrackerLink(ctx context.Context, slug, id string, in Pu
 func (c *Client) DeleteIssueTrackerLink(ctx context.Context, slug, id, link string) error {
 	return c.do(ctx, "DELETE", issueTrackerLinksPath(slug, id)+"/"+url.PathEscape(link), nil, nil)
 }
+
+func (c *Client) GetNativeIssueTrackerStatus(ctx context.Context, slug, id, link string) (NativeIssueTrackerStatus, error) {
+	var out NativeIssueTrackerStatus
+	err := c.do(ctx, "GET", issueTrackerLinksPath(slug, id)+"/"+url.PathEscape(link)+"/native-status", nil, &out)
+	return out, err
+}
+func (c *Client) UpdateNativeIssueTrackerStatus(ctx context.Context, slug, id, link string, in UpdateNativeIssueTrackerStatusRequest) (NativeIssueTrackerStatus, error) {
+	var out NativeIssueTrackerStatus
+	err := c.do(ctx, "POST", issueTrackerLinksPath(slug, id)+"/"+url.PathEscape(link)+"/native-status", in, &out)
+	return out, err
+}

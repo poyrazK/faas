@@ -13621,6 +13621,65 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Gregale issue identity whose canonical group owns the tracker reference.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: link_id
+        description: Tracker reference identity to read or synchronize through the native connection.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getNativeIssueTrackerStatus
+      summary: Read a linked GitHub issue through the app owner's native installation.
+      description: Requires Issues entitlement and app read access. Verifies the caller-owned installation, pinned bound repository identity, current repository visibility and issue-group reference membership. GitHub installation credentials stay server-side. Linear native connections are unsupported.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Canonical issue, reference, connection and observed provider status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: "Native connection missing, unsupported status or changed binding/reference." }
+        '502': { description: "Provider status could not be confirmed." }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: updateNativeIssueTrackerStatus
+      summary: Push the current Gregale lifecycle through the native GitHub connection.
+      description: Requires deploy-write and session MFA. desired_state must match the current canonical Gregale issue. expected must be the observed linked GitHub status. Rechecks reference membership, installation ownership, repository identity and visibility before using server credentials. Refuses changed snapshots and unsupported states. Separate APIs cannot provide an atomic cross-provider transaction; preview again after uncertain outcomes.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNativeIssueTrackerStatusRequest' }
+      responses:
+        '200':
+          description: Verified native connection and resulting provider status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: "Native connection missing, unsupported status or changed snapshot." }
+        '502': { description: "Provider update could not be confirmed; preview again." }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues/{issue_id}/tracker-links:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82182,6 +82241,37 @@ components:
       properties:
         url: { type: string, format: uri, maxLength: 512, description: Public GitHub issue or Linear issue HTTPS URL; maximum 512 UTF-8 bytes. }
         title: { type: string, maxLength: 256, description: Optional display title; maximum 256 UTF-8 bytes without control characters. }
+    IssueTrackerProviderStatus:
+      description: Observed lifecycle and identity of an external tracker issue.
+      type: object
+      required: [provider, url, id, state]
+      properties:
+        provider: { type: string, enum: [github, linear] }
+        url: { type: string, format: uri }
+        id: { type: string }
+        state: { type: string, enum: [open, resolved] }
+        team_id: { type: string, format: uuid }
+        state_id: { type: string, format: uuid }
+    NativeIssueTrackerStatus:
+      description: Verified native connection and observed status of a linked tracker issue.
+      type: object
+      required: [issue_id, link_id, installation_id, repository, repository_id, status]
+      properties:
+        issue_id: { type: string, format: uuid }
+        link_id: { type: string, format: uuid }
+        installation_id: { type: integer, format: int64 }
+        repository: { type: string }
+        repository_id: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/IssueTrackerProviderStatus' }
+    UpdateNativeIssueTrackerStatusRequest:
+      description: Expected provider snapshot and current Gregale lifecycle to push through a native connection.
+      type: object
+      additionalProperties: false
+      required: [desired_state, expected]
+      properties:
+        desired_state: { type: string, enum: [open, resolved] }
+        expected: { $ref: '#/components/schemas/IssueTrackerProviderStatus' }
+
     IssueTrackerLink:
       type: object
       required: [id, original_issue_id, provider, external_key, url, created_at, updated_at]

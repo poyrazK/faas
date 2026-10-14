@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {AppsService,FaaSClient,type NativeIssueTrackerStatus} from '../src/index.js';
+
+test('native status API retains the provider snapshot without provider credentials',async(t)=>{
+ const issue='33333333-3333-4333-8333-333333333333';const link='55555555-5555-4555-8555-555555555555';
+ const observed:NativeIssueTrackerStatus={issue_id:issue,link_id:link,installation_id:42,repository:'owner/repo',repository_id:100,status:{provider:'github',url:'https://github.com/owner/repo/issues/42',id:'42',state:'resolved'}};
+ let writes=0;
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.url,`/v1/apps/payments/issues/${issue}/tracker-links/${link}/native-status`);res.setHeader('Content-Type','application/json');
+  if(req.method==='POST') {writes++;const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),{desired_state:'open',expected:observed.status});res.end(JSON.stringify({...observed,status:{...observed.status,state:'open'}}));return;}
+  assert.equal(req.method,'GET');res.end(JSON.stringify(observed));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ assert.deepEqual(await AppsService.getNativeIssueTrackerStatus({slug:'payments',issueId:issue,linkId:link}),observed);
+ const result=await AppsService.updateNativeIssueTrackerStatus({slug:'payments',issueId:issue,linkId:link,requestBody:{desired_state:'open',expected:observed.status}});assert.equal(result.status.state,'open');assert.equal(writes,1);
+});

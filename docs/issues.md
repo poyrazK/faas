@@ -961,3 +961,19 @@ gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --d
 Linear push requires `--linear-state WORKFLOW_STATE_UUID` when changing status. The selected state must belong to the linked issue's team, be active and have the appropriate workflow type. The CLI does not guess state names. Credentials use the same `GREGALE_GITHUB_TOKEN` / `GREGALE_LINEAR_TOKEN` defaults and `--token-env NAME` override as ticket creation. Preview requires provider read access; push requires provider issue-write permission; pull requires Gregale's normal mutation authority.
 
 The CLI finds the link through paginated issue-group references, checks exact provider identity, and rechecks group membership and both lifecycle snapshots before applying. JSON output includes the observed states, `desired_state`, `would_change`, `applied`, `needs_deployment` and `needs_linear_state`. Equal states are a no-op. After a timeout or uncertain update response, preview again before applying: a confirmed desired state needs no repeated action. Provider and Gregale reads and writes are separate operations, so concurrent changes can still race after the final check. This is explicit CLI sync; native organization connections, OAuth setup, provider callbacks and continuous reconciliation remain separate work.
+
+## Use the native GitHub connection
+
+App owners can use the existing connected GitHub App installation for status synchronization without a local GitHub token:
+
+```sh
+gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --native
+gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --native --apply
+gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction pull --native --apply --deployment FIXING_DEPLOYMENT_UUID
+```
+
+Connect GitHub and bind the app repository through the existing app connection settings. The GitHub App needs Issues read permission for preview and write permission for push. The linked ticket must belong to that bound repository. The API verifies the caller-owned installation, the bound repository's pinned ID and current visibility, and the reference's current issue-group membership. Older bindings without repository identity need rebinding. Shared-app members do not inherit another account's GitHub grant. Removing access, rebinding the repository or moving/unlinking the reference stops the operation.
+
+`GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status` returns the canonical issue/reference IDs, installation/repository identity and observed status. POST to the same route accepts `desired_state` and `expected` provider status, and pushes only the current Gregale open/resolved state. Reads require app read permission and Issues entitlement; pushes require deploy-write and normal session MFA. Typed Go, Node and Python clients expose both operations. Tokens stay server-side through the existing githubd credential lifecycle, and errors omit provider credentials and bodies.
+
+Native mode cannot be combined with `--token-env` or `--linear-state`; there is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. This increment supports GitHub status operations. Linear native OAuth, native ticket creation, provider callbacks and continuous reconciliation remain separate work.

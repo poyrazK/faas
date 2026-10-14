@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
@@ -1286,3 +1287,10 @@ func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
 }
+
+func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
+	e.s.githubd = gh
+	e.s.nativeTrackerProvider = provider
+}
+func IssueNativeStore(e pgHandlerEnv) state.Store     { return e.store }
+func IssueNativeAccount(e pgHandlerEnv) state.Account { return e.acct }

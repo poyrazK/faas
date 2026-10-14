@@ -1818,6 +1818,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":            "CheckAccountWorkflowReadinessNotification",
 	"PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}": "UpdatePlatformTenantSelfWorkflowReadinessNotification",
 	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}":   "CheckPlatformTenantSelfWorkflowReadinessNotification",
+
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":  "GetNativeIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status": "UpdateNativeIssueTrackerStatus",
 }
 
 func main() {

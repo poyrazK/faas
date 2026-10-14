@@ -98,6 +98,10 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/apps/{slug}/issues/bulk-actions":                          true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/saved-views":                           true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/teams":                                 true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":              true, // session/CSRF HTML adapter for the corresponding public Issues API
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -331,6 +335,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"NormalizedIssueTrackerLink":  true, // internal provider identity canonicalizer; never a wire DTO
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
@@ -594,6 +599,7 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"BulkIssueLifecycleAction":         true, // restricted SDK shape of IssueActionRequest for the four supported bulk lifecycle operations
 	"ObjectStorageReleaseRequirements": true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
 	"EdgeRuleMatchExpr":                true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"DevBridgeScope":                   true, // wire types live in pkg/devbridge; digests never cross the wire
@@ -1099,6 +1105,14 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
+		filepath.Join(root, "pkg", "api", "issue_context.go"),
+		filepath.Join(root, "pkg", "api", "issue_source_maps.go"),
+		filepath.Join(root, "pkg", "api", "issue_triage.go"),
+		filepath.Join(root, "pkg", "api", "issue_saved_views.go"),
+		filepath.Join(root, "pkg", "api", "issue_teams.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_links.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_native.go"),
+
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_versions.go"),

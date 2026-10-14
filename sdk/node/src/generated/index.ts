@@ -814,6 +814,7 @@ export type { IssueSplitRuleUpdate } from './models/IssueSplitRuleUpdate.js';
 export type { IssueSymbolicationResult } from './models/IssueSymbolicationResult.js';
 export type { IssueTeam } from './models/IssueTeam.js';
 export type { IssueTrackerLink } from './models/IssueTrackerLink.js';
+export type { IssueTrackerProviderStatus } from './models/IssueTrackerProviderStatus.js';
 export type { JobArtifactDownloadResponse } from './models/JobArtifactDownloadResponse.js';
 export type { JobDeletedResponse } from './models/JobDeletedResponse.js';
 export type { JobFinishedWebhookPayload } from './models/JobFinishedWebhookPayload.js';
@@ -1006,6 +1007,7 @@ export type { MirrorReplayRequestItem } from './models/MirrorReplayRequestItem.j
 export type { MirrorRuleListResponse } from './models/MirrorRuleListResponse.js';
 export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
+export type { NativeIssueTrackerStatus } from './models/NativeIssueTrackerStatus.js';
 export type { OAuthProviderCapability } from './models/OAuthProviderCapability.js';
 export type { OAuthTokenExchangeError } from './models/OAuthTokenExchangeError.js';
 export type { OAuthTokenExchangeRequest } from './models/OAuthTokenExchangeRequest.js';
@@ -1995,6 +1997,7 @@ export type { UpdateIssueImpactAlertPolicyRequest } from './models/UpdateIssueIm
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
+export type { UpdateNativeIssueTrackerStatusRequest } from './models/UpdateNativeIssueTrackerStatusRequest.js';
 export type { UpdateOutboundBindingPolicyRequest } from './models/UpdateOutboundBindingPolicyRequest.js';
 export type { UpdatePlatformTenantWebhookRequest } from './models/UpdatePlatformTenantWebhookRequest.js';
 export type { UpdatePrivateNetworkPolicyRequest } from './models/UpdatePrivateNetworkPolicyRequest.js';

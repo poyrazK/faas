@@ -1645,6 +1645,9 @@ from .issue_symbolication_result import IssueSymbolicationResult
 from .issue_team import IssueTeam
 from .issue_tracker_link import IssueTrackerLink
 from .issue_tracker_link_provider import IssueTrackerLinkProvider
+from .issue_tracker_provider_status import IssueTrackerProviderStatus
+from .issue_tracker_provider_status_provider import IssueTrackerProviderStatusProvider
+from .issue_tracker_provider_status_state import IssueTrackerProviderStatusState
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
@@ -2003,6 +2006,7 @@ from .mirror_replay_request_item_method import MirrorReplayRequestItemMethod
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
+from .native_issue_tracker_status import NativeIssueTrackerStatus
 from .o_auth_provider_capability import OAuthProviderCapability
 from .o_auth_token_exchange_error import OAuthTokenExchangeError
 from .o_auth_token_exchange_error_error import OAuthTokenExchangeErrorError
@@ -3847,6 +3851,8 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
     UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
+from .update_native_issue_tracker_status_request import UpdateNativeIssueTrackerStatusRequest
+from .update_native_issue_tracker_status_request_desired_state import UpdateNativeIssueTrackerStatusRequestDesiredState
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
@@ -5703,6 +5709,9 @@ __all__ = (
     "IssueTeam",
     "IssueTrackerLink",
     "IssueTrackerLinkProvider",
+    "IssueTrackerProviderStatus",
+    "IssueTrackerProviderStatusProvider",
+    "IssueTrackerProviderStatusState",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
@@ -6021,6 +6030,7 @@ __all__ = (
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
+    "NativeIssueTrackerStatus",
     "OAuthProviderCapability",
     "OAuthTokenExchangeError",
     "OAuthTokenExchangeErrorError",
@@ -7737,6 +7747,8 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequestAuthMode",
     "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
+    "UpdateNativeIssueTrackerStatusRequest",
+    "UpdateNativeIssueTrackerStatusRequestDesiredState",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateOutboundBindingPolicyRequest",
     "UpdatePlatformTenantWebhookRequest",

@@ -156,3 +156,48 @@ func TestIssueTicketSyncPushRechecksGroupAndRefusesStaleSource(t *testing.T) {
 		t.Fatal("invalid sync IDs accepted")
 	}
 }
+
+func TestIssueTicketSyncNativeKeepsCredentialsOnServer(t *testing.T) {
+	appID := "22222222-2222-4222-8222-222222222222"
+	issueID := "33333333-3333-4333-8333-333333333333"
+	linkID := "55555555-5555-4555-8555-555555555555"
+	nativeWrites := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/native-status"):
+			state := "resolved"
+			if r.Method == "POST" {
+				nativeWrites++
+				var in api.UpdateNativeIssueTrackerStatusRequest
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				if in.DesiredState != "open" || in.Expected.ID != "42" {
+					t.Error("native push lost expected snapshot")
+				}
+				state = "open"
+			}
+			_ = json.NewEncoder(w).Encode(api.NativeIssueTrackerStatus{IssueID: issueID, LinkID: linkID, InstallationID: 42, Repository: "owner/repo", RepositoryID: 100, Status: api.IssueTrackerProviderStatus{Provider: "github", URL: "https://github.com/owner/repo/issues/42", ID: "42", State: state}})
+		case r.URL.Path == "/v1/apps/payments":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: appID, Slug: "payments"})
+		case strings.HasSuffix(r.URL.Path, "/tracker-links"):
+			_ = json.NewEncoder(w).Encode(api.ListIssueTrackerLinksResponse{Items: []api.IssueTrackerLink{{ID: linkID, Provider: "github", URL: "https://github.com/owner/repo/issues/42"}}})
+		default:
+			_ = json.NewEncoder(w).Encode(api.IssueDetail{Issue: api.Issue{ID: issueID, AppID: appID, State: "open"}})
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_GITHUB_TOKEN", "")
+	previousOut, previousJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	args := []string{"--app", "payments", "--issue", issueID, "--link", linkID, "--direction", "push", "--native", "--apply"}
+	if runIssueTicketSync(args, nil) != 0 || nativeWrites != 1 {
+		t.Fatal("native push required a local credential")
+	}
+	if runIssueTicketSync(append(args, "--token-env", "SHOULD_NOT_BE_READ"), nil) == 0 || nativeWrites != 1 {
+		t.Fatal("native mode accepted mixed credentials")
+	}
+}

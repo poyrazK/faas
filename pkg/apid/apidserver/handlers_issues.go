@@ -26,6 +26,8 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSavedView)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueSavedView))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueSavedView))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getNativeIssueTrackerStatus)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateNativeIssueTrackerStatus))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueTrackerLinks)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/tracker-links", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueTrackerLink))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueTrackerLink))))

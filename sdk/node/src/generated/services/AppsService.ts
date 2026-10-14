@@ -79,6 +79,7 @@ import type { ListIssueTrackerLinksResponse } from '../models/ListIssueTrackerLi
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
+import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
@@ -148,6 +149,7 @@ import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatu
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
+import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -2818,6 +2820,92 @@ export class AppsService {
         402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a linked GitHub issue through the app owner's native installation.
+   * Requires Issues entitlement and app read access. Verifies the caller-owned installation, pinned bound repository identity, current repository visibility and issue-group reference membership. GitHub installation credentials stay server-side. Linear native connections are unsupported.
+   * @returns NativeIssueTrackerStatus Canonical issue, reference, connection and observed provider status.
+   * @throws ApiError
+   */
+  public static getNativeIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    issueId: string,
+    linkId: string,
+  }): CancelablePromise<NativeIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Native connection missing, unsupported status or changed binding/reference.`,
+        502: `Provider status could not be confirmed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Push the current Gregale lifecycle through the native GitHub connection.
+   * Requires deploy-write and session MFA. desired_state must match the current canonical Gregale issue. expected must be the observed linked GitHub status. Rechecks reference membership, installation ownership, repository identity and visibility before using server credentials. Refuses changed snapshots and unsupported states. Separate APIs cannot provide an atomic cross-provider transaction; preview again after uncertain outcomes.
+   * @returns NativeIssueTrackerStatus Verified native connection and resulting provider status.
+   * @throws ApiError
+   */
+  public static updateNativeIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    issueId: string,
+    linkId: string,
+    requestBody: UpdateNativeIssueTrackerStatusRequest,
+  }): CancelablePromise<NativeIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Native connection missing, unsupported status or changed snapshot.`,
+        502: `Provider update could not be confirmed; preview again.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

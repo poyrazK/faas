@@ -49,12 +49,13 @@ func linkedIssueTicket(ctx context.Context, client *Client, slug, issue, link st
 	}
 }
 func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int {
-	usage := "usage: gregale issues tickets sync --app SLUG --issue UUID --link UUID --direction push|pull [--apply --deployment UUID --linear-state UUID --token-env NAME]"
+	usage := "usage: gregale issues tickets sync --app SLUG --issue UUID --link UUID --direction push|pull [--native --apply --deployment UUID --linear-state UUID --token-env NAME]"
 	fs := newFlagSet("issues tickets sync", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	issue := fs.String("issue", "", "issue UUID")
 	linkID := fs.String("link", "", "stored tracker reference UUID")
 	direction := fs.String("direction", "", "push Gregale status or pull provider status")
+	native := fs.Bool("native", false, "use the app owner's connected GitHub installation")
 	apply := fs.Bool("apply", false, "apply the previewed lifecycle change")
 	deployment := fs.String("deployment", "", "fixing deployment UUID for a pulled resolution")
 	linearState := fs.String("linear-state", "", "team workflow state UUID for a Linear push")
@@ -86,6 +87,17 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 			invalid = true
 		}
 	})
+	if *native {
+		mixed := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "token-env" || f.Name == "linear-state" {
+				mixed = true
+			}
+		})
+		if mixed {
+			return printErr("Invalid sync request", fmt.Errorf("native mode cannot use --token-env or --linear-state"))
+		}
+	}
 	if invalid {
 		return printErr("Invalid sync request", fmt.Errorf("deployment applies to pull; Linear workflow state applies to push"))
 	}
@@ -119,6 +131,12 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	if link.Provider != "linear" && *linearState != "" {
 		return printErr("Invalid sync request", fmt.Errorf("Linear workflow state does not apply to GitHub"))
 	}
+	if *native {
+		if link.Provider != "github" {
+			return printErr("Native connection unavailable", fmt.Errorf("native sync currently supports connected GitHub repositories"))
+		}
+		provider = nativeIssueStatusProvider{client: client, app: *app, issue: detail.Issue.ID, link: link.ID}
+	}
 	if *tokenEnv == "" {
 		if link.Provider == "github" {
 			*tokenEnv = "GREGALE_GITHUB_TOKEN"
@@ -126,7 +144,10 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 			*tokenEnv = "GREGALE_LINEAR_TOKEN"
 		}
 	}
-	token := os.Getenv(*tokenEnv)
+	token := ""
+	if !*native {
+		token = os.Getenv(*tokenEnv)
+	}
 	remote, err := provider.ReadStatus(ctx, link.URL, token)
 	if err != nil {
 		return printErr("Cannot read provider status", err)
