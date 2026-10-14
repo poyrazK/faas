@@ -47,7 +47,8 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
        coalesce(image_materialization_error, ''),
        image_materialized_at, image_materialization_attempts,
        image_materialization_next_attempt_at, coalesce(cron_schedule, ''),
-       cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision`
+       cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision,
+       coalesce(image_entrypoint, '{}'), coalesce(image_cmd, '{}'), image_entrypoint is not null`
 
 // jobRunSelectCols is the canonical column order for job_runs.
 // Includes dead_letter_count (00574). ORDER BY id keeps the contract
@@ -99,7 +100,8 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 		&j.ImageStorageKey, &j.ImageMaterializationStatus,
 		&j.ImageMaterializationError, &j.ImageMaterializedAt,
 		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt,
-		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt, &j.SchedulePolicy, &j.FailureRules, &j.ScheduleRevision); err != nil {
+		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt, &j.SchedulePolicy, &j.FailureRules, &j.ScheduleRevision,
+		&j.ImageEntrypoint, &j.ImageCmd, &j.ImageConfigRecorded); err != nil {
 		return Job{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -284,7 +286,7 @@ func (s *PgStore) JobGetByName(ctx context.Context, accountID, name string) (Job
 func (s *PgStore) JobListByAccount(ctx context.Context, accountID string, limit, offset int) ([]Job, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+jobSelectCols+` from jobs
-		 where account_id = $1::uuid and status <> 'deleted'
+		 where account_id = $1::uuid and status <> 'deleted' and kind <> 'image_run'
 		 order by created_at desc
 		 limit $2 offset $3`,
 		accountID, limit, offset)
@@ -355,6 +357,8 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		   image_materialization_next_attempt_at = case when $3 is null then image_materialization_next_attempt_at else null end,
 		   image_materialization_lease_owner = case when $3 is null then image_materialization_lease_owner else null end,
 		   image_materialization_lease_until = case when $3 is null then image_materialization_lease_until else null end,
+		   image_entrypoint = case when $3 is null then image_entrypoint else null end,
+		   image_cmd       = case when $3 is null then image_cmd else null end,
 		   ram_mb          = coalesce($4,          ram_mb),
 		   task_timeout_s  = coalesce($5,          task_timeout_s),
 		   max_parallelism = coalesce($6,          max_parallelism),
@@ -417,6 +421,8 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 		   image_materialization_next_attempt_at = case when $3 is null then image_materialization_next_attempt_at else null end,
 		   image_materialization_lease_owner = case when $3 is null then image_materialization_lease_owner else null end,
 		   image_materialization_lease_until = case when $3 is null then image_materialization_lease_until else null end,
+		   image_entrypoint = case when $3 is null then image_entrypoint else null end,
+		   image_cmd       = case when $3 is null then image_cmd else null end,
 		   ram_mb          = coalesce($4,          ram_mb),
 		   task_timeout_s  = coalesce($5,          task_timeout_s),
 		   max_parallelism = coalesce($6,          max_parallelism),
@@ -786,7 +792,7 @@ func (s *PgStore) JobSoftDelete(ctx context.Context, id string) (deleted bool, h
 func (s *PgStore) JobCountByAccount(ctx context.Context, accountID string) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx,
-		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted'`,
+		`select count(*) from jobs where account_id = $1::uuid and status <> 'deleted' and kind <> 'image_run'`,
 		accountID,
 	).Scan(&count)
 	if err != nil {

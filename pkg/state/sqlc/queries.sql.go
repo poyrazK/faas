@@ -10348,7 +10348,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -10390,6 +10390,8 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.SchedulePolicy,
 		&i.FailureRules,
 		&i.ScheduleRevision,
+		&i.ImageEntrypoint,
+		&i.ImageCmd,
 	)
 	return i, err
 }
@@ -28385,6 +28387,50 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 		return nil, err
 	}
 	return items, nil
+}
+
+const instanceLogsOwnedByApp = `-- name: InstanceLogsOwnedByApp :one
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = $1::uuid
+          AND i.app_id = $2::uuid
+          AND a.account_id = $3::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = $3::uuid
+          AND u.app_id = $2::uuid
+          AND u.instance_id = $1::uuid
+          AND u.minute >= $4::timestamptz
+          AND u.minute < $5::timestamptz
+    )
+)::boolean AS owned
+`
+
+type InstanceLogsOwnedByAppParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	FromMinute pgtype.Timestamptz
+	ToMinute   pgtype.Timestamptz
+}
+
+// Archived runtime logs are keyed by instance only. The instance row proves
+// ownership while it exists; afterwards the app's billing rows for that
+// instance in [from_minute, to_minute) do.
+func (q *Queries) InstanceLogsOwnedByApp(ctx context.Context, db DBTX, arg InstanceLogsOwnedByAppParams) (bool, error) {
+	row := db.QueryRow(ctx, instanceLogsOwnedByApp,
+		arg.InstanceID,
+		arg.AppID,
+		arg.AccountID,
+		arg.FromMinute,
+		arg.ToMinute,
+	)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
 }
 
 const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
@@ -69423,6 +69469,28 @@ func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db 
 		&i.ReservedInstanceID,
 	)
 	return i, err
+}
+
+const renewInvocationLease = `-- name: RenewInvocationLease :execrows
+UPDATE invocations
+SET lease_expires_at = now() + $1::integer * interval '1 second'
+WHERE id = $2::uuid AND operation_id IS NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now()
+`
+
+type RenewInvocationLeaseParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewInvocationLease(ctx context.Context, db DBTX, arg RenewInvocationLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, renewInvocationLease, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const renewNotificationClaim = `-- name: RenewNotificationClaim :execrows

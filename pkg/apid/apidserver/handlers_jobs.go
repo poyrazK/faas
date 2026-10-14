@@ -939,6 +939,10 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 		s.notFound(w, "no such job")
 		return
 	}
+	if j.Kind == state.JobKindImageRun {
+		api.WriteProblem(w, api.ErrImageRunManaged(j.Name))
+		return
+	}
 	// Re-clamp RAM / task_timeout / parallelism / retry against
 	// the plan caps so a downgrade + PATCH can't escalate a
 	// job's resource footprint above the current plan's

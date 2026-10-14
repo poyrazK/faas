@@ -99,6 +99,7 @@ var memDispatched = map[string]bool{
 	"RecordPublishedEventRecipientProgress":                   true,
 	"RecordUploadCommitOutcome":                               true,
 	"RecoverCanaryRouteHealth":                                true,
+	"RenewInvocationLease":                                    true,
 	"RenewOperationExecution":                                 true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
@@ -789,6 +790,15 @@ func (s *Mem) RecoverCanaryRouteHealth(p0 context.Context, p1 string, p2 string,
 		return o.RecoverCanaryRouteHealth(p0, p1, p2, p3, p4)
 	}
 	return s.MemStore.RecoverCanaryRouteHealth(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) RenewInvocationLease(p0 context.Context, p1 string, p2 int, p3 int) (bool, error) {
+	if o, ok := s.over.(interface {
+		RenewInvocationLease(context.Context, string, int, int) (bool, error)
+	}); ok {
+		return o.RenewInvocationLease(p0, p1, p2, p3)
+	}
+	return s.MemStore.RenewInvocationLease(p0, p1, p2, p3)
 }
 
 func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 int) (bool, error) {

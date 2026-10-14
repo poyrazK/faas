@@ -7,6 +7,25 @@ operator listener is not bound to loopback. These are **not** API keys or
 customer-account tokens: one account-bound key cannot advance canaries for
 other tenants.
 
+## Alerts
+
+meterd runs the safe-deploy orchestrator, so these read `meterd_*` series.
+All are warn (ADR-1235).
+
+- `FaasCanaryStuckStep`: a rollout passed `StuckAfterDuration` at one step.
+  Traffic stays at the current split; advance or abort it after checking the
+  health gate below.
+- `FaasSafedeployAbortSurge`: more than one abort per 5 minutes. A fleet-wide
+  abort rate means a shared cause (health gate, metrics source, platform
+  regression), not one bad release; check before retrying rollouts.
+- `FaasSafedeployAuditEmitFailing`: orchestrator or deployment audit writes are
+  failing. Rollouts continue, but their audit trail is incomplete; check apid
+  and Postgres write errors.
+- `FaasSafedeployMissingTimestamp`: deployments without
+  `canary_step_started_at`, which stuck detection cannot evaluate.
+- `FaasDeploymentAuditGCFailing`: the 90-day audit retention sweep failed, so
+  audit rows accumulate until it succeeds.
+
 ## Staging activation
 
 Generate two distinct random tokens of at least 32 bytes each. Provision the

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -310,8 +311,10 @@ const SyncInvokeWaitSecondsFree = 5
 // GatewaySynthDispatchTimeout bounds one schedd → gatewayd-internal synth
 // call: a cron HTTP target, an async invocation or a workflow step, including
 // any wake it triggers and the application's answer. It is therefore the
-// per-attempt execution limit of an async invocation; an attempt that outlives
-// it is recorded as a timeout and retried under the invocation's retry policy.
+// per-attempt execution limit of an async invocation at the default timeout;
+// an attempt that outlives it is recorded as a timeout and retried under the
+// invocation's retry policy. An invocation of an app whose request timeout is
+// longer is bounded by AsyncInvocationDispatchTimeout instead (ADR-1180).
 const GatewaySynthDispatchTimeout = 30 * time.Second
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
@@ -2965,6 +2968,21 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
 }
 
+// LayerExtractionBudgetMultiple bounds the regular-file bytes one image build
+// may write while applying OCI layers, as a multiple of EphemeralDiskMaxBytes.
+// Layers are extracted before the final size check, and a small compressed
+// layer can expand without bound, so extraction stops at this budget instead
+// of filling the build disk. The finished artifact must still fit
+// EphemeralDiskMaxMB; the multiple leaves room for files a later layer
+// replaces or deletes.
+const LayerExtractionBudgetMultiple = 2
+
+// LayerExtractionBudgetBytes is the extraction budget for one image build.
+// Zero means the limits value is unset; callers fail closed.
+func (l Limits) LayerExtractionBudgetBytes() int64 {
+	return l.EphemeralDiskMaxBytes() * LayerExtractionBudgetMultiple
+}
+
 // UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
 // cap on meterd's upstream-probe loop. Read by cmd/meterd at boot
 // time and by pkg/meter/upstream_probe.go on each loop tick. NOT a
@@ -5469,8 +5487,16 @@ const (
 	// ceiling so the cold-boot latency contract (§14, wake < 350 ms)
 	// stays predictable. 60s is well above the largest manifest +
 	// image-config GET and a generous safety margin over the
-	// fail-fast PullImageConfig path.
+	// fail-fast PullImageConfig path. Blob downloads use it as the
+	// response-header timeout and as the longest a body read may wait for
+	// data, not as a total: a large layer legitimately takes longer.
 	OCIPullTimeoutSeconds = 60
+
+	// OCIBlobTransferMaxSeconds caps one registry blob transfer, including
+	// the time its consumer spends extracting it. It stops a registry that
+	// trickles bytes just fast enough to never stall from holding a pull open
+	// indefinitely.
+	OCIBlobTransferMaxSeconds = 30 * 60
 
 	// Idle timeout tuning (spec §4.3): app-configurable down to this floor, and
 	// no higher than plan default × this multiplier.
@@ -6308,6 +6334,12 @@ var (
 	// JobMaxPerAccount is the maximum number of job templates an
 	// account may own concurrently (status <> 'deleted').
 	JobMaxPerAccount = [4]int{0, 5, 25, 100}
+
+	// ImageRunCachedImages caps the platform-managed image-run runner jobs
+	// (ADR-1161) an account keeps live, one per cached image. They do not
+	// count against JobMaxPerAccount; at the cap the least recently used
+	// idle image is evicted.
+	ImageRunCachedImages = [4]int{0, 3, 10, 25}
 
 	// JobConcurrentPerAccount caps the live job-task instances
 	// (kind='job_task' AND state IN ('waking','cold_booting','running'))
@@ -9069,6 +9101,76 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 		d = l.RequestBudget()
 	}
 	return d
+}
+
+const (
+	// AsyncInvocationTimeoutFloor is the run time every async, queue, cron
+	// and replay invocation gets at least (ADR-1180). It matches the
+	// function runner's default handler timeout.
+	AsyncInvocationTimeoutFloor = 30 * time.Second
+	// AsyncInvocationWakeAllowance is the time a dispatcher allows for
+	// waking an instance before the invocation itself starts. It was the
+	// drain's whole invocation lease before ADR-1180.
+	AsyncInvocationWakeAllowance = 60 * time.Second
+	// AsyncInvocationDispatchMax bounds one dispatched invocation, wake
+	// included: the longest run any plan allows plus the wake allowance.
+	// Schedd's gateway clients use it as their outer HTTP timeout.
+	AsyncInvocationDispatchMax = RequestBudgetPlanMax + AsyncInvocationWakeAllowance
+	// AsyncInvocationLeaseMargin keeps a dispatch lease alive past the
+	// dispatch deadline, long enough to record the outcome.
+	AsyncInvocationLeaseMargin = 30 * time.Second
+	// TriggerBatchTimeout bounds one trigger batch at the gateway. A batch
+	// for an app whose invocations run longer may take one whole record
+	// instead (ADR-1180).
+	TriggerBatchTimeout = 5 * time.Minute
+)
+
+// AsyncInvocationTimeout is how long one async, queue, cron or replay
+// invocation of an app may run (ADR-1180): the app's request_timeout_s,
+// clamped to the plan's ceiling, and never less than
+// AsyncInvocationTimeoutFloor. An app without its own timeout gets the floor.
+func (l Limits) AsyncInvocationTimeout(requestTimeoutS int) time.Duration {
+	if requestTimeoutS <= 0 {
+		return AsyncInvocationTimeoutFloor
+	}
+	timeout := min(time.Duration(requestTimeoutS)*time.Second, l.RequestBudgetMaxDuration())
+	return max(timeout, AsyncInvocationTimeoutFloor)
+}
+
+// AsyncInvocationDispatchTimeout bounds one dispatch, wake included, of an
+// invocation that may run for timeout (ADR-1180).
+func AsyncInvocationDispatchTimeout(timeout time.Duration) time.Duration {
+	return AsyncInvocationWakeAllowance + timeout
+}
+
+// GuestDeadline is how long the guest side may take with a request whose
+// DeadlineHeader value is deadlineMs (ADR-1150): that deadline, never less
+// than floor and never more than RequestBudgetPlanMax. An absent or malformed
+// value gives floor. The function runner bounds the handler with it and
+// vmmd's stream bridge its wait for the guest's response headers.
+func GuestDeadline(deadlineMs string, floor time.Duration) time.Duration {
+	wait := floor
+	if ms, err := strconv.ParseInt(deadlineMs, 10, 64); err == nil && ms > 0 {
+		if forwarded := time.Duration(ms) * time.Millisecond; forwarded > wait {
+			wait = forwarded
+		}
+	}
+	return min(wait, RequestBudgetPlanMax)
+}
+
+// TriggerBatchDispatchTimeout bounds one trigger batch for an app whose
+// invocations may run for timeout: the gateway's batch bound, or one whole
+// record when that is longer (ADR-1180).
+func TriggerBatchDispatchTimeout(timeout time.Duration) time.Duration {
+	return max(TriggerBatchTimeout, AsyncInvocationDispatchTimeout(timeout))
+}
+
+// AsyncInvocationLease is the dispatch lease for an invocation that may run
+// for timeout (ADR-1180): the dispatch timeout plus a margin to record the
+// outcome. A lease that expired while the handler still ran would requeue
+// the invocation and run it twice.
+func AsyncInvocationLease(timeout time.Duration) time.Duration {
+	return AsyncInvocationDispatchTimeout(timeout) + AsyncInvocationLeaseMargin
 }
 
 // FunctionInterpreterMaxWorkers bounds active generated-adapter processes in

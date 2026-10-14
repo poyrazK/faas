@@ -298,6 +298,7 @@ export type { CreateEnvironmentGitSourceRequest } from './CreateEnvironmentGitSo
 export type { CreateExecutionArtifactGrantRequest } from './CreateExecutionArtifactGrantRequest.js';
 export type { CreateExecutionRequest } from './CreateExecutionRequest.js';
 export type { CreateFinancialBudgetRequest } from './CreateFinancialBudgetRequest.js';
+export type { CreateImageRunRequest } from './CreateImageRunRequest.js';
 export type { CreateInboundWebhookEndpointRequest } from './CreateInboundWebhookEndpointRequest.js';
 export type { CreateIssueIngestTokenRequest } from './CreateIssueIngestTokenRequest.js';
 export type { CreateJobRequest } from './CreateJobRequest.js';
@@ -751,6 +752,7 @@ export type { GregaleRelease } from './GregaleRelease.js';
 export type { GregaleRevision } from './GregaleRevision.js';
 export type { Id32 } from './Id32.js';
 export type { IdempotencyKey } from './IdempotencyKey.js';
+export type { ImageRunResponse } from './ImageRunResponse.js';
 export type { InboundWebhookEndpointResponse } from './InboundWebhookEndpointResponse.js';
 export type { InboundWebhookReceiptResponse } from './InboundWebhookReceiptResponse.js';
 export type { InjectScenarioTestChaosRequest } from './InjectScenarioTestChaosRequest.js';

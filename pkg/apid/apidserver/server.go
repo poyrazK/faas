@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -74,7 +75,8 @@ type server struct {
 	appEvents                              appevents.Service // ADR-977; Host wired in newServer
 	featureFlagsEnabled                    bool
 	aiGatewayEnabled                       bool
-	outboundAI                             outboundai.Service // ADR-977; Host wired in newServer
+	aiGatewayRollout                       outbound.AIGatewayRollout // ADR-998
+	outboundAI                             outboundai.Service        // ADR-977; Host wired in newServer
 	flagsWorkloadVerifier                  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
@@ -381,7 +383,10 @@ type server struct {
 	// interactiveAppTasksEnabled additionally admits ADR-1037 interactive
 	// sessions (`gregale app exec -it`). It requires appTaskAPIEnabled.
 	interactiveAppTasksEnabled bool
-	outboundProbeGatewayURL    string
+	// imageRunsEnabled is the operator gate for POST /v1/image-runs
+	// (ADR-1161, FAAS_IMAGE_RUNS).
+	imageRunsEnabled        bool
+	outboundProbeGatewayURL string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -781,6 +786,12 @@ func (s *server) WithRealtimeAccessPreviewEnabled(enabled bool) *server {
 // interactive app-task admission.
 func (s *server) WithInteractiveAppTasksEnabled(enabled bool) *server {
 	s.interactiveAppTasksEnabled = enabled
+	return s
+}
+
+// WithImageRunsEnabled attaches the image-run gate (ADR-1161).
+func (s *server) WithImageRunsEnabled(enabled bool) *server {
+	s.imageRunsEnabled = enabled
 	return s
 }
 
@@ -2376,6 +2387,7 @@ func (s *server) handler() http.Handler {
 	// empty lists on Free (read gate is not in the plan).
 	mux.HandleFunc("GET /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobs))))
 	mux.HandleFunc("POST /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJob)))))
+	mux.HandleFunc("POST /v1/image-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createImageRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))
