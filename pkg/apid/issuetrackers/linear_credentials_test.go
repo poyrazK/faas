@@ -67,3 +67,26 @@ func TestLinearCredentialScopeAndRotation(t *testing.T) {
 		t.Fatal("verification error leaked")
 	}
 }
+
+func TestLinearSigningSecretIsSealedWithScopeAndPreservesTokenAccess(t *testing.T) {
+	key, _ := age.GenerateX25519Identity()
+	identity := issuetracker.LinearIdentity{WorkspaceID: "11111111-1111-4111-8111-111111111111", TeamID: "22222222-2222-4222-8222-222222222222", ViewerID: "33333333-3333-4333-8333-333333333333"}
+	verifier := linearVerifierFunc(func(context.Context, string, string) (issuetracker.LinearIdentity, error) { return identity, nil })
+	secret := "linear_signing_secret_1234567890abcdef"
+	scope, sealed, err := SealLinearCredential(t.Context(), verifier, key.Recipient(), "44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555", identity.TeamID, "lin_api_secret", secret)
+	if err != nil || bytes.Contains(sealed, []byte(secret)) {
+		t.Fatal("secret not sealed", err)
+	}
+	got, err := OpenLinearWebhookSecret([]*age.X25519Identity{key}, scope, sealed)
+	if err != nil || got != secret {
+		t.Fatal(err)
+	}
+	token, err := OpenLinearCredential([]*age.X25519Identity{key}, scope, sealed)
+	if err != nil || token != "lin_api_secret" {
+		t.Fatal("token compatibility lost", err)
+	}
+	scope.AppID = scope.AccountID
+	if _, err := OpenLinearWebhookSecret([]*age.X25519Identity{key}, scope, sealed); err == nil {
+		t.Fatal("cross-app callback key accepted")
+	}
+}

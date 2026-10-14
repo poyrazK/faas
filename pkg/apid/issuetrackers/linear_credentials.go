@@ -25,8 +25,9 @@ type LinearCredentialScope struct {
 }
 
 type linearCredentialEnvelope struct {
-	Scope LinearCredentialScope `json:"scope"`
-	Token string                `json:"token"`
+	Scope         LinearCredentialScope `json:"scope"`
+	Token         string                `json:"token"`
+	WebhookSecret string                `json:"webhook_secret,omitempty"`
 }
 
 const linearCredentialNamespace = "issue_tracker_linear_api_key_v1"
@@ -43,7 +44,17 @@ func validLinearScope(scope LinearCredentialScope) bool {
 
 // SealLinearCredential performs a fresh provider verification before returning
 // ciphertext. Caller authorization and durable connection storage are separate.
-func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier, recipient *age.X25519Recipient, accountID, appID, teamID, token string) (LinearCredentialScope, []byte, error) {
+func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier, recipient *age.X25519Recipient, accountID, appID, teamID, token string, webhookSecrets ...string) (LinearCredentialScope, []byte, error) {
+	webhookSecret := ""
+	if len(webhookSecrets) > 1 {
+		return LinearCredentialScope{}, nil, errors.New("invalid webhook configuration")
+	}
+	if len(webhookSecrets) == 1 {
+		webhookSecret = webhookSecrets[0]
+	}
+	if webhookSecret != "" && !issuetracker.ValidLinearWebhookSecret(webhookSecret) {
+		return LinearCredentialScope{}, nil, errors.New("invalid webhook signing secret")
+	}
 	if verifier == nil || recipient == nil || !validLinearToken(token) {
 		return LinearCredentialScope{}, nil, errors.New("Linear credential configuration is invalid")
 	}
@@ -58,7 +69,7 @@ func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier
 	if err != nil || !validLinearScope(scope) || identity.TeamID != teamID {
 		return LinearCredentialScope{}, nil, errors.New("Linear connection could not be verified")
 	}
-	plaintext, err := json.Marshal(linearCredentialEnvelope{Scope: scope, Token: token})
+	plaintext, err := json.Marshal(linearCredentialEnvelope{Scope: scope, Token: token, WebhookSecret: webhookSecret})
 	if err != nil {
 		return LinearCredentialScope{}, nil, errors.New("Linear credential could not be encoded")
 	}
@@ -82,4 +93,14 @@ func OpenLinearCredential(identities []*age.X25519Identity, expected LinearCrede
 
 func validLinearToken(token string) bool {
 	return len(token) > 0 && len(token) <= api.IssueTrackerCredentialMaxBytes && strings.IndexFunc(token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+}
+
+// OpenLinearWebhookSecret keeps the signing secret bound to the verified key's scope.
+func OpenLinearWebhookSecret(identities []*age.X25519Identity, expected LinearCredentialScope, sealed []byte) (string, error) {
+	namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
+	var envelope linearCredentialEnvelope
+	if err != nil || namespace != linearCredentialNamespace || !validLinearScope(expected) || json.Unmarshal(plaintext, &envelope) != nil || envelope.Scope != expected || !validLinearToken(envelope.Token) || !issuetracker.ValidLinearWebhookSecret(envelope.WebhookSecret) {
+		return "", errors.New("Linear callback credential does not match the connection")
+	}
+	return envelope.WebhookSecret, nil
 }

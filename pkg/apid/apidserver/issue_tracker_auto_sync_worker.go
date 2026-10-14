@@ -33,6 +33,21 @@ func (s *server) runIssueTrackerAutoSyncBatch(ctx context.Context) {
 	if !ok {
 		return
 	}
+	if callbacks, ok := s.store.(state.IssueTrackerCallbackStore); ok {
+		for i := 0; i < api.IssueTrackerCallbackBatch; i++ {
+			processed, err := callbacks.ProcessIssueTrackerCallback(ctx)
+			if err != nil {
+				s.log.Warn("tracker callback scheduling failed")
+				break
+			}
+			if !processed {
+				break
+			}
+		}
+		if err := callbacks.CleanupIssueTrackerCallbacks(ctx); err != nil {
+			s.log.Warn("tracker callback receipt cleanup failed")
+		}
+	}
 	for i := 0; i < api.IssueTrackerAutoSyncBatch && ctx.Err() == nil; i++ {
 		row, err := st.ClaimIssueTrackerAutoSync(ctx)
 		if errors.Is(err, state.ErrNoIssueTrackerAutoSyncWork) {

@@ -20,6 +20,10 @@ class IssueTrackerLinearConnection:
     """Whether a verified personal API key is stored."""
     revision: int
     """Configuration revision used to fence concurrent changes."""
+    webhook_enabled: bool | Unset = UNSET
+    """True when a scoped signing secret is stored for Linear issue callbacks."""
+    callback_path: str | Unset = UNSET
+    """Provider callback path to append to the Gregale API origin when callbacks are enabled."""
     workspace_id: UUID | Unset = UNSET
     """Verified Linear organization identity."""
     team_id: UUID | Unset = UNSET
@@ -32,6 +36,10 @@ class IssueTrackerLinearConnection:
         connected = self.connected
 
         revision = self.revision
+
+        webhook_enabled = self.webhook_enabled
+
+        callback_path = self.callback_path
 
         workspace_id: str | Unset = UNSET
         if not isinstance(self.workspace_id, Unset):
@@ -53,6 +61,10 @@ class IssueTrackerLinearConnection:
                 "revision": revision,
             }
         )
+        if webhook_enabled is not UNSET:
+            field_dict["webhook_enabled"] = webhook_enabled
+        if callback_path is not UNSET:
+            field_dict["callback_path"] = callback_path
         if workspace_id is not UNSET:
             field_dict["workspace_id"] = workspace_id
         if team_id is not UNSET:
@@ -68,6 +80,10 @@ class IssueTrackerLinearConnection:
         connected = d.pop("connected")
 
         revision = d.pop("revision")
+
+        webhook_enabled = d.pop("webhook_enabled", UNSET)
+
+        callback_path = d.pop("callback_path", UNSET)
 
         _workspace_id = d.pop("workspace_id", UNSET)
         workspace_id: UUID | Unset
@@ -93,6 +109,8 @@ class IssueTrackerLinearConnection:
         issue_tracker_linear_connection = cls(
             connected=connected,
             revision=revision,
+            webhook_enabled=webhook_enabled,
+            callback_path=callback_path,
             workspace_id=workspace_id,
             team_id=team_id,
             viewer_id=viewer_id,

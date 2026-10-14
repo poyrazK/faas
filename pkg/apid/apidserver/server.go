@@ -3573,6 +3573,7 @@ func (s *server) handler() http.Handler {
 	// 200'd. Mounted unconditionally so the same apid binary works
 	// on either provider; the handler's 503 covers the wrong-provider
 	// case.
+	mux.HandleFunc("POST /hooks/issue-trackers/linear/{app_id}", s.linearIssueTrackerCallback)
 	mux.HandleFunc("POST /v1/webhooks/paddle", s.paddleWebhook)
 	// Polar webhook (no auth — Standard Webhooks signs requests). Mounted
 	// unconditionally so one apid binary can serve any configured provider.

@@ -82534,6 +82534,8 @@ components:
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
       required: [connected, revision]
       properties:
+        webhook_enabled: { type: boolean, description: True when a scoped signing secret is stored for Linear issue callbacks. }
+        callback_path: { type: string, description: Provider callback path to append to the Gregale API origin when callbacks are enabled. }
         connected: { type: boolean, description: Whether a verified personal API key is stored. }
         revision: { type: integer, format: int64, minimum: 0, description: Configuration revision used to fence concurrent changes. }
         workspace_id: { type: string, format: uuid, description: Verified Linear organization identity. }
@@ -82548,6 +82550,7 @@ components:
         expected_revision: { type: integer, format: int64, minimum: 0, description: Revision from the latest connection metadata read. }
         team_id: { type: string, format: uuid, description: Active team UUID required only when connecting. }
         api_key: { type: string, maxLength: 4096, writeOnly: true, description: Personal API key required only when connecting; never returned or logged. }
+        webhook_secret: { type: string, minLength: 32, maxLength: 4096, writeOnly: true, description: Optional Linear webhook signing secret stored with the connection. Omission on replacement disables callbacks. Never returned or logged. }
     IssueTrackerAutoSync:
       type: object
       description: Opt-in automatic Gregale-to-GitHub or Linear policy and latest durable worker outcome for a tracker reference.

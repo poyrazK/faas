@@ -145,6 +145,7 @@ func (s *server) dashboardLinearConnectionForm(w http.ResponseWriter, r *http.Re
 	if in.Connected {
 		in.TeamID = r.PostForm.Get("team_id")
 		in.APIKey = r.PostForm.Get("api_key")
+		in.WebhookSecret = r.PostForm.Get("webhook_secret")
 	}
 	body, err := json.Marshal(in)
 	if err != nil {

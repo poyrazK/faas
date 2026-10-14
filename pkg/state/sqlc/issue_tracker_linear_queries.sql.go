@@ -12,7 +12,7 @@ import (
 )
 
 const issueTrackerLinearGet = `-- name: IssueTrackerLinearGet :one
-SELECT app_id, account_id, revision, connected, workspace_id, team_id, viewer_id, sealed_credential, updated_at FROM issue_tracker_linear_connections WHERE app_id=$1 AND account_id=$2
+SELECT app_id, account_id, revision, connected, workspace_id, team_id, viewer_id, sealed_credential, updated_at, webhook_enabled FROM issue_tracker_linear_connections WHERE app_id=$1 AND account_id=$2
 `
 
 type IssueTrackerLinearGetParams struct {
@@ -33,6 +33,7 @@ func (q *Queries) IssueTrackerLinearGet(ctx context.Context, db DBTX, arg IssueT
 		&i.ViewerID,
 		&i.SealedCredential,
 		&i.UpdatedAt,
+		&i.WebhookEnabled,
 	)
 	return i, err
 }
@@ -54,11 +55,11 @@ func (q *Queries) IssueTrackerLinearOwner(ctx context.Context, db DBTX, arg Issu
 }
 
 const issueTrackerLinearPut = `-- name: IssueTrackerLinearPut :one
-INSERT INTO issue_tracker_linear_connections(app_id,account_id,revision,connected,workspace_id,team_id,viewer_id,sealed_credential)
-VALUES($1,$2,1,$3,$4,$5,$6,$7)
+INSERT INTO issue_tracker_linear_connections(app_id,account_id,revision,connected,workspace_id,team_id,viewer_id,sealed_credential,webhook_enabled)
+VALUES($1,$2,1,$3,$4,$5,$6,$7,$8)
 ON CONFLICT(app_id) DO UPDATE SET account_id=excluded.account_id,revision=issue_tracker_linear_connections.revision+1,connected=excluded.connected,
-workspace_id=excluded.workspace_id,team_id=excluded.team_id,viewer_id=excluded.viewer_id,sealed_credential=excluded.sealed_credential,updated_at=now()
-RETURNING app_id, account_id, revision, connected, workspace_id, team_id, viewer_id, sealed_credential, updated_at
+workspace_id=excluded.workspace_id,team_id=excluded.team_id,viewer_id=excluded.viewer_id,sealed_credential=excluded.sealed_credential,webhook_enabled=excluded.webhook_enabled,updated_at=now()
+RETURNING app_id, account_id, revision, connected, workspace_id, team_id, viewer_id, sealed_credential, updated_at, webhook_enabled
 `
 
 type IssueTrackerLinearPutParams struct {
@@ -69,6 +70,7 @@ type IssueTrackerLinearPutParams struct {
 	TeamID           pgtype.UUID
 	ViewerID         pgtype.UUID
 	SealedCredential []byte
+	WebhookEnabled   bool
 }
 
 func (q *Queries) IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueTrackerLinearPutParams) (IssueTrackerLinearConnection, error) {
@@ -80,6 +82,7 @@ func (q *Queries) IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueT
 		arg.TeamID,
 		arg.ViewerID,
 		arg.SealedCredential,
+		arg.WebhookEnabled,
 	)
 	var i IssueTrackerLinearConnection
 	err := row.Scan(
@@ -92,6 +95,7 @@ func (q *Queries) IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueT
 		&i.ViewerID,
 		&i.SealedCredential,
 		&i.UpdatedAt,
+		&i.WebhookEnabled,
 	)
 	return i, err
 }

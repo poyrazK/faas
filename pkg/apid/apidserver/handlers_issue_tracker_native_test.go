@@ -4,6 +4,9 @@ package apidserver_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -966,5 +969,171 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	(*e.H()).ServeHTTP(denied, req)
 	if denied.Code != 404 {
 		t.Fatal("cross-app reference exposed", denied.Code)
+	}
+}
+
+// adr: 1221
+func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "linear-callbacks")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "CallbackError", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	issuePath := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://linear.app/acme/issue/PAY-42"}, nil), 200)
+	identity, _ := age.GenerateX25519Identity()
+	oldRecipient, oldIDs := *apidserver.SetSecretRecipient, *apidserver.MfaIdentities
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	*apidserver.MfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = oldRecipient; *apidserver.MfaIdentities = oldIDs })
+	apidserver.IssueNativeSetLinearVerifier(e, &nativeLinearFake{})
+	secret := "linear_signing_secret_1234567890abcdef"
+	connection := apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, TeamID: uuid.NewString(), APIKey: "lin_api_secret", WebhookSecret: secret}, nil), 200)
+	if !connection.WebhookEnabled || connection.CallbackPath != "/hooks/issue-trackers/linear/"+app.ID {
+		t.Fatal(connection)
+	}
+	provider := &nativeLinearLifecycleFake{status: issuetracker.Status{Provider: "linear", URL: link.URL, ID: uuid.NewString(), TeamID: connection.TeamID, StateID: uuid.NewString(), State: "open"}}
+	apidserver.IssueNativeSetClients(e, nil, provider)
+	path := issuePath + "/tracker-links/" + link.ID
+	snapshot := apidserver.IssueDecode[api.NativeLinearIssueTrackerStatus](t, e.Do(t, "GET", path+"/native-linear-status", nil, nil), 200)
+	input := api.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedLinearStatus: &snapshot, ExpectedIssueState: "open", LinearOpenStateID: provider.status.StateID, LinearResolvedStateID: uuid.NewString()}
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path+"/auto-sync", input, nil), 200)
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.NextCheckAt == nil || !policy.NextCheckAt.After(time.Now()) {
+		t.Fatal("initial policy not delayed", policy)
+	}
+	callbacks := apidserver.IssueNativeStore(e).(state.IssueTrackerCallbackStore)
+	payload := map[string]any{"type": "Issue", "action": "update", "organizationId": connection.WorkspaceID, "webhookTimestamp": time.Now().UnixMilli(), "data": map[string]string{"id": provider.status.ID, "teamId": connection.TeamID, "updatedAt": "event-one", "state": "completed"}}
+	delivery := uuid.NewString()
+	send := func(id string, body map[string]any, valid bool) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(raw)
+		sig := hex.EncodeToString(mac.Sum(nil))
+		if !valid {
+			sig = "bad"
+		}
+		req := httptest.NewRequest("POST", connection.CallbackPath, strings.NewReader(string(raw)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Linear-Signature", sig)
+		req.Header.Set("Linear-Delivery", id)
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	if out := send(delivery, payload, false); out.Code != 401 {
+		t.Fatal("unsigned callback accepted", out.Code)
+	}
+	first := send(delivery, payload, true)
+	if first.Code != 200 || !strings.Contains(first.Body.String(), "accepted") || strings.Contains(first.Body.String(), secret) {
+		t.Fatal(first.Code, first.Body.String())
+	}
+	payload["webhookTimestamp"] = time.Now().Add(-10 * time.Minute).UnixMilli()
+	if out := send(delivery, payload, true); out.Code != 200 || !strings.Contains(out.Body.String(), "duplicate") {
+		t.Fatal("known late retry failed", out.Code, out.Body.String())
+	}
+	payload["data"].(map[string]string)["updatedAt"] = "stale-new-event"
+	if out := send(uuid.NewString(), payload, true); out.Code != 401 {
+		t.Fatal("unknown stale event accepted", out.Code)
+	}
+	payload["webhookTimestamp"] = time.Now().UnixMilli()
+	payload["data"].(map[string]string)["updatedAt"] = "event-one"
+	payload["data"].(map[string]string)["teamId"] = uuid.NewString()
+	if out := send(uuid.NewString(), payload, true); out.Code != 401 {
+		t.Fatal("foreign team accepted", out.Code)
+	}
+	payload["data"].(map[string]string)["teamId"] = connection.TeamID
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.Outcome != "matched" || provider.writes != 0 {
+		t.Fatal("signed payload overrode fresh provider state", policy)
+	}
+	payload["data"].(map[string]string)["updatedAt"] = "event-two"
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	policies := apidserver.IssueNativeStore(e).(state.IssueTrackerAutoSyncStore)
+	claim, err := policies.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := send(uuid.NewString(), payload, true); out.Code != 200 {
+		t.Fatal(out.Code, out.Body.String())
+	}
+	if processed, err := callbacks.ProcessIssueTrackerCallback(t.Context()); err != nil || processed {
+		t.Fatal("hint consumed during live claim", processed, err)
+	}
+	if _, err := policies.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := callbacks.ProcessIssueTrackerCallback(t.Context()); err != nil || !processed {
+		t.Fatal("in-flight hint lost", processed, err)
+	}
+	provider.status.State = "resolved"
+	provider.status.StateID = input.LinearResolvedStateID
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", issuePath, nil, nil), 200)
+	if policy.Outcome != "conflict" || policy.Reason != "provider_changed" || provider.writes != 0 || detail.Issue.State != "open" {
+		t.Fatal("manual edit was overwritten or pulled", policy)
+	}
+	payload["data"].(map[string]string)["updatedAt"] = "event-three"
+	if out := send(uuid.NewString(), payload, true); out.Code != 200 || !strings.Contains(out.Body.String(), "ignored") {
+		t.Fatal("callback resumed paused policy", out.Code, out.Body.String())
+	}
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 1}, nil), 200)
+	if out := send(uuid.NewString(), payload, true); out.Code != 404 {
+		t.Fatal("disconnected callbacks accepted", out.Code)
+	}
+}
+
+func TestNativeIssueGitHubCallbacksOnlyWakeOwnedActiveReferences(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "github-callbacks")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "GithubCallback", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	issuePath := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, nil), 200)
+	store := apidserver.IssueNativeStore(e)
+	acct := apidserver.IssueNativeAccount(e)
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{AccountID: acct.ID, InstallationID: 42, DefaultBranch: "main", AuditGithubLogin: "owner", SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: app.ID, AccountID: acct.ID, BindingID: uuid.NewString(), InstallID: 42, RepoFullName: "Owner/Repo", OwnerID: 10, RepoID: 100, ProductionBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &nativeStatusFake{status: issuetracker.Status{Provider: "github", URL: link.URL, ID: "42", State: "open"}}
+	apidserver.IssueNativeSetClients(e, &nativeGitHubFake{repoID: 100}, provider)
+	path := issuePath + "/tracker-links/" + link.ID
+	snapshot := apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", path+"/native-status", nil, nil), 200)
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path+"/auto-sync", api.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedStatus: &snapshot, ExpectedIssueState: "open"}, nil), 200)
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	callbacks := store.(state.IssueTrackerCallbackStore)
+	body := []byte(`{"action":"closed","installation":{"id":42},"repository":{"id":100,"full_name":"Owner/Repo"},"issue":{"number":42,"html_url":"https://github.com/owner/repo/issues/42"}}`)
+	event, err := issuetracker.DecodeGitHubIssueCallback(body, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := event
+	foreign.InstallationID = 43
+	foreign.ScopeKey = "github/43"
+	if status, err := callbacks.EnqueueIssueTrackerCallback(t.Context(), foreign); err != nil || status != "ignored" {
+		t.Fatal("foreign install woke policy", status, err)
+	}
+	if status, err := callbacks.EnqueueIssueTrackerCallback(t.Context(), event); err != nil || status != "accepted" {
+		t.Fatal(status, err)
+	}
+	if status, err := callbacks.EnqueueIssueTrackerCallback(t.Context(), event); err != nil || status != "duplicate" {
+		t.Fatal(status, err)
+	}
+	provider.status.State = "resolved"
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.Outcome != "conflict" || provider.writes != 0 {
+		t.Fatal("manual GitHub edit overwritten", policy)
 	}
 }

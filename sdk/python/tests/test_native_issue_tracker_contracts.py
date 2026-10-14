@@ -212,3 +212,26 @@ def test_linear_auto_sync_preserves_mapping_and_native_scope():
     )
     assert policy.linear_open_state_id == opened
     assert policy.linear_resolved_state_id == resolved
+
+
+def test_linear_callback_secret_is_write_only_and_metadata_is_public():
+    from faas_sdk.api.apps import update_issue_tracker_linear_connection
+    from faas_sdk.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
+    from faas_sdk.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
+
+    secret = "linear_signing_secret_1234567890abcdef"
+    payload = {
+        "connected": True,
+        "expected_revision": 2,
+        "team_id": str(uuid4()),
+        "api_key": "key",
+        "webhook_secret": secret,
+    }
+    body = UpdateIssueTrackerLinearConnectionRequest.from_dict(payload)
+    assert update_issue_tracker_linear_connection._get_kwargs("payments", body=body)["json"] == payload
+    response = IssueTrackerLinearConnection.from_dict(
+        {"connected": True, "revision": 3, "webhook_enabled": True, "callback_path": "/hooks/issue-trackers/linear/app"}
+    )
+    assert response.webhook_enabled is True
+    assert response.callback_path == "/hooks/issue-trackers/linear/app"
+    assert secret not in str(response.to_dict())

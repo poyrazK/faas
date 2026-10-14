@@ -58394,8 +58394,10 @@ CREATE TABLE public.issue_tracker_linear_connections (
     viewer_id uuid,
     sealed_credential bytea,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    webhook_enabled boolean DEFAULT false NOT NULL,
     CONSTRAINT issue_tracker_linear_connections_check CHECK (((connected AND (workspace_id IS NOT NULL) AND (team_id IS NOT NULL) AND (viewer_id IS NOT NULL) AND (octet_length(sealed_credential) > 0) AND (sealed_credential IS NOT NULL)) OR ((NOT connected) AND (workspace_id IS NULL) AND (team_id IS NULL) AND (viewer_id IS NULL) AND (sealed_credential IS NULL)))),
-    CONSTRAINT issue_tracker_linear_connections_revision_check CHECK ((revision > 0))
+    CONSTRAINT issue_tracker_linear_connections_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_linear_webhook_connected CHECK (((NOT webhook_enabled) OR connected))
 );
 
 --
@@ -58418,3 +58420,64 @@ ALTER TABLE ONLY public.issue_tracker_linear_connections
 
 ALTER TABLE ONLY public.issue_tracker_linear_connections
     ADD CONSTRAINT issue_tracker_linear_connections_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_callbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_callbacks (
+    scope_key text NOT NULL,
+    delivery_id text NOT NULL,
+    provider text NOT NULL,
+    app_id uuid,
+    connection_revision bigint DEFAULT 0 NOT NULL,
+    installation_id bigint DEFAULT 0 NOT NULL,
+    repository_id bigint DEFAULT 0 NOT NULL,
+    workspace_id uuid,
+    team_id uuid,
+    ticket_id text NOT NULL,
+    ticket_url text DEFAULT ''::text NOT NULL,
+    payload_hash text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone,
+    CONSTRAINT issue_tracker_callbacks_check CHECK ((((provider = 'github'::text) AND (app_id IS NULL) AND (installation_id > 0) AND (repository_id > 0) AND (connection_revision = 0) AND (workspace_id IS NULL) AND (team_id IS NULL) AND (ticket_url <> ''::text)) OR ((provider = 'linear'::text) AND (app_id IS NOT NULL) AND (connection_revision > 0) AND (installation_id = 0) AND (repository_id = 0) AND (workspace_id IS NOT NULL) AND (team_id IS NOT NULL) AND (ticket_url = ''::text)))),
+    CONSTRAINT issue_tracker_callbacks_delivery_id_check CHECK (((octet_length(delivery_id) >= 1) AND (octet_length(delivery_id) <= 128))),
+    CONSTRAINT issue_tracker_callbacks_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_tracker_callbacks_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'linear'::text]))),
+    CONSTRAINT issue_tracker_callbacks_scope_key_check CHECK ((octet_length(scope_key) <= 128)),
+    CONSTRAINT issue_tracker_callbacks_ticket_id_check CHECK (((octet_length(ticket_id) >= 1) AND (octet_length(ticket_id) <= 128))),
+    CONSTRAINT issue_tracker_callbacks_ticket_url_check CHECK ((octet_length(ticket_url) <= 512))
+);
+
+--
+-- Name: issue_tracker_callbacks issue_tracker_callbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callbacks
+    ADD CONSTRAINT issue_tracker_callbacks_pkey PRIMARY KEY (scope_key, delivery_id);
+
+--
+-- Name: issue_tracker_callbacks issue_tracker_callbacks_scope_key_payload_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callbacks
+    ADD CONSTRAINT issue_tracker_callbacks_scope_key_payload_hash_key UNIQUE (scope_key, payload_hash);
+
+--
+-- Name: issue_tracker_callbacks_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_callbacks_pending_idx ON public.issue_tracker_callbacks USING btree (received_at) WHERE (processed_at IS NULL);
+
+--
+-- Name: issue_tracker_callbacks_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_callbacks_retention_idx ON public.issue_tracker_callbacks USING btree (processed_at) WHERE (processed_at IS NOT NULL);
+
+--
+-- Name: issue_tracker_callbacks issue_tracker_callbacks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callbacks
+    ADD CONSTRAINT issue_tracker_callbacks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

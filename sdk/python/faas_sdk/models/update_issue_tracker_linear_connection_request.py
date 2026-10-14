@@ -24,6 +24,9 @@ class UpdateIssueTrackerLinearConnectionRequest:
     """Active team UUID required only when connecting."""
     api_key: str | Unset = UNSET
     """Personal API key required only when connecting; never returned or logged."""
+    webhook_secret: str | Unset = UNSET
+    """Optional Linear webhook signing secret stored with the connection. Omission on replacement disables
+    callbacks. Never returned or logged."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +40,8 @@ class UpdateIssueTrackerLinearConnectionRequest:
 
         api_key = self.api_key
 
+        webhook_secret = self.webhook_secret
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -49,6 +54,8 @@ class UpdateIssueTrackerLinearConnectionRequest:
             field_dict["team_id"] = team_id
         if api_key is not UNSET:
             field_dict["api_key"] = api_key
+        if webhook_secret is not UNSET:
+            field_dict["webhook_secret"] = webhook_secret
 
         return field_dict
 
@@ -68,11 +75,14 @@ class UpdateIssueTrackerLinearConnectionRequest:
 
         api_key = d.pop("api_key", UNSET)
 
+        webhook_secret = d.pop("webhook_secret", UNSET)
+
         update_issue_tracker_linear_connection_request = cls(
             connected=connected,
             expected_revision=expected_revision,
             team_id=team_id,
             api_key=api_key,
+            webhook_secret=webhook_secret,
         )
 
         update_issue_tracker_linear_connection_request.additional_properties = d

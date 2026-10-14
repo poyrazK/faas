@@ -103,25 +103,28 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/teams":                                 true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":              true, // session/CSRF HTML adapter for the corresponding public Issues API
 
-	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
-	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
-	"GET /v1/account/dpa":                        true, // public markdown (no auth)
-	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
-	"POST /v1/webhooks/polar":                    true, // Standard Webhooks-signed webhook
-	"POST /v1/webhooks/resend":                   true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                      true, // operator-only (ADR-029)
-	"GET /v1/compute-nodes/{name}":               true, // operator-only node detail
-	"POST /v1/compute-nodes":                     true, // operator-only
-	"DELETE /v1/compute-nodes/{name}":            true, // operator-only
-	"GET /v1/compute-nodes/{name}/heartbeats":    true, // CP-1: operator-only (heartbeat history; schedd-owned)
-	"GET /v1/compute-nodes/events":               true, // CP-1: operator-only SSE on compute_node_changed
-	"GET /v1/internal/metrics/targets":           true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/vmmd-targets":      true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/imaged-targets":    true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/builderd-targets":  true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/realtimed-targets": true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/promtail-targets":  true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"GET /v1/dev/bridges/{id}/connect":                                true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
+	"GET /v1/dev/bridges/{id}/status":                                 true, // attachment-authenticated CLI readiness protocol
+	"GET /v1/account/dpa":                                             true, // public markdown (no auth)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1219: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1219: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1221: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook
+	"POST /v1/webhooks/paddle":                                        true, // HMAC-signed webhook (PR #3 / ADR-025)
+	"POST /v1/webhooks/polar":                                         true, // Standard Webhooks-signed webhook
+	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115)
+	"GET /v1/compute-nodes":                                           true, // operator-only (ADR-029)
+	"GET /v1/compute-nodes/{name}":                                    true, // operator-only node detail
+	"POST /v1/compute-nodes":                                          true, // operator-only
+	"DELETE /v1/compute-nodes/{name}":                                 true, // operator-only
+	"GET /v1/compute-nodes/{name}/heartbeats":                         true, // CP-1: operator-only (heartbeat history; schedd-owned)
+	"GET /v1/compute-nodes/events":                                    true, // CP-1: operator-only SSE on compute_node_changed
+	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":                           true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":                         true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets":                       true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/realtimed-targets":                      true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists

@@ -1213,3 +1213,59 @@ The catalog is bounded to 200 scanned states across four pages of 50; failed or
 incomplete discovery returns no partial picker. Names are bounded to 256 bytes
 and pagination cursors to 512 bytes. CLI sync and delegation still accept explicit
 workflow UUIDs. See [ADR-1220](adr/1220-named-linear-workflow-picker.md).
+
+## Provider callbacks for prompt tracker refresh
+
+Callbacks advance an active policy's next check; the worker then reads the live
+provider. Manual ticket edits appear as conflicts and are not overwritten.
+Callbacks do not pull resolutions or resume a paused policy. Polling continues as
+recovery for missed, rejected or delayed callbacks. Checks normally run on the next
+maintenance pass (about a minute); active claims or backlogs can extend the delay.
+
+For **GitHub**, subscribe the platform GitHub App to **Issues** events, retaining
+its Issues permission and existing signed `/webhooks/github` setup. The durable
+GitHub inbox handles duplicate deliveries and processing retries. Issue-event
+retries reach that inbox even after an edge-to-daemon attempt fails. No per-ticket
+webhook or additional app credential is needed.
+
+For **Linear**, create a webhook in Linear's team settings for **Issue** events
+scoped to the connected team. Use the signing secret displayed by Linear:
+
+```sh
+# Supply both values through your existing environment/secret manager:
+gregale issues tickets linear-connection --app payments --connect \
+  --team <TEAM_UUID> --token-env GREGALE_LINEAR_TOKEN \
+  --webhook-secret-env GREGALE_LINEAR_WEBHOOK_SECRET
+```
+
+Inspect the connection metadata, then set the provider webhook URL to the Gregale
+API origin plus `callback_path`, for example
+`https://api.example.com/hooks/issue-trackers/linear/<APP_UUID>`. Connection metadata
+reports `webhook_enabled`; neither the signing secret nor API key is returned.
+You can also supply the optional signing secret in the dashboard Linear connection
+form. Replacing a connection without it disables callbacks; disconnect erases it.
+Every connection replacement changes its revision, so review/re-enable existing
+Linear delegation afterward.
+
+Linear deliveries must have a valid raw-body signature, delivery UUID and matching
+workspace/team. New deliveries must have a signed sending timestamp within one
+minute. Known authenticated retries are acknowledged without scheduling twice,
+including late retries; changing only the sending timestamp preserves retry
+identity. A delivery ID reused with different content is rejected. Linear receives
+HTTP 200 only after acceptance, duplicate acknowledgment or an ignored reference;
+storage failures remain retryable. Linear documents retries after one minute, one
+hour and six hours; inspect its webhook settings if repeated failures disable it.
+
+The connection PUT accepts optional write-only `webhook_secret` (32–4096 bytes).
+Go, Node and Python connection SDK methods expose that field and the public
+callback metadata. Keep the webhook scoped to the connected team and copy its
+signing secret exactly. A wrong secret, changed connection, unsupported scope or
+stale new delivery is rejected; polling still detects provider changes.
+
+Payloads are bounded to 1 MiB. Receipts store only delivery/target metadata and
+hashes, with at most 10,000 per scope. Processed receipts remain for seven days;
+pending hints wait for active claims and are preserved for recovery. Scheduling
+and cleanup each handle at most 100 receipts per pass. Callbacks for untracked,
+disabled or paused policies do not enable delegation.
+See [ADR-1221](adr/1221-provider-issue-callback-hints.md) and
+[Linear's webhook protocol](https://linear.app/developers/webhooks).

@@ -353,3 +353,38 @@ func TestIssueTicketLinearAutoSyncCLIRequiresMappingsAndDisablesOffline(t *testi
 		t.Fatal("offline disable read provider")
 	}
 }
+
+func TestIssueTicketLinearConnectionCLIStoresWebhookSecretOnlyOnConnect(t *testing.T) {
+	team := "22222222-2222-4222-8222-222222222222"
+	secret := "linear_signing_secret_1234567890abcdef"
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			writes++
+			var in api.UpdateIssueTrackerLinearConnectionRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.WebhookSecret != secret || in.ExpectedRevision != 2 {
+				t.Error("signing secret or revision lost", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.IssueTrackerLinearConnection{Connected: true, Revision: 2, WebhookEnabled: true, CallbackPath: "/hooks/issue-trackers/linear/app"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_LINEAR_TOKEN", "lin_api_secret")
+	t.Setenv("LINEAR_CALLBACK_TEST_SECRET", secret)
+	old := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = old })
+	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--connect", "--team", team, "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code != 0 || writes != 1 {
+		t.Fatal("callback configuration failed", code)
+	}
+	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "callbacks=true") {
+		t.Fatal("secret exposed or callback metadata missing")
+	}
+	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code == 0 || writes != 1 {
+		t.Fatal("credential flag allowed during inspection")
+	}
+}

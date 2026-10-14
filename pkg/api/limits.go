@@ -10483,3 +10483,15 @@ const (
 	IssueTrackerAutoSyncCheckInterval = 5 * time.Minute
 	IssueTrackerAutoSyncLease         = 2 * IssueTrackerRequestTimeoutSeconds * time.Second
 )
+
+// Provider callbacks carry bounded refresh hints, never lifecycle authority.
+const (
+	IssueTrackerCallbackBodyMaxBytes     = 1 << 20
+	IssueTrackerCallbackDeliveryMaxBytes = 128
+	IssueTrackerCallbackSecretMinBytes   = 32
+	IssueTrackerCallbackTimestampSkew    = time.Minute
+	IssueTrackerCallbackBatch            = 100
+	IssueTrackerCallbackReceiptsMax      = 10000
+	IssueTrackerCallbackRetention        = 7 * 24 * time.Hour
+	IssueTrackerCallbackRequestTimeout   = 4 * time.Second
+)

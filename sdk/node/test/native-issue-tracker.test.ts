@@ -107,3 +107,13 @@ test('Linear automatic policy preserves workflow mapping and native scope',async
  const address=server.address();assert.ok(address&&typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
  const out=await AppsService.updateIssueTrackerAutoSync({slug:'payments',issueId:issue,linkId:link,requestBody:body});assert.equal(out.linear_resolved_state_id,body.linear_resolved_state_id);
 });
+
+test('Linear callback configuration keeps the signing secret write-only',async(t)=>{
+ const body={connected:true,expected_revision:2,team_id:'22222222-2222-4222-8222-222222222222',api_key:'key',webhook_secret:'linear_signing_secret_1234567890abcdef'};
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.method,'PUT');const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),body);
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({connected:true,revision:3,webhook_enabled:true,callback_path:'/hooks/issue-trackers/linear/app'}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address&&typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ const out=await AppsService.updateIssueTrackerLinearConnection({slug:'payments',requestBody:body});assert.equal(out.webhook_enabled,true);assert.equal(out.callback_path,'/hooks/issue-trackers/linear/app');assert.ok(!JSON.stringify(out).includes(body.webhook_secret));
+});

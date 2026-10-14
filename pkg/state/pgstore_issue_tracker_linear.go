@@ -9,7 +9,11 @@ import (
 )
 
 func linearConnectionRow(r sqlc.IssueTrackerLinearConnection) IssueTrackerLinearRecord {
-	return IssueTrackerLinearRecord{AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), SealedCredential: r.SealedCredential, Connection: api.IssueTrackerLinearConnection{Connected: r.Connected, Revision: r.Revision, WorkspaceID: issueID(r.WorkspaceID), TeamID: issueID(r.TeamID), ViewerID: issueID(r.ViewerID)}}
+	out := IssueTrackerLinearRecord{AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), SealedCredential: r.SealedCredential, Connection: api.IssueTrackerLinearConnection{WebhookEnabled: r.WebhookEnabled, Connected: r.Connected, Revision: r.Revision, WorkspaceID: issueID(r.WorkspaceID), TeamID: issueID(r.TeamID), ViewerID: issueID(r.ViewerID)}}
+	if out.Connection.WebhookEnabled {
+		out.Connection.CallbackPath = "/hooks/issue-trackers/linear/" + out.AppID
+	}
+	return out
 }
 func (s *PgStore) GetIssueTrackerLinearConnection(ctx context.Context, app, account string) (IssueTrackerLinearRecord, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -61,8 +65,9 @@ func (s *PgStore) ConfigureIssueTrackerLinearConnection(ctx context.Context, in 
 		in.Connection.TeamID = ""
 		in.Connection.ViewerID = ""
 		in.SealedCredential = nil
+		in.Connection.WebhookEnabled = false
 	}
-	row, err = q.IssueTrackerLinearPut(ctx, tx, sqlc.IssueTrackerLinearPutParams{AppID: issueUUID(in.AppID), AccountID: issueUUID(in.AccountID), Connected: in.Connection.Connected, WorkspaceID: issueUUID(in.Connection.WorkspaceID), TeamID: issueUUID(in.Connection.TeamID), ViewerID: issueUUID(in.Connection.ViewerID), SealedCredential: in.SealedCredential})
+	row, err = q.IssueTrackerLinearPut(ctx, tx, sqlc.IssueTrackerLinearPutParams{AppID: issueUUID(in.AppID), AccountID: issueUUID(in.AccountID), WebhookEnabled: in.Connection.WebhookEnabled, Connected: in.Connection.Connected, WorkspaceID: issueUUID(in.Connection.WorkspaceID), TeamID: issueUUID(in.Connection.TeamID), ViewerID: issueUUID(in.Connection.ViewerID), SealedCredential: in.SealedCredential})
 	if err != nil {
 		return in, mapErr(err)
 	}

@@ -4022,6 +4022,23 @@ type IssueTrackerAutoSync struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type IssueTrackerCallback struct {
+	ScopeKey           string
+	DeliveryID         string
+	Provider           string
+	AppID              pgtype.UUID
+	ConnectionRevision int64
+	InstallationID     int64
+	RepositoryID       int64
+	WorkspaceID        pgtype.UUID
+	TeamID             pgtype.UUID
+	TicketID           string
+	TicketUrl          string
+	PayloadHash        string
+	ReceivedAt         pgtype.Timestamptz
+	ProcessedAt        pgtype.Timestamptz
+}
+
 type IssueTrackerLinearConnection struct {
 	AppID            pgtype.UUID
 	AccountID        pgtype.UUID
@@ -4032,6 +4049,7 @@ type IssueTrackerLinearConnection struct {
 	ViewerID         pgtype.UUID
 	SealedCredential []byte
 	UpdatedAt        pgtype.Timestamptz
+	WebhookEnabled   bool
 }
 
 type IssueTrackerLink struct {

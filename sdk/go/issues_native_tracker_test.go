@@ -202,3 +202,23 @@ func TestIssueNativeLinearAutoSyncSDKPreservesMappingsAndScope(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestIssueNativeLinearCallbackSDKPreservesWriteOnlySecretAndMetadata(t *testing.T) {
+	secret := "linear_signing_secret_1234567890abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in faas.UpdateIssueTrackerLinearConnectionRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.WebhookSecret != secret {
+			t.Error("signing secret lost", err)
+		}
+		_ = json.NewEncoder(w).Encode(faas.IssueTrackerLinearConnection{Connected: true, Revision: 3, WebhookEnabled: true, CallbackPath: "/hooks/issue-trackers/linear/app"})
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.UpdateIssueTrackerLinearConnection(t.Context(), "payments", faas.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 2, APIKey: "key", TeamID: "team", WebhookSecret: secret})
+	if err != nil || !out.WebhookEnabled || out.CallbackPath != "/hooks/issue-trackers/linear/app" {
+		t.Fatal(out, err)
+	}
+}

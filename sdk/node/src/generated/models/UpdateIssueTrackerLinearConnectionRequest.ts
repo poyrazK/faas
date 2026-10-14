@@ -22,5 +22,9 @@ export type UpdateIssueTrackerLinearConnectionRequest = {
    * Personal API key required only when connecting; never returned or logged.
    */
   api_key?: string;
+  /**
+   * Optional Linear webhook signing secret stored with the connection. Omission on replacement disables callbacks. Never returned or logged.
+   */
+  webhook_secret?: string;
 };
 

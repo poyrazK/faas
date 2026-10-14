@@ -7,6 +7,14 @@
  */
 export type IssueTrackerLinearConnection = {
   /**
+   * True when a scoped signing secret is stored for Linear issue callbacks.
+   */
+  webhook_enabled?: boolean;
+  /**
+   * Provider callback path to append to the Gregale API origin when callbacks are enabled.
+   */
+  callback_path?: string;
+  /**
    * Whether a verified personal API key is stored.
    */
   connected: boolean;
