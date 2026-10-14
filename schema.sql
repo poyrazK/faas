@@ -41466,6 +41466,13 @@ CREATE UNIQUE INDEX app_webhooks_platform_tenant_target_uniq ON public.app_webho
 
 
 --
+-- Name: apps_account_deleted_inventory_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_account_deleted_inventory_idx ON public.apps USING btree (account_id, COALESCE(deleted_at, created_at) DESC, ((id)::text) DESC) WHERE (status = 'deleted'::text);
+
+
+--
 -- Name: apps_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
