@@ -35,7 +35,7 @@ import (
 // SKIPPED when DATABASE_URL is unset; CI runs this with a service
 // container.
 func TestPgStore_ClaimAlertFire_StampsPayload(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -93,7 +93,7 @@ func TestPgStore_ClaimAlertFire_StampsPayload(t *testing.T) {
 // MemStore unit test and is the byte-for-byte Postgres equivalent
 // of pkg/state/pgstore_alert_rules_test.go::TestPgStore_AlertRule_ClaimDedupe.
 func TestPgStore_ClaimAlertFire_DuplicateBucket(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -145,7 +145,7 @@ func TestPgStore_ClaimAlertFire_DuplicateBucket(t *testing.T) {
 // pinned this; PR 4 re-pins via the integration test so the FK
 // constraint is exercised end-to-end.
 func TestPgStore_DeleteAccount_CascadesAlertRules(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -218,7 +218,7 @@ var _ = alerts.AlertSecretNamespace
 // Postgres: after a fire, a breach that outlasts the cool-down fires again.
 // The old last_fired_at-derived dedupe key made every rule one-shot.
 func TestPgEvaluator_RefiresAfterCooldown(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)

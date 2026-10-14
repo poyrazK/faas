@@ -672,6 +672,7 @@ func cmdDev(args []string) int {
 				devTelemetry.finishRouteSwitch()
 			}
 			if code == 0 {
+				devTelemetry.reconcileFinalStages(deployCtx, client)
 				receipt := devTelemetry.receipt("live")
 				if err := reportDevSyncReceipt(deployCtx, client, project, workspaceID, receipt); err != nil && !syncHistoryWarned.Swap(true) {
 					PrintWarn(osStderr, "could not save developer sync history; the live sync succeeded (%v)", err)

@@ -272,6 +272,9 @@ func TestCmdJobsRun_ForwardsExplicitZeroRetries(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	// An accepted run is recorded under the project root, which from the
+	// package directory is the repository checkout itself.
+	t.Chdir(t.TempDir())
 
 	if code := cmdJobsRun([]string{"valid-slug", "--tasks", "1", "--retries", "0"}); code != 0 {
 		t.Fatalf("cmdJobsRun = %d, want 0", code)
@@ -296,6 +299,7 @@ func TestCmdJobsRun_ExternalManifest(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	t.Chdir(t.TempDir())
 	if code := cmdJobsRun([]string{"valid-slug", "--input-manifest-uri", "obj://app/bucket/inputs.json", "--input-manifest-sha256", "sha256:" + strings.Repeat("a", 64)}); code != 0 {
 		t.Fatalf("manifest run code = %d", code)
 	}

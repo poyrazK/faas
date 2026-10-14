@@ -1595,6 +1595,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause admission enabled (ADR-1151)",
 			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
 	}
+	if cfg.FrozenTier {
+		engine.EnableFrozenTier()
+		log.Info("frozen tier enabled (ADR-1151)",
+			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership

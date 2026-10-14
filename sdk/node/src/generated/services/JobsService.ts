@@ -807,6 +807,69 @@ export class JobsService {
     });
   }
   /**
+   * Stream a task's output live (SSE).
+   * ADR-1163. Served by the compute gateway, not apid. Waits while the
+   * task is queued, then relays the task VM's console output as it is
+   * written, including each retry attempt in turn. Frames match the app
+   * log stream: `event: log` (seq, instance, stream, line, written_at),
+   * `event: gap` when the VM already dropped older lines, heartbeat
+   * comments, and one final `event: end` whose `reason` is
+   * `task_finished` (all output relayed), `stored_output` (the task ended
+   * before its last VM's output could be streamed; read `GET .../logs`),
+   * `timeout`, `node_unreachable` or `not_found`. Read the task for its
+   * outcome; the stored output from `GET .../logs` remains available.
+   *
+   * @returns any A text/event-stream of the task's output lines, ending with one `end` frame.
+   * @throws ApiError
+   */
+  public static streamJobTaskLogs({
+    name,
+    id,
+    idx,
+    sinceSeq,
+  }: {
+    /**
+     * Job whose task output is streamed.
+     */
+    name: string,
+    /**
+     * Job-run identifier (UUIDv4) owning the task.
+     */
+    id: string,
+    /**
+     * Zero-based index of the task within the run.
+     */
+    idx: number,
+    /**
+     * Resume the current attempt after this line sequence; 0 replays the attempt from its first line.
+     */
+    sinceSeq?: number,
+  }): CancelablePromise<any> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      query: {
+        'since_seq': sinceSeq,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Live task output needs a plan with Jobs (not Free).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List immutable terminal attempts of a task.
    * @returns ListJobTaskAttemptsResponse Attempts ordered by attempt number.
    * @throws ApiError

@@ -755,6 +755,7 @@ from .debug_dependency_impact_exemplar_window import DebugDependencyImpactExempl
 from .debug_dependency_latency_item import DebugDependencyLatencyItem
 from .debug_dependency_latency_item_type import DebugDependencyLatencyItemType
 from .debug_dependency_latency_response import DebugDependencyLatencyResponse
+from .debug_dependency_query_item import DebugDependencyQueryItem
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_confidence import DebugEvidenceExplanationConfidence
 from .debug_evidence_explanation_diagnosis import DebugEvidenceExplanationDiagnosis
@@ -772,6 +773,7 @@ from .debug_regression_action_request import DebugRegressionActionRequest
 from .debug_regression_action_request_action import DebugRegressionActionRequestAction
 from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
+from .debug_regression_item_kind import DebugRegressionItemKind
 from .debug_regression_item_state import DebugRegressionItemState
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_comparison import DebugReplayComparison
@@ -1511,6 +1513,7 @@ from .get_route_health_investigation_method import GetRouteHealthInvestigationMe
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
+from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
 from .get_worker_rollout_observation_scope import GetWorkerRolloutObservationScope
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
@@ -1740,6 +1743,7 @@ from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
 from .list_managed_realtime_schedules_status import ListManagedRealtimeSchedulesStatus
+from .list_mcp_admission_history_outcome import ListMCPAdmissionHistoryOutcome
 from .list_object_write_receipts_status import ListObjectWriteReceiptsStatus
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
@@ -1986,10 +1990,69 @@ from .managed_realtime_schedules_response import ManagedRealtimeSchedulesRespons
 from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
+from .mcp_admission_evidence import MCPAdmissionEvidence
+from .mcp_admission_evidence_outcome import MCPAdmissionEvidenceOutcome
+from .mcp_admission_evidence_version import MCPAdmissionEvidenceVersion
+from .mcp_admission_gateway import MCPAdmissionGateway
+from .mcp_admission_history_response import MCPAdmissionHistoryResponse
+from .mcp_catalog_monitor_config import MCPCatalogMonitorConfig
+from .mcp_catalog_monitor_config_baseline import MCPCatalogMonitorConfigBaseline
+from .mcp_catalog_monitor_config_request import MCPCatalogMonitorConfigRequest
+from .mcp_catalog_monitor_config_request_baseline import MCPCatalogMonitorConfigRequestBaseline
+from .mcp_catalog_monitor_signal import MCPCatalogMonitorSignal
+from .mcp_catalog_monitor_signal_roles import MCPCatalogMonitorSignalRoles
+from .mcp_catalog_monitor_signal_state import MCPCatalogMonitorSignalState
+from .mcp_catalog_monitor_snapshot import MCPCatalogMonitorSnapshot
+from .mcp_catalog_monitor_snapshot_roles import MCPCatalogMonitorSnapshotRoles
+from .mcp_catalog_monitor_snapshot_state import MCPCatalogMonitorSnapshotState
+from .mcp_catalog_monitor_summary import MCPCatalogMonitorSummary
+from .mcp_catalog_monitor_summary_roles import MCPCatalogMonitorSummaryRoles
+from .mcp_catalog_monitor_summary_state import MCPCatalogMonitorSummaryState
+from .mcp_catalog_o_auth_check import MCPCatalogOAuthCheck
+from .mcp_catalog_o_auth_check_reason import MCPCatalogOAuthCheckReason
+from .mcp_catalog_o_auth_check_state import MCPCatalogOAuthCheckState
+from .mcp_catalog_o_auth_event import MCPCatalogOAuthEvent
+from .mcp_catalog_o_auth_event_kind import MCPCatalogOAuthEventKind
+from .mcp_catalog_o_auth_flow import MCPCatalogOAuthFlow
+from .mcp_catalog_o_auth_lifecycle import MCPCatalogOAuthLifecycle
+from .mcp_catalog_o_auth_lifecycle_credential_state import MCPCatalogOAuthLifecycleCredentialState
+from .mcp_catalog_o_auth_lifecycle_local_state import MCPCatalogOAuthLifecycleLocalState
+from .mcp_catalog_o_auth_renewal import MCPCatalogOAuthRenewal
+from .mcp_catalog_o_auth_renewal_outcome import MCPCatalogOAuthRenewalOutcome
+from .mcp_catalog_o_auth_renewal_state import MCPCatalogOAuthRenewalState
+from .mcp_catalog_o_auth_request import MCPCatalogOAuthRequest
+from .mcp_catalog_o_auth_request_action import MCPCatalogOAuthRequestAction
+from .mcp_catalog_o_auth_response import MCPCatalogOAuthResponse
+from .mcp_catalog_o_auth_response_provider_revocation import MCPCatalogOAuthResponseProviderRevocation
+from .mcp_catalog_o_auth_response_state import MCPCatalogOAuthResponseState
+from .mcp_catalog_o_auth_revocation import MCPCatalogOAuthRevocation
+from .mcp_catalog_o_auth_revocation_failure_reason import MCPCatalogOAuthRevocationFailureReason
+from .mcp_catalog_o_auth_revocation_state import MCPCatalogOAuthRevocationState
+from .mcp_catalog_observation_request import MCPCatalogObservationRequest
+from .mcp_catalog_observation_request_observed import MCPCatalogObservationRequestObserved
+from .mcp_catalog_observer_config import MCPCatalogObserverConfig
+from .mcp_catalog_observer_o_auth_config import MCPCatalogObserverOAuthConfig
+from .mcp_catalog_observer_o_auth_config_profile import MCPCatalogObserverOAuthConfigProfile
+from .mcp_catalog_observer_o_auth_config_revocation_auth_method import MCPCatalogObserverOAuthConfigRevocationAuthMethod
+from .mcp_catalog_observer_o_auth_config_token_auth_method import MCPCatalogObserverOAuthConfigTokenAuthMethod
+from .mcp_catalog_observer_o_auth_status import MCPCatalogObserverOAuthStatus
+from .mcp_catalog_observer_o_auth_status_state import MCPCatalogObserverOAuthStatusState
+from .mcp_catalog_observer_status import MCPCatalogObserverStatus
+from .mcp_catalog_observer_status_failure_reason import MCPCatalogObserverStatusFailureReason
+from .mcp_catalog_observer_status_state import MCPCatalogObserverStatusState
+from .mcp_catalog_receipt import MCPCatalogReceipt
+from .mcp_catalog_receipt_diff import MCPCatalogReceiptDiff
+from .mcp_catalog_receipt_state import MCPCatalogReceiptState
+from .mcp_connection_health_issue import MCPConnectionHealthIssue
+from .mcp_connection_health_issue_kind import MCPConnectionHealthIssueKind
+from .mcp_connection_health_snapshot import MCPConnectionHealthSnapshot
+from .mcp_connection_health_snapshot_counts import MCPConnectionHealthSnapshotCounts
 from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
 from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
 from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
 from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
+from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
 from .mcp_probe_rpc_request import MCPProbeRPCRequest
 from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
 from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
@@ -2001,6 +2064,12 @@ from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportReq
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcpo_auth_retirement import MCPOAuthRetirement
+from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
+from .mcpo_auth_retirement_action_action import MCPOAuthRetirementActionAction
+from .mcpo_auth_retirement_event import MCPOAuthRetirementEvent
+from .mcpo_auth_retirement_state import MCPOAuthRetirementState
+from .mcpo_auth_retirements_response import MCPOAuthRetirementsResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -4180,6 +4249,9 @@ from .update_deployment_open_api_doc_response_200_doc import UpdateDeploymentOpe
 from .update_deployment_open_api_doc_response_200_source import UpdateDeploymentOpenAPIDocResponse200Source
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
+from .update_deployment_traffic_request_expected_mcp_access_policy import (
+    UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
+)
 from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
@@ -5185,6 +5257,7 @@ __all__ = (
     "DebugDependencyLatencyItem",
     "DebugDependencyLatencyItemType",
     "DebugDependencyLatencyResponse",
+    "DebugDependencyQueryItem",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationConfidence",
     "DebugEvidenceExplanationDiagnosis",
@@ -5202,6 +5275,7 @@ __all__ = (
     "DebugRegressionActionRequestAction",
     "DebugRegressionActionResponse",
     "DebugRegressionItem",
+    "DebugRegressionItemKind",
     "DebugRegressionItemState",
     "DebugRegressionsResponse",
     "DebugReplayComparison",
@@ -5927,6 +6001,7 @@ __all__ = (
     "GetRouteHealthInvestigationSignal",
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
+    "GetRuntimePolicyStatusEdgeRulesScope",
     "GetWorkerRolloutObservationScope",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
@@ -6146,6 +6221,7 @@ __all__ = (
     "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
     "ListManagedRealtimeSchedulesStatus",
+    "ListMCPAdmissionHistoryOutcome",
     "ListObjectWriteReceiptsStatus",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
@@ -6346,10 +6422,75 @@ __all__ = (
     "ManagedRealtimeSignalRequest",
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
+    "MCPAdmissionEvidence",
+    "MCPAdmissionEvidenceOutcome",
+    "MCPAdmissionEvidenceVersion",
+    "MCPAdmissionGateway",
+    "MCPAdmissionHistoryResponse",
+    "MCPCatalogMonitorConfig",
+    "MCPCatalogMonitorConfigBaseline",
+    "MCPCatalogMonitorConfigRequest",
+    "MCPCatalogMonitorConfigRequestBaseline",
+    "MCPCatalogMonitorSignal",
+    "MCPCatalogMonitorSignalRoles",
+    "MCPCatalogMonitorSignalState",
+    "MCPCatalogMonitorSnapshot",
+    "MCPCatalogMonitorSnapshotRoles",
+    "MCPCatalogMonitorSnapshotState",
+    "MCPCatalogMonitorSummary",
+    "MCPCatalogMonitorSummaryRoles",
+    "MCPCatalogMonitorSummaryState",
+    "MCPCatalogOAuthCheck",
+    "MCPCatalogOAuthCheckReason",
+    "MCPCatalogOAuthCheckState",
+    "MCPCatalogOAuthEvent",
+    "MCPCatalogOAuthEventKind",
+    "MCPCatalogOAuthFlow",
+    "MCPCatalogOAuthLifecycle",
+    "MCPCatalogOAuthLifecycleCredentialState",
+    "MCPCatalogOAuthLifecycleLocalState",
+    "MCPCatalogOAuthRenewal",
+    "MCPCatalogOAuthRenewalOutcome",
+    "MCPCatalogOAuthRenewalState",
+    "MCPCatalogOAuthRequest",
+    "MCPCatalogOAuthRequestAction",
+    "MCPCatalogOAuthResponse",
+    "MCPCatalogOAuthResponseProviderRevocation",
+    "MCPCatalogOAuthResponseState",
+    "MCPCatalogOAuthRevocation",
+    "MCPCatalogOAuthRevocationFailureReason",
+    "MCPCatalogOAuthRevocationState",
+    "MCPCatalogObservationRequest",
+    "MCPCatalogObservationRequestObserved",
+    "MCPCatalogObserverConfig",
+    "MCPCatalogObserverOAuthConfig",
+    "MCPCatalogObserverOAuthConfigProfile",
+    "MCPCatalogObserverOAuthConfigRevocationAuthMethod",
+    "MCPCatalogObserverOAuthConfigTokenAuthMethod",
+    "MCPCatalogObserverOAuthStatus",
+    "MCPCatalogObserverOAuthStatusState",
+    "MCPCatalogObserverStatus",
+    "MCPCatalogObserverStatusFailureReason",
+    "MCPCatalogObserverStatusState",
+    "MCPCatalogReceipt",
+    "MCPCatalogReceiptDiff",
+    "MCPCatalogReceiptState",
+    "MCPConnectionHealthIssue",
+    "MCPConnectionHealthIssueKind",
+    "MCPConnectionHealthSnapshot",
+    "MCPConnectionHealthSnapshotCounts",
     "MCPInstanceHealthProbeResponse",
     "MCPInstanceProtocolProbeRequest",
     "MCPInstanceProtocolProbeRequestProtocolVersion",
     "MCPInstanceProtocolProbeResponse",
+    "MCPOAuthRetirement",
+    "MCPOAuthRetirementAction",
+    "MCPOAuthRetirementActionAction",
+    "MCPOAuthRetirementEvent",
+    "MCPOAuthRetirementsResponse",
+    "MCPOAuthRetirementState",
+    "MCPPolicyConvergenceSnapshot",
+    "MCPPolicyConvergenceSnapshotState",
     "MCPProbeRPCRequest",
     "MCPProbeRPCRequestMethod",
     "MCPProbeRPCRequestParams",
@@ -8352,6 +8493,7 @@ __all__ = (
     "UpdateDeploymentOpenAPIDocResponse200Source",
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
+    "UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy",
     "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",

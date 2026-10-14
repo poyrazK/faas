@@ -6,6 +6,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_runtime_policy_status_edge_rules_scope import (
+    GetRuntimePolicyStatusEdgeRulesScope,
+)
 from ...models.problem import Problem
 from ...models.runtime_policy_status_response import RuntimePolicyStatusResponse
 from ...types import UNSET, Response, Unset
@@ -15,11 +18,18 @@ def _get_kwargs(
     slug: str,
     *,
     wait: str | Unset = UNSET,
+    edge_rules_scope: GetRuntimePolicyStatusEdgeRulesScope | Unset = "app",
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["wait"] = wait
+
+    json_edge_rules_scope: str | Unset = UNSET
+    if not isinstance(edge_rules_scope, Unset):
+        json_edge_rules_scope = edge_rules_scope
+
+    params["edge_rules_scope"] = json_edge_rules_scope
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -84,6 +94,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
+    edge_rules_scope: GetRuntimePolicyStatusEdgeRulesScope | Unset = "app",
 ) -> Response[Problem | RuntimePolicyStatusResponse]:
     """Check whether runtime policy changes have reached their serving consumers.
 
@@ -108,6 +119,7 @@ def sync_detailed(
     Args:
         slug (str):
         wait (str | Unset):  Example: 5s.
+        edge_rules_scope (GetRuntimePolicyStatusEdgeRulesScope | Unset):  Default: 'app'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,6 +132,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         wait=wait,
+        edge_rules_scope=edge_rules_scope,
     )
 
     response = client.get_httpx_client().request(
@@ -134,6 +147,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
+    edge_rules_scope: GetRuntimePolicyStatusEdgeRulesScope | Unset = "app",
 ) -> Problem | RuntimePolicyStatusResponse | None:
     """Check whether runtime policy changes have reached their serving consumers.
 
@@ -158,6 +172,7 @@ def sync(
     Args:
         slug (str):
         wait (str | Unset):  Example: 5s.
+        edge_rules_scope (GetRuntimePolicyStatusEdgeRulesScope | Unset):  Default: 'app'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,6 +186,7 @@ def sync(
         slug=slug,
         client=client,
         wait=wait,
+        edge_rules_scope=edge_rules_scope,
     ).parsed
 
 
@@ -179,6 +195,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
+    edge_rules_scope: GetRuntimePolicyStatusEdgeRulesScope | Unset = "app",
 ) -> Response[Problem | RuntimePolicyStatusResponse]:
     """Check whether runtime policy changes have reached their serving consumers.
 
@@ -203,6 +220,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         wait (str | Unset):  Example: 5s.
+        edge_rules_scope (GetRuntimePolicyStatusEdgeRulesScope | Unset):  Default: 'app'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -215,6 +233,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         wait=wait,
+        edge_rules_scope=edge_rules_scope,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -227,6 +246,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     wait: str | Unset = UNSET,
+    edge_rules_scope: GetRuntimePolicyStatusEdgeRulesScope | Unset = "app",
 ) -> Problem | RuntimePolicyStatusResponse | None:
     """Check whether runtime policy changes have reached their serving consumers.
 
@@ -251,6 +271,7 @@ async def asyncio(
     Args:
         slug (str):
         wait (str | Unset):  Example: 5s.
+        edge_rules_scope (GetRuntimePolicyStatusEdgeRulesScope | Unset):  Default: 'app'.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -265,5 +286,6 @@ async def asyncio(
             slug=slug,
             client=client,
             wait=wait,
+            edge_rules_scope=edge_rules_scope,
         )
     ).parsed
