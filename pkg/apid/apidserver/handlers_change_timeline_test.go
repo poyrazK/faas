@@ -73,6 +73,9 @@ func TestGetChangeTimeline_ForeignAppIsNotFound(t *testing.T) {
 func TestGetChangeTimeline_MergesSources(t *testing.T) {
 	e := changeTimelineEnv(t)
 	ctx := context.Background()
+	// Apps take the account's personal org as their owner; org activity
+	// is keyed by it.
+	seedActivityPersonalOrg(t, e)
 	app := createApp(t, e, "shop")
 	other := createApp(t, e, "other")
 	now := time.Now().UTC()

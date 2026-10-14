@@ -105,6 +105,11 @@ func (s *server) appChangeTimeline(ctx context.Context, acct state.Account, app 
 	return resp
 }
 
+// changeTimelineSourceRows reads one row past the response cap from each
+// source, so a single source holding more rows than the cap still marks the
+// merged timeline truncated.
+const changeTimelineSourceRows = api.ChangeTimelineMaxEvents + 1
+
 func (s *server) changeTimelineSources(acct state.Account, app state.App, since, until, now time.Time) []changeTimelineSource {
 	return []changeTimelineSource{
 		{api.ChangeSourceDeployment, func(ctx context.Context) ([]api.AppChangeEvent, error) {
@@ -112,7 +117,7 @@ func (s *server) changeTimelineSources(acct state.Account, app state.App, since,
 			if !ok {
 				return nil, errors.New("store lacks app change reads")
 			}
-			rows, err := store.ListAppDeploymentAuditBetween(ctx, acct.ID, app.ID, since, until, api.ChangeTimelineMaxEvents)
+			rows, err := store.ListAppDeploymentAuditBetween(ctx, acct.ID, app.ID, since, until, changeTimelineSourceRows)
 			return deploymentChangeEvents(rows), err
 		}},
 		{api.ChangeSourceEdgeRule, func(ctx context.Context) ([]api.AppChangeEvent, error) {
@@ -120,7 +125,7 @@ func (s *server) changeTimelineSources(acct state.Account, app state.App, since,
 			if !ok {
 				return nil, errors.New("store lacks app change reads")
 			}
-			rows, err := store.ListAppEdgeRuleChangesBetween(ctx, acct.ID, app.ID, since, until, api.ChangeTimelineMaxEvents)
+			rows, err := store.ListAppEdgeRuleChangesBetween(ctx, acct.ID, app.ID, since, until, changeTimelineSourceRows)
 			return edgeRuleChangeEvents(rows), err
 		}},
 		{api.ChangeSourceRuntimeConfig, func(ctx context.Context) ([]api.AppChangeEvent, error) {
@@ -254,9 +259,12 @@ var activityChangeSummaries = map[string]string{
 }
 
 func (s *server) activityChangeEvents(ctx context.Context, app state.App) ([]api.AppChangeEvent, error) {
+	if app.OrgID == "" {
+		return nil, nil // apps without an owning org have no org activity
+	}
 	orgID, err := uuid.Parse(app.OrgID)
 	if err != nil {
-		return nil, nil // apps without an owning org have no org activity
+		return nil, fmt.Errorf("parse org id: %w", err)
 	}
 	appID, err := uuid.Parse(app.ID)
 	if err != nil {
@@ -266,7 +274,7 @@ func (s *server) activityChangeEvents(ctx context.Context, app state.App) ([]api
 	if !ok {
 		return nil, errors.New("store lacks org activity reads")
 	}
-	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, AppID: &appID, Limit: api.ChangeTimelineMaxEvents})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, AppID: &appID, Limit: changeTimelineSourceRows})
 	if err != nil {
 		return nil, err
 	}
