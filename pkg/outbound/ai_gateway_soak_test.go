@@ -82,6 +82,7 @@ func TestAIGatewaySoak(t *testing.T) {
 	var mu sync.Mutex
 	statuses := map[int]int{}
 	var latencies []time.Duration
+	var refusals []string
 	tracer.roundTrips.Store(0)
 	deadline := time.Now().Add(duration)
 	var wg sync.WaitGroup
@@ -95,6 +96,9 @@ func TestAIGatewaySoak(t *testing.T) {
 				elapsed := time.Since(started)
 				mu.Lock()
 				statuses[recorder.Code]++
+				if recorder.Code != http.StatusOK && len(refusals) < 5 {
+					refusals = append(refusals, recorder.Body.String())
+				}
 				if recorder.Code == http.StatusOK {
 					latencies = append(latencies, elapsed)
 				}
@@ -143,7 +147,7 @@ func TestAIGatewaySoak(t *testing.T) {
 		t.Logf("postgres round trips: %.1f per call", float64(roundTrips)/float64(ok))
 	}
 	if len(statuses) != 1 || ok == 0 {
-		t.Errorf("non-200 responses: %v", statuses)
+		t.Errorf("non-200 responses: %v; first: %q", statuses, refusals)
 	}
 	if settled != int64(ok) || usage.DailyTokenCount != int64(ok)*(soakInputTokens+soakOutputTokens) {
 		t.Errorf("settlement drifted: %d calls, %d settled, %d tokens", ok, settled, usage.DailyTokenCount)
