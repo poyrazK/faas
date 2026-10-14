@@ -64,7 +64,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ObsHealthResponse | Problem]:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
@@ -82,8 +82,8 @@ def sync_detailed(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
@@ -112,7 +112,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ObsHealthResponse | Problem | None:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
@@ -130,8 +130,8 @@ def sync(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
@@ -156,7 +156,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ObsHealthResponse | Problem]:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
@@ -174,8 +174,8 @@ async def asyncio_detailed(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
@@ -202,7 +202,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ObsHealthResponse | Problem | None:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
@@ -220,8 +220,8 @@ async def asyncio(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
