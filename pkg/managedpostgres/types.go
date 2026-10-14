@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
@@ -33,6 +34,12 @@ var (
 // window answered "the configured provider is temporarily unavailable" with
 // outage advice (hunt #9, H9-P107).
 var ErrProvisioningClosed = fmt.Errorf("%w: provisioning is not open for this account", ErrUnavailable)
+
+// ErrLineageUnproven reports a restore target whose lineage could not be
+// proven on this observation but may be on a later one: Neon maps a timestamp
+// to a drifting LSN inside the commit-free interval after it (ADR-1259). It
+// wraps ErrUnavailable; the service retries it at the poll interval.
+var ErrLineageUnproven = fmt.Errorf("%w: restore lineage not proven yet", ErrUnavailable)
 
 // ErrNotInPlan refuses a compute target the account's plan does not include
 // (a class or always-on compute). It unwraps to ErrQuotaExceeded for existing
@@ -182,6 +189,42 @@ type ObservedDatabase struct {
 	// isolated stage database. SourceResourceID must identify the exact source
 	// (for example a Neon branch), not a mutable default selector.
 	RestoreLineage *RestoreLineage
+	// RestoreVerification is set when this observation independently verified
+	// the lineage, or confirmed a supplied record (ADR-1259).
+	RestoreVerification *RestoreVerification
+}
+
+// RestoreVerification is durable evidence that an adapter independently
+// verified a restore target's lineage (ADR-1259). Evidence fingerprints the
+// target's immutable provider metadata; it is opaque to the service and never
+// carries credentials. Later observations confirm the fingerprint instead of
+// remapping a historical position that the provider resolves inexactly.
+type RestoreVerification struct {
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        time.Time
+	Evidence           string
+}
+
+// Validate checks the record's shape and that it describes request against
+// providerResourceID. It proves nothing about the provider's current state.
+func (v RestoreVerification) Validate(providerResourceID string, request RestoreRequest) error {
+	if !validOpaqueID(v.ProviderResourceID) || !validOpaqueID(v.SourceResourceID) || v.PointInTime.IsZero() ||
+		v.Evidence == "" || len(v.Evidence) > 1024 || strings.ContainsFunc(v.Evidence, unicode.IsControl) {
+		return ErrInvalid
+	}
+	if v.ProviderResourceID != providerResourceID || v.SourceResourceID != request.SourceResourceID || !v.PointInTime.Equal(request.PointInTime) {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RestoreVerificationStore keeps one verification per restore target. A write
+// needs the target's current provisioning lease; a different record for the
+// same target is ErrConflict.
+type RestoreVerificationStore interface {
+	RecordRestoreVerification(context.Context, Database, RestoreVerification) error
+	GetRestoreVerification(ctx context.Context, accountID, databaseID string) (RestoreVerification, error)
 }
 
 type RestoreLineage struct {
@@ -257,6 +300,9 @@ type RestoreRequest struct {
 	Spec             Spec
 	PointInTime      time.Time
 	IdempotencyKey   string
+	// Verification, when recorded, is confirmed against the target's current
+	// immutable metadata instead of remapping PointInTime (ADR-1259).
+	Verification *RestoreVerification
 }
 
 // RestoreInspector verifies an existing target against its pinned source and

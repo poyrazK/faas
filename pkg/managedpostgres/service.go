@@ -451,9 +451,14 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 	} else {
 		if inspector, ok := backend.Provider.(RestoreInspector); ok && database.RestoreSourceResourceID != "" {
+			recorded, recordedErr := s.restoreVerification(ctx, database)
+			if recordedErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, recordedErr)
+			}
 			observed, err = inspector.InspectRestore(providerContext, database.ProviderResourceID, RestoreRequest{
 				ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
+				Verification: recorded,
 			})
 		} else {
 			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
@@ -485,6 +490,9 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 		}
 		database.ProviderResourceID = observed.ProviderResourceID
+	}
+	if err := s.recordRestoreVerification(ctx, database, observed); err != nil {
+		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
@@ -677,7 +685,11 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {
 	normalized := normalizeProviderError(providerErr)
-	return s.releaseKnownError(ctx, database, next, providerErrorCode(providerErr), withLoggableReason(normalized, providerErr), retryDelay(normalized, database.AttemptCount))
+	code, delay := providerErrorCode(providerErr), retryDelay(normalized, database.AttemptCount)
+	if errors.Is(providerErr, ErrLineageUnproven) {
+		code, delay = "restore_lineage_unavailable", lineageRetryDelay(s.pollInterval, database.AttemptCount)
+	}
+	return s.releaseKnownError(ctx, database, next, code, withLoggableReason(normalized, providerErr), delay)
 }
 
 func (s *Service) releaseKnownError(ctx context.Context, database Database, next State, code string, operationErr error, delay time.Duration) error {
@@ -710,6 +722,18 @@ func (s *Service) finishDelete(ctx context.Context, databaseID, leaseToken strin
 	finishContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
 	defer cancel()
 	return s.store.FinishDelete(finishContext, databaseID, leaseToken, s.now())
+}
+
+// lineagePollAttempts bounds how long an unproven restore lineage is retried
+// at the poll interval before the ordinary backoff applies (ADR-1259). Each
+// attempt opens a provider historical connection, so it is not unbounded.
+const lineagePollAttempts = 20
+
+func lineageRetryDelay(poll time.Duration, attempt int32) time.Duration {
+	if attempt <= lineagePollAttempts {
+		return poll
+	}
+	return retryDelay(ErrUnavailable, attempt-lineagePollAttempts)
 }
 
 func retryDelay(err error, attempt int32) time.Duration {

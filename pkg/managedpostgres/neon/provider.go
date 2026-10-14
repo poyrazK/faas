@@ -339,10 +339,11 @@ func (p *Provider) inspect(ctx context.Context, providerResourceID string, resto
 		status = managedpostgres.ProviderStatusPending
 	}
 	lineage, err := observedBranchLineage(ref.projectID, selectedBranch)
+	var verification *managedpostgres.RestoreVerification
 	if restore != nil {
 		source, _ := parseResourceRef(restore.SourceResourceID)
-		verified, verifyErr := p.observeRestoredBranch(ctx, ref.projectID, source.branchID, p.restoreBranchName(restore.ResourceID), selectedBranch, *restore)
-		lineage, err = verified.RestoreLineage, verifyErr
+		verified, verifyErr := p.verifyRestoredBranch(ctx, ref.projectID, source.branchID, p.restoreBranchName(restore.ResourceID), selectedBranch, *restore)
+		lineage, verification, err = verified.RestoreLineage, verified.RestoreVerification, verifyErr
 	}
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
@@ -365,7 +366,8 @@ func (p *Provider) inspect(ctx context.Context, providerResourceID string, resto
 		}
 		observedComputeState = managedpostgres.ComputeStateActive
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: dataID, Status: status, ComputeState: observedComputeState, Spec: observedSpec, RestoreLineage: lineage}, nil
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: dataID, Status: status, ComputeState: observedComputeState,
+		Spec: observedSpec, RestoreLineage: lineage, RestoreVerification: verification}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.

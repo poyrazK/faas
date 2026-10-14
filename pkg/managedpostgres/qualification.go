@@ -949,6 +949,10 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		restoreTargetProviderResourceID = restored.ProviderResourceID
 		report.Restore.Restored = true
 		record("restore_observed", nil)
+		// The creation was just verified independently; readiness and the
+		// idempotent replay confirm that verification instead of remapping a
+		// drifting historical position (ADR-1259).
+		restoreRequest.Verification = restored.RestoreVerification
 		ready, readyErr := qualifyProviderReadyWithRestore(ctx, provider, restoreTargetProviderResourceID, options.PollInterval, &restoreRequest)
 		if readyErr == nil && (ready.ProviderResourceID != restoreTargetProviderResourceID || ready.Spec != options.Spec) {
 			readyErr = ErrUnavailable

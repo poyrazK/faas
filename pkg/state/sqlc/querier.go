@@ -3017,6 +3017,7 @@ type Querier interface {
 	ReadManagedPostgresLifecycleDependants(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresLifecycleDependantsRow, error)
 	ReadManagedPostgresLifecycleRestoreSource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error)
 	ReadManagedPostgresResizeConflicts(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresResizeConflictsRow, error)
+	ReadManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg ReadManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error)
 	ReadManagedWorkflowRunForUpdate(ctx context.Context, db DBTX, runID string) (ReadManagedWorkflowRunForUpdateRow, error)
 	ReadManagedWorkflowStepForUpdate(ctx context.Context, db DBTX, arg ReadManagedWorkflowStepForUpdateParams) (ReadManagedWorkflowStepForUpdateRow, error)
 	ReadPendingRuntimeUpgradePublicEdgeWithdrawals(ctx context.Context, db DBTX, limit int32) ([]RuntimeUpgradePublicEdgeWithdrawal, error)
@@ -3265,6 +3266,8 @@ type Querier interface {
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
+	// ADR-1259: append-once; a replay must describe the same verified lineage.
+	RecordManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error)
 	RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error)
 	RecordProjectEnvironmentClonePostgresArchive(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresArchiveParams) (ProjectEnvironmentClonePostgresArchive, error)
 	RecordProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresContentsParams) (ProjectEnvironmentClonePostgresContent, error)

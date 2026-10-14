@@ -4501,6 +4501,19 @@ type ManagedPostgresRestoreProof struct {
 	DataResourceID     pgtype.Text
 }
 
+type ManagedPostgresRestoreVerification struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Evidence           string
+	VerifiedAt         pgtype.Timestamptz
+}
+
 type ManagedPostgresUsage struct {
 	AccountID          pgtype.UUID
 	DatabaseID         pgtype.UUID

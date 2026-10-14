@@ -23482,6 +23482,33 @@ CREATE TABLE public.managed_postgres_restore_proofs (
 
 
 --
+-- Name: managed_postgres_restore_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_restore_verifications (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    generation bigint NOT NULL,
+    provider_resource_id text NOT NULL,
+    source_resource_id text NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    evidence text NOT NULL,
+    verified_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_restore_verifications_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_restore_verifications_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verifications_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= verified_at))),
+    CONSTRAINT managed_postgres_restore_verifications_evidence_check CHECK (((evidence <> ''::text) AND (length(evidence) <= 1024))),
+    CONSTRAINT managed_postgres_restore_verifications_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_restore_verifications_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_restore_verifications_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verifications_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verifications_verified_at_check CHECK (isfinite(verified_at))
+);
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35135,6 +35162,22 @@ ALTER TABLE ONLY public.managed_postgres_resizes
 
 ALTER TABLE ONLY public.managed_postgres_restore_proofs
     ADD CONSTRAINT managed_postgres_restore_proofs_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_backend_id_backend_f_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_backend_id_backend_f_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -54261,6 +54304,22 @@ ALTER TABLE ONLY public.managed_postgres_resizes
 
 ALTER TABLE ONLY public.managed_postgres_restore_proofs
     ADD CONSTRAINT managed_postgres_restore_proofs_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
 
 
 --

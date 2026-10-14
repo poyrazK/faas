@@ -62133,6 +62133,33 @@ func (q *Queries) ReadManagedPostgresResizeConflicts(ctx context.Context, db DBT
 	return i, err
 }
 
+const readManagedPostgresRestoreVerification = `-- name: ReadManagedPostgresRestoreVerification :one
+SELECT database_id, account_id, backend_id, backend_fingerprint, generation, provider_resource_id, source_resource_id, point_in_time, evidence, verified_at FROM managed_postgres_restore_verifications WHERE account_id=$1 AND database_id=$2
+`
+
+type ReadManagedPostgresRestoreVerificationParams struct {
+	AccountID  pgtype.UUID
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg ReadManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error) {
+	row := db.QueryRow(ctx, readManagedPostgresRestoreVerification, arg.AccountID, arg.DatabaseID)
+	var i ManagedPostgresRestoreVerification
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.AccountID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.Generation,
+		&i.ProviderResourceID,
+		&i.SourceResourceID,
+		&i.PointInTime,
+		&i.Evidence,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
 const readManagedWorkflowRunForUpdate = `-- name: ReadManagedWorkflowRunForUpdate :one
 SELECT app_id::text, coalesce(platform_tenant_id::text, '')::text AS platform_tenant_id, status FROM workflow_runs
 WHERE id=$1::text::uuid FOR UPDATE
@@ -67376,6 +67403,61 @@ func (q *Queries) RecordManagedPostgresProviderResource(ctx context.Context, db 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresRestoreVerification = `-- name: RecordManagedPostgresRestoreVerification :one
+INSERT INTO managed_postgres_restore_verifications(database_id,account_id,backend_id,backend_fingerprint,generation,
+    provider_resource_id,source_resource_id,point_in_time,evidence)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (database_id) DO UPDATE SET database_id=EXCLUDED.database_id
+WHERE managed_postgres_restore_verifications.account_id=EXCLUDED.account_id
+    AND managed_postgres_restore_verifications.backend_id=EXCLUDED.backend_id
+    AND managed_postgres_restore_verifications.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_restore_verifications.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_restore_verifications.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_restore_verifications.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_restore_verifications.evidence=EXCLUDED.evidence RETURNING database_id, account_id, backend_id, backend_fingerprint, generation, provider_resource_id, source_resource_id, point_in_time, evidence, verified_at
+`
+
+type RecordManagedPostgresRestoreVerificationParams struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Evidence           string
+}
+
+// ADR-1259: append-once; a replay must describe the same verified lineage.
+func (q *Queries) RecordManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error) {
+	row := db.QueryRow(ctx, recordManagedPostgresRestoreVerification,
+		arg.DatabaseID,
+		arg.AccountID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.Generation,
+		arg.ProviderResourceID,
+		arg.SourceResourceID,
+		arg.PointInTime,
+		arg.Evidence,
+	)
+	var i ManagedPostgresRestoreVerification
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.AccountID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.Generation,
+		&i.ProviderResourceID,
+		&i.SourceResourceID,
+		&i.PointInTime,
+		&i.Evidence,
+		&i.VerifiedAt,
+	)
+	return i, err
 }
 
 const recordManagedPostgresSharedUsage = `-- name: RecordManagedPostgresSharedUsage :execrows
