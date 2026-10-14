@@ -80,6 +80,14 @@ func startPressureApp(t *testing.T, prefix string) pressureApp {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 	app := pressureApp{h: h, key: key, slug: slug, appID: appID, depID: depID, client: h.HTTPClient(), url: gatewayAppURL(h, slug), host: slug + ".apps.test.example"}
+	// Park before the harness stops the daemons (cleanups run LIFO): an
+	// instance still running at teardown leaks its VM, and an app that was
+	// OOM-killed and restarted in place is still running.
+	t.Cleanup(func() {
+		if _, s := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); s != http.StatusNoContent {
+			t.Errorf("cleanup park: status=%d", s)
+		}
+	})
 	if b, s := doGetWithHost(t, app.client, app.url, app.host, 60*time.Second); s != http.StatusOK || strings.TrimSpace(string(b)) != "pressure hello" {
 		t.Fatalf("first request: status=%d body=%q", s, b)
 	}
@@ -180,9 +188,6 @@ func TestProfileCaptureMemoryPressureMetal(t *testing.T) {
 
 	if _, s := doGetWithHost(t, client, url+"release", host, 10*time.Second); s != http.StatusNoContent {
 		t.Fatalf("release: status=%d", s)
-	}
-	if _, s := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); s != http.StatusNoContent {
-		t.Fatalf("cleanup park: status=%d", s)
 	}
 }
 
