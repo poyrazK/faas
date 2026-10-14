@@ -4,10 +4,42 @@ package api
 // hints, not verified JSON-RPC body fields. Names and arguments never become labels.
 func MCPMethodLabel(method string) string {
 	switch method {
-	case "initialize", "notifications/initialized", "server/discover", "ping",
-		"tools/list", "tools/call", "resources/list", "resources/templates/list", "resources/read", "resources/subscribe", "resources/unsubscribe",
-		"prompts/list", "prompts/get", "completion/complete", "tasks/get", "tasks/result", "tasks/list", "tasks/cancel":
-		return method
+	case "initialize":
+		return "initialize"
+	case "notifications/initialized":
+		return "notifications/initialized"
+	case "server/discover":
+		return "server/discover"
+	case "ping":
+		return "ping"
+	case "tools/list":
+		return "tools/list"
+	case "tools/call":
+		return "tools/call"
+	case "resources/list":
+		return "resources/list"
+	case "resources/templates/list":
+		return "resources/templates/list"
+	case "resources/read":
+		return "resources/read"
+	case "resources/subscribe":
+		return "resources/subscribe"
+	case "resources/unsubscribe":
+		return "resources/unsubscribe"
+	case "prompts/list":
+		return "prompts/list"
+	case "prompts/get":
+		return "prompts/get"
+	case "completion/complete":
+		return "completion/complete"
+	case "tasks/get":
+		return "tasks/get"
+	case "tasks/result":
+		return "tasks/result"
+	case "tasks/list":
+		return "tasks/list"
+	case "tasks/cancel":
+		return "tasks/cancel"
 	default:
 		return "other"
 	}

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestDurableRetirementExpiryAndUnknownIssuance(t *testing.T) {
 	if r.State != "manual_required" || r.Reason != "issuance_unknown" || r.Revocation.AccessAcknowledged || r.Revocation.RefreshAcknowledged {
 		t.Fatal("unknown issuance claimed provider evidence")
 	}
-	if err := recoverRetirement(&r, api.MCPOAuthRetirementAction{Action: "retry"}, at); err != ErrInvalidArgument {
+	if err := recoverRetirement(&r, api.MCPOAuthRetirementAction{Action: "retry"}, at); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatal("unknown tokens were retried", err)
 	}
 	if err := recoverRetirement(&r, api.MCPOAuthRetirementAction{Action: "acknowledge_manual"}, at); err != nil {
@@ -58,7 +59,7 @@ func TestDurableRetirementHoldAndRecovery(t *testing.T) {
 	if r.State != "pending" || r.Revocation.Attempts != 1 || r.Revocation.LeaseID == "" {
 		t.Fatal("explicit recovery did not claim")
 	}
-	if err := recoverRetirement(&r, api.MCPOAuthRetirementAction{Action: "acknowledge_manual"}, at); err != ErrConflict {
+	if err := recoverRetirement(&r, api.MCPOAuthRetirementAction{Action: "acknowledge_manual"}, at); !errors.Is(err, ErrConflict) {
 		t.Fatal("live lease was overwritten", err)
 	}
 }

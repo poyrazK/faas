@@ -148,7 +148,7 @@ type MCPCatalogMonitorSummary struct {
 func CatalogMonitorSummary(snapshot MCPCatalogMonitorSnapshot, slug string, at time.Time) MCPCatalogMonitorSummary {
 	out := MCPCatalogMonitorSummary{Roles: map[string]MCPCatalogMonitorSnapshot{}}
 	signal := MCPCatalogMonitorSignal{State: "disabled", Roles: map[string]MCPCatalogMonitorSignal{}}
-	roles := make([]string, 0, len(snapshot.Roles)+1)
+	roles := make([]string, 0, len(snapshot.Roles))
 	if snapshot.Config.Revision != "" {
 		roles = append(roles, "default")
 	}

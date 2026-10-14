@@ -92,8 +92,6 @@ func (c *testLoadCollector) arrivalBudgetExceeded() bool {
 var arrivalLoadRunner = runTestArrivalLoad
 
 func runTestArrivalLoad(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, started time.Time, runJourney func(int)) {
-	stopProgress := monitorTestLoadProgress(ctx, collector, cfg, started)
-	defer stopProgress()
 	runTestArrivalLoadWithClock(ctx, collector, cfg, func() time.Duration { return time.Since(started) }, waitTestLoad, runJourney)
 }
 
