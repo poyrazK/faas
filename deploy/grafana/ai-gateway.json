@@ -112,6 +112,58 @@
       ],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI settlement writes (5m)",
+      "id": 9,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "description": "Usage settlements recorded, retried after a failed attempt, failed on every attempt (state_error), or unavailable. state_error and unavailable mean caps and reports under-count. ADR-998, ADR-1120.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (event) (rate(outbound_ai_usage_record_events_total[5m]))", "legendFormat": "{{event}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Content policy findings (1h)",
+      "id": 10,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "description": "Findings the content policy redacted or blocked, by detector. ADR-997.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (kind, action) (increase(outbound_ai_content_findings_total[1h]))", "legendFormat": "{{kind}} {{action}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI media usage (1h)",
+      "id": 11,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "description": "Images, audio seconds and speech characters settled. ADR-997.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (kind) (increase(outbound_ai_media_total[1h]))", "legendFormat": "{{kind}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI replays (1h)",
+      "id": 12,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+      "description": "Replays the outboundd worker finished, by state. ADR-997.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (state) (increase(outbound_ai_replays_total[1h]))", "legendFormat": "{{state}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     }
   ],
   "refresh": "1m",
@@ -123,5 +175,5 @@
   "timezone": "utc",
   "title": "Gregale AI gateway",
   "uid": "faas-ai-gateway",
-  "version": 1
+  "version": 2
 }

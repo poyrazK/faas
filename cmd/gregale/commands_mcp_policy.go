@@ -56,8 +56,7 @@ func applyMCPGatewayPolicy(ctx context.Context, c *Client, slug string, cfg mcph
 		return api.EdgeRuleResponse{}, errors.New("MCP resource must match the app's canonical endpoint")
 	}
 	resource, _ := url.Parse(endpoint)
-	a := api.EdgeRuleJWTAction{Issuer: cfg.Auth.Issuer, Audience: []string{endpoint}, JWKSURL: cfg.Auth.JWKSURL, Algorithms: algorithms,
-		MCP: &api.MCPResourcePolicy{Resource: endpoint, Scopes: cfg.Auth.Scopes, AllowedOrigins: cfg.AllowedOrigins, ToolScopes: cfg.Auth.ToolScopes, ResourceScopes: cfg.Auth.ResourceScopes, PromptScopes: cfg.Auth.PromptScopes}}
+	a := mcpExpectedGatewayAction(cfg, algorithms)
 	if problem := a.Validate(); problem != nil {
 		return api.EdgeRuleResponse{}, errors.New(problem.Detail)
 	}

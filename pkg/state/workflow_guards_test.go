@@ -61,7 +61,12 @@ func seedGuardRunWithSpec(t *testing.T, store Store, spec api.WorkflowSpec, inpu
 
 func guardStep(t *testing.T, store Store, runID, name string) *WorkflowStep {
 	t.Helper()
-	steps, err := store.GetWorkflowSteps(context.Background(), runID)
+	return guardStepWithContext(t, context.Background(), store, runID, name)
+}
+
+func guardStepWithContext(t *testing.T, ctx context.Context, store Store, runID, name string) *WorkflowStep {
+	t.Helper()
+	steps, err := store.GetWorkflowSteps(ctx, runID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,6 +24,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 |---|---|---|---|---|---|---|
 | `FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ADMIN_EMAILS` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
+| `FAAS_AI_GATEWAY_ACCOUNTS` | apid, outboundd | `default` |  |  | `` | optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account |
 | `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd | `default` |  |  | `int` | optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off) |
 | `FAAS_ALERT_EVAL_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_APID_ADVISORY_SOCK` | apid, vmmd, shared | `unit` |  |  | `` |  |
@@ -212,6 +213,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_FREE_PAGE_REPORTING` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+ |
+| `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_NODE22` | imaged | `unit` | yes |  | `path-exists` |  |
@@ -280,6 +282,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
+| `FAAS_IMAGE_RUNS` | apid, shared | `dropin` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); 99-faas-image-runs.conf drop-in from control_plane_service (faas_image_runs_enabled); enable after the image-run migration and imaged are deployed (ADR-1161) |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_INTERACTIVE_APP_TASKS` | apid, shared | `default` |  |  | `` | exact opt-in for ADR-1037 interactive app tasks (exec -it, cp, port-forward) on top of FAAS_APP_TASK_API_ENABLED; default off until vmmd, schedd, gateways and guest-init carry the attach path |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
@@ -523,6 +526,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
+| `FAAS_STORAGE_SPARSE_EXTENTS` | shared | `envfile` |  |  | `` | GCS writers store compressed drives, rootfs images and snapshot memory as data extents only; default off; enable only after every node runs a compatible reader (ADR-1135) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |

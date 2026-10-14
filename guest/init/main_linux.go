@@ -72,6 +72,10 @@ func main() {
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
 	}
+	// Nor does the builder's dependency-cache check, run by the build shell.
+	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
+		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
+	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
 		os.Exit(1)
@@ -420,6 +424,9 @@ func boot() error {
 	// fails the deploy — that's worse than today's opaque "guest
 	// not ready after 30s" path).
 	go runCharacterizationForSup(supRef, manifest)
+	// ADR-1170: a watch-mode development server may listen on another port
+	// or on localhost only; bridge the runtime port to it.
+	go runDevWatchBridge(supRef.LastAppPID, manifest.EffectivePort(), slog.Default())
 	// M-2 / //code-review PR #1202 finding #7: a single boot-scoped
 	// cancellable context is shared between the HEALTHCHECK poll
 	// goroutine and the PID 1 signal-handler loop so both observe
@@ -548,6 +555,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
+	env = stampDevWatchEnv(env, devWatchActive.Load())
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -1253,6 +1261,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		case removed:
 			fmt.Fprintf(os.Stderr, "guest-init: dependency cache exceeded %d bytes and was discarded\n", api.MaxExportedLayerBytes)
 		}
+		finishDependencyCacheInputs(m.OutDir)
 	}
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
@@ -1744,11 +1753,18 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	if m.DependencyCache {
-		build += " --export-cache " + shellQuote("type=local,dest=/build/out/cache,mode=max")
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if !m.DependencyCache {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
 	}
-	build += " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
-	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
+	// "$@" carries --export-cache. Once the plan exists, a re-executed
+	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
+	// cache came from the same plan and install inputs; anything else exports.
+	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
+		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
+	}, " ")
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
@@ -2011,6 +2027,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
+		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
 		if watchErr != nil {

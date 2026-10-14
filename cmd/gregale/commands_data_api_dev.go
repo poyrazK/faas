@@ -16,10 +16,24 @@ import (
 )
 
 type dataAPIDevOptions struct {
+	AccessChecks      string `json:"access_checks,omitempty"`
+	Verify            bool   `json:"verify,omitempty"`
+	PlanCheck         bool   `json:"plan_check,omitempty"`
+	PlanBudget        string `json:"plan_budget,omitempty"`
+	Explain           bool   `json:"explain,omitempty"`
+	Collection        string `json:"collection,omitempty"`
+	PlanBaseline      string `json:"plan_baseline,omitempty"`
+	PlanScenario      string `json:"plan_scenario,omitempty"`
+	Preview           bool   `json:"preview,omitempty"`
+	Dependencies      string `json:"dependencies,omitempty"`
+	FromVersion       int    `json:"from_version,omitempty"`
+	Fixture           string `json:"fixture,omitempty"`
+	DataCheck         string `json:"data_check,omitempty"`
 	Directory         string `json:"directory"`
 	Output            string `json:"output"`
 	Port              int    `json:"port"`
 	Check             bool   `json:"check"`
+	Validators        bool   `json:"validators"`
 	CheckTypes        bool   `json:"check_types"`
 	Once              bool   `json:"once"`
 	JSON              bool   `json:"json"`
@@ -35,13 +49,21 @@ type dataAPIDevOptions struct {
 	OutputSet         bool   `json:"output_set"`
 }
 
-func cmdDataAPIDev(args []string) int {
+func cmdDataAPIDev(args []string) int { return runDataAPIDev(args, nil) }
+
+func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
+	preview := rehearsal != nil && !rehearsal.Explain && !rehearsal.Verify
+	if rehearsal == nil {
+		rehearsal = &dataAPIMigrationOptions{}
+	}
+	dependencies := rehearsal.Dependencies
 	fs := newFlagSet("data-api dev", flag.ContinueOnError)
 	directory := fs.String("directory", ".", "Data API project directory")
 	config := fs.String("config", "", "project-relative development config (default: data-api.dev.json)")
 	output := fs.String("output", "client/src/database.types.ts", "generated types path relative to the project")
 	port := fs.Int("port", 8080, "loopback gateway port (0 selects a free port)")
 	check := fs.Bool("check", false, "run configured client checks")
+	validators := fs.Bool("validators", false, "generate runtime table and RPC argument validators alongside types")
 	checkTypes := fs.Bool("check-types", false, "compare committed types without rewriting them (requires --once)")
 	once := fs.Bool("once", false, "verify the local workflow and exit, removing containers")
 	watch := fs.Bool("watch", true, "watch migrations and refresh the local API and types (disabled by --once)")
@@ -55,12 +77,23 @@ func cmdDataAPIDev(args []string) int {
 		return 1
 	}
 	if (*approval != "" && (*baseline == "" || !*checkBreaking)) || (*checkTypes && !*once) || fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--check-types --once] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--approval FILE] [--accepted-contracts FILE] [--replay FILE --once] [--scenario NAME]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--validators] [--check-types --once] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--approval FILE] [--accepted-contracts FILE] [--replay FILE --once] [--scenario NAME]", "data-api")
 		return 1
 	}
 	base, err := filepath.Abs(*directory)
 	if err != nil {
 		return printErr("Invalid project directory", err)
+	}
+	if dependencies != "" {
+		dependencies = dataAPISyncPath(base, dependencies)
+		if _, err := readDataAPIConsumers(dependencies); err != nil {
+			return printErr("Invalid dependency manifest", err)
+		}
+	}
+	for _, input := range []*string{&rehearsal.Fixture, &rehearsal.DataCheck, &rehearsal.Collection, &rehearsal.PlanBaseline, &rehearsal.PlanBudget, &rehearsal.AccessChecks} {
+		if *input != "" {
+			*input = dataAPISyncPath(base, *input)
+		}
 	}
 	configPath := filepath.Join(base, "data-api.dev.json")
 	if *config != "" {
@@ -179,7 +212,7 @@ func cmdDataAPIDev(args []string) int {
 			outputSet = true
 		}
 	})
-	options, err := json.Marshal(dataAPIDevOptions{Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
+	options, err := json.Marshal(dataAPIDevOptions{Explain: rehearsal.Explain, Verify: rehearsal.Verify, AccessChecks: rehearsal.AccessChecks, PlanCheck: rehearsal.PlanCheck, PlanBudget: rehearsal.PlanBudget, Collection: rehearsal.Collection, PlanBaseline: rehearsal.PlanBaseline, PlanScenario: rehearsal.PlanScenario, Preview: preview, Dependencies: dependencies, FromVersion: rehearsal.FromVersion, Fixture: rehearsal.Fixture, DataCheck: rehearsal.DataCheck, Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Validators: *validators, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
 	if err != nil {
 		return printErr("Could not prepare local options", err)
 	}
@@ -202,8 +235,8 @@ func cmdDataAPIDev(args []string) int {
 	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 	err = command.Run()
 	if ctx.Err() != nil && errors.Is(err, context.Canceled) {
-		if *replay != "" {
-			return printErr("Saved request replay interrupted", ctx.Err())
+		if preview || rehearsal.Explain || rehearsal.Verify || *replay != "" {
+			return printErr("Local verification interrupted", ctx.Err())
 		}
 		return 0
 	}

@@ -17,5 +17,25 @@ export type RouteAdviceEvidence = {
   top_consumer_requests?: number;
   top_consumer_peak_per_minute?: number;
   next_consumer_peak_per_minute?: number;
+  /**
+   * Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache suggestions only.
+   */
+  content_observed?: number;
+  /**
+   * Observed responses identical to the previous one for their URL within the longest content window (1 h).
+   */
+  content_repeats?: number;
+  /**
+   * Observed responses that differed from the previous one for their URL within the longest content window.
+   */
+  content_changes?: number;
+  /**
+   * Observed responses the edge cache could not store (Set-Cookie, Cache-Control no-store or private, Vary, or size).
+   */
+  content_uncacheable?: number;
+  /**
+   * Longest cache lifetime at which the observed repeats would have served at most 1% stale bodies; absent until enough repeats are measured.
+   */
+  safe_max_age_seconds?: 60 | 300 | 3600;
 };
 

@@ -3419,6 +3419,8 @@ const (
 	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
+	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-1192
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3608,7 +3610,11 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	EventSubscriptionID             string
+	EventSubscriptionID string
+	// EdgeRuleID scopes an edge-rule activity alert to one rule (ADR-1192);
+	// empty counts every rule of the app. Immutable, and not a foreign key:
+	// a rule-set restore re-inserts rules under the same ids.
+	EdgeRuleID                      string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AccountID                       string
@@ -3804,6 +3810,8 @@ const (
 	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "automation.recovery_review_finished"
 	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
+	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
+	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3862,8 +3870,9 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
+	AppWebhookEventRecoveryPollingStatus, AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

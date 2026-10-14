@@ -41,7 +41,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
+	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -753,6 +755,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
+		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log)
 		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)
@@ -1441,6 +1444,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
+		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
@@ -1460,7 +1464,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
-	srv.configureAIGateway(*cfg, deps.getenv)
+	if err := srv.configureAIGateway(*cfg, deps.getenv); err != nil {
+		return fmt.Errorf("apid: AI gateway: %w", err)
+	}
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)

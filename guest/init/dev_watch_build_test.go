@@ -14,7 +14,7 @@ import (
 // adr: 1170 — the watch overlay sets the development command and marks the
 // image, and only Node builds accept it.
 func TestDevWatchRailpackConfig(t *testing.T) {
-	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev"}
+	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev", DevWatchHost: "dev-api.gregale.dev"}
 	config := map[string]any{"deploy": map[string]any{"base": map[string]any{"image": "runner"}}}
 	if err := devWatchRailpackConfig(config, m); err != nil {
 		t.Fatal(err)
@@ -24,12 +24,35 @@ func TestDevWatchRailpackConfig(t *testing.T) {
 		t.Fatalf("deploy = %+v", deploy)
 	}
 	variables := deploy["variables"].(map[string]any)
-	if variables["NODE_ENV"] != "development" || variables[api.DevWatchEnv] != "1" {
+	if variables["NODE_ENV"] != "development" || variables[api.DevWatchEnv] != "1" || variables[api.DevWatchHostEnv] != "dev-api.gregale.dev" {
 		t.Fatalf("variables = %+v", variables)
 	}
-	if err := devWatchRailpackConfig(map[string]any{}, api.BuildManifest{Framework: api.FrameworkRailpackPython, DevWatchCommand: "uvicorn app:app --reload"}); err == nil ||
+	// Image environment keys must start with a letter; guest-init adds
+	// Vite's at workload start instead (stampDevWatchEnv).
+	if _, ok := variables[api.DevWatchViteAllowedHostsEnv]; ok || validEnvKey(api.DevWatchViteAllowedHostsEnv) {
+		t.Fatalf("Vite's variable is in the image or would survive the env filter: %+v", variables)
+	}
+	for _, host := range []string{"", "Dev-API.gregale.dev", "a.example,evil.example"} {
+		config := map[string]any{}
+		if err := devWatchRailpackConfig(config, api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev", DevWatchHost: host}); err != nil {
+			t.Fatal(err)
+		}
+		variables := config["deploy"].(map[string]any)["variables"].(map[string]any)
+		if _, ok := variables[api.DevWatchHostEnv]; ok {
+			t.Fatalf("host %q reached the image: %+v", host, variables)
+		}
+	}
+	if err := devWatchRailpackConfig(map[string]any{}, api.BuildManifest{Framework: api.FrameworkRailpackGo, DevWatchCommand: "air"}); err == nil ||
 		!strings.HasPrefix(err.Error(), api.CodeDevWatchUnsupported) {
-		t.Fatalf("python watch build error = %v, want %s", err, api.CodeDevWatchUnsupported)
+		t.Fatalf("go watch build error = %v, want %s", err, api.CodeDevWatchUnsupported)
+	}
+	python := map[string]any{}
+	if err := devWatchRailpackConfig(python, api.BuildManifest{Framework: api.FrameworkRailpackPython, DevWatchCommand: "uvicorn main:app --reload"}); err != nil {
+		t.Fatal(err)
+	}
+	pyVars := python["deploy"].(map[string]any)["variables"].(map[string]any)
+	if _, node := pyVars["NODE_ENV"]; node || pyVars["PYTHONPATH"] != "/app/src:/app" || pyVars[api.DevWatchEnv] != "1" {
+		t.Fatalf("python variables = %+v", pyVars)
 	}
 	if err := devWatchRailpackConfig(map[string]any{"steps": "not an object"}, m); err == nil {
 		t.Fatal("a malformed railpack.json was accepted")
@@ -40,10 +63,25 @@ func TestDevWatchRailpackConfig(t *testing.T) {
 	}
 }
 
-// The overlay's build commands must turn Railpack's real Node plan with a
-// build script into a verbatim one, which is what makes live patches apply.
-func TestDevWatchOverlayMakesTheNodeBuildPlanVerbatim(t *testing.T) {
-	data, err := os.ReadFile("../../pkg/devpatch/testdata/railpack-0.38.0-node-build.json")
+// The overlay's build commands must turn Railpack's real plans with a build
+// step (a Node build script, a uv project install) into verbatim ones,
+// which is what makes live patches apply.
+func TestDevWatchOverlayMakesBuildPlansVerbatim(t *testing.T) {
+	for _, tc := range []struct {
+		fixture   string
+		framework api.BuildFramework
+		command   string
+	}{
+		{"railpack-0.38.0-node-build.json", api.FrameworkRailpackNode, "npm run dev"},
+		{"railpack-0.38.0-py-uv.json", api.FrameworkRailpackPython, "uvicorn main:app --reload"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) { checkDevWatchOverlayVerbatim(t, tc.fixture, tc.framework, tc.command) })
+	}
+}
+
+func checkDevWatchOverlayVerbatim(t *testing.T, fixture string, framework api.BuildFramework, command string) {
+	t.Helper()
+	data, err := os.ReadFile("../../pkg/devpatch/testdata/" + fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +89,7 @@ func TestDevWatchOverlayMakesTheNodeBuildPlanVerbatim(t *testing.T) {
 		t.Fatalf("fixture baseline = %+v, want build_command", got)
 	}
 	config := map[string]any{}
-	if err := devWatchRailpackConfig(config, api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev"}); err != nil {
+	if err := devWatchRailpackConfig(config, api.BuildManifest{Framework: framework, DevWatchCommand: command}); err != nil {
 		t.Fatal(err)
 	}
 	overrides := config["steps"].(map[string]any)["build"].(map[string]any)["commands"]
@@ -69,7 +107,7 @@ func TestDevWatchOverlayMakesTheNodeBuildPlanVerbatim(t *testing.T) {
 	if !got.Verbatim {
 		t.Fatalf("watch plan = %+v, want verbatim", got)
 	}
-	watched, err := devWatchSourceMap(api.BuildManifest{DevWatchCommand: "npm run dev"}, &got)
+	watched, err := devWatchSourceMap(api.BuildManifest{DevWatchCommand: command}, &got)
 	if err != nil || !watched.Watch || !watched.Verbatim {
 		t.Fatalf("watch source map = %+v, %v", watched, err)
 	}
@@ -100,5 +138,22 @@ func TestDevPatchRestartSkippedInWatchMode(t *testing.T) {
 	devWatchActive.Store(false)
 	if err := restart(); err == nil || calls != 1 {
 		t.Fatalf("normal mode did not restart: calls=%d err=%v", calls, err)
+	}
+}
+
+// adr: 1170 — a watch-mode workload gets Vite's allowed-hosts override from
+// the environment's hostname; other workloads and bad hostnames get nothing.
+func TestStampDevWatchEnv(t *testing.T) {
+	env := []string{"PATH=/usr/bin", api.DevWatchHostEnv + "=dev-api.gregale.dev"}
+	got := stampDevWatchEnv(append([]string(nil), env...), true)
+	if devDebugEnvValue(got, api.DevWatchViteAllowedHostsEnv) != "dev-api.gregale.dev" {
+		t.Fatalf("watch env = %v", got)
+	}
+	if got := stampDevWatchEnv(append([]string(nil), env...), false); len(got) != len(env) {
+		t.Fatalf("non-watch env = %v", got)
+	}
+	bad := []string{api.DevWatchHostEnv + "=a.example,evil.example"}
+	if got := stampDevWatchEnv(bad, true); len(got) != 1 {
+		t.Fatalf("invalid host was stamped: %v", got)
 	}
 }

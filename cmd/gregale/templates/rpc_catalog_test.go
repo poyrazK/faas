@@ -11,11 +11,17 @@ import (
 )
 
 func TestDataAPIRPCSharedCatalog(t *testing.T) {
+	for _, name := range []string{"data-api-starter", "data-api-teams"} {
+		t.Run(name, func(t *testing.T) { testDataAPISharedCatalog(t, name) })
+	}
+}
+
+func testDataAPISharedCatalog(t *testing.T, name string) {
 	dir := t.TempDir()
-	if err := Materialize("data-api-starter", dir); err != nil {
+	if err := Materialize(name, dir); err != nil {
 		t.Fatal(err)
 	}
-	for target, source := range sharedTemplateCopies["data-api-starter"] {
+	for target, source := range sharedTemplateCopies[name] {
 		want, err := FS.ReadFile(source)
 		if err != nil {
 			t.Fatal(err)
@@ -29,7 +35,7 @@ func TestDataAPIRPCSharedCatalog(t *testing.T) {
 		}
 	}
 	archive := filepath.Join(t.TempDir(), "starter.tar.gz")
-	if err := TarGz("data-api-starter", archive); err != nil {
+	if err := TarGz(name, archive); err != nil {
 		t.Fatal(err)
 	}
 	contents, err := os.ReadFile(archive)
@@ -51,8 +57,8 @@ func TestDataAPIRPCSharedCatalog(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for target, source := range sharedTemplateCopies["data-api-starter"] {
-			if header.Name != "data-api-starter/"+target {
+		for target, source := range sharedTemplateCopies[name] {
+			if header.Name != name+"/"+target {
 				continue
 			}
 			got, err := io.ReadAll(reader)
@@ -69,7 +75,7 @@ func TestDataAPIRPCSharedCatalog(t *testing.T) {
 			seen[target] = true
 		}
 	}
-	if len(seen) != len(sharedTemplateCopies["data-api-starter"]) {
+	if len(seen) != len(sharedTemplateCopies[name]) {
 		t.Fatal("archive missing shared catalog")
 	}
 }

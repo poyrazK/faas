@@ -32,6 +32,8 @@ type Metrics struct {
 	aiBudgetAlerts         *prometheus.CounterVec
 	credentialKeyEvents    *prometheus.CounterVec
 	aiContentFindings      *prometheus.CounterVec
+	aiMedia                *prometheus.CounterVec
+	aiReplays              *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -94,7 +96,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"integration_id"}),
 		aiUsageRecordEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_usage_record_events_total",
-			Help: "AI usage settlement writes by integration and bounded event (recorded, state_error, or unavailable).",
+			Help: "AI usage settlement writes by integration and bounded event (recorded, retried, state_error after the last attempt, or unavailable).",
 		}, []string{"integration_id", "event"}),
 		relayConnections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_relay_connections_total",
@@ -124,6 +126,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_content_findings_total",
 			Help: "AI content policy findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked).",
 		}, []string{"integration_id", "kind", "action"}),
+		aiMedia: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_media_total",
+			Help: "Settled AI media usage by integration and kind (images, audio_seconds, or characters) (ADR-997).",
+		}, []string{"integration_id", "kind"}),
+		aiReplays: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_replays_total",
+			Help: "AI replays the worker finished, by state (done or failed) (ADR-997).",
+		}, []string{"state"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -146,6 +156,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiBudgetAlerts,
 		m.credentialKeyEvents,
 		m.aiContentFindings,
+		m.aiMedia,
+		m.aiReplays,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -263,6 +275,22 @@ func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, u
 			m.aiTokens.WithLabelValues(integrationID, kind).Add(float64(value))
 		}
 	}
+	if m.aiMedia == nil {
+		return
+	}
+	for kind, value := range map[string]int64{"images": usage.Images, "audio_seconds": usage.AudioSeconds, "characters": usage.Characters} {
+		if value > 0 {
+			m.aiMedia.WithLabelValues(integrationID, kind).Add(float64(value))
+		}
+	}
+}
+
+// ObserveAIReplay counts one finished replay.
+func (m *Metrics) ObserveAIReplay(state string) {
+	if m == nil || m.aiReplays == nil {
+		return
+	}
+	m.aiReplays.WithLabelValues(state).Inc()
 }
 
 func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {

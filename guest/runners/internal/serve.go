@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
@@ -29,13 +28,7 @@ const HandlerTimeout = 30 * time.Second
 // HandlerTimeout, so existing functions keep their 30 s, and never more than
 // the longest plan budget.
 func invocationTimeout(h http.Header) time.Duration {
-	timeout := HandlerTimeout
-	if ms, err := strconv.ParseInt(h.Get(api.DeadlineHeader), 10, 64); err == nil && ms > 0 {
-		if forwarded := time.Duration(ms) * time.Millisecond; forwarded > timeout {
-			timeout = forwarded
-		}
-	}
-	return min(timeout, api.RequestBudgetPlanMax)
+	return api.GuestDeadline(h.Get(api.DeadlineHeader), HandlerTimeout)
 }
 
 // Envelope is the §4.9 request a runner sends its handler, extended with the

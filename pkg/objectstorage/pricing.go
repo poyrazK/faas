@@ -9,7 +9,7 @@ import (
 
 const (
 	bytesPerGiB        int64 = 1 << 30
-	storageHoursMonth  int64 = 730
+	storageHoursMonth        = api.ObjectStorageBillingHoursPerMonth
 	requestsPerMillion int64 = 1_000_000
 )
 
@@ -19,12 +19,13 @@ var (
 )
 
 // CalculateCharge converts normalized cumulative usage into a customer-facing
-// estimate. It uses integer arithmetic throughout. Storage is priced in
-// GiB-months using the conventional 730-hour month; requests are priced per
-// million and egress per GiB. Each component is rounded up independently to
-// the nearest millicent.
-func CalculateCharge(pricing api.ObjectStoragePricing, usage api.ObjectStorageUsage) (api.ObjectStorageCharge, error) {
-	if !pricing.Valid() || len(usage.UnavailableMeters) != 0 {
+// estimate. It uses integer arithmetic throughout. The plan allowance is
+// removed from each meter first (ADR-1320); only usage above it is priced.
+// Storage is priced in GiB-months using the conventional 730-hour month;
+// requests are priced per million and egress per GiB. Each component is
+// rounded up independently to the nearest millicent.
+func CalculateCharge(pricing api.ObjectStoragePricing, usage api.ObjectStorageUsage, allowance api.ObjectStorageAllowance) (api.ObjectStorageCharge, error) {
+	if !pricing.Valid() || !allowance.Valid() || len(usage.UnavailableMeters) != 0 {
 		return api.ObjectStorageCharge{}, ErrInvalidPricing
 	}
 	for _, v := range []int64{usage.StoredByteHours, usage.RequestCount, usage.EgressBytes} {
@@ -33,15 +34,15 @@ func CalculateCharge(pricing api.ObjectStoragePricing, usage api.ObjectStorageUs
 		}
 	}
 
-	storage, err := ceilMulDiv(usage.StoredByteHours, pricing.StorageMillicentsPerGiBMonth, bytesPerGiB*storageHoursMonth)
+	storage, err := ceilMulDiv(max(usage.StoredByteHours-allowance.StoredByteHours, 0), pricing.StorageMillicentsPerGiBMonth, bytesPerGiB*storageHoursMonth)
 	if err != nil {
 		return api.ObjectStorageCharge{}, err
 	}
-	requests, err := ceilMulDiv(usage.RequestCount, pricing.RequestsMillicentsPerMillion, requestsPerMillion)
+	requests, err := ceilMulDiv(max(usage.RequestCount-allowance.Requests, 0), pricing.RequestsMillicentsPerMillion, requestsPerMillion)
 	if err != nil {
 		return api.ObjectStorageCharge{}, err
 	}
-	egress, err := ceilMulDiv(usage.EgressBytes, pricing.EgressMillicentsPerGiB, bytesPerGiB)
+	egress, err := ceilMulDiv(max(usage.EgressBytes-allowance.EgressBytes, 0), pricing.EgressMillicentsPerGiB, bytesPerGiB)
 	if err != nil {
 		return api.ObjectStorageCharge{}, err
 	}

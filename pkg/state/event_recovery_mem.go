@@ -203,6 +203,13 @@ func (m *MemStore) createEventRecoveryLocked(ctx context.Context, accountID, app
 	if active >= api.EventRecoveryActiveJobsMax {
 		return api.EventRecoveryJob{}, ErrEventRecoveryQuota
 	}
+	if req.WorkflowRuns != nil && req.ParentJobID == "" {
+		for _, target := range req.WorkflowRuns.Runs {
+			if target.ExpectedResumeCount == 0 && m.initialRecoveryPendingLocked(appID, target.RunID) {
+				return api.EventRecoveryJob{}, initialReviewBlocked("pending_recovery")
+			}
+		}
+	}
 	items, err := m.eventRecoveryCandidatesLocked(ctx, accountID, appID, req, now)
 	if err != nil {
 		return api.EventRecoveryJob{}, err

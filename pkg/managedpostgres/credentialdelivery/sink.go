@@ -170,7 +170,9 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 		// replica endpoint is optional; primary pooled/direct connections
 		// preserve the same permission contract and read-after-write behavior.
 	}
-	if access == managedpostgres.CredentialMigration {
+	// Auth logins depend on role session defaults and run GoTrue migrations,
+	// so like migration logins they must bypass the transaction pooler.
+	if access == managedpostgres.CredentialMigration || access == managedpostgres.CredentialAuth {
 		for _, endpoint := range endpoints {
 			if endpoint.Role == managedpostgres.EndpointDirect {
 				return endpoint, true

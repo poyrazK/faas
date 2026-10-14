@@ -361,6 +361,18 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 // cancellation — every other failure is observation, not load-
 // bearing for the next tick.
 func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time.Time, stats *Stats) {
+	var health *api.MCPConnectionHealthSnapshot
+	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+		ctx, health = e.withMCPConnectionHealth(ctx, rule)
+	}
+	var catalog *api.MCPCatalogMonitorSignal
+	if api.IsMCPCatalogMonitorMetric(string(rule.Metric)) {
+		ctx, catalog = e.withMCPCatalogSignal(ctx, rule)
+	}
+	var convergence *api.MCPPolicyConvergenceSnapshot
+	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
+		ctx, convergence = withMCPPolicyConvergenceSnapshot(ctx, e.store, rule)
+	}
 	observed, comparisonResult, skipReason := e.observe(ctx, rule)
 	if skipReason != "" {
 		switch skipReason {
@@ -395,13 +407,16 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	}
 
 	if !comparisonResult {
+		if health != nil {
+			e.recoverMCPConnectionHealth(ctx, rule, observed, health, now, stats)
+		}
 		// Healthy tick — comparison false. If we were firing,
 		// flip back to ok and emit audit.resolved.
 		if rule.State != state.AlertStateOk {
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil {
+			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 				e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
 					"rule_id": rule.ID,
 					"rule":    rule.Name,
@@ -415,6 +430,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
+	if health != nil && e.sameMCPHealthIncident(ctx, rule, health) {
+		_, _ = e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now)
+		_ = e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now)
+		return
+	}
 	// Comparison fires. Apply the cool-down, then build the dedupe key.
 	//
 	// The cool-down is a plain time gate on last_fired_at. The dedupe key
@@ -469,7 +489,13 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.investigationPaths(ctx, rule))
+	paths := e.investigationPaths(ctx, rule)
+	paths.mcpCatalog = catalog
+	paths.mcpHealth = health
+	if convergence != nil {
+		paths.mcpConvergence = convergence
+	}
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths)
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -519,6 +545,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
 	}
 
+	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
+}
+func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -726,6 +755,15 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+		return e.observeMCPConnectionHealth(ctx, rule)
+	}
+	if api.IsMCPCatalogMonitorMetric(string(rule.Metric)) {
+		return e.observeMCPCatalogMonitor(ctx, rule)
+	}
+	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
+		return e.observeMCPPolicyConvergence(ctx, rule)
+	}
 	if api.IsEventRetentionAlertMetric(string(rule.Metric)) {
 		return e.observeEventRetention(ctx, rule)
 	}
@@ -761,6 +799,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits:
+		return e.observeEdgeRuleHits(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -1104,6 +1144,9 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
 type investigationPaths struct {
+	mcpHealth        *api.MCPConnectionHealthSnapshot
+	mcpCatalog       *api.MCPCatalogMonitorSignal
+	mcpConvergence   *api.MCPPolicyConvergenceSnapshot
 	observations     string
 	dashboard        string
 	appID            string
@@ -1167,6 +1210,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
 	}
+	if rule.EdgeRuleID != "" {
+		m["edge_rule_id"] = rule.EdgeRuleID
+	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations
 		m["dashboard_path"] = paths.dashboard
@@ -1178,6 +1224,17 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		if paths.workflowDeadRuns != "" {
 			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
 		}
+	}
+	if paths.mcpHealth != nil {
+		m["mcp_connection_health"] = paths.mcpHealth
+		m["incident_id"] = paths.mcpHealth.Fingerprints[api.MCPConnectionHealthKind(string(rule.Metric))]
+		m["event"] = "alert.fired"
+	}
+	if paths.mcpCatalog != nil {
+		m["mcp_catalog"] = paths.mcpCatalog
+	}
+	if paths.mcpConvergence != nil {
+		m["mcp_convergence"] = paths.mcpConvergence
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
