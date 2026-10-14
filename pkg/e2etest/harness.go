@@ -1583,6 +1583,7 @@ func (h *Harness) stop() {
 		}
 	}
 	h.stopProcs(draining)
+	h.destroyLiveVMs(remaining)
 	h.stopProcs(remaining)
 }
 
