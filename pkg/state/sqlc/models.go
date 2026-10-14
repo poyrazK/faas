@@ -2028,6 +2028,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	NotBefore                    pgtype.Timestamptz
 }
 
 type BuildExportPublication struct {

@@ -584,9 +584,11 @@ type MemStore struct {
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
 	devWatch             map[string]DevWatchSetting
-	devSourcePatchSeq    int64
-	domains              map[string]CustomDomain
-	defaultDomains       map[string]string
+	// buildNotBefore holds deferred builds' not_before (ADR-20261021221906).
+	buildNotBefore    map[string]time.Time
+	devSourcePatchSeq int64
+	domains           map[string]CustomDomain
+	defaultDomains    map[string]string
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
@@ -11718,15 +11720,15 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 }
 
 func (m *MemStore) CreateBuildWithID(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
-	build, _, err := m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, nil)
+	build, _, err := m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, nil, nil)
 	return build, err
 }
 
 func (m *MemStore) CreateBuildWithIDAndActivity(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
-	return m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, &activity)
+	return m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, &activity, nil)
 }
 
-func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
+func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity, notBefore *time.Time) (Build, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[deploymentID]; !ok {
@@ -11757,6 +11759,12 @@ func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKin
 	dep.BuildID = id
 	m.putDeploymentLocked(deploymentID, dep)
 	m.builds[b.ID] = b
+	if notBefore != nil {
+		if m.buildNotBefore == nil {
+			m.buildNotBefore = map[string]time.Time{}
+		}
+		m.buildNotBefore[b.ID] = *notBefore
+	}
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(normalized)
@@ -12056,8 +12064,9 @@ func (m *MemStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 	}
 
 	n := 0
-	for _, b := range m.builds {
-		if b.Status == BuildQueued {
+	now := time.Now()
+	for id, b := range m.builds {
+		if b.Status == BuildQueued && m.buildDueLocked(id, now) {
 			n++
 		}
 	}
@@ -12133,7 +12142,7 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildDueLocked(id, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -12152,7 +12161,7 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildDueLocked(id, time.Now()) || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -12214,8 +12223,9 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 		earliest time.Time
 		found    bool
 	)
+	now := time.Now()
 	for id, b := range m.builds {
-		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, now) || !m.buildDueLocked(id, now) {
 			continue
 		}
 		if !found || b.EnqueuedAt.Before(earliest) {
@@ -12264,7 +12274,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 	}
 	var queued []candidate
 	for id, b := range m.builds {
-		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, now) || !m.buildDueLocked(id, now) {
 			continue
 		}
 		dep, ok := m.deployments[b.DeploymentID]
@@ -12349,7 +12359,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 	}
 	queued := make([]candidate, 0)
 	for id, build := range m.builds {
-		if build.Status != BuildQueued || !m.buildDependencyEligibleLocked(build, now) || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
+		if build.Status != BuildQueued || !m.buildDependencyEligibleLocked(build, now) || !m.buildDueLocked(id, now) || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
 			continue
 		}
 		dep, ok := m.deployments[build.DeploymentID]

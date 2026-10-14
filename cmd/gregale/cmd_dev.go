@@ -627,6 +627,13 @@ func cmdDev(args []string) int {
 				prefixBuildLogs:  true,
 				streamLogsOnJSON: true,
 				developerSource:  syncState,
+				// --once wants a converged deploy, not a patch (ADR-20261021221906).
+				devBuildNow: *once,
+				untilDevPatched: func(waitCtx context.Context, dep api.DeploymentResponse) (int, bool) {
+					return finishDeferredDevSync(waitCtx, dep, func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
+						return client.GetDevPatchStatus(ctx, project, workspaceID, generation)
+					}, devPatchWatchInterval, devPatchWatchTimeout, devTelemetry.patchDelivered)
+				},
 				extraSourceExcludes: func() []string {
 					excludes := make([]string, 0, 2)
 					if envFilePath != "" {
@@ -646,7 +653,7 @@ func cmdDev(args []string) int {
 					if line := patchExplainer.explain(dep.DevPatch); line != "" && !jsonOutput {
 						PrintProgress(osStdout, "%s", line)
 					}
-					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 {
+					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 && dep.DevPatch.BuildDeferredUntil == nil {
 						go watchDevPatch(deployCtx, dep.DevPatch.Generation,
 							func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
 								return client.GetDevPatchStatus(ctx, project, workspaceID, generation)

@@ -2,13 +2,16 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devpatch"
 	"github.com/onebox-faas/faas/pkg/sourcedelta"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -95,16 +98,17 @@ func (s *server) planDevPatch(ctx context.Context, app state.App, sourcePath, so
 
 // recordDevPatchSource stores the new deployment's manifest and, when
 // delivery is enabled and the sync is eligible, the patch for the live
-// deployment. Errors are logged; the deployment itself already succeeded.
-func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploymentID, sourcePath, sourceRoot string, plan devPatchPlan) {
+// deployment. It reports whether the patch was published. Errors are
+// logged; the deployment itself already succeeded.
+func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploymentID, sourcePath, sourceRoot string, plan devPatchPlan) bool {
 	store, ok := s.store.(state.DevSourcePatchStore)
 	if !ok {
-		return
+		return false
 	}
 	watch := devloop.LoadWatch(ctx, s.store, app.ID) != nil
 	if !plan.inspect {
 		s.devLoopMetrics.ObservePatchPlan(devloop.PatchUninspected, "", watch)
-		return
+		return false
 	}
 	if err := store.RecordDevSourceManifest(ctx, state.DevSourceManifest{
 		DeploymentID: deploymentID, AppID: app.ID, SourceRoot: sourceRoot,
@@ -114,23 +118,111 @@ func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploy
 	}
 	switch {
 	case plan.preview == nil:
-		return
+		return false
 	case !plan.preview.Eligible:
 		s.devLoopMetrics.ObservePatchPlan(devloop.PatchIneligible, plan.preview.Reason, watch)
-		return
+		return false
 	case plan.preview.ChangedPaths == 0:
 		s.devLoopMetrics.ObservePatchPlan(devloop.PatchNoChanges, "", watch)
-		return
+		return false
 	case !devPatchDeliveryEnabled():
 		s.devLoopMetrics.ObservePatchPlan(devloop.PatchDeliveryDisabled, "", watch)
-		return
+		return false
 	}
 	if err := s.publishDevPatch(ctx, store, app, sourcePath, sourceRoot, plan); err != nil {
 		s.log.Warn("developer live patch not published", "app_id", app.ID, "error", err)
 		s.devLoopMetrics.ObservePatchPlan(devloop.PatchPublishFailed, "", watch)
-		return
+		return false
 	}
 	s.devLoopMetrics.ObservePatchPlan(devloop.PatchPublished, "", watch)
+	return true
+}
+
+// settleDeferredDevBuild finishes ADR-20261021221906's decision once the patch is in:
+// a published patch keeps the build deferred and tells the CLI until when;
+// otherwise the build starts now, since the edit has not reached the
+// instance.
+func (s *server) settleDeferredDevBuild(ctx context.Context, app state.App, deploymentID string, notBefore time.Time, published bool, preview *api.DevPatchPreview) {
+	if notBefore.IsZero() {
+		return
+	}
+	if published && preview != nil {
+		preview.BuildDeferredUntil = &notBefore
+		s.devLoopMetrics.ObserveBuildDeferral(devloop.BuildDeferred)
+		return
+	}
+	s.startDeferredDevBuild(ctx, app, deploymentID)
+}
+
+// startDeferredDevBuilds starts every deferred build of the app now: a
+// live patch failed to apply, so the build is what delivers the edit.
+func (s *server) startDeferredDevBuilds(ctx context.Context, app state.App) {
+	deferred, ok := s.store.(state.DeferredBuildStore)
+	if !ok {
+		return
+	}
+	ids, err := deferred.DeferredDeployments(ctx, app.ID)
+	if err != nil {
+		s.log.Warn("deferred developer builds not listed; they start when their window ends", "app_id", app.ID, "error", err)
+		return
+	}
+	for _, id := range ids {
+		s.startDeferredDevBuild(ctx, app, id)
+	}
+}
+
+// startDeferredDevBuild makes one deferred build claimable now and tells
+// builderd.
+func (s *server) startDeferredDevBuild(ctx context.Context, app state.App, deploymentID string) {
+	deferred, ok := s.store.(state.DeferredBuildStore)
+	if !ok {
+		return
+	}
+	build, found, err := deferred.StartDeferredBuild(ctx, deploymentID)
+	if err != nil {
+		s.log.Warn("deferred developer build not started; it starts when its window ends", "app_id", app.ID, "deployment_id", deploymentID, "error", err)
+		return
+	}
+	if found {
+		s.devLoopMetrics.ObserveBuildDeferral(devloop.BuildStarted)
+		apidsource.NotifyBuildQueued(ctx, s.notif, s.log, build, app.ID, "")
+	}
+}
+
+// cancelSupersededDevBuilds cancels the app's other deferred developer
+// builds before they run (ADR-20261021221906): the sync just enqueued carries their
+// source, and CreateDeployment does not supersede a deployment whose build
+// is already queued. A build that started meanwhile is cancelled too; the
+// newer sync's build replaces it.
+func (s *server) cancelSupersededDevBuilds(ctx context.Context, acct state.Account, app state.App, keepDeploymentID string) {
+	deferred, ok := s.store.(state.DeferredBuildStore)
+	if !ok {
+		return
+	}
+	ids, err := deferred.DeferredDeployments(ctx, app.ID)
+	if err != nil {
+		s.log.Warn("deferred developer builds not listed; they build when their window ends", "app_id", app.ID, "error", err)
+		return
+	}
+	for _, id := range ids {
+		if id == keepDeploymentID {
+			continue
+		}
+		_, cancelledBuilds, err := s.store.CancelDeploymentTx(ctx, id, acct.ID, state.CancelReasonSystem)
+		if err != nil {
+			if !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrInvalidStateTransition) {
+				s.log.Warn("superseded developer build not cancelled", "app_id", app.ID, "deployment_id", id, "error", err)
+			}
+			continue
+		}
+		s.devLoopMetrics.ObserveBuildDeferral(devloop.BuildSuperseded)
+		for _, buildID := range cancelledBuilds {
+			raw, _ := json.Marshal(buildChangedPayload{BuildID: buildID, DeploymentID: id, Status: "cancelled", Reason: string(state.CancelReasonSystem), Cascade: true})
+			if err := s.notif.Notify(ctx, db.NotifyBuildChanged, string(raw)); err != nil {
+				s.log.Warn("superseded developer build: build_changed notify", "build", buildID, "error", err)
+			}
+		}
+	}
 }
 
 func (s *server) publishDevPatch(ctx context.Context, store state.DevSourcePatchStore, app state.App, sourcePath, sourceRoot string, plan devPatchPlan) error {

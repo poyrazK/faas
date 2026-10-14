@@ -4158,6 +4158,7 @@ type Querier interface {
 	OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error)
 	OperatorParkHoldsInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (bool, error)
 	OperatorPostCaptureSnapshot(ctx context.Context, db DBTX, instanceLookback int32) ([]OperatorPostCaptureSnapshotRow, error)
+	// Deferred builds that are not due yet (ADR-20261021221906) are not backlog.
 	OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error)
 	OperatorQueuedBuildsSnapshot(ctx context.Context, db DBTX) (OperatorQueuedBuildsSnapshotRow, error)
 	OperatorRecentFailureCounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]OperatorRecentFailureCountsRow, error)

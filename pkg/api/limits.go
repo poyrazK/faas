@@ -2030,6 +2030,13 @@ const (
 	// DevSourceCacheTTL keeps the node-local reconstruction base disposable.
 	// Cache absence is a normal condition and makes the CLI resend a full tree.
 	DevSourceCacheTTL = 24 * time.Hour
+	// DevBuildCoalesceWindow is how long apid holds back the convergence
+	// build of a developer sync that already reached the running instance
+	// as a live patch (ADR-20261021221906). Each such sync restarts the window; a
+	// developer who stops saving gets one build when it ends. It stays well
+	// inside DevSourceCacheTTL, so the patch a cold boot replays never
+	// expires before the build that replaces it.
+	DevBuildCoalesceWindow = 3 * time.Minute
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30

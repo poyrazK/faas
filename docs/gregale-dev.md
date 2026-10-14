@@ -251,20 +251,28 @@ says why, for example `build_command`, `rebuild_input_changed`,
 
 Applying eligible patches to the running environment is operator-gated while
 it completes native acceptance. Until it is enabled, `dev_patch` is a
-measurement only and the normal developer build always runs; when enabled, the
-build still runs and replaces the patched environment once it is live.
+measurement only and the normal developer build always runs.
 
-When a sync publishes a live patch, `dev_patch.generation` is set and the
-watcher follows its delivery while the build continues. As soon as the
-running environment applies it, the terminal prints
-`Live patch applied in 0.8s; the app is restarting with your edit while the full build continues.`
-The phase summary then includes `patch=0.8s` (edit-to-patch, measured on your
-machine), and `gregale dev history` shows `(live patch 0.8s)` beside the sync.
-A patch that fails to apply is reported with its reason, and the build still
-delivers the edit. With `--json`, the watcher emits a
+When a sync publishes a live patch, `dev_patch.generation` is set, and the
+patch is the sync: as soon as the running environment applies it, the
+terminal prints
+`Live patch applied in 0.8s; your edit is live. The full build runs after you stop saving.`
+and the watcher waits for your next edit. The developer build that makes the
+environment converge on a built image is held back (`dev_patch.build_deferred_until`)
+and replaced by the next sync's, so a burst of saves builds once, about three
+minutes after the last one, and the running app is not restarted by a build
+after every save. Until that build is live, a wake that starts the
+environment again replays your patches. The phase summary includes
+`patch=0.8s` (edit-to-patch, measured on your machine), and
+`gregale dev history` shows `(live patch 0.8s)` beside the sync. A patch that
+fails to apply is reported with its reason and starts the build at once,
+which the watcher then follows; a patch no instance acknowledged in time
+(for example, the environment is parked) applies when it next starts.
+`gregale dev --once` always builds. With `--json`, the watcher emits a
 `{"event":"developer_patch",...}` NDJSON record with the generation, `state`
-(`applied` or `failed`), `edit_to_patch_ms`, and `apply_ms`; the
-`developer_sync` receipt includes the same `patch` phase.
+(`applied`, `failed`, or `pending`), `edit_to_patch_ms`, `apply_ms` and
+`build_deferred`; the `developer_sync` receipt includes the same `patch`
+phase.
 
 When a sync cannot be live-patched, the terminal says why and what would make
 the app patchable, for example

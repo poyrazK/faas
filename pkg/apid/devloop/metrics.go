@@ -22,7 +22,18 @@ type Metrics struct {
 	editToLive *prometheus.HistogramVec
 	phases     *prometheus.HistogramVec
 	patchPlans *prometheus.CounterVec
+	deferrals  *prometheus.CounterVec
 }
+
+// Build deferral outcomes (ADR-20261021221906): a live-patched sync's build waits for
+// the coalescing window, starts at once because the patch was not published
+// after all, or is cancelled before it ran because a newer sync superseded
+// it (a build saved).
+const (
+	BuildDeferred   = "deferred"
+	BuildStarted    = "started"
+	BuildSuperseded = "superseded"
+)
 
 // Patch plan outcomes for a developer sync.
 const (
@@ -72,6 +83,10 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_dev_patch_plans_total",
 			Help: "Developer sync live-patch decisions (ADR-740), by outcome and ineligibility reason.",
 		}, []string{"outcome", "reason", "watch"}),
+		deferrals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_dev_build_deferrals_total",
+			Help: "Developer builds held back behind a live patch (ADR-20261021221906), by outcome: deferred, started at once because the patch was not published, or superseded by a newer sync before they ran.",
+		}, []string{"outcome"}),
 	}
 	register := func(c prometheus.Collector) prometheus.Collector {
 		if err := reg.Register(c); err != nil {
@@ -87,6 +102,10 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 	m.editToLive = register(m.editToLive).(*prometheus.HistogramVec)
 	m.phases = register(m.phases).(*prometheus.HistogramVec)
 	m.patchPlans = register(m.patchPlans).(*prometheus.CounterVec)
+	m.deferrals = register(m.deferrals).(*prometheus.CounterVec)
+	for _, outcome := range []string{BuildDeferred, BuildStarted, BuildSuperseded} {
+		m.deferrals.WithLabelValues(outcome)
+	}
 	for _, outcome := range []string{PatchPublished, PatchNoChanges, PatchDeliveryDisabled, PatchPublishFailed, PatchUninspected} {
 		m.patchPlans.WithLabelValues(outcome, "", "false")
 	}
@@ -115,6 +134,15 @@ func (m *Metrics) ObservePatchPlan(outcome, reason string, watch bool) {
 		return
 	}
 	m.patchPlans.WithLabelValues(outcome, devPatchReasonLabel(reason), strconv.FormatBool(watch)).Inc()
+}
+
+// ObserveBuildDeferral counts one deferral outcome (BuildDeferred,
+// BuildStarted or BuildSuperseded).
+func (m *Metrics) ObserveBuildDeferral(outcome string) {
+	if m == nil {
+		return
+	}
+	m.deferrals.WithLabelValues(outcome).Inc()
 }
 
 // Registry is the registerer these metrics were created on.
