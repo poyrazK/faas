@@ -946,6 +946,9 @@ func cmdApp(args []string) int {
 	if hint := requireAuthnStillOnHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
 	}
+	if hint := functionConcurrencyDeployHint(req, updated); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
 		// successfully, don't surface an unrelated auth/network blip
@@ -1337,6 +1340,16 @@ func requireAuthnStillOnHint(req api.UpdateAppRequest, updated api.AppResponse) 
 		return ""
 	}
 	return "Requests still need a Gregale bearer token: require_authn is on. Pass --no-require-authn to make the app public."
+}
+
+// functionConcurrencyDeployHint says when a function_concurrency change
+// reaches requests: imaged stamps it into the function's build (ADR-1190),
+// so the live deployment keeps its workers until the next deploy.
+func functionConcurrencyDeployHint(req api.UpdateAppRequest, updated api.AppResponse) string {
+	if req.FunctionConcurrency == nil || updated.Type != "function" {
+		return ""
+	}
+	return fmt.Sprintf("function_concurrency=%d applies from the next deploy; run `gregale deploy` to rebuild %s with it.", *req.FunctionConcurrency, updated.Slug)
 }
 
 func openPublicAuthAfterTokenRemoval(current api.AppResponse) *api.PublicAuthBlock {
