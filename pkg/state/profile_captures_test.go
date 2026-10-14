@@ -66,7 +66,7 @@ func TestProfileCaptureLifecycle(t *testing.T) {
 			}
 
 			claimed, err := store.ClaimProfileCapture(ctx, now)
-			if err != nil || claimed.ID != c.ID || claimed.AppID != app.ID || claimed.AccountID != acct.ID || claimed.Capture.DurationSeconds != 5 {
+			if err != nil || claimed.ID != c.ID || claimed.AppID != app.ID || claimed.AccountID != acct.ID || claimed.Capture.DurationSeconds != 5 || !claimed.Capture.CreatedAt.Equal(now) {
 				t.Fatalf("claim: %+v %v", claimed, err)
 			}
 			if _, err := store.ClaimProfileCapture(ctx, now); !errors.Is(err, state.ErrNotFound) {

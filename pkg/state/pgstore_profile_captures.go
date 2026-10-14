@@ -130,6 +130,9 @@ func (s *PgStore) ClaimProfileCapture(ctx context.Context, now time.Time) (Claim
 		return ClaimedProfileCapture{}, err
 	}
 	c.ID, c.AppID, c.Status = row.ID, row.AppID, api.ProfileCaptureCapturing
+	if row.CreatedAt.Valid {
+		c.CreatedAt = row.CreatedAt.Time.UTC()
+	}
 	return ClaimedProfileCapture{ID: row.ID, AppID: row.AppID, AccountID: row.AccountID, Capture: c}, nil
 }
 

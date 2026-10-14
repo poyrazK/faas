@@ -14,7 +14,7 @@ import (
 const claimQueuedProfileCapture = `-- name: ClaimQueuedProfileCapture :one
 UPDATE profile_captures SET status = 'capturing', claimed_at = $1::timestamptz
 WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued' ORDER BY q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
-RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture
+RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at
 `
 
 type ClaimQueuedProfileCaptureRow struct {
@@ -22,6 +22,7 @@ type ClaimQueuedProfileCaptureRow struct {
 	AppID     string
 	AccountID string
 	Capture   []byte
+	CreatedAt pgtype.Timestamptz
 }
 
 func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (ClaimQueuedProfileCaptureRow, error) {
@@ -32,6 +33,7 @@ func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pg
 		&i.AppID,
 		&i.AccountID,
 		&i.Capture,
+		&i.CreatedAt,
 	)
 	return i, err
 }

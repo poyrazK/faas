@@ -46,7 +46,7 @@ ORDER BY d.seq;
 -- name: ClaimQueuedProfileCapture :one
 UPDATE profile_captures SET status = 'capturing', claimed_at = sqlc.arg(now)::timestamptz
 WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued' ORDER BY q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
-RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture;
+RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at;
 
 -- name: FinishProfileCapture :execrows
 UPDATE profile_captures SET status = sqlc.arg(status)::text, capture = capture || sqlc.arg(result)::jsonb, completed_at = sqlc.arg(now)::timestamptz
