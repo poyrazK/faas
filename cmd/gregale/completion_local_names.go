@@ -13,12 +13,23 @@ func localNameCompletionTarget(words []string) (kind, prefix, inline string, ok 
 	if len(words) > 0 && words[0] == "--" {
 		words = words[1:]
 	}
-	if len(words) < 2 {
+	if len(words) == 0 {
 		return
 	}
 	prefix = words[len(words)-1]
 	prior := words[:len(words)-1]
-	if len(words) >= 4 && words[0] == "jobs" && words[1] == "defaults" && words[2] == "update" {
+	if len(prior) == 0 {
+		return
+	}
+	command := prior[0]
+	subcommand, action := "", ""
+	if len(prior) > 1 {
+		subcommand = prior[1]
+	}
+	if len(prior) > 2 {
+		action = prior[2]
+	}
+	if len(words) >= 4 && command == "jobs" && subcommand == "defaults" && action == "update" {
 		for _, option := range []string{"--remove-include", "--remove-exclude"} {
 			if strings.HasPrefix(prefix, option+"=") {
 				return "job-" + strings.TrimPrefix(option, "--"), strings.TrimPrefix(prefix, option+"="), option + "=", true
@@ -28,12 +39,12 @@ func localNameCompletionTarget(words []string) (kind, prefix, inline string, ok 
 			}
 		}
 	}
-	if len(words) >= 4 && words[0] == "secrets" && words[1] == "requirements" && words[2] == "remove" && !strings.HasPrefix(prefix, "-") {
+	if len(words) >= 4 && command == "secrets" && subcommand == "requirements" && action == "remove" && !strings.HasPrefix(prefix, "-") {
 		return "required-secret-names", prefix, "", true
 	}
-	if len(words) >= 3 && (words[0] == "jobs" && words[1] == "resume" || words[0] == "workflows" && words[1] == "resume-wait") {
+	if len(words) >= 3 && (command == "jobs" && subcommand == "resume" || command == "workflows" && subcommand == "resume-wait") {
 		kind = "job"
-		if words[0] == "workflows" {
+		if command == "workflows" {
 			kind = "workflow"
 		}
 		nameOption := "--" + kind
@@ -58,31 +69,31 @@ func localNameCompletionTarget(words []string) (kind, prefix, inline string, ok 
 		}
 		return "", "", "", false
 	}
-	if words[0] == "context" && len(words) >= 3 {
-		if len(prior) == 4 && words[1] == "presets" && words[2] == "delete" && (prior[3] == "--dry-run" || prior[3] == "--dry-run=true" || prior[3] == "--dry-run=false") && !strings.HasPrefix(prefix, "-") {
+	if command == "context" && len(words) >= 3 {
+		if len(prior) == 4 && subcommand == "presets" && action == "delete" && (prior[3] == "--dry-run" || prior[3] == "--dry-run=true" || prior[3] == "--dry-run=false") && !strings.HasPrefix(prefix, "-") {
 			return "presets", prefix, "", true
 		}
-		if words[1] == "use" && (len(prior) == 2 || len(prior) == 3 && (prior[2] == "--dry-run" || prior[2] == "--dry-run=true" || prior[2] == "--dry-run=false")) && !strings.HasPrefix(prefix, "-") {
+		if subcommand == "use" && (len(prior) == 2 || len(prior) == 3 && (prior[2] == "--dry-run" || prior[2] == "--dry-run=true" || prior[2] == "--dry-run=false")) && !strings.HasPrefix(prefix, "-") {
 			return "presets", prefix, "", true
 		}
-		if len(prior) == 3 && words[1] == "presets" && (words[2] == "show" || words[2] == "update" || words[2] == "delete" || words[2] == "rename" || words[2] == "copy") && !strings.HasPrefix(prefix, "-") {
+		if len(prior) == 3 && subcommand == "presets" && (action == "show" || action == "update" || action == "delete" || action == "rename" || action == "copy") && !strings.HasPrefix(prefix, "-") {
 			return "presets", prefix, "", true
 		}
 	}
-	if words[0] == "logs" {
-		if len(prior) >= 3 && words[1] == "defaults" && words[2] == "set" && !strings.HasPrefix(prefix, "-") && logDefaultsSetNamePosition(prior[3:]) {
+	if command == "logs" {
+		if len(prior) >= 3 && subcommand == "defaults" && action == "set" && !strings.HasPrefix(prefix, "-") && logDefaultsSetNamePosition(prior[3:]) {
 			return "views", prefix, "", true
 		}
-		if len(prior) >= 3 && words[1] == "views" && words[2] == "show" && !strings.HasPrefix(prefix, "-") && logViewShowNamePosition(prior[3:]) {
+		if len(prior) >= 3 && subcommand == "views" && action == "show" && !strings.HasPrefix(prefix, "-") && logViewShowNamePosition(prior[3:]) {
 			return "views", prefix, "", true
 		}
-		if len(prior) == 4 && words[1] == "views" && words[2] == "delete" && (prior[3] == "--dry-run" || prior[3] == "--dry-run=true" || prior[3] == "--dry-run=false") && !strings.HasPrefix(prefix, "-") {
+		if len(prior) == 4 && subcommand == "views" && action == "delete" && (prior[3] == "--dry-run" || prior[3] == "--dry-run=true" || prior[3] == "--dry-run=false") && !strings.HasPrefix(prefix, "-") {
 			return "views", prefix, "", true
 		}
-		if len(prior) == 3 && words[1] == "views" && (words[2] == "update" || words[2] == "delete" || words[2] == "rename" || words[2] == "copy") && !strings.HasPrefix(prefix, "-") {
+		if len(prior) == 3 && subcommand == "views" && (action == "update" || action == "delete" || action == "rename" || action == "copy") && !strings.HasPrefix(prefix, "-") {
 			return "views", prefix, "", true
 		}
-		if words[1] != "views" {
+		if subcommand != "views" {
 			if strings.HasPrefix(prefix, "--view=") {
 				return "views", strings.TrimPrefix(prefix, "--view="), "--view=", true
 			}
