@@ -3355,6 +3355,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
 		}
+		// A plan must refuse what the deploy would refuse. The deploy runs
+		// these manifest checks only after login, so --plan used to print
+		// an "apply this plan" for a manifest the deploy rejects (H10-67).
+		if *image == "" && !projectRequested && !*noTriggers {
+			if manifestErr := validateSingleAppManifestTargets(sourceDir, slug); manifestErr != nil {
+				return printErr("Invalid deploy manifest", manifestErr)
+			}
+		}
 		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
