@@ -1,16 +1,17 @@
 package appevents
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func lineageControlActorRequest(r *http.Request) *http.Request {
+func lineageControlActorContext(ctx context.Context, r *http.Request) context.Context {
 	principal, ok := httpkit.PrincipalFrom(r)
 	if !ok {
-		return r
+		return ctx
 	}
 	kind, id, credential := "account", principal.Acct.ID, "session"
 	if principal.Key != nil {
@@ -21,5 +22,5 @@ func lineageControlActorRequest(r *http.Request) *http.Request {
 			credential = "deploy_token"
 		}
 	}
-	return r.WithContext(state.WithEventExecutionLineageControlActor(r.Context(), principal.Acct.ID, kind, id, credential))
+	return state.WithEventExecutionLineageControlActor(ctx, principal.Acct.ID, kind, id, credential)
 }

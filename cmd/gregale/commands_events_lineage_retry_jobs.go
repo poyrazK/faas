@@ -72,12 +72,13 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		return 0
 	}
 	var out api.EventExecutionLineageRetryJob
-	if mode == "subscription-lineage-retry-job-create" {
+	switch mode {
+	case "subscription-lineage-retry-job-create":
 		if err := input.validateApp(context.Background(), client, positional[0]); err != nil {
 			return printErr("Retry file app target mismatch", err)
 		}
 		out, err = client.CreateEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], input.Request)
-	} else if mode == "subscription-lineage-retry-job-cancel" || mode == "subscription-lineage-retry-job-pause" || mode == "subscription-lineage-retry-job-resume" {
+	case "subscription-lineage-retry-job-cancel", "subscription-lineage-retry-job-pause", "subscription-lineage-retry-job-resume":
 		created, e := time.Parse(time.RFC3339Nano, expectedCreated)
 		if e != nil || created.IsZero() {
 			return printErr("Invalid job control guard", fmt.Errorf("--expected-created-at must be the original RFC3339 creation timestamp from the reviewed job"))
@@ -90,7 +91,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		default:
 			out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created, CommandID: commandID})
 		}
-	} else {
+	default:
 		out, err = client.GetEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2])
 	}
 	if err != nil {

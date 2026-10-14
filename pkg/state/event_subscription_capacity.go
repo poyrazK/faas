@@ -71,7 +71,7 @@ func (s *PgStore) setEventSubscriptionCapacity(ctx context.Context, account, app
 	if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	plan, err := q.EventSubscriptionCapacityAccount(ctx, tx, mustPgUUID(account))
 	if err != nil {

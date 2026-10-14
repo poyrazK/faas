@@ -49,7 +49,7 @@ func cmdEventsLineageControlPlanReconcile(args []string) int {
 	if err != nil {
 		return printErr("Cannot create reconciled report", err)
 	}
-	defer journal.file.Close()
+	defer func() { _ = journal.file.Close() }()
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, *timeout)

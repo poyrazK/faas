@@ -200,8 +200,8 @@ func retryEventExecutionLineageCaseTx(ctx context.Context, tx pgx.Tx, account, a
 		if c.RootInvocationID != "" && c.RootInvocationID != PublishedEventInvocationID(r.InvocationAccountID, r.Source, r.EventID, sub) {
 			return out, ErrConflict
 		}
-		row := sqlc.EventExecutionLineageRepairReceiptsRow{Payload: r.Payload, OutboxID: r.OutboxID, AcceptedAt: r.AcceptedAt, Source: r.Source, EventID: r.EventID, InvocationAccountID: r.InvocationAccountID}
-		job := sqlc.EventExecutionLineageRepairJobsRow{AccountID: owner.AccountID, AppID: owner.AppID, SubscriptionID: owner.SubscriptionID, LineageRepairProgress: owner.LineageRepairProgress}
+		row := sqlc.EventExecutionLineageRepairReceiptsRow(r)
+		job := sqlc.EventExecutionLineageRepairJobsRow(owner)
 		outcome, err = repairEventExecutionLineageRow(ctx, q, tx, job, row, timestamptzToTimePtr(c.RootCreatedAt))
 		if err != nil {
 			return out, err

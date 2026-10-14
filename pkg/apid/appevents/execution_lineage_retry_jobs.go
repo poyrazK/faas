@@ -118,8 +118,8 @@ func (s *Service) CancelEventExecutionLineageRetryJob(w http.ResponseWriter, r *
 	if !httpkit.DecodeJSONLimit(w, r, &req, api.EventExecutionLineageRetryJobBodyMaxBytes) {
 		return
 	}
-	r = lineageControlActorRequest(r)
-	out, err := store.CancelEventExecutionLineageRetryJob(r.Context(), acct.ID, app, r.PathValue("subscriptionID"), r.PathValue("requestID"), req)
+	ctx = lineageControlActorContext(ctx, r)
+	out, err := store.CancelEventExecutionLineageRetryJob(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.PathValue("requestID"), req)
 	if !writeLineageRetryJobCancelError(w, err) {
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}

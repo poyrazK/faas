@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -82,7 +83,7 @@ func readLineageControlPlan(path string) (lineageControlPlan, error) {
 	if err != nil {
 		return plan, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(file, api.EventExecutionLineageControlPlanMaxBytes+1))
 	if err != nil {
 		return plan, err
@@ -114,7 +115,7 @@ func readLineageControlPlan(path string) (lineageControlPlan, error) {
 	if err = dec.Decode(&plan); err != nil {
 		return plan, err
 	}
-	if err = dec.Decode(new(any)); err != io.EOF {
+	if err = dec.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return plan, fmt.Errorf("plan must contain one JSON object")
 	}
 	return plan, normalizeLineageControlPlan(&plan)
@@ -135,7 +136,7 @@ func buildLineageControlPlan(page api.EventExecutionLineageRetryJobs, sub, statu
 		}
 		plan.AppID = app.String()
 		detail := job.Attention
-		if (job.Status != "pending" && job.Status != "paused") || (status != "" && job.Status != status) || !sameBindingDeployment(detail.RequestID, job.RequestID) || detail.Status != job.Status || !detail.CreatedAt.Equal(job.CreatedAt) || !detail.RetainUntil.Equal(job.RetainUntil) || detail.Processed != job.Processed || detail.Selected != job.Selected || job.Selected < 1 || job.Selected > api.EventExecutionLineageRetryJobMaxCases || job.Processed < 0 || job.Processed >= job.Selected || !(attention == "any" && (detail.StalledPending || detail.RetentionRisk) || attention == "stalled" && detail.StalledPending || attention == "retention_risk" && detail.RetentionRisk) {
+		if (job.Status != "pending" && job.Status != "paused") || (status != "" && job.Status != status) || !sameBindingDeployment(detail.RequestID, job.RequestID) || detail.Status != job.Status || !detail.CreatedAt.Equal(job.CreatedAt) || !detail.RetainUntil.Equal(job.RetainUntil) || detail.Processed != job.Processed || detail.Selected != job.Selected || job.Selected < 1 || job.Selected > api.EventExecutionLineageRetryJobMaxCases || job.Processed < 0 || job.Processed >= job.Selected || ((attention != "any" || (!detail.StalledPending && !detail.RetentionRisk)) && (attention != "stalled" || !detail.StalledPending) && (attention != "retention_risk" || !detail.RetentionRisk)) {
 			return plan, fmt.Errorf("invalid attention job observation")
 		}
 		plan.Actions = append(plan.Actions, lineageControlPlanEntry{JobRequestID: job.RequestID, ExpectedCreatedAt: job.CreatedAt, RetainUntil: job.RetainUntil, Action: action, CommandID: uuid.NewString()})

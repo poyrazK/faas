@@ -266,8 +266,8 @@ func (s *PgStore) AdvanceEventExecutionLineageCaseBackfills(ctx context.Context,
 					outcome := "existing"
 					recorded := false
 					if !exists {
-						proofJob := sqlc.EventExecutionLineageRepairJobsRow{AccountID: owner.AccountID, AppID: owner.AppID, SubscriptionID: owner.SubscriptionID, LineageRepairProgress: owner.LineageRepairProgress}
-						row := sqlc.EventExecutionLineageRepairReceiptsRow{Payload: candidate.Payload, OutboxID: candidate.OutboxID, AcceptedAt: candidate.AcceptedAt, Source: candidate.Source, EventID: candidate.EventID, InvocationAccountID: candidate.InvocationAccountID}
+						proofJob := sqlc.EventExecutionLineageRepairJobsRow(owner)
+						row := sqlc.EventExecutionLineageRepairReceiptsRow(candidate)
 						outcome, e = evaluateEventExecutionLineageRow(ctx, q, tx, proofJob, row, false)
 						if e != nil {
 							return 0, e

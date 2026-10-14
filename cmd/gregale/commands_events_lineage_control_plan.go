@@ -93,7 +93,7 @@ func cmdEventsLineageControlPlan(args []string, apply bool, preflight ...bool) i
 			if err != nil {
 				return printErr("Cannot create execution report", err)
 			}
-			defer run.journal.file.Close()
+			defer func() { _ = run.journal.file.Close() }()
 		}
 		return applyLineageControlPlan(ctx, client, positional[0], plan, *file, run)
 	}

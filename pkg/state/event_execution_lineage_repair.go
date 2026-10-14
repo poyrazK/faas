@@ -132,7 +132,8 @@ func repairEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx
 func evaluateEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventExecutionLineageRepairJobsRow, row sqlc.EventExecutionLineageRepairReceiptsRow, associate bool, expected ...*time.Time) (string, error) {
 
 	var envelope eventcontract.Envelope
-	if json.Unmarshal(row.Payload, &envelope) != nil || envelope.ID != row.EventID || envelope.Source != row.Source || envelope.AccountID != row.InvocationAccountID {
+	validEnvelope := json.Unmarshal(row.Payload, &envelope) == nil
+	if !validEnvelope || envelope.ID != row.EventID || envelope.Source != row.Source || envelope.AccountID != row.InvocationAccountID {
 		return "unresolved:invalid_receipt", nil
 	}
 	id := PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, uuidString(job.SubscriptionID))

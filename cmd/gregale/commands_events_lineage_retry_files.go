@@ -51,7 +51,7 @@ func readLineageRetryRequestFile(path string) (lineageRetryRequestFile, error) {
 	if err != nil {
 		return out, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(file, api.EventExecutionLineageRetryJobBodyMaxBytes+1))
 	if err != nil {
 		return out, err

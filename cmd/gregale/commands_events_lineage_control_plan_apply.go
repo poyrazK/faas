@@ -121,7 +121,7 @@ func runLineageControlPlanEntry(ctx context.Context, client *api.Client, app str
 		observed, err := preflightLineageControlPlanEntry(ctx, client, app, plan, entry)
 		if err != nil {
 			result.Error = "resume receipt inspection failed: " + err.Error()
-			return result, nil
+			return result, nil //nolint:nilerr // Independent command failures are recorded in the result; returned errors stop the batch only for journal persistence failures.
 		}
 		if observed.Outcome == "already_acknowledged" {
 			observed.Outcome = "acknowledged"
@@ -149,7 +149,7 @@ func runLineageControlPlanEntry(ctx context.Context, client *api.Client, app str
 	}
 	if err != nil {
 		result.Error = err.Error()
-		return result, nil
+		return result, nil //nolint:nilerr // Preserve the unconfirmed command result and continue independent entries; no acknowledgment is inferred.
 	}
 	result.Outcome = "acknowledged"
 	result.Status, result.Processed, result.Selected, result.Receipt = job.Status, job.Processed, len(job.Items), job.ControlReceipt

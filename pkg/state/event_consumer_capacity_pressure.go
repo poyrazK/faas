@@ -55,7 +55,7 @@ func (s *PgStore) GetEventConsumerCapacityPressure(ctx context.Context, account,
 	if err != nil {
 		return out, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	now := time.Now().UTC()
 	q := sqlc.New()
 	if _, err = q.EventConsumerPressureTarget(ctx, tx, sqlc.EventConsumerPressureTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
@@ -156,22 +156,22 @@ func (m *MemStore) eventConsumerPressureWaitsLocked(ctx context.Context, account
 				entry.DeliveryControlReason = m.eventSubscriptionWaitingReasonLocked(account, recipient.AppID, recipient.ID, now)
 			}
 			backlogObservation(&entry.EventBacklogRecipient, now)
-			scope := -1
+			var count *int64
+			var first **time.Time
 			switch entry.WaitingReason {
 			case "capacity_consumer":
-				scope = 0
+				count, first = &counts[0], &oldest[0]
 			case "capacity_app":
-				scope = 1
+				count, first = &counts[1], &oldest[1]
 			case "capacity_account":
-				scope = 2
-			}
-			if scope < 0 {
+				count, first = &counts[2], &oldest[2]
+			default:
 				continue
 			}
-			counts[scope]++
-			if oldest[scope] == nil || entry.AcceptedAt.Before(*oldest[scope]) {
+			*count++
+			if *first == nil || entry.AcceptedAt.Before(**first) {
 				accepted := entry.AcceptedAt
-				oldest[scope] = &accepted
+				*first = &accepted
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,7 +28,7 @@ func readLineageControlHistoryArtifact(path string) (lineageControlHistoryExport
 	if err != nil {
 		return out, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(file, api.EventExecutionLineageRetryControlExportMaxBytes+1))
 	if err != nil {
 		return out, err
@@ -46,7 +47,7 @@ func readLineageControlHistoryArtifact(path string) (lineageControlHistoryExport
 	if err = decoder.Decode(&out); err != nil {
 		return out, err
 	}
-	if err = decoder.Decode(new(any)); err != io.EOF {
+	if err = decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return out, fmt.Errorf("history must contain exactly one JSON object")
 	}
 	return out, validateLineageControlHistoryArtifact(&out)
