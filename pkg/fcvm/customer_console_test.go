@@ -175,6 +175,9 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 00:58:50 INFO outbound relay started endpoint=http://127.0.0.1:2774\n",
 		"2026/10/14 00:58:50 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err=\"invalid argument\"\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
+		// A job task's log ended with the exit delivery and the kernel halt.
+		"2026/10/14 09:23:13 INFO job-exit shipped exit_code=3 error_class=failed signal=0 attempt=1\n",
+		"[    2.497231] reboot: Power off not available: System halted instead\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
 		"hello-gregale listening on :3000\n",
 	} {
