@@ -279,6 +279,18 @@ staging. On the test node `TestCrashSnapshotMetal` (no plaintext on
 storage at any point), `TestCrashSnapshotSDKMetal`, `TestLiveForkMetal`,
 `TestForkMetal` and the PgStore fork/capture tests pass on sealed
 captures, with no new leaks.
+Fork exec (ADR-732 amendment, 2026-10-14): `POST /v1/apps/{slug}/forks/{id}/execs`
+runs a command inside a running fork. On the test node, rebased onto main
+and built with Go 1.26.9 / golang.org/x/net v0.60.0 (the guest-init in the
+staged base now scans with no fix-available findings, so vmmd's scan gate
+admits cold boots), `TestForkMetal` passes including
+`exec-runs-inside-the-fork`, together with `TestCrashSnapshotMetal`,
+`TestLiveForkMetal`, `TestCrashSnapshotSDKMetal` and the PgStore
+fork/capture/exec tests, with no new leaks. The first exec run failed
+because guest-init wrapped its vsock listener with `net.FileListener`, which
+does not support AF_VSOCK; the SDK trigger failed after the rebase because
+main's outbound relay took host vsock port 1032, so the crash capture
+receiver moved to 1033.
 
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures
