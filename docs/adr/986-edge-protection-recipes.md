@@ -61,3 +61,16 @@ coherent.
 - Adding a recipe is a reviewed code change to the catalog.
 - Recipes cover every hostname the app serves, custom domains included
   (`match_host: "@app"`, ADR-1191); `--host` restricts one to a single host.
+
+## Amendment (2026-10-14): "alert me"
+
+A recipe can also create a spike alert for the rule it adds: an
+`edge_rule_activity` alert (ADR-1192 amendment) scoped to that rule, over a
+1-hour window, firing above a threshold (default 100 matches per hour), to
+a webhook URL and secret the user supplies — alerts deliver to webhooks
+only. Counting both modes means the alert keeps working after "Start
+enforcing". The dashboard checks the alert inputs and the plan's alert
+allowance before creating the rule; if the alert still fails (for example
+the webhook URL is refused), the rule stays and the page says the alert was
+not added. CLI: `gregale edge-rules recipe <id> --alert-webhook-url …
+(--alert-webhook-secret-stdin | --alert-webhook-secret …) [--alert-threshold N]`.

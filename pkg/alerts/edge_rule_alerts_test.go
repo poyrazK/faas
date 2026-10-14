@@ -24,20 +24,28 @@ const (
 // the webhook carries the rule id.
 func TestEvaluatorEdgeRuleActivity(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		metric   state.AlertMetric
-		ruleID   string
-		wantFire bool
+		name      string
+		metric    state.AlertMetric
+		ruleID    string
+		wantFire  bool
+		threshold float64
 	}{
-		{"app-wide enforced 8+5 > 10", state.AlertMetricEdgeRuleHits, "", true},
-		{"rule A enforced 8 <= 10", state.AlertMetricEdgeRuleHits, edgeRuleA, false},
-		{"rule A logged 50 > 10", state.AlertMetricEdgeRuleLogHits, edgeRuleA, true},
-		{"rule B logged 0 <= 10", state.AlertMetricEdgeRuleLogHits, edgeRuleB, false},
-		{"deleted rule counts zero", state.AlertMetricEdgeRuleHits, "33333333-3333-4333-8333-333333333333", false},
+		{"app-wide enforced 8+5 > 10", state.AlertMetricEdgeRuleHits, "", true, 0},
+		{"rule A enforced 8 <= 10", state.AlertMetricEdgeRuleHits, edgeRuleA, false, 0},
+		{"rule A logged 50 > 10", state.AlertMetricEdgeRuleLogHits, edgeRuleA, true, 0},
+		{"rule B logged 0 <= 10", state.AlertMetricEdgeRuleLogHits, edgeRuleB, false, 0},
+		{"deleted rule counts zero", state.AlertMetricEdgeRuleHits, "33333333-3333-4333-8333-333333333333", false, 0},
+		// edge_rule_activity (ADR-1192 amendment): rule A matched 8 + logged 50.
+		{"rule A activity 58 > 57", state.AlertMetricEdgeRuleActivity, edgeRuleA, true, 57},
+		{"rule A activity 58 <= 58", state.AlertMetricEdgeRuleActivity, edgeRuleA, false, 58},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			seeded, ident, _ := seedRule(t, store, tc.metric, state.AlertGt, 10)
+			threshold := tc.threshold
+			if threshold == 0 {
+				threshold = 10
+			}
+			seeded, ident, _ := seedRule(t, store, tc.metric, state.AlertGt, threshold)
 			rule := seeded
 			if tc.ruleID != "" {
 				if err := store.DeleteAlertRule(context.Background(), seeded.ID); err != nil {

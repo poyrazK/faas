@@ -284,3 +284,44 @@ func buildBlockCountries(v recipeValues) (CreateEdgeRuleRequest, error) {
 func recipeSplit(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
 }
+
+// Bounds on a recipe's "alert me" threshold (matches per hour).
+const (
+	EdgeRuleRecipeAlertDefaultPerHour = 100
+	edgeRuleRecipeAlertMaxPerHour     = 10_000_000
+)
+
+// EdgeRuleRecipeAlert builds the optional "alert me" rule for the edge rule a
+// recipe created (ADR-986 amendment): fire when the rule matches more than
+// perHour requests in an hour. It counts edge_rule_activity — matches in
+// either mode — so the alert keeps working when the rule moves from log mode
+// to enforce. Alerts deliver to a webhook only.
+func EdgeRuleRecipeAlert(recipeID, edgeRuleID string, perHour int, webhookURL, webhookSecret string) (CreateAlertRuleRequest, *Problem) {
+	recipe, ok := EdgeRuleRecipeByID(recipeID)
+	if !ok {
+		return CreateAlertRuleRequest{}, ErrValidation(fmt.Sprintf("unknown recipe %q", recipeID))
+	}
+	if edgeRuleID == "" {
+		return CreateAlertRuleRequest{}, ErrValidation("recipe alert needs the edge rule id")
+	}
+	if perHour < 1 || perHour > edgeRuleRecipeAlertMaxPerHour {
+		return CreateAlertRuleRequest{}, ErrValidation(fmt.Sprintf("alert threshold must be a whole number of matches per hour from 1 to %d", edgeRuleRecipeAlertMaxPerHour))
+	}
+	if strings.TrimSpace(webhookURL) == "" || webhookSecret == "" {
+		return CreateAlertRuleRequest{}, ErrValidation("recipe alert needs a webhook URL and secret")
+	}
+	suffix := edgeRuleID
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	return CreateAlertRuleRequest{
+		Name:          fmt.Sprintf("%s spike (%s)", recipe.Title, suffix),
+		Metric:        AlertMetricEdgeRuleActivity,
+		Comparison:    "gt",
+		Threshold:     float64(perHour),
+		WindowSpec:    "1h",
+		EdgeRuleID:    edgeRuleID,
+		WebhookURL:    strings.TrimSpace(webhookURL),
+		WebhookSecret: webhookSecret,
+	}, nil
+}

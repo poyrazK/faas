@@ -8251,7 +8251,7 @@ List protection recipes: ready-made rules that start in log mode
 
 Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
 
-`gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] <recipe>`
+`gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8259,6 +8259,10 @@ Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
 | `--host <HOST>` | restrict the rule to one hostname (default: every host the app serves) |  |
 | `--set <NAME=VALUE>` | recipe parameter name=value (repeat) |  |
 | `--enforce` | enforce immediately instead of starting in log mode |  |
+| `--alert-webhook-url <URL>` | also alert this webhook when the rule spikes |  |
+| `--alert-webhook-secret-stdin` | read the spike alert&#39;s webhook signing secret from stdin |  |
+| `--alert-webhook-secret <VALUE>` | spike alert webhook signing secret (prefer --alert-webhook-secret-stdin) |  |
+| `--alert-threshold <N>` | spike alert threshold in matches per hour (default 100) |  |
 
 Examples:
 

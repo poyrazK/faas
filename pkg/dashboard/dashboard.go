@@ -979,6 +979,9 @@ type AppEdgeRulesData struct {
 	Events EdgeRuleEventsPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
+	// RecipeAlerts is set when the plan includes alert rules, so recipe
+	// forms offer "alert me".
+	RecipeAlerts bool
 	// Hosts lists the hostnames the app serves and how many enabled rules
 	// apply to each (ADR-1191), so an uncovered custom domain stands out.
 	Hosts []EdgeRuleHostCoverage

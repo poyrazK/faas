@@ -3421,6 +3421,7 @@ const (
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-1192
 	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-1192
+	AlertMetricEdgeRuleActivity       AlertMetric = "edge_rule_activity" // ADR-1192 amendment
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.

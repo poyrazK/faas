@@ -66,6 +66,18 @@ func TestEdgeRulesRecipeCommand(t *testing.T) {
 		}
 	}
 
+	// adr: 986 — --alert-webhook-url adds an edge_rule_activity alert scoped
+	// to the new rule after creating it.
+	f = authedFakeAPI(t, `{"id":"0123456789abcdef","kind":"ip","name":"x"}`, http.StatusCreated)
+	if code := cmdEdgeRules([]string{"recipe", "block-unverified-bots", "--app", "demo", "--alert-webhook-url", "https://hooks.example.com/x", "--alert-webhook-secret", "s3cret", "--alert-threshold", "250"}); code != 0 {
+		t.Fatalf("recipe with alert exit = %d", code)
+	}
+	var alert api.CreateAlertRuleRequest
+	if err := json.Unmarshal(f.sawBody, &alert); err != nil || f.sawPath != "/v1/apps/demo/alerts" || alert.Metric != api.AlertMetricEdgeRuleActivity ||
+		alert.EdgeRuleID != "0123456789abcdef" || alert.Threshold != 250 || alert.WebhookSecret != "s3cret" {
+		t.Fatalf("alert request %s %s", f.sawPath, f.sawBody)
+	}
+
 	if code := cmdEdgeRules([]string{"recipes"}); code != 0 {
 		t.Fatalf("recipes exit = %d", code)
 	}

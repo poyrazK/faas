@@ -3094,6 +3094,10 @@ var cliCommands = []cliCommand{
 				{Name: "host", Short: "restrict the rule to one hostname (default: every host the app serves)", Value: "HOST"},
 				{Name: "set", Short: "recipe parameter name=value (repeat)", Value: "NAME=VALUE"},
 				{Name: "enforce", Short: "enforce immediately instead of starting in log mode", Bool: true},
+				{Name: "alert-webhook-url", Short: "also alert this webhook when the rule spikes", Value: "URL"},
+				{Name: "alert-webhook-secret-stdin", Short: "read the spike alert's webhook signing secret from stdin", Bool: true},
+				{Name: "alert-webhook-secret", Short: "spike alert webhook signing secret (prefer --alert-webhook-secret-stdin)", Value: "VALUE"},
+				{Name: "alert-threshold", Short: "spike alert threshold in matches per hour (default 100)", Value: "N"},
 			}},
 			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
