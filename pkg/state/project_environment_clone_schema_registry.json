@@ -2724,7 +2724,10 @@
       "path",
       "request_id",
       "rule_id",
-      "user_agent"
+      "user_agent",
+      "waf_categories",
+      "waf_rule_ids",
+      "waf_score"
     ],
     "kind": "operational"
   },
