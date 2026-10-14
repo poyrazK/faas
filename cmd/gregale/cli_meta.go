@@ -4042,7 +4042,7 @@ var cliCommands = []cliCommand{
 				{Name: "disable-signup", Short: "allow only invited or administrator-created users"},
 				{Name: "authz", Value: "FILE", Short: "JSON file declaring custom roles and policies (applied on deploy)"},
 				{Name: "email-provider", Value: "PROVIDER", Short: "HTTPS email provider", ClosedSet: []string{"resend", "postmark"}},
-				{Name: "email-from", Value: "SENDER", Short: `sender, "Name <address>" or an address`},
+				{Name: "email-from", Value: "SENDER", Short: "sender address, or a display name with the address in angle brackets"},
 				{Name: "email-api-key-stdin", Short: "read the email provider API key from stdin (prompted on a terminal)"},
 				{Name: "workflows", Short: "let authorized users start workflows (mints an events:publish key sealed in the app)"},
 				{Name: "resume", Short: "resume configuration and deployment of an existing app"},

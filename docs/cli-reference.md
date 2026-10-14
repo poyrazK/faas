@@ -11524,7 +11524,7 @@ Deploy a managed GoTrue Auth server bound to your database
 | `--disable-signup` | allow only invited or administrator-created users |  |
 | `--authz <FILE>` | JSON file declaring custom roles and policies (applied on deploy) |  |
 | `--email-provider <PROVIDER>` | HTTPS email provider | one of `resend` · `postmark` |
-| `--email-from <SENDER>` | sender, &#34;Name &lt;address&gt;&#34; or an address |  |
+| `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
 | `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
 | `--workflows` | let authorized users start workflows (mints an events:publish key sealed in the app) |  |
 | `--resume` | resume configuration and deployment of an existing app |  |

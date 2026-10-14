@@ -71,7 +71,7 @@ func cmdAuthCreate(args []string) int {
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
 	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on deploy)")
 	emailProvider := fs.String("email-provider", "", "HTTPS email provider: resend or postmark")
-	emailFrom := fs.String("email-from", "", `sender, "Name <address>" or an address`)
+	emailFrom := fs.String("email-from", "", "sender address, or a display name with the address in angle brackets")
 	emailKeyStdin := fs.Bool("email-api-key-stdin", false, "read the email provider API key from stdin (prompted on a terminal)")
 	workflows := fs.Bool("workflows", false, "let authorized users start workflows (mints an events:publish key sealed in the app)")
 	if err := parseInterspersed(fs, args); err != nil {
