@@ -20244,6 +20244,58 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/routes/awake:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteAwake
+      summary: Show which routes keep a scale-to-zero app awake.
+      description: |
+        Read-only awake-time report (ADR-1187). Awake time is the app's billed
+        running time (plan RAM + 8 MB per running second) from the usage
+        ledger. It is attributed, minute by minute, to the routes whose
+        requests restarted the idle timer: a 2xx response from an instance, or
+        a request that cold-booted it. Requests the gateway answered itself
+        (edge cache hits, edge answers, rejected credentials) never wake the
+        app and are not counted.
+
+        For each of the busiest ten routes the report estimates the awake time
+        and the change in cold wakes had that route's requests never reached
+        the app, flags routes called at a steady interval (uptime monitors,
+        pollers), and suggests serving anonymous GET traffic from the edge
+        cache or calling less often than the idle timeout. Awake time no
+        request explains (synthetic probes, scheduled prewarm, minimum
+        instances, queue, cron and waitUntil work) is reported as
+        unattributed. Minute resolution makes every figure an estimate. Uses
+        the normal read scopes, completed MFA and the DebugTelemetryEnabled
+        plan gate.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 168h }
+          description: "Start of the awake report window: a positive lookback duration (for example 7d) or an RFC3339 timestamp, clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end of the window, default now; must be within retained telemetry and not in the future."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Awake time and the routes that caused it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteAwakeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/service-wake-ahead:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29556,6 +29608,44 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitPlan
+      summary: Preview field changes for an immutable commit without approval or writes.
+      description: Requires environment read scope and a bound Git source. Verifies the immutable commit, repository identity and definition scope, then observes current intent and ownership. Values are redacted. The candidate plan cannot approve, adopt, deploy or certify runtime readiness. Request a fresh plan after source or environment changes.
+      requestBody:
+        required: true
+        description: Immutable commit to assess using the bound Git source.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRevisionRequest'
+      responses:
+        '200':
+          description: Read-only field plan with redacted values and current observation metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitPlanResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview:
     parameters:
     - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
@@ -38362,12 +38452,933 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause:
+    post:
+      tags: [events]
+      operationId: pauseEventExecutionLineageCaseBackfill
+      summary: Pause a retained lineage diagnostic scan.
+      description: Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Pauses a pending or waiting scan. Repeating pause on a paused scan leaves its metadata unchanged. Completed, cancelled and expired scans return 409. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application whose retained diagnostic scan is being paused.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Reviewed original nonzero diagnostic scan UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '200':
+          description: Current guarded scan state and preserved progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume:
+    post:
+      tags: [events]
+      operationId: resumeEventExecutionLineageCaseBackfill
+      summary: Resume a retained lineage diagnostic scan.
+      description: Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Resumes a paused scan from its saved cursor and fixed retained range. Repeating resume on a pending or waiting scan leaves metadata unchanged. Completed, cancelled and expired scans return 409. Active bulk retry jobs still govern whether the scheduler can scan. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Resume a retained lineage diagnostic scan."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Resume a retained lineage diagnostic scan."
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: "Reviewed original nonzero diagnostic scan UUID. Context: Resume a retained lineage diagnostic scan."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '200':
+          description: "Current guarded scan state and preserved progress. Context: Resume a retained lineage diagnostic scan."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: "Invalid identifier or missing original creation timestamp. Context: Resume a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Resume a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: "Request exceeds the 65536-byte body limit. Context: Resume a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventExecutionLineageCaseBackfill
+      summary: Cancel a retained lineage diagnostic scan.
+      description: Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Cancels unprocessed diagnostic work while keeping existing case records, cursor and counters. Repeating cancel on a cancelled, completed or expired scan returns its current terminal state unchanged. A cancelled scan cannot be resumed. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Cancel a retained lineage diagnostic scan."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Cancel a retained lineage diagnostic scan."
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: "Reviewed original nonzero diagnostic scan UUID. Context: Cancel a retained lineage diagnostic scan."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '200':
+          description: "Current guarded scan state and preserved progress. Context: Cancel a retained lineage diagnostic scan."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: "Invalid identifier or missing original creation timestamp. Context: Cancel a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Cancel a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: "Request exceeds the 65536-byte body limit. Context: Cancel a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill:
+    get:
+      tags: [events]
+      operationId: getEventExecutionLineageCaseBackfill
+      summary: Inspect the latest bounded lineage diagnostic scan.
+      description: Requires read scope. Reports the latest scan only, or not_requested. Counters describe examined retained receipts, not live blockers or complete history. Existing case revisions and forward repair progress are preserved. Expiry is visible immediately after the 30-day work deadline.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Inspect the latest bounded lineage diagnostic scan."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Inspect the latest bounded lineage diagnostic scan."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Latest scan status and counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: Invalid identifier or scan guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Latest scan changed or is active; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Request timed out; repeat the same request UUID and previous-request guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [events]
+      operationId: requestEventExecutionLineageCaseBackfill
+      summary: Backfill missing lineage cases from retained admission evidence.
+      description: Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Backfill missing lineage cases from retained admission evidence."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Backfill missing lineage cases from retained admission evidence."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestEventExecutionLineageCaseBackfillRequest' }
+      responses:
+        '202':
+          description: Durably accepted active diagnostic scan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '200':
+          description: Current paused, cancelled, completed or expired scan, or an empty retained range.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCaseBackfill' }
+        '400':
+          description: "Invalid identifier or scan guard. Context: Backfill missing lineage cases from retained admission evidence."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Latest scan changed or is active; stable code event_lineage_case_backfill_changed. Context: Backfill missing lineage cases from retained admission evidence."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview:
+    get:
+      tags: [events]
+      operationId: previewEventExecutionLineageRetries
+      summary: Preview unresolved or conflicting retained lineage cases.
+      description: Requires read scope. Optional exact reason filter; live pagination, not a reserved selection. Review case acceptance timestamps and revisions before submitting a fixed job selection.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Preview unresolved or conflicting retained lineage cases."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Preview unresolved or conflicting retained lineage cases."
+          schema: { type: string, format: uuid }
+        - name: reason
+          in: query
+          description: Exact reason code; empty matches all reasons.
+          schema: { type: string, maxLength: 128 }
+        - name: after
+          in: query
+          description: Exclusive outbox cursor.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          description: Page size; zero selects the default.
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Retained eligible cases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCases' }
+        '400':
+          description: Invalid identifier, selection or pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case guard changed or retained request identity reused with another selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Operation timed out; repeat submission with the same request identity and selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs:
+    get:
+      tags: [events]
+      operationId: listEventExecutionLineageRetryJobs
+      summary: List retained bulk lineage retry job summaries.
+      description: Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Optional attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs, before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more plus per-job progress/retention diagnostics and the original creation guard. This list is not capped by the health sample or 500-job health scan. Continue with next_after and the same status and attention filters. Jobs created or changing into a filtered status or warning above the cursor can require restarting from the first page. No frozen snapshot or complete backlog count is claimed. Status completed/cancelled with attention is invalid. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug selecting the owner of this lineage operation. List retained bulk lineage retry job summaries."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Subscription UUID whose retained lineage records are inspected. List retained bulk lineage retry job summaries."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          description: Omit for all retained states.
+          schema: { type: string, enum: [pending, paused, completed, cancelled] }
+        - name: after
+          in: query
+          description: Continuation cursor returned by next_after; pass unchanged with the same status filter.
+          schema: { type: string, maxLength: 128 }
+        - name: limit
+          description: "Maximum number of retained records in this response; zero selects the default. List retained bulk lineage retry job summaries."
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50, description: Zero selects the default page size. }
+        - name: attention
+          in: query
+          description: Optional warning filter; applies only to active pending/paused jobs. Empty means ordinary retained listing.
+          schema: { type: string, enum: ['', any, stalled, retention_risk] }
+      responses:
+        '200':
+          description: Retained job summaries; an existing subscription with no jobs returns an empty array.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJobs' }
+        '400':
+          description: Invalid identifier, status filter or pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Listing timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [events]
+      operationId: createEventExecutionLineageRetryJob
+      summary: Submit a fixed reviewed lineage retry selection.
+      description: Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Submit a fixed reviewed lineage retry selection."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Submit a fixed reviewed lineage retry selection."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEventExecutionLineageRetryJobRequest' }
+      responses:
+        '202':
+          description: Durably accepted pending job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '200':
+          description: Previously paused, completed or cancelled job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: "Invalid identifier, selection or pagination. Context: Submit a fixed reviewed lineage retry selection."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Case guard changed or retained request identity reused with another selection. Context: Submit a fixed reviewed lineage retry selection."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/controls:
+    get:
+      tags: [events]
+      operationId: listEventExecutionLineageRetryJobControls
+      summary: List retained immutable bulk retry control receipts.
+      description: Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Optional action, actor_id and credential_type filters combine with AND before pagination. Sequence cursors retain their original per-job meaning and may have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts remain in unfiltered history and match action filters but not nonempty attribution filters. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug selecting the owner of this lineage operation. List retained immutable bulk retry control receipts."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Subscription UUID whose retained lineage records are inspected. List retained immutable bulk retry control receipts."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: requestID
+          description: "Original bulk retry submission UUID whose command receipts are listed. List retained immutable bulk retry control receipts."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: expected_created_at
+          in: query
+          required: true
+          description: Original nonzero creation timestamp from the reviewed job.
+          schema: { type: string, format: date-time }
+        - name: after
+          description: "Opaque continuation boundary returned by the preceding control-history page. List retained immutable bulk retry control receipts."
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, maximum: 128, default: 0 }
+        - name: limit
+          description: "Maximum number of retained records in this response; zero selects the default. List retained immutable bulk retry control receipts."
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50, description: "Zero selects the default page size. Context: List retained immutable bulk retry control receipts." }
+        - name: action
+          in: query
+          description: Exact action filter; empty means all actions.
+          schema: { type: string, enum: ['', pause, resume, cancel] }
+        - name: actor_id
+          in: query
+          description: Exact original actor UUID or store for internal calls. UUIDs must use hyphenated form; casing is normalized. Empty means all actors. Attribution-free legacy receipts do not match a nonempty actor filter.
+          schema: { type: string }
+        - name: credential_type
+          in: query
+          description: Exact original credential type; empty means all types. Attribution-free legacy receipts do not match a nonempty filter.
+          schema: { type: string, enum: ['', session, api_key, deploy_token, platform_tenant_token, internal] }
+      responses:
+        '200':
+          description: Immutable command receipts, oldest sequence first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJobControls' }
+        '400':
+          description: Invalid identifier, creation guard, pagination or history filter.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Job creation guard changed; event_lineage_retry_job_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: History read timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/pause:
+    post:
+      tags: [events]
+      operationId: pauseEventExecutionLineageRetryJob
+      summary: Pause unprocessed cases in a retained bulk lineage retry job.
+      description: Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Pause unprocessed cases in a retained bulk lineage retry job."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Pause unprocessed cases in a retained bulk lineage retry job."
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Original nonzero submission UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageRetryJobRequest' }
+      responses:
+        '200':
+          description: Current job; control_receipt contains the immutable original outcome when command_id was supplied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: "Invalid identifier or missing original creation timestamp. Context: Pause unprocessed cases in a retained bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: "Request exceeds the 65536-byte body limit. Context: Pause unprocessed cases in a retained bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/resume:
+    post:
+      tags: [events]
+      operationId: resumeEventExecutionLineageRetryJob
+      summary: Resume unprocessed cases in a paused bulk lineage retry job.
+      description: "Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: "Original nonzero submission UUID. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageRetryJobRequest' }
+      responses:
+        '200':
+          description: "Current job; control_receipt contains the immutable original outcome when command_id was supplied. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: "Invalid identifier or missing original creation timestamp. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed). Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: "Request exceeds the 65536-byte body limit. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: "Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventExecutionLineageRetryJob
+      summary: Cancel unprocessed cases in a retained bulk lineage retry job.
+      description: Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation. Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it. Optional nonzero command_id atomically records an immutable cancellation acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current job state with the original control_receipt. A completed or already cancelled job remains unchanged and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409 event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID beyond the cap returns 429 without cancelling, while known command repeats and cancellation without command_id remain available. Receipts expire with the original job.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Cancel unprocessed cases in a retained bulk lineage retry job."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Cancel unprocessed cases in a retained bulk lineage retry job."
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: "Original nonzero submission UUID. Context: Cancel unprocessed cases in a retained bulk lineage retry job."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelEventExecutionLineageRetryJobRequest' }
+      responses:
+        '200':
+          description: Cancelled or previously terminal job, preserving evaluated results; optional control_receipt records the original command outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: Invalid identifier, command UUID or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Original creation timestamp does not match (event_lineage_retry_job_changed) or command UUID reused for another action (event_lineage_retry_control_command_changed).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: New command UUID exceeds the shared 128-receipt cap; stable code event_lineage_retry_control_limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: "Request exceeds the 65536-byte body limit. Context: Cancel unprocessed cases in a retained bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}:
+    get:
+      tags: [events]
+      operationId: getEventExecutionLineageRetryJob
+      summary: Inspect retained bulk lineage retry progress and per-case results.
+      description: Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated results and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage status.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Inspect retained bulk lineage retry progress and per-case results."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Event subscription identifier. Context: Inspect retained bulk lineage retry progress and per-case results."
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: "Original nonzero submission UUID. Context: Inspect retained bulk lineage retry progress and per-case results."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Retained job and case results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: "Invalid identifier, selection or pagination. Context: Inspect retained bulk lineage retry progress and per-case results."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Case guard changed or retained request identity reused with another selection. Context: Inspect retained bulk lineage retry progress and per-case results."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases:
+    get:
+      tags: [events]
+      operationId: listEventExecutionLineageCases
+      summary: List retained lineage repair cases.
+      description: Requires read scope. Cases cover recorded retained scans, not all historical gaps. No event payloads or handler errors are returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: List retained lineage repair cases."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Application event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: Exclusive outbox ID cursor.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          description: Page size; zero selects the server default.
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Retained cases or the saved guarded retry result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCases' }
+        '400':
+          description: Invalid identifier, pagination or retry guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case revision or request identity changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Lineage operation timed out; repeat the same guarded request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases/{outboxID}/retry:
+    post:
+      tags: [events]
+      operationId: retryEventExecutionLineageCase
+      summary: Recheck one reviewed lineage case with an idempotent guard.
+      description: Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Recheck one reviewed lineage case with an idempotent guard."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Application event subscription identifier. Context: Recheck one reviewed lineage case with an idempotent guard."
+          schema: { type: string, format: uuid }
+        - name: outboxID
+          in: path
+          required: true
+          description: Retained case outbox identifier.
+          schema: { type: integer, format: int64, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetryEventExecutionLineageCaseRequest' }
+      responses:
+        '200':
+          description: "Retained cases or the saved guarded retry result. Context: Recheck one reviewed lineage case with an idempotent guard."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+        '400':
+          description: "Invalid identifier, pagination or retry guard. Context: Recheck one reviewed lineage case with an idempotent guard."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Case revision or request identity changed. Context: Recheck one reviewed lineage case with an idempotent guard."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation:
+    get:
+      tags: [events]
+      operationId: getEventExecutionReconciliation
+      summary: Inspect durable execution coverage reconciliation.
+      description: Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Inspect durable execution coverage reconciliation."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Application event subscription identifier. Context: Inspect durable execution coverage reconciliation."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current reconciliation status, including completed or already qualified requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionReconciliation' }
+        '400':
+          description: Invalid subscription identifier.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Subscription reconciliation request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [events]
+      operationId: requestEventExecutionReconciliation
+      summary: Request a forward-only execution coverage boundary.
+      description: Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Application slug. Context: Request a forward-only execution coverage boundary."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Application event subscription identifier. Context: Request a forward-only execution coverage boundary."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Current reconciliation status, including completed or already qualified requests. Context: Request a forward-only execution coverage boundary."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionReconciliation' }
+        '202':
+          description: Durable request accepted; awaiting scheduler reconciliation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionReconciliation' }
+        '400':
+          description: "Invalid subscription identifier. Context: Request a forward-only execution coverage boundary."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health:
     get:
       tags: [events]
       operationId: getEventConsumerExecutionHealth
       summary: Inspect consumer execution health over a retained history window.
-      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
+      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown until requested forward-only reconciliation establishes a new boundary. Counts are not unique event totals. Completion latency starts at original event acceptance.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -38944,6 +39955,156 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '504':
           description: "Resume one event consumer with controlled draining: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity:
+    put:
+      tags: [events]
+      operationId: setEventSubscriptionCapacity
+      summary: Set a lower live-delivery ceiling for one event consumer.
+      description: "Set a lower live-delivery ceiling for one event consumer. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. The explicit integer counts pending plus dispatching invocations. Zero restores the current plan limit; positive values cannot exceed it. Lowering does not evict existing work. Pause, rate and circuit state are preserved; plan downgrades clamp the effective ceiling. Routing and replay share this limit."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: set the live-delivery ceiling for one event consumer."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: set the live-delivery ceiling for one event consumer."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionCapacityRequest' }
+      responses:
+        '200':
+          description: "Set consumer delivery capacity: current control configuration and waiting recipient counts."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeliveryControl' }
+        '400':
+          description: "Set consumer delivery capacity: invalid subscription identifier, missing capacity or capacity outside the current plan ceiling."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Set consumer delivery capacity: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptionCapacityCommands
+      summary: List retained original capacity-command receipts.
+      description: Requires apps:read or admin and MFA. Read-only newest-first pagination by recorded_at and command UUID descending. Outcome and expiry filters apply before the page limit. Each page has a fresh ownership and receipt snapshot; cursors are bound to account, app, subscription and normalized outcome filter, but do not freeze history. New commands and expiry can affect later pages. Listing never applies commands, prunes evidence or extends retention. Empty history does not prove commands never ran. Recording order does not establish delivery or execution order. Responses use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Owned application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned active subscription or retained delivery control identifier.
+          schema: { type: string, format: uuid }
+        - name: outcome
+          in: query
+          description: Original successful command outcome to include. Omission is equivalent to any.
+          schema: { type: string, enum: [any, applied, unchanged], default: any }
+        - name: limit
+          in: query
+          description: Maximum receipts in this page. Omission uses 25. Explicit zero is invalid.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: after
+          in: query
+          description: Opaque next_after from the preceding page with the same owned scope and outcome filter. Page size may change. This cursor is a boundary rather than an authorization credential.
+          schema: { type: string, maxLength: 512 }
+      responses:
+        '200':
+          description: Scoped page of original receipts and a continuation cursor when more matching retained receipts exist.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionCapacityCommands' }
+        '400':
+          description: Invalid UUID, outcome filter, page limit or scoped cursor.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Read-only command history timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionCapacityCommand
+      summary: Read retained original capacity-command evidence.
+      description: Requires apps:read or admin and MFA. Returns the original successful command request values and outcome without applying a change, consuming receipt capacity, pruning records or extending retention. The fixed retention deadline is thirty days after success. A missing or expired receipt is unavailable evidence and does not prove the command never ran. The receipt does not describe current configuration and does not establish an ordering or execution guarantee.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Owned application slug. Context: Read retained original capacity-command evidence."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Owned active subscription or retained delivery control identifier. Context: Read retained original capacity-command evidence."
+          schema: { type: string, format: uuid }
+        - name: commandID
+          in: path
+          required: true
+          description: Original nonzero hyphenated command UUID.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Immutable original successful capacity-command receipt. Cache-Control is no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
+        '400':
+          description: Invalid subscription or command UUID.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No owned target or unexpired command receipt is available. Receipt absence does not prove the command never ran.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Read-only capacity-command lookup timed out.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -55817,6 +56978,50 @@ components:
       required:
       - commit_sha
       additionalProperties: false
+    EnvironmentGitOpsChangedWebhookPayload:
+      type: object
+      description: Value-free account webhook emitted atomically with a current GitOps report or completed source poll. Unchanged status is silent; first failures and later recoveries are delivered to explicit environment.gitops.changed subscribers. The drift and source axes remain independent.
+      required: [version, transition_id, source_id, project, environment, axis, previous_status, status, generation, observed_version, observed_at, dashboard_path, changes, blocking_reasons, details_truncated]
+      properties:
+        version: { type: integer, enum: [1] }
+        transition_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        project: { type: string }
+        environment: { type: string }
+        axis: { type: string, enum: [drift, source] }
+        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified] }
+        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified] }
+        generation: { type: integer, format: int64, minimum: 0 }
+        observed_version: { type: integer, format: int64, minimum: 0 }
+        approved_revision_id: { type: string, format: uuid }
+        commit_sha: { type: string, pattern: '^[a-f0-9]{40}$' }
+        run_id: { type: string, format: uuid }
+        error_code: { type: string }
+        observed_at: { type: string, format: date-time }
+        dashboard_path: { type: string }
+        changes:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EnvironmentGitOpsChange' }
+        blocking_reasons:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        details_truncated: { type: boolean }
+    PreviewEnvironmentGitPlanResponse:
+      type: object
+      description: Read-only candidate plan pinned to a source generation and observed intent version. Values are omitted. The plan cannot authorize approval, adoption, deployment or runtime readiness. Re-run after source or environment changes.
+      required: [source_id, provider, project, environment, observed_at, read_only, values_redacted, plan]
+      properties:
+        source_id: { type: string, format: uuid }
+        provider: { type: string, enum: [github, gitlab] }
+        project: { type: string }
+        environment: { type: string }
+        observed_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        values_redacted: { type: boolean, enum: [true] }
+        plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
     PreviewEnvironmentGitRevisionResponse:
       type: object
       description: Verified Git bytes with the digest and source generation needed for approval.
@@ -57224,6 +58429,59 @@ components:
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
         evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    RouteAwakeResponse:
+      type: object
+      description: "How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time."
+      required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, other_routes_seconds, routes_limit, routes]
+      properties:
+        slug: {"type": "string"}
+        from: {"type": "string", "format": "date-time"}
+        until: {"type": "string", "format": "date-time"}
+        window_clamped: {"type": "boolean"}
+        idle_timeout_seconds: {"type": "integer", "description": "The app's effective idle timeout: how long it stays awake after its last successful request."}
+        window_seconds: {"type": "integer", "format": "int64"}
+        awake_seconds: {"type": "integer", "format": "int64"}
+        awake_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of the window's minutes with at least one instance running."}
+        mb_seconds: {"type": "integer", "format": "int64", "description": "Billed MB-seconds in the window."}
+        gb_hours: {"type": "number"}
+        wakes: {"type": "integer", "format": "int64", "description": "Cold boots in the window."}
+        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request explains: synthetic probes, scheduled prewarm, minimum instances, queue, cron and waitUntil work, or telemetry the plan's rate cap dropped."}
+        other_routes_seconds: {"type": "integer", "format": "int64", "description": "Awake time attributed to routes outside the busiest routes_limit."}
+        routes_limit: {"type": "integer"}
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RouteAwakeRoute' }
+    RouteAwakeRoute:
+      type: object
+      description: "One route's share of the app's awake time and what removing its requests would change."
+      required: [method, route, requests, wakes, awake_seconds, awake_share, gb_hours, pattern, if_removed]
+      properties:
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Route template, for example /orders/{id}."}
+        requests: {"type": "integer", "format": "int64", "description": "Requests that restarted the idle timer."}
+        wakes: {"type": "integer", "format": "int64", "description": "Cold boots this route's requests triggered."}
+        awake_seconds: {"type": "integer", "format": "int64"}
+        awake_share: {"type": "number", "minimum": 0, "maximum": 1}
+        gb_hours: {"type": "number"}
+        pattern: {"type": "string", "enum": ["periodic", "irregular"]}
+        interval_seconds: {"type": "integer", "description": "Approximate interval when pattern is periodic."}
+        if_removed: { $ref: '#/components/schemas/RouteAwakeWhatIf' }
+        suggestion: { $ref: '#/components/schemas/RouteAwakeSuggestion' }
+    RouteAwakeWhatIf:
+      type: object
+      description: "Estimated change had this route's requests never reached the app, with every other request unchanged."
+      required: [awake_seconds_saved, gb_hours_saved, wakes_change]
+      properties:
+        awake_seconds_saved: {"type": "integer", "format": "int64"}
+        gb_hours_saved: {"type": "number"}
+        wakes_change: {"type": "integer", "format": "int64", "description": "Change in cold wakes; positive when other routes would find the app parked more often."}
+    RouteAwakeSuggestion:
+      type: object
+      description: "A change that would let the app park."
+      required: [kind, message]
+      properties:
+        kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
+        message: {"type": "string"}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -57283,6 +58541,11 @@ components:
         top_consumer_requests: {"type": "integer", "format": "int64"}
         top_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
         next_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+        content_observed: {"type": "integer", "format": "int64", "description": "Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache suggestions only."}
+        content_repeats: {"type": "integer", "format": "int64", "description": "Observed responses identical to the previous one for their URL within the longest content window (1 h)."}
+        content_changes: {"type": "integer", "format": "int64", "description": "Observed responses that differed from the previous one for their URL within the longest content window."}
+        content_uncacheable: {"type": "integer", "format": "int64", "description": "Observed responses the edge cache could not store (Set-Cookie, Cache-Control no-store or private, Vary, or size)."}
+        safe_max_age_seconds: {"type": "integer", "enum": [60, 300, 3600], "description": "Longest cache lifetime at which the observed repeats would have served at most 1% stale bodies; absent until enough repeats are measured."}
     RouteAdviceImpact:
       type: object
       description: "What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."
@@ -71054,6 +72317,7 @@ components:
       description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
       required: [started_at, observed_at, routing, execution, pending_sample]
       properties:
+        capacity_pressure: { $ref: '#/components/schemas/EventConsumerCapacityPressure' }
         waiting_reasons: { $ref: '#/components/schemas/EventConsumerWaitingReasons' }
         capacity_waits: { $ref: '#/components/schemas/EventConsumerCapacityWaits' }
         started_at: { type: string, format: date-time }
@@ -71079,6 +72343,44 @@ components:
           type: object
           description: Counts for circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, and ready. Known reasons include zero counts; processing recipients are excluded.
           additionalProperties: { type: integer, format: int64, minimum: 0 }
+
+    EventConsumerCapacityPressure:
+      type: object
+      additionalProperties: false
+      description: Read-only current live slot usage and effective capacity waiting reasons from one owned subscription snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after capacity drains. Age is since event acceptance, not continuous capacity-wait duration. No capacity reservation or delivery-order guarantee.
+      required: [app_id, subscription_id, observed_at, coverage, complete, blocking_scope, configured_max_pending_deliveries, plan_max_pending_deliveries, scopes]
+      properties:
+        capacity_command_budget: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandBudget', description: "Optional receipt budget from the same snapshot and observed_at as this pressure. Absent on older servers; absence does not mean slots are available." }
+        plan_max_pending_deliveries: { type: integer, minimum: 1, description: "Current plan consumer ceiling before applying the saved subscription setting; used to validate proposed capacity changes." }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [live_slots_and_all_pending_application_recipients] }
+        complete: { type: boolean, description: "All trusted live slots and retained pending application recipients in this scope were assessed; not inferred from a bounded sample." }
+        blocking_scope: { type: string, enum: ['', consumer, app, account], description: "Current first full admission ceiling in consumer then app then account order; empty means none observed. Not inferred from recorded waits." }
+        configured_max_pending_deliveries: { type: integer, minimum: 0, description: "Saved subscription ceiling; zero uses the current plan default." }
+        scopes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: Consumer, app and account scopes in admission priority order. Waiting counts refer only to this subscription; live app/account counts include sibling deliveries in those scopes.
+          items: { $ref: '#/components/schemas/EventConsumerCapacityScope' }
+
+    EventConsumerCapacityScope:
+      type: object
+      additionalProperties: false
+      description: Current usage and ceiling together with this subscription's effective recorded waits for this scope. Advice is informational and never initiates recovery or changes controls.
+      required: [scope, live_deliveries, effective_limit, at_limit, waiting_recipients, oldest_waiting_age_seconds, advice]
+      properties:
+        scope: { type: string, enum: [consumer, app, account] }
+        live_deliveries: { type: integer, format: int64, minimum: 0, description: "Trusted pending plus dispatching delivery slots, including replay descendants; excludes untagged legacy invocations." }
+        effective_limit: { type: integer, minimum: 1, description: "Current plan ceiling, clamped by a configured subscription ceiling for consumer scope." }
+        at_limit: { type: boolean, description: "Live usage is greater than or equal to the effective ceiling." }
+        waiting_recipients: { type: integer, format: int64, minimum: 0, description: "This subscription's retained pending application recipients whose effective reason is capacity at this scope. Precedence follows the existing backlog pause, circuit, ordering and routing-state rules." }
+        oldest_waiting_accepted_at: { type: string, format: date-time, description: "Acceptance timestamp of the oldest such recipient; absent when no recipients wait at this scope." }
+        oldest_waiting_age_seconds: { type: number, format: double, minimum: 0, description: "Age since acceptance at observed_at, not continuous capacity-wait duration; zero when none wait." }
+        advice: { type: string, description: "Suggested read-only investigation or operator review based on current scope pressure." }
+
 
     EventConsumerCapacityWaits:
       type: object
@@ -71113,12 +72415,314 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
 
+    ControlEventExecutionLineageCaseBackfillRequest:
+      description: "Original scan creation guard for pausing, resuming, or cancelling a retained diagnostic backfill."
+      type: object
+      additionalProperties: false
+      required: [expected_created_at]
+      properties:
+        expected_created_at: { type: string, format: date-time, description: Exact original created_at of the reviewed retained scan. }
+    RequestEventExecutionLineageCaseBackfillRequest:
+      description: "Idempotent request identity and previous-scan guard for a bounded diagnostic backfill."
+      type: object
+      additionalProperties: false
+      required: [request_id]
+      properties:
+        request_id: { type: string, format: uuid }
+        expected_previous_request_id: { type: string, format: uuid, description: "Omit for the first request; otherwise use the latest completed, cancelled or expired request UUID. Repeated submissions preserve their original guard." }
+    EventExecutionLineageCaseBackfill:
+      description: "Retained diagnostic scan status, durable cursor, and repair counters for one subscription."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, status, through_outbox_id, cursor, scanned, recorded, existing, associated, unresolved, conflicts]
+      properties:
+        request_id: { type: string, format: uuid }
+        previous_request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [not_requested, pending, waiting_for_retry_jobs, paused, cancelled, completed, expired] }
+        through_outbox_id: { type: integer, format: int64, minimum: 0 }
+        cursor: { type: integer, format: int64, minimum: 0 }
+        scanned: { type: integer, format: int64, minimum: 0 }
+        recorded: { type: integer, format: int64, minimum: 0 }
+        existing: { type: integer, format: int64, minimum: 0 }
+        associated: { type: integer, format: int64, minimum: 0 }
+        unresolved: { type: integer, format: int64, minimum: 0 }
+        conflicts: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time, description: Work deadline; latest scan metadata remains available while its coverage row exists. }
+    CancelEventExecutionLineageRetryJobRequest:
+      description: "Original job creation guard and optional command identity for cancelling bulk lineage retries."
+      type: object
+      additionalProperties: false
+      required: [expected_created_at]
+      properties:
+        command_id: { type: string, format: uuid, description: Optional nonzero command UUID; reuse with the original cancel action and creation guard after a lost response. }
+        expected_created_at: { type: string, format: date-time, description: Exact original created_at from the reviewed retained job; fences a replacement after expiry. }
+    EventExecutionLineageRetrySelection:
+      description: "One reviewed lineage case with its revision and optional diagnostic incarnation guard."
+      type: object
+      additionalProperties: false
+      required: [outbox_id, expected_revision, accepted_at]
+      properties:
+        expected_diagnostic_id: { type: string, format: uuid, description: Required when the reviewed case has diagnostic_id; omit for legacy cases. }
+        outbox_id: { type: integer, format: int64, minimum: 1 }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+        accepted_at: { type: string, format: date-time, description: Exact original acceptance timestamp from the reviewed case. }
+    CreateEventExecutionLineageRetryJobRequest:
+      description: "Fixed bounded selection and submission UUID for a durable bulk lineage retry job."
+      type: object
+      additionalProperties: false
+      required: [request_id, cases]
+      properties:
+        request_id: { type: string, format: uuid }
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: Unique outbox identities; server normalizes ascending order for idempotency.
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetrySelection' }
+    EventExecutionLineageRetryJobItem:
+      description: "Retained evaluation status and guarded retry result for one selected case in a bulk job."
+      type: object
+      additionalProperties: false
+      required: [selection, status]
+      properties:
+        selection: { $ref: '#/components/schemas/EventExecutionLineageRetrySelection' }
+        status: { type: string, enum: [pending, cancelled, changed, unavailable, unresolved, conflict, repaired, already_associated] }
+        reason: { type: string }
+        result: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+    ControlEventExecutionLineageRetryJobRequest:
+      description: "Original job creation guard and optional idempotency UUID for a pause or resume command."
+      type: object
+      additionalProperties: false
+      required: [expected_created_at]
+      properties:
+        command_id: { type: string, format: uuid, description: Optional nonzero command UUID; reuse it with the original action and creation guard after a lost response. }
+        expected_created_at: { type: string, format: date-time, description: "Original nonzero creation timestamp from the reviewed job. Context: Control Event Execution Lineage Retry Job Request." }
+    EventExecutionLineageRetryJobControlReceipt:
+      description: "Immutable original successful control outcome with command identity, progress, and trusted actor attribution."
+      type: object
+      additionalProperties: false
+      required: [command_id, sequence, job_request_id, subscription_id, app_id, action, expected_created_at, result_status, processed, selected, job_updated_at, recorded_at, retain_until]
+      properties:
+        actor_kind: { type: string, enum: [account, credential, internal], description: Server-resolved original command actor; absent on legacy receipts. }
+        actor_id: { type: string, description: "Account UUID for a session, credential UUID for a bearer, or store for an internal call. Never a token value or session ID." }
+        credential_type: { type: string, enum: [session, api_key, deploy_token, platform_tenant_token, internal], description: Original server-resolved authentication type; absent on legacy receipts. }
+        command_id: { type: string, format: uuid }
+        sequence: { type: integer, format: int64, minimum: 1, maximum: 128 }
+        job_request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        action: { type: string, enum: [pause, resume, cancel] }
+        expected_created_at: { type: string, format: date-time }
+        result_status: { type: string, enum: [pending, paused, completed, cancelled], description: Immutable job state observed by the original command. }
+        processed: { type: integer, minimum: 0, maximum: 200 }
+        selected: { type: integer, minimum: 1, maximum: 200 }
+        job_updated_at: { type: string, format: date-time }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventExecutionLineageRetryJobControlFilters:
+      description: "Exact action and original actor filters applied before control-receipt pagination."
+      type: object
+      additionalProperties: false
+      properties:
+        action: { type: string, enum: ['', pause, resume, cancel] }
+        actor_id: { type: string, description: Exact actor UUID in hyphenated form or store for an internal caller. Empty means no filter. }
+        credential_type: { type: string, enum: ['', session, api_key, deploy_token, platform_tenant_token, internal] }
+    EventExecutionLineageRetryJobControls:
+      description: "Observed scoped page of retained bulk-job control receipts and its continuation cursor."
+      type: object
+      additionalProperties: false
+      required: [controls]
+      properties:
+        controls:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobControlReceipt' }
+        next_after: { type: integer, format: int64, minimum: 1, maximum: 128 }
+    EventExecutionLineageRetryJobSummary:
+      description: "Retained bulk retry job identity, creation guards, lifecycle status, and progress summary."
+      type: object
+      additionalProperties: false
+      required: [request_id, subscription_id, app_id, status, selected, processed, created_at, updated_at, retain_until]
+      properties:
+        last_progress_at: { type: string, format: date-time, description: Last known committed evaluation or skip; absent for unevaluated or legacy jobs. }
+        attention: { $ref: "#/components/schemas/EventExecutionLineageRetryJobHealthSample" }
+        request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, paused, completed, cancelled] }
+        selected: { type: integer, minimum: 1, maximum: 200 }
+        processed: { type: integer, minimum: 0, maximum: 200, description: Cases evaluated or skipped; cancelled items are not counted. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventExecutionLineageRetryJobAttentionOptions:
+      description: "Warning filter selecting retained retry jobs with inactivity or retention pressure."
+      type: object
+      additionalProperties: false
+      properties:
+        attention: { type: string, enum: ['', any, stalled, retention_risk] }
+    EventExecutionLineageRetryJobAttentionPage:
+      type: object
+      additionalProperties: false
+      description: Current matching-page observations; no total count or frozen membership is promised.
+      required: [coverage, filter, observed_at, has_more, inactivity_warning_seconds, retention_warning_seconds]
+      properties:
+        coverage: { type: string, enum: [live_matching_retry_jobs_page] }
+        filter: { type: string, enum: [any, stalled, retention_risk] }
+        observed_at: { type: string, format: date-time }
+        has_more: { type: boolean, description: Another matching row was observed after this page; consistent with next_after. }
+        inactivity_warning_seconds: { type: integer, format: int64, minimum: 0 }
+        retention_warning_seconds: { type: integer, format: int64, minimum: 0 }
+    EventExecutionLineageRetryJobs:
+      description: "Scoped live page of retained bulk lineage retry job summaries."
+      type: object
+      additionalProperties: false
+      required: [jobs]
+      properties:
+        attention: { $ref: "#/components/schemas/EventExecutionLineageRetryJobAttentionPage" }
+        jobs:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobSummary' }
+        next_after: { type: string, maxLength: 128, description: Continuation cursor; omitted when no further page was observed. }
+    EventExecutionLineageRetryJob:
+      description: "Durable bulk lineage retry status, original selection, per-case results, and optional command receipt."
+      type: object
+      additionalProperties: false
+      required: [request_id, subscription_id, app_id, status, processed, items, created_at, updated_at, retain_until]
+      properties:
+        last_progress_at: { type: string, format: date-time, description: Last committed evaluation or skip recorded by upgraded workers. Absent before the first evaluation or for older snapshots; controls do not change it. }
+        control_receipt:
+          description: Immutable command outcome accompanying a UUID-keyed control response; outer job fields are current observations.
+          allOf: [{ $ref: '#/components/schemas/EventExecutionLineageRetryJobControlReceipt' }]
+        request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, paused, completed, cancelled] }
+        processed: { type: integer, minimum: 0, maximum: 200, description: Cases evaluated or skipped before cancellation; cancelled items are not counted. }
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobItem' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventExecutionLineageCase:
+      description: "Retained reason-coded lineage diagnostic with revision and incarnation guards for reevaluation."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, outbox_id, accepted_at, status, reason, revision, retry_count, recorded_at, retain_until]
+      properties:
+        diagnostic_id: { type: string, format: uuid, description: Unique incarnation of a diagnostically created case; required in its retry guards. }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        outbox_id: { type: integer, format: int64, minimum: 1 }
+        accepted_at: { type: string, format: date-time }
+        root_invocation_id: { type: string, format: uuid }
+        root_created_at: { type: string, format: date-time }
+        status: { type: string, enum: [unresolved, conflict, repaired, already_associated] }
+        reason: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        retry_count: { type: integer, format: int64, minimum: 0 }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventExecutionLineageCases:
+      description: "Scoped page of retained execution-lineage diagnostics with a continuation boundary."
+      type: object
+      additionalProperties: false
+      required: [cases]
+      properties:
+        cases:
+          type: array
+          items: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+        next_after: { type: integer, format: int64, minimum: 1 }
+    RetryEventExecutionLineageCaseRequest:
+      description: "Idempotent reevaluation identity and reviewed revision guard for a single lineage case."
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_revision]
+      properties:
+        expected_diagnostic_id: { type: string, format: uuid, description: "Required when the reviewed case has diagnostic_id; omit for legacy cases. Context: Retry Event Execution Lineage Case Request." }
+        request_id: { type: string, format: uuid }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+
+    EventExecutionReconciliation:
+      description: "Subscription execution-coverage status and durable progress of forward reconciliation and legacy repair."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, status, unattributed_execution_present, repair_scanned, repair_repaired, repair_unresolved, repair_conflicts]
+      properties:
+        repair_scanned: { type: integer, format: int64, minimum: 0, description: Cumulative retained receipt candidates examined by this request. }
+        repair_repaired: { type: integer, format: int64, minimum: 0, description: Newly associated authoritative roots; existing associations are not counted. }
+        repair_unresolved: { type: integer, format: int64, minimum: 0, description: Examined candidates with missing or incompatible execution evidence; not a live blocker count. }
+        repair_conflicts: { type: integer, format: int64, minimum: 0, description: Examined candidates with competing acceptance or incompatible existing lineage; not a live blocker count. }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [not_requested, waiting_for_lineage, completed, not_required] }
+        requested_at: { type: string, format: date-time }
+        collection_started_at: { type: string, format: date-time }
+        unattributed_execution_present:
+          type: boolean
+          description: A retained app invocation lacks authoritative ledger lineage; unrelated app invocations can conservatively block reconciliation.
+
+    EventExecutionLineageRetryJobHealth:
+      type: object
+      additionalProperties: false
+      description: Bounded retained pending and paused lineage retry jobs at observed_at. Independent of the execution window and handler outcome completeness. Earliest retention deadlines are observed first. When counts_complete is false counts are lower bounds and oldest/next timestamps describe only observed jobs. Stalled pending is an advisory inactivity warning; pause/resume activity can reset inactivity without changing last progress. Legacy evaluated jobs without a progress timestamp report unknown progress. No handler payloads or case selections are included.
+      required: [coverage, counts_complete, job_limit, inactivity_warning_seconds, retention_warning_seconds, observed_jobs, pending_jobs, paused_jobs, remaining_cases, pending_remaining_cases, paused_remaining_cases, stalled_pending_jobs, retention_risk_jobs, unknown_progress_jobs, jobs]
+      properties:
+        coverage: { type: string, enum: [bounded_retained_active_lineage_retry_jobs] }
+        counts_complete: { type: boolean }
+        job_limit: { type: integer, minimum: 1, maximum: 500 }
+        inactivity_warning_seconds: { type: integer, format: int64, minimum: 0 }
+        retention_warning_seconds: { type: integer, format: int64, minimum: 0 }
+        observed_jobs: { type: integer, format: int64, minimum: 0 }
+        pending_jobs: { type: integer, format: int64, minimum: 0 }
+        paused_jobs: { type: integer, format: int64, minimum: 0 }
+        remaining_cases: { type: integer, format: int64, minimum: 0 }
+        pending_remaining_cases: { type: integer, format: int64, minimum: 0 }
+        paused_remaining_cases: { type: integer, format: int64, minimum: 0 }
+        stalled_pending_jobs: { type: integer, format: int64, minimum: 0 }
+        retention_risk_jobs: { type: integer, format: int64, minimum: 0 }
+        unknown_progress_jobs: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_activity_at: { type: string, format: date-time }
+        next_retain_until: { type: string, format: date-time }
+        jobs:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobHealthSample' }
+    EventExecutionLineageRetryJobHealthSample:
+      description: "Bounded active-job diagnostic with inactivity, expiry, progress evidence, and original creation guards."
+      type: object
+      additionalProperties: false
+      required: [request_id, status, processed, selected, remaining, created_at, last_activity_at, inactivity_age_seconds, progress_known, stalled_pending, retention_risk, retain_until, retention_seconds]
+      properties:
+        request_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, paused] }
+        processed: { type: integer, minimum: 0, maximum: 200 }
+        selected: { type: integer, minimum: 1, maximum: 200 }
+        remaining: { type: integer, minimum: 1, maximum: 200 }
+        created_at: { type: string, format: date-time, description: Original job incarnation guard for operator controls. }
+        last_activity_at: { type: string, format: date-time, description: Authoritative job update timestamp; includes progress and state changes. }
+        inactivity_age_seconds: { type: number, minimum: 0 }
+        last_progress_at: { type: string, format: date-time, description: Last committed case evaluation or skip; absent for unevaluated or legacy jobs. }
+        progress_age_seconds: { type: number, minimum: 0, description: Age since known last progress or creation before the first evaluation. Absent for legacy evaluated jobs without progress evidence. }
+        progress_known: { type: boolean }
+        stalled_pending: { type: boolean, description: Pending with no job activity for at least 15 minutes; paused jobs never match. Advisory and not proof of scheduler failure. }
+        retention_risk: { type: boolean, description: Active job expires within 24 hours; includes deliberately paused work. }
+        retain_until: { type: string, format: date-time }
+        retention_seconds: { type: number, minimum: 0 }
     EventConsumerExecutionHealth:
       type: object
       additionalProperties: false
       description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use an immutable, per-subscription outcome ledger with 30-day retention. Window evidence survives source deletion and is independent of retained execution-state truncation. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. History completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial.'
       required: [subscription_id, app_id, observed_at, window_start, coverage, history_complete, truncated, retained_roots, missing_roots, executions, queued, running, retrying, succeeded, failed, expired, dead_lettered, cancelled, superseded, unknown, successful_attempts, failed_attempts, unknown_attempts, window_completions, window_dead_letters, handler_failure_pct, dead_letter_rate_per_second, completion_latency_p95_seconds]
       properties:
+        lineage_retry_jobs: { $ref: "#/components/schemas/EventExecutionLineageRetryJobHealth" }
         window_coverage: { type: string, enum: [durable_execution_outcomes], description: 'Evidence scope for attempt rates and completion latency; current invocation states retain their separate bounded scope.' }
         window_history_complete: { type: boolean, description: 'True when the requested ledger window has a known baseline and no lost, expired or unknown outcomes.' }
         window_history_status: { type: string, enum: [complete, partial, unknown] }
@@ -71263,12 +72867,88 @@ components:
         configured: { type: boolean }
         policy: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
 
+    EventSubscriptionCapacityGuard:
+      type: object
+      additionalProperties: false
+      description: Value preconditions checked atomically before changing subscription capacity. Both fields are required. Checks saved configuration and the current plan allowance; live usage is not reserved.
+      required: [max_pending_deliveries, plan_max_pending_deliveries]
+      properties:
+        max_pending_deliveries: { type: integer, minimum: 0, description: "Expected saved setting, including zero for plan default; may exceed a downgraded plan ceiling." }
+        plan_max_pending_deliveries: { type: integer, minimum: 1, description: Expected current plan consumer ceiling before applying a subscription override. }
+
+    EventSubscriptionCapacityRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit per-subscription live-delivery ceiling. Zero restores the plan default; positive values must not exceed the current plan ceiling. Requires deploy write or admin scope and MFA.
+      required: [max_pending_deliveries]
+      properties:
+        command_id: { type: string, format: uuid, description: "Optional nonzero command UUID scoped to this owned subscription. Repeat the same value and expectations while its 30-day receipt remains retained; repeats return the original receipt without applying again, even after later settings or plan changes. Different normalized inputs conflict. No guarantee after expiry or deletion." }
+        expected: { $ref: '#/components/schemas/EventSubscriptionCapacityGuard' }
+        max_pending_deliveries: { type: integer, minimum: 0, description: Maximum pending plus dispatching deliveries; zero restores the current plan default. }
+
+    EventSubscriptionCapacityCommands:
+      type: object
+      required: [app_id, subscription_id, outcome, observed_at, receipts, has_more]
+      description: One fresh page of retained original command evidence. History order does not establish execution order or current configuration.
+      properties:
+        app_id: { type: string, format: uuid, description: Owned application identifier. }
+        subscription_id: { type: string, format: uuid, description: Owned subscription or retained control identifier. }
+        outcome: { type: string, enum: [any, applied, unchanged], description: Normalized original-outcome filter for this page. }
+        observed_at: { type: string, format: date-time, description: Logical observation time shared by this page. }
+        receipts:
+          type: array
+          maxItems: 100
+          description: Matching unexpired original receipts in descending recorded_at and command UUID order. An accessible empty history returns an empty array.
+          items: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
+        has_more: { type: boolean, description: Whether another matching retained receipt existed at this observation. }
+        next_after: { type: string, maxLength: 512, description: Opaque scope-bound boundary for the next page. Present only when has_more is true. }
+
+    EventSubscriptionCapacityCommandBudget:
+      type: object
+      additionalProperties: false
+      description: Complete scoped advisory observation of all unexpired successful capacity-command receipts. Neither reserves receipt slots nor modifies retention. Known unchanged-input command repeats remain available when full; commands without UUIDs have no idempotent receipt evidence.
+      required: [app_id, subscription_id, observed_at, complete, retained_receipts, limit, remaining_slots, full, advice]
+      properties:
+        app_id: { type: string, format: uuid, description: "Owned application identifier. Context: Event Subscription Capacity Command Budget." }
+        subscription_id: { type: string, format: uuid, description: "Owned subscription or retained control identifier. Context: Event Subscription Capacity Command Budget." }
+        observed_at: { type: string, format: date-time, description: Logical observation time used for receipt expiry. }
+        complete: { type: boolean, description: All matching unexpired receipts were counted rather than sampled from a history page. }
+        retained_receipts: { type: integer, minimum: 0, maximum: 128, description: Successful applied and unchanged command receipts whose retention deadline is after observed_at. }
+        limit: { type: integer, enum: [128], description: Maximum retained receipts per subscription. }
+        remaining_slots: { type: integer, minimum: 0, maximum: 128, description: Limit minus retained receipts at the observation. Concurrent writes may consume slots. }
+        full: { type: boolean, description: Whether no slots for new command UUIDs were available at the observation. }
+        earliest_expiry_at: { type: string, format: date-time, description: Earliest retained receipt deadline that could free a slot. Omitted when no receipts remain. Logical expiry frees quota without waiting for physical pruning. }
+        advice: { type: string, description: Advisory guidance without a reservation or write authorization guarantee. }
+
+    EventSubscriptionCapacityCommandReceipt:
+      type: object
+      additionalProperties: false
+      description: Immutable acknowledgment of a successful capacity command. The surrounding control response reports current state; this receipt preserves the original outcome. Retained for 30 days without extension on repeat. No event payloads or credentials.
+      required: [command_id, app_id, subscription_id, requested_max_pending_deliveries, previous_max_pending_deliveries, plan_max_pending_deliveries, effective_max_pending_deliveries, outcome, recorded_at, retain_until]
+      properties:
+        command_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        requested_max_pending_deliveries: { type: integer, minimum: 0 }
+        expected: { $ref: '#/components/schemas/EventSubscriptionCapacityGuard' }
+        previous_max_pending_deliveries: { type: integer, minimum: 0 }
+        plan_max_pending_deliveries: { type: integer, minimum: 1 }
+        effective_max_pending_deliveries: { type: integer, minimum: 1 }
+        outcome: { type: string, enum: [applied, unchanged], description: "Whether the original successful command changed the saved setting; both consume a receipt slot." }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+
     EventSubscriptionDeliveryControl:
       type: object
       additionalProperties: false
       description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
-      required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds]
+      required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, max_pending_deliveries, effective_max_pending_deliveries, live_deliveries]
       properties:
+        capacity_command_budget: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandBudget', description: "Optional complete receipt budget in read-only delivery-control status. Mutation responses may omit it; absence means unknown." }
+        capacity_command_receipt: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
+        max_pending_deliveries: { type: integer, minimum: 0, description: Configured live-delivery ceiling; zero uses the current plan limit. }
+        effective_max_pending_deliveries: { type: integer, minimum: 1, description: Effective ceiling after applying the current plan limit. }
+        live_deliveries: { type: integer, format: int64, minimum: 0, description: Current pending plus dispatching invocations with trusted delivery slots; excludes untagged legacy work. }
         circuit_breaker: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -89360,7 +91040,7 @@ components:
 
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe a target to release events emitted by every app owned by the active account.
+      description: Subscribe to account release outcomes and environment GitOps status transitions.
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -89368,9 +91048,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 4
+          maxItems: 5
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -89534,9 +91214,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 4
+          maxItems: 5
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }

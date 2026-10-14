@@ -6,14 +6,13 @@
 //     `Idempotency-Key` header. The server replays the same response
 //     for the same key within 24h (apid's idempotency middleware).
 //   * GET/HEAD skip the header — the server doesn't dedupe reads.
-//   * Default behaviour: the SDK auto-mints a fresh UUIDv4 on EVERY
-//     mutating attempt (per-attempt, not per-call) so the server's
-//     24h replay window sees a fresh retry budget per attempt.
+//   * Default behaviour: the SDK auto-mints a fresh UUIDv4 per logical
+//     mutating call. Every retry of that call keeps the same key, so the
+//     server can replay an accepted response instead of repeating the write.
 //   * Opt-in: callers can pin a stable key via `client.setIdempotencyKey`
 //     for retry semantics that survive across processes (CI deploys,
 //     idempotent batch jobs, etc.). The key is process-wide, attached
-//     to the FaaSClient instance, and reset on the next mutating call
-//     unless the caller sets it again.
+//     to the FaaSClient instance, and persists until explicitly replaced.
 //
 // The async-local-storage wire-in (per-call key without touching
 // the FaaSClient instance) is deferred to a doc-driven follow-up;

@@ -1046,7 +1046,16 @@ func (r *server) GetQueueBindingStatus(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Event, p2 state.Account, p3 bool) error {
 	return r.handleBillingEventWithOptions(p0, p1, p2, p3)
 }
-func (r *server) Handler() http.Handler                       { return r.handler() }
+func (r *server) Handler() http.Handler { return r.handler() }
+
+func (r *server) GitOpsDashboardRequestForTest(request *http.Request) (any, string, error) {
+	body, _, method, err := r.environmentGitOpsDashboardRequest(request)
+	return body, method, err
+}
+func (r *server) GitOpsPreviewArchiveForTest(t *testing.T, definition, resolvedSHA string) {
+	r.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
+		archive: environmentGitOpsArchiveDefinition(t, definition), resolvedSHA: resolvedSHA}
+}
 func (r *server) Idempotent(p0 accountHandler) accountHandler { return r.idempotent(p0) }
 func (r *server) ImagedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.imagedMetricsDiscovery(p0, p1)

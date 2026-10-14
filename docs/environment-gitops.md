@@ -205,6 +205,61 @@ check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
 
+## Preview a pull or merge request
+
+Preview a candidate before approving it, including on a binding that has no
+approved revision yet:
+
+```sh
+gregale projects environments gitops plan shop staging \
+  --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
+```
+
+Gregale verifies the commit through the bound provider and plans against current
+scoped intent and ownership. It returns the commit, digest, source generation,
+observed intent version and plan hash. Before/after values are omitted. It
+creates no revision, ownership claim, workload reservation or run. Its candidate
+hash cannot authorize approval or adoption. Refresh after source or environment
+changes; a passing check does not prove qualification or serving readiness.
+
+JSON is the default. `--fail-on-blocked` prints the result before exit 2 for
+ownership conflicts and unsupported operations. Exit 1 means the request or
+response could not be validated. See the
+[GitHub Actions and GitLab CI examples](../examples/gitops-ci/README.md) for
+summaries, artifacts and read-only `project_environments:read` credentials.
+
+Before adoption, unmanaged edits can change the plan hash while the managed
+intent counter remains zero. The hash includes the actual observed fields;
+candidate plans always require a fresh request and grant no write authority.
+
+## Receive drift and source notifications
+
+Subscribe an account receiver explicitly to `environment.gitops.changed`:
+
+```sh
+printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+  --target-url https://alerts.example.test/gregale \
+  --event environment.gitops.changed --from-stdin
+```
+
+The `drift` axis reports `in_sync`, `drifted`, `blocked` or `unavailable` for
+current observations. The independent `source` axis reports `verified`,
+`blocked` or `unavailable`; an outage preserves the last approved definition.
+An initial healthy result establishes a silent baseline. Failures and later
+recoveries notify; unchanged status stays quiet. Stale reports cannot change
+the current baseline. New receivers get future transitions; inspect GitOps
+status for the current report. Drift reporting retains its operator opt-in; source
+notifications follow completed polls. Existing fleet stale-poll alerts remain
+separate from confirmed access loss.
+
+Signed payloads include a transition UUID, approved revision/commit when known,
+generation, observation version, field paths/actions, stable error/blocker codes,
+and a dashboard link. They omit values, secret-reference targets and credentials.
+Field and blocker details are limited to 100 each; `details_truncated` identifies
+shortened payloads. Baselines and all receiver deliveries commit together and
+survive restart and report pruning. Existing retries, receiver controls and
+account quotas apply. Native qualification and enforcement keep their gates.
+
 ## Isolated enforcement acceptance
 
 The real apid enforcement worker can run only in an isolated development

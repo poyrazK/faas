@@ -157,6 +157,10 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 		if err = observeEventExecutionLedgerWindow(ctx, q, tx, &out, account); err != nil {
 			return out, err
 		}
+		out.LineageRetryJobs, err = observeLineageRetryJobHealth(ctx, q, tx, account, app, sub, now)
+		if err != nil {
+			return out, err
+		}
 		return out, tx.Commit(ctx)
 	}
 	executions, err := q.EventConsumerExecutionInvocations(ctx, tx, sqlc.EventConsumerExecutionInvocationsParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), NowAt: pgtypeFromTime(now), Roots: ids, InvocationLimit: api.EventConsumerExecutionInvocationsMax + 1})
@@ -194,6 +198,10 @@ func (s *PgStore) GetEventConsumerExecutionHealth(ctx context.Context, account, 
 		applyExecutionCoverage(&out, c, coverage.AttemptsExpired)
 	}
 	if err = observeEventExecutionLedgerWindow(ctx, q, tx, &out, account); err != nil {
+		return out, err
+	}
+	out.LineageRetryJobs, err = observeLineageRetryJobHealth(ctx, q, tx, account, app, sub, now)
+	if err != nil {
 		return out, err
 	}
 	return out, tx.Commit(ctx)
@@ -327,6 +335,11 @@ func (m *MemStore) GetEventConsumerExecutionHealth(ctx context.Context, account,
 		applyExecutionCoverage(&out, c, expired)
 	}
 	m.observeEventExecutionLedgerWindowLocked(&out, account)
+	var healthErr error
+	out.LineageRetryJobs, healthErr = m.observeLineageRetryJobHealthLocked(app, sub, now)
+	if healthErr != nil {
+		return out, healthErr
+	}
 	return out, nil
 }
 

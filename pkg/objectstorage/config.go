@@ -287,12 +287,12 @@ func (r *Registry) Backends() []Backend {
 // ChargeForUsage returns a customer-facing estimate when the operator has
 // configured a rate card. A nil result is intentional when pricing is absent:
 // deployments can qualify accounting and safety budgets before choosing
-// customer prices.
-func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage) (*api.ObjectStorageCharge, error) {
+// customer prices. The allowance is the account plan's included usage.
+func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage, allowance api.ObjectStorageAllowance) (*api.ObjectStorageCharge, error) {
 	if r == nil || r.Pricing == nil || r.Accounting.GatewaySafety() {
 		return nil, nil
 	}
-	charge, err := CalculateCharge(*r.Pricing, usage)
+	charge, err := CalculateCharge(*r.Pricing, usage, allowance)
 	if err != nil {
 		return nil, err
 	}

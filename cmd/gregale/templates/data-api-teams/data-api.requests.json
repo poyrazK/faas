@@ -1,0 +1,1640 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "team-access",
+      "requests": [
+        {
+          "name": "owner reads shared order",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001&select=id",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner cannot read other team",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000002",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "member reads shared order",
+          "identity": "member",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001&select=id",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001"
+              }
+            ]
+          }
+        },
+        {
+          "name": "other cannot read shop-a",
+          "identity": "other",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "other cannot save shop-a",
+          "identity": "other",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1200,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "outsider cannot read shop-a",
+          "identity": "outsider",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "outsider cannot save shop-a",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1200,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Other reads actual membership despite forged tenant",
+          "identity": "other",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000002&select=id",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Member cannot promote self",
+          "identity": "member",
+          "method": "PATCH",
+          "path": "/rest/v1/team_members?subject=eq.ann",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "role": "owner"
+          }
+        },
+        {
+          "name": "Member cannot join other team",
+          "identity": "member",
+          "method": "POST",
+          "path": "/rest/v1/team_members",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "tenant_id": "shop-b",
+            "subject": "ann",
+            "role": "owner"
+          }
+        },
+        {
+          "name": "Membership is unchanged",
+          "identity": "member",
+          "method": "GET",
+          "path": "/rest/v1/team_members?select=tenant_id,role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "tenant_id": "shop-a",
+                "role": "member"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Read-only member cannot save",
+          "identity": "member",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1200,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "REST cannot bypass save scope",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/team_orders",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "id": "00000000-0000-4000-8000-000000000003",
+            "tenant_id": "shop-a",
+            "created_by": "alice",
+            "total_cents": 0
+          }
+        },
+        {
+          "name": "REST update cannot bypass version check",
+          "identity": "owner",
+          "method": "PATCH",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "total_cents": 0
+          }
+        },
+        {
+          "name": "Receipts cannot be read directly",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_order_receipts",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "order-saves",
+      "requests": [
+        {
+          "name": "Owner creates",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1200,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Same operation replays",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1200,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Changed payload conflicts",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1300,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Owner updates expected version",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000002",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 1,
+            "order_total": 1500,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Update replays without increment",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000002",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 1,
+            "order_total": 1500,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Stale version conflicts",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000004",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 1,
+            "order_total": 1600,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Admin independently scopes same key",
+          "identity": "admin",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 2,
+            "order_total": 1800,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Member sees team update",
+          "identity": "member",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000003&select=id,total_cents,version",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "00000000-0000-4000-8000-000000000003",
+                "total_cents": 1800,
+                "version": 3
+              }
+            ]
+          }
+        },
+        {
+          "name": "Original create receipt survives edits",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "10000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "order_id": "00000000-0000-4000-8000-000000000003",
+            "expected_version": 0,
+            "order_total": 1200,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Replay does not revert current order",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000003&select=total_cents,version",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "total_cents": 1800,
+                "version": 3
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "team-administration",
+      "requests": [
+        {
+          "name": "Owner loads current member revisions",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/list_team_members",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a"
+          },
+          "capture": {
+            "owner_revision": "/0/revision",
+            "admin_revision": "/1/revision",
+            "member_revision": "/2/revision"
+          }
+        },
+        {
+          "name": "admin cannot list shop-a members",
+          "identity": "admin",
+          "method": "POST",
+          "path": "/rest/v1/rpc/list_team_members",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "team_id": "shop-a"
+          }
+        },
+        {
+          "name": "member cannot grant owner access",
+          "identity": "member",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": null,
+            "new_role": "owner",
+            "request_key": "{{owner_revision}}"
+          }
+        },
+        {
+          "name": "other cannot list shop-a members",
+          "identity": "other",
+          "method": "POST",
+          "path": "/rest/v1/rpc/list_team_members",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "team_id": "shop-a"
+          }
+        },
+        {
+          "name": "Owner admits registered user",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": null,
+            "new_role": "member",
+            "request_key": "{{owner_revision}}"
+          },
+          "capture": {
+            "added_revision": "/0/after_revision"
+          }
+        },
+        {
+          "name": "Membership operation replays once",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": null,
+            "new_role": "member",
+            "request_key": "{{owner_revision}}"
+          }
+        },
+        {
+          "name": "Changed membership payload conflicts",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": null,
+            "new_role": "owner",
+            "request_key": "{{owner_revision}}"
+          }
+        },
+        {
+          "name": "Added user reads shared orders",
+          "identity": "outsider",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001&select=id",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Owner changes member role",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": "{{added_revision}}",
+            "new_role": "admin",
+            "request_key": "{{added_revision}}"
+          },
+          "capture": {
+            "changed_revision": "/0/after_revision"
+          }
+        },
+        {
+          "name": "Stale membership revision is refused",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": "{{added_revision}}",
+            "new_role": "owner",
+            "request_key": "{{member_revision}}"
+          }
+        },
+        {
+          "name": "Owner removes access",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": "{{changed_revision}}",
+            "new_role": null,
+            "request_key": "{{changed_revision}}"
+          }
+        },
+        {
+          "name": "Removed user cannot read orders",
+          "identity": "outsider",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?id=eq.00000000-0000-4000-8000-000000000001",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Last owner cannot be demoted",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "alice",
+            "expected_revision": "{{owner_revision}}",
+            "new_role": "admin",
+            "request_key": "{{admin_revision}}"
+          }
+        },
+        {
+          "name": "Last owner cannot be removed",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "alice",
+            "expected_revision": "{{owner_revision}}",
+            "new_role": null,
+            "request_key": "{{admin_revision}}"
+          }
+        },
+        {
+          "name": "Ownership transfers atomically",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transfer_team_ownership_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "amy",
+            "expected_revision": "{{admin_revision}}",
+            "request_key": "{{admin_revision}}"
+          },
+          "capture": {
+            "former_owner_revision": "/0/actor_after_revision"
+          }
+        },
+        {
+          "name": "Former owner resolves transfer receipt",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/get_team_change_receipt?select=action,actor_after_role,after_role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "action": "transfer",
+                "actor_after_role": "admin",
+                "after_role": "owner"
+              }
+            ]
+          },
+          "body": {
+            "team_id": "shop-a",
+            "operation_key": "{{admin_revision}}"
+          }
+        },
+        {
+          "name": "Former owner cannot list team members",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/list_team_members",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "team_id": "shop-a"
+          }
+        },
+        {
+          "name": "Former owner cannot read history",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_membership_events?tenant_id=eq.shop-a",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "New owner restores original ownership",
+          "identity": "admin",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transfer_team_ownership_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a",
+            "target_subject": "alice",
+            "expected_revision": "{{former_owner_revision}}",
+            "request_key": "{{former_owner_revision}}"
+          }
+        },
+        {
+          "name": "Owner can audit the immutable admission",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_membership_events?tenant_id=eq.shop-a&request_key=eq.{{owner_revision}}&select=action,target_subject,before_role,after_role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "action": "add",
+                "target_subject": "eve",
+                "before_role": null,
+                "after_role": "member"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Another tenant cannot read audit history",
+          "identity": "other",
+          "method": "GET",
+          "path": "/rest/v1/team_membership_events?tenant_id=eq.shop-a",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Audit cannot be modified through REST",
+          "identity": "owner",
+          "method": "PATCH",
+          "path": "/rest/v1/team_membership_events?tenant_id=eq.shop-a",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "after_role": "owner"
+          }
+        },
+        {
+          "name": "User registry cannot be forged",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/team_users",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "subject": "unverified-user"
+          }
+        },
+        {
+          "name": "Roles return to the fixture baseline",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/list_team_members?select=subject,role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "subject": "alice",
+                "role": "owner"
+              },
+              {
+                "subject": "amy",
+                "role": "admin"
+              },
+              {
+                "subject": "ann",
+                "role": "member"
+              }
+            ]
+          },
+          "body": {
+            "team_id": "shop-a"
+          }
+        }
+      ]
+    },
+    {
+      "name": "team-invitations",
+      "requests": [
+        {
+          "name": "Owner captures fresh invitation operation key",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_members?tenant_id=eq.shop-a&subject=eq.alice&select=revision",
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "invite_key": "/0/revision"
+          }
+        },
+        {
+          "name": "Owner captures disposable fixture expiry",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_invitations?invitation_id=eq.90000000-0000-4000-8000-000000000001&select=expires_at",
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "invite_expiry": "/0/expires_at"
+          }
+        },
+        {
+          "name": "Nonowner cannot create invite",
+          "identity": "member",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_team_invitation_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "invite_role": "member",
+            "valid_until": "{{invite_expiry}}"
+          }
+        },
+        {
+          "name": "Owner role cannot be invited",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_team_invitation_once",
+          "expect": {
+            "status": 400
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "invite_role": "owner",
+            "valid_until": "{{invite_expiry}}"
+          }
+        },
+        {
+          "name": "Owner creates member invite",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_team_invitation_once?select=invited_role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "invited_role": "member"
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "invite_role": "member",
+            "valid_until": "{{invite_expiry}}"
+          }
+        },
+        {
+          "name": "Same creation key is replayable",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_team_invitation_once?select=invited_role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "invited_role": "member"
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "invite_role": "member",
+            "valid_until": "{{invite_expiry}}"
+          }
+        },
+        {
+          "name": "Changed invite payload is refused",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/create_team_invitation_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "invite_role": "admin",
+            "valid_until": "{{invite_expiry}}"
+          }
+        },
+        {
+          "name": "Outsider cannot browse pending invitations",
+          "identity": "outsider",
+          "method": "GET",
+          "path": "/rest/v1/team_invitations",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Wrong team cannot redeem invite",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-b",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        {
+          "name": "Wrong secret cannot redeem invite",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        {
+          "name": "Existing member role is preserved",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        {
+          "name": "Verified outsider accepts once",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once?select=accepted_subject,invited_role",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "accepted_subject": "eve",
+                "invited_role": "member"
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        {
+          "name": "Acceptance receipt returns revision",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once?select=accepted_revision",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "capture": {
+            "invite_revision": "/0/accepted_revision"
+          }
+        },
+        {
+          "name": "Another user cannot reuse accepted link",
+          "identity": "other",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        {
+          "name": "Owner cannot revoke consumed invitation",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/revoke_team_invitation_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a"
+          }
+        },
+        {
+          "name": "Owner removes invited member",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/change_team_member_once",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "request_key": "{{invite_revision}}",
+            "team_id": "shop-a",
+            "target_subject": "eve",
+            "expected_revision": "{{invite_revision}}",
+            "new_role": null
+          }
+        },
+        {
+          "name": "Replayed receipt does not restore access",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once?select=accepted_subject",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "accepted_subject": "eve"
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{invite_key}}",
+            "team_id": "shop-a",
+            "invite_secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        {
+          "name": "Removed invitee still cannot read orders",
+          "identity": "outsider",
+          "method": "GET",
+          "path": "/rest/v1/team_orders?tenant_id=eq.shop-a",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Invitation audit records verified accepting actor",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_invitation_events?invitation_id=eq.{{invite_key}}&action=eq.accept&select=actor,action",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "actor": "eve",
+                "action": "accept"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Direct invitation updates remain denied",
+          "identity": "owner",
+          "method": "PATCH",
+          "path": "/rest/v1/team_invitations?invitation_id=eq.{{invite_key}}",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "invited_role": "admin"
+          }
+        },
+        {
+          "name": "Owner revokes disposable pending link",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/revoke_team_invitation_once?select=invitation_id",
+          "body": {
+            "operation_id": "90000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a"
+          },
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "invitation_id": "90000000-0000-4000-8000-000000000001"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Revoked invitation cannot be accepted",
+          "identity": "outsider",
+          "method": "POST",
+          "path": "/rest/v1/rpc/accept_team_invitation_once",
+          "body": {
+            "operation_id": "90000000-0000-4000-8000-000000000001",
+            "team_id": "shop-a",
+            "invite_secret": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "expect": {
+            "status": 409
+          }
+        }
+      ]
+    },
+    {
+      "name": "team-order-imports",
+      "requests": [
+        {
+          "name": "Capture fresh import key",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_members?subject=eq.alice&tenant_id=eq.shop-a&select=revision",
+          "expect": {
+            "status": 200
+          },
+          "capture": {
+            "import_key": "/0/revision"
+          }
+        },
+        {
+          "name": "Member cannot register import",
+          "identity": "member",
+          "method": "POST",
+          "path": "/rest/v1/rpc/start_team_order_import_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "source_label": "reviewed-orders.csv",
+            "items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "total_cents": 1,
+                "status": "draft"
+              },
+              {
+                "id": "{{import_key}}",
+                "total_cents": 432,
+                "status": "submitted"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Server rejects invalid row before registration",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/start_team_order_import_once",
+          "expect": {
+            "status": 400
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "source_label": "reviewed-orders.csv",
+            "items": [
+              {
+                "id": "{{import_key}}",
+                "total_cents": -1,
+                "status": "draft"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Register reviewed plan without order writes",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/start_team_order_import_once?select=processed,total",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "processed": 0,
+                "total": 2
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "source_label": "reviewed-orders.csv",
+            "items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "total_cents": 1,
+                "status": "draft"
+              },
+              {
+                "id": "{{import_key}}",
+                "total_cents": 432,
+                "status": "submitted"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Same key cannot change reviewed plan",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/start_team_order_import_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "source_label": "changed.csv",
+            "items": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "total_cents": 1,
+                "status": "draft"
+              },
+              {
+                "id": "{{import_key}}",
+                "total_cents": 432,
+                "status": "submitted"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Batch preserves duplicate and creates new row",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/advance_team_order_import_once?select=processed,inserted,skipped",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "processed": 2,
+                "inserted": 1,
+                "skipped": 1
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "expected_processed": 0
+          }
+        },
+        {
+          "name": "Old cursor replay does not import twice",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/advance_team_order_import_once?select=processed,inserted,skipped",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "processed": 2,
+                "inserted": 1,
+                "skipped": 1
+              }
+            ]
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "expected_processed": 0
+          }
+        },
+        {
+          "name": "Other team cannot advance import",
+          "identity": "other",
+          "method": "POST",
+          "path": "/rest/v1/rpc/advance_team_order_import_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "operation_id": "{{import_key}}",
+            "team_id": "shop-a",
+            "expected_processed": 0
+          }
+        },
+        {
+          "name": "Member cannot read import manifests",
+          "identity": "member",
+          "method": "GET",
+          "path": "/rest/v1/team_order_imports",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Owner can inspect import history",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_order_imports?import_id=eq.{{import_key}}&tenant_id=eq.shop-a&select=processed,inserted,skipped",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "processed": 2,
+                "inserted": 1,
+                "skipped": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "Direct history writes remain denied",
+          "identity": "owner",
+          "method": "PATCH",
+          "path": "/rest/v1/team_order_imports?import_id=eq.{{import_key}}&tenant_id=eq.shop-a&select=processed,inserted,skipped",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "source_name": "forged.csv"
+          }
+        },
+        {
+          "name": "History remains unchanged after direct write attempt",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_order_imports?import_id=eq.{{import_key}}&tenant_id=eq.shop-a&select=processed,inserted,skipped",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "processed": 2,
+                "inserted": 1,
+                "skipped": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "team-order-workflows",
+      "requests": [
+        {
+          "name": "Capture fresh workflow keys",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/list_team_members?select=revision",
+          "expect": {
+            "status": 200
+          },
+          "body": {
+            "team_id": "shop-a"
+          },
+          "capture": {
+            "owner_key": "/0/revision",
+            "order_key": "/1/revision",
+            "refusal_key": "/2/revision"
+          }
+        },
+        {
+          "name": "Create draft for reviewed actions",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once?select=status,version",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "status": "draft",
+                "version": 1
+              }
+            ]
+          },
+          "body": {
+            "request_key": "{{order_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 0,
+            "order_total": 650,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Member cannot submit",
+          "identity": "member",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transition_team_order_once",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "request_key": "{{owner_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 1,
+            "next_state": "submitted"
+          }
+        },
+        {
+          "name": "Draft cannot skip to fulfilment",
+          "identity": "admin",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transition_team_order_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "{{owner_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 1,
+            "next_state": "fulfilled"
+          }
+        },
+        {
+          "name": "Owner submits at expected version",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transition_team_order_once?select=status,version,total_cents",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "status": "submitted",
+                "version": 2,
+                "total_cents": 650
+              }
+            ]
+          },
+          "body": {
+            "request_key": "{{owner_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 1,
+            "next_state": "submitted"
+          }
+        },
+        {
+          "name": "Submission atomically enqueues one delivery",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_order_outbox?tenant_id=eq.shop-a&order_id=eq.{{order_key}}&select=version",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "version": 2
+              }
+            ]
+          }
+        },
+        {
+          "name": "Ordinary save cannot revert submitted order",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/save_team_order_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "{{refusal_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 2,
+            "order_total": 650,
+            "order_state": "draft"
+          }
+        },
+        {
+          "name": "Admin fulfils at expected version",
+          "identity": "admin",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transition_team_order_once?select=status,version,total_cents",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "status": "fulfilled",
+                "version": 3,
+                "total_cents": 650
+              }
+            ]
+          },
+          "body": {
+            "request_key": "{{owner_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 2,
+            "next_state": "fulfilled"
+          }
+        },
+        {
+          "name": "Old submit receipt never reverts fulfilment",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transition_team_order_once?select=status,version",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "status": "submitted",
+                "version": 2
+              }
+            ]
+          },
+          "body": {
+            "request_key": "{{owner_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 1,
+            "next_state": "submitted"
+          }
+        },
+        {
+          "name": "Stale action cannot overwrite later version",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/transition_team_order_once",
+          "expect": {
+            "status": 409
+          },
+          "body": {
+            "request_key": "{{refusal_key}}",
+            "team_id": "shop-a",
+            "order_id": "{{order_key}}",
+            "expected_version": 2,
+            "next_state": "fulfilled"
+          }
+        },
+        {
+          "name": "Member sees verified actor and transition history",
+          "identity": "member",
+          "method": "GET",
+          "path": "/rest/v1/team_order_events?tenant_id=eq.shop-a&order_id=eq.{{order_key}}&order=version&select=actor,action,before_status,after_status",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "actor": "alice",
+                "action": "submit",
+                "before_status": "draft",
+                "after_status": "submitted"
+              },
+              {
+                "actor": "amy",
+                "action": "fulfil",
+                "before_status": "submitted",
+                "after_status": "fulfilled"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Owner token cannot claim trusted worker delivery",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/claim_team_order_webhook",
+          "body": {
+            "team_id": "shop-a",
+            "claim_token": "{{owner_key}}"
+          },
+          "expect": {
+            "status": 403
+          }
+        },
+        {
+          "name": "Owner reads current queue health and revision",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/get_team_delivery_health",
+          "body": {
+            "team_id": "shop-a"
+          },
+          "capture": {
+            "control_revision": "/revision"
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Owner pauses with current control revision",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/set_team_delivery_pause_once",
+          "body": {
+            "team_id": "shop-a",
+            "operation_id": "{{owner_key}}",
+            "expected_revision": "{{control_revision}}",
+            "pause_delivery": true
+          },
+          "capture": {
+            "pause_revision": "/0/result/revision"
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Paused worker cannot lease ready delivery",
+          "identity": "delivery_worker",
+          "method": "POST",
+          "path": "/rest/v1/rpc/claim_team_order_webhook",
+          "body": {
+            "team_id": "shop-a",
+            "claim_token": "{{owner_key}}"
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Owner resumes with the recorded revision",
+          "identity": "owner",
+          "method": "POST",
+          "path": "/rest/v1/rpc/set_team_delivery_pause_once",
+          "body": {
+            "team_id": "shop-a",
+            "operation_id": "{{order_key}}",
+            "expected_revision": "{{pause_revision}}",
+            "pause_delivery": false
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Control history records verified actor and actions",
+          "identity": "owner",
+          "method": "GET",
+          "path": "/rest/v1/team_delivery_operations?tenant_id=eq.shop-a&or=(operation_id.eq.{{owner_key}},operation_id.eq.{{order_key}})&order=action&select=actor,action",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "actor": "alice",
+                "action": "pause"
+              },
+              {
+                "actor": "alice",
+                "action": "resume"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

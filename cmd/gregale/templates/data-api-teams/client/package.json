@@ -1,0 +1,23 @@
+{
+  "name": "gregale-team-orders-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.inference.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "build:browser": "npm run typecheck && node tools/build.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "dependencies": {
+    "@gregale/data": "file:vendor/gregale-data.tgz"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  }
+}

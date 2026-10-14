@@ -570,3 +570,10 @@ from .commit_recovery_status import (
 )
 
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+from .event_consumer_delivery_context import (
+    EventConsumerDeliveryContext,
+    EventConsumerDeliveryContextUnavailableError,
+    event_consumer_delivery_context_from_headers,
+)
+
+__all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
