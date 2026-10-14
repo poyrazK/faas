@@ -59,7 +59,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (linked app or interactive picker) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
-| [`run`](#run) | Run untrusted code in an isolated disposable microVM |
+| [`run`](#run) | Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image) |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
@@ -75,8 +75,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
-| [`profile`](#profile) | Manage named API connections and isolated credentials |
-| [`context`](#context) | Show the linked project and default app context |
+| [`profile`](#profile) | List or manage named API connections and isolated credentials |
+| [`context`](#context) | Show linked targets, configuration sources, and missing defaults |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events (linked app or interactive picker) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
@@ -103,7 +103,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`trusted-publishers`](#trusted-publishers) | Per-app cosign trusted-publisher list (admin; trusted-publishers add\|remove\|list) |
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
 | [`version`](#version) | Print the CLI version |
-| [`config`](#config) | Manage non-secret local CLI settings (config get\|set\|list) |
+| [`config`](#config) | Show or manage non-secret local CLI settings (config [get\|set\|list]) |
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline [&lt;slug&gt;] &lt;wake-id&gt; [--app SLUG] [--since RFC3339] [--limit N] [--all] [--verbose]; slug defaults to linked context) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
@@ -1460,13 +1460,16 @@ gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
+gregale ai logs show <integration-id> <request-id>
+gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
+gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini
 ```
 
 ### ai policy
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1475,8 +1478,24 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
 | `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
+| `--request-log-content <on|off>` | also keep the first 32 KiB of each logged call&#39;s bodies for 3 days | one of `on` · `off` |
 | `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
 | `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
+
+### ai content-policy
+
+Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)
+
+`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--email <ACTION>` | e-mail addresses | one of `off` · `redact` · `block` |
+| `--payment-card <ACTION>` | payment card numbers | one of `off` · `redact` · `block` |
+| `--iban <ACTION>` | IBANs | one of `off` · `redact` · `block` |
+| `--secrets <ACTION>` | API keys, tokens and private keys | one of `off` · `redact` · `block` |
+| `--block-term <TERM>` | block requests containing this term, ignoring case (repeat) |  |
+| `--clear-terms` | remove every blocked term first |  |
 
 ### ai app-limit
 
@@ -1511,7 +1530,7 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 
 | Flag | Meaning | |
 |---|---|---|
-| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
+| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears) |  |
 
 ### ai catalog
 
@@ -1581,11 +1600,23 @@ List budget alerts recorded at 80% and 100%
 |---|---|---|
 | `--limit <N>` | alerts to show, 1 to 100 |  |
 
+### ai replay
+
+Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay
+
+`gregale ai replay [--target <TARGET>] [--no-wait] [--timeout <duration>] [show] <integration-id|replay-id> [<request-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] to replay on (repeat, at most 5) |  |
+| `--no-wait` | print the replay without waiting for results |  |
+| `--timeout <duration>` | how long to wait for results (default 3m) |  |
+
 ### ai logs
 
-Page the opt-in AI request log, newest first
+Page the opt-in AI request log, newest first, or show one call&#39;s captured bodies
 
-`gregale ai logs [--limit <N>] [--before <TIME>] <integration-id>`
+`gregale ai logs [--limit <N>] [--before <TIME>] [show] <integration-id> [<request-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2787,12 +2818,19 @@ Examples:
 ```sh
 gregale apps
 gregale apps --json
-gregale apps -q my-api
+gregale apps rm my-api --dry-run
+gregale apps rm my-api --yes
 ```
 
 ### apps ls
 
 Alias for the default list action
+
+### apps rm
+
+Delete an app (alias: delete); restore it within the deletion grace window
+
+`gregale apps rm <slug>`
 
 ### apps restore
 
@@ -3136,10 +3174,12 @@ Follow an accepted fresh restart without submitting another request
 
 Run a one-off command against the live deployment
 
-`gregale app <slug> exec [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale app <slug> exec [--interactive] [--tty] [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | attach stdin and stream output live (-i; default command /bin/sh) |  |
+| `--tty` | allocate a remote terminal (-t; use -it) |  |
 | `--shell` | interpret one command string through the app shell |  |
 | `--detach` | return after the task is queued |  |
 | `--timeout-seconds <N>` | server-side command timeout |  |
@@ -3150,6 +3190,27 @@ Run a one-off command against the live deployment
 | `--idempotency-key <KEY>` | stable retry identity for this submission |  |
 | `--poll-interval <D>` | status polling interval while attached |  |
 | `--wait-timeout <D>` | maximum attached wait |  |
+
+### app cp
+
+Copy a path out of a fresh VM of the live deployment
+
+`gregale app <slug> cp [--wait-timeout <D>] <remote-path> <local-path|->`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
+
+### app port-forward
+
+Forward a local port to HOST:PORT reached from inside the app&#39;s network
+
+`gregale app <slug> port-forward [--address <A>] [--wait-timeout <D>] [LOCAL_PORT:]HOST:PORT`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--address <A>` | local address to listen on (default 127.0.0.1) |  |
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
 
 ### app security
 
@@ -3904,7 +3965,7 @@ List cron rules
 
 ### crons add
 
-Schedule an HTTP request or deployment command
+Schedule a POST to an app path, or a deployment command
 
 `gregale crons add [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
@@ -3913,7 +3974,7 @@ Schedule an HTTP request or deployment command
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
-| `--path <PATH>` | HTTP request path (mutually exclusive with --command) |  |
+| `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron |  |
 | `--arg <ARG>` | append one command argument (repeatable) |  |
 | `--shell` | run --command as one shell string |  |
@@ -3949,7 +4010,7 @@ Update one cron rule
 | `--interactive` | choose an HTTP task, edit current values, preview times, and confirm changes |  |
 | `--app <SLUG>` | app slug for interactive task selection (linked app or picker by default) |  |
 | `--schedule <EXPR>` | new five-field cron expression |  |
-| `--path <PATH>` | HTTP request path |  |
+| `--path <PATH>` | path the cron sends a POST to |  |
 | `--timezone <TZ>` | IANA timezone |  |
 | `--enable` | enable the cron |  |
 | `--disable` | disable the cron |  |
@@ -4229,6 +4290,46 @@ Manage jobs (run-to-completion workloads)
 
 `gregale jobs [<subcommand>]`
 
+Examples:
+
+```sh
+gregale jobs
+gregale jobs overview nightly-report
+gregale jobs --help
+```
+
+### jobs resume
+
+Recover a saved Job run: observe, read failure logs, or collect results
+
+`gregale jobs resume [--dry-run] [--run <UUID|PREFIX>] [--list] [--overview] [--current-connection] [--forget <UUID>] [--timeout <DURATION>] [--poll-interval <DURATION>] [--job <NAME>] [--saved-job] [--latest] [--logs] [--results]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview the selected run and action offline; no waiting, API access, or file writes |  |
+| `--run <UUID|PREFIX>` | saved run UUID or unique prefix (at least 8 characters), resolved on the current profile/API |  |
+| `--list` | list saved identifiers without API access |  |
+| `--overview` | group recorded statuses into in progress, finished, and unavailable; retains records |  |
+| `--current-connection` | filter --list or --overview by current profile and API; retain all records |  |
+| `--forget <UUID>` | remove one local record only; requires its recorded API/profile, makes no requests |  |
+| `--timeout <DURATION>` | maximum wait (default 10m) or overview duration (default 30s); positive |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+| `--job <NAME>` | filter saved runs by exact Job name on the current profile/API; supports --list and --overview |  |
+| `--saved-job` | use the Job name from local jobs defaults; excludes --job and --forget; inherits no run settings |  |
+| `--latest` | select the most recently recorded run for --saved-job on the current profile/API; excludes explicit run and maintenance selectors |  |
+| `--logs` | read current failed-task logs from the exact recorded run; accepts --job and --run |  |
+| `--results` | wait for success and collect exact recorded run outputs into ./results/JOB/RUN_ID |  |
+
+Examples:
+
+```sh
+gregale jobs resume --list
+gregale jobs resume --job nightly-report --overview
+gregale jobs resume --job nightly-report --logs
+gregale jobs resume --job nightly-report --results
+gregale jobs resume --run RUN_ID
+```
+
 ### jobs list
 
 List jobs in this account
@@ -4349,10 +4450,11 @@ gregale jobs rm --interactive
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale jobs run [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
+`gregale jobs run [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--saved-job` | use local jobs defaults for the Job name and omitted settings; excludes a positional Job name |  |
 | `--wait-ready` | wait for selected image preparation before submitting |  |
 | `--image-wait-timeout <DURATION>` | image preparation deadline (default 5m; requires --wait-ready) |  |
 | `--image-poll-interval <DURATION>` | image polling interval (default 2s; requires --wait-ready) |  |
@@ -4388,6 +4490,7 @@ gregale jobs run nightly-report --tasks 10 --wait --wait-timeout 10m
 gregale jobs run nightly-report --tasks 10 --out-dir ./results
 gregale jobs run nightly-report --tasks 10 --results
 gregale jobs run --dry-run
+gregale jobs run --saved-job --dry-run
 gregale jobs run --wait-ready --results
 ```
 
@@ -4499,30 +4602,41 @@ gregale jobs wait my-job RUN_ID --timeout 10m --json
 
 Cancel a run
 
-`gregale jobs cancel [--interactive] [<name>] [<run-id>]`
+`gregale jobs cancel [--dry-run] [--interactive] [<name>] [<run-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | inspect target status, task counts, and cancellation effects without cancelling |  |
 | `--interactive` | choose an unfinished run, review progress, and confirm cancellation |  |
 
 Examples:
 
 ```sh
+gregale jobs cancel nightly-report RUN_ID --dry-run
 gregale jobs cancel --interactive
 ```
 
 ### jobs defaults
 
-Manage non-secret project-local Job defaults
+Show or manage non-secret project-local Job defaults
+
+Examples:
+
+```sh
+gregale jobs defaults
+gregale jobs defaults show
+gregale jobs defaults --help
+```
 
 #### jobs defaults set
 
 Replace saved Job defaults
 
-`gregale jobs defaults set [--tasks <N>] [--results] [--wait-ready] [--include <GLOB>] [--exclude <GLOB>] <name>`
+`gregale jobs defaults set [--dry-run] [--tasks <N>] [--results] [--wait-ready] [--include <GLOB>] [--exclude <GLOB>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | preview current/proposed settings without saving or submitting |  |
 | `--tasks <N>` | default positive task count |  |
 | `--results` | collect results by default |  |
 | `--wait-ready` | wait for image preparation before submitting by default |  |
@@ -4533,28 +4647,35 @@ Replace saved Job defaults
 
 Change saved Job defaults while preserving omitted settings
 
-`gregale jobs defaults update [--tasks <N>] [--results] [--wait-ready] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [<name>]`
+`gregale jobs defaults update [--dry-run] [--tasks <N>] [--clear-tasks] [--results] [--wait-ready] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--add-include <GLOB>]... [--remove-include <GLOB>]... [--add-exclude <GLOB>]... [--remove-exclude <GLOB>]... [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | preview changes while preserving omitted settings; no writes or submissions |  |
 | `--tasks <N>` | replace default positive task count |  |
+| `--clear-tasks` | unset saved task count while preserving other settings; excludes --tasks |  |
 | `--results` | replace results preference; use --results=false to disable |  |
 | `--wait-ready` | replace image-wait preference; use --wait-ready=false to disable |  |
 | `--include <GLOB>` | repeatable glob; explicit filters replace both saved lists |  |
 | `--exclude <GLOB>` | repeatable glob to omit; explicit filters replace both saved lists |  |
 | `--all-artifacts` | clear saved artifact filters |  |
+| `--add-include <GLOB>` | append include glob; preserve other filters and skip duplicates |  |
+| `--remove-include <GLOB>` | remove exact saved include glob; unknown patterns fail |  |
+| `--add-exclude <GLOB>` | append exclude glob; preserve other filters and skip duplicates |  |
+| `--remove-exclude <GLOB>` | remove exact saved exclude glob; unknown patterns fail |  |
 
 Examples:
 
 ```sh
-gregale jobs defaults update --tasks 3
+gregale jobs defaults update --tasks 3 --dry-run
+gregale jobs defaults update --clear-tasks --dry-run
 gregale jobs defaults update --results=false
 gregale jobs defaults update --all-artifacts
 ```
 
 #### jobs defaults show
 
-Show saved Job defaults and their path
+Show saved Job settings, their path, and local recovery readiness
 
 `gregale jobs defaults show`
 
@@ -4562,7 +4683,17 @@ Show saved Job defaults and their path
 
 Remove saved Job defaults
 
-`gregale jobs defaults clear`
+`gregale jobs defaults clear [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | show settings and inheritance effects without removing the file |  |
+
+Examples:
+
+```sh
+gregale jobs defaults clear --dry-run
+```
 
 ### jobs results
 
@@ -4592,13 +4723,14 @@ gregale jobs results nightly-report latest --out-dir ./results --dry-run
 
 List tasks (saved Job and latest run by default)
 
-`gregale jobs tasks [--all] [--limit <N>] [--offset <N>] [--failed-only] [--artifacts-only] [--include <GLOB>] [--exclude <GLOB>] [--interactive] [<name>] [<run-id|latest>]`
+`gregale jobs tasks [--all] [--limit <N>] [--offset <N>] [--unsuccessful-only] [--failed-only] [--artifacts-only] [--include <GLOB>] [--exclude <GLOB>] [--interactive] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | read all task pages from the starting offset |  |
 | `--limit <N>` | task page size (1..200) |  |
 | `--offset <N>` | starting task offset (non-negative) |  |
+| `--unsuccessful-only` | scan all task pages for failed, timeout, oom, and cancelled tasks |  |
 | `--failed-only` | scan all task pages and show failed, timeout, and oom tasks |  |
 | `--artifacts-only` | scan task pages for valid manifests containing artifacts |  |
 | `--include <GLOB>` | repeatable artifact-name glob; requires --artifacts-only; quote patterns |  |
@@ -4608,6 +4740,7 @@ List tasks (saved Job and latest run by default)
 Examples:
 
 ```sh
+gregale jobs tasks --unsuccessful-only
 gregale jobs tasks
 gregale jobs tasks --failed-only
 gregale jobs tasks --artifacts-only
@@ -4621,11 +4754,12 @@ gregale jobs tasks --interactive
 
 List retained attempts for one task in an exact or latest run
 
-`gregale jobs attempts [--task <N>] [--failed-only] [--all] [--limit <N>] [--offset <N>] [--interactive] [<name>] [<run-id|latest>] [<task-index>]`
+`gregale jobs attempts [--task <N>] [--unsuccessful-only] [--failed-only] [--all] [--limit <N>] [--offset <N>] [--interactive] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--task <N>` | task index; omitted Job uses local defaults, omitted run uses latest |  |
+| `--unsuccessful-only` | filter fetched history to failed, timeout, oom, and cancelled attempts |  |
 | `--failed-only` | filter fetched history to failed, timeout, and oom attempts |  |
 | `--all` | read all retained attempt pages from the starting offset |  |
 | `--limit <N>` | history page size (1..200; server default 50) |  |
@@ -4635,6 +4769,7 @@ List retained attempts for one task in an exact or latest run
 Examples:
 
 ```sh
+gregale jobs attempts --task 2 --unsuccessful-only --all
 gregale jobs attempts --task 2 --failed-only --all
 gregale jobs attempts nightly-report latest 0 --all --failed-only
 gregale jobs attempts nightly-report latest 0 --all
@@ -4646,10 +4781,11 @@ gregale jobs attempts --interactive
 
 Retry one failed task; --task uses the saved Job and newest run
 
-`gregale jobs retry [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--task <N>] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id>] [<task-index>]`
+`gregale jobs retry [--dry-run] [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--task <N>] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | read task state and preview retry without starting another attempt |  |
 | `--results` | wait for success and collect outputs into ./results/JOB/RUN_ID, verifying existing files |  |
 | `--include <GLOB>` | artifact-name glob; requires --results |  |
 | `--exclude <GLOB>` | artifact-name glob to omit; requires --results |  |
@@ -4663,6 +4799,7 @@ Retry one failed task; --task uses the saved Job and newest run
 Examples:
 
 ```sh
+gregale jobs retry --task 2 --dry-run
 gregale jobs retry --task 2 --results
 gregale jobs retry --task 2
 gregale jobs retry nightly-report latest --task 2 --wait
@@ -4674,10 +4811,11 @@ gregale jobs retry --interactive
 
 Replay unsuccessful tasks; omitted Job uses local defaults, omitted run uses latest
 
-`gregale jobs replay-failed [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id|latest>]`
+`gregale jobs replay-failed [--dry-run] [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | read source tasks and preview replay without starting a new run |  |
 | `--results` | wait for recovery success and collect outputs into ./results/JOB/NEW_RUN_ID, verifying existing files |  |
 | `--include <GLOB>` | artifact-name glob; requires --results |  |
 | `--exclude <GLOB>` | artifact-name glob to omit; requires --results |  |
@@ -4690,6 +4828,7 @@ Replay unsuccessful tasks; omitted Job uses local defaults, omitted run uses lat
 Examples:
 
 ```sh
+gregale jobs replay-failed nightly-report latest --dry-run
 gregale jobs replay-failed --results
 gregale jobs replay-failed
 gregale jobs replay-failed nightly-report latest --wait
@@ -4763,13 +4902,14 @@ gregale jobs artifacts nightly-report latest 0
 
 ### jobs logs
 
-Tail task logs from an exact or latest run
+Read unsuccessful-task logs by default, or select one task
 
-`gregale jobs logs [--failed-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
+`gregale jobs logs [--failed-only] [--unsuccessful-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--failed-only` | scan task pages and read current logs for failed, timeout, and oom tasks |  |
+| `--unsuccessful-only` | scan task pages and read current logs for failed, timeout, oom, and cancelled tasks |  |
 | `--task <N>` | task index shortcut; omitted Job uses saved defaults, omitted run uses latest |  |
 | `--attempt <N>` | read retained output for a positive attempt number (explicit task only) |  |
 | `--interactive` | choose a Job, run, and task to inspect |  |
@@ -4778,6 +4918,8 @@ Tail task logs from an exact or latest run
 Examples:
 
 ```sh
+gregale jobs logs
+gregale jobs logs nightly-report
 gregale jobs logs --failed-only
 gregale jobs logs --task 0
 gregale jobs logs nightly-report --task 0
@@ -5389,6 +5531,107 @@ Publish the current automation draft
 Manage durable execution workflows
 
 `gregale workflows [<subcommand>]`
+
+### workflows defaults
+
+Show or manage project-local workflow recovery selectors
+
+Examples:
+
+```sh
+gregale workflows defaults
+gregale workflows defaults --help
+```
+
+#### workflows defaults set
+
+Save a preferred workflow name and recorded app locally
+
+`gregale workflows defaults set --app <SLUG> [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | recorded app slug for recovery; target existence is not checked | required |
+| `--dry-run` | preview destination, before/after selectors, and proposed recovery readiness without saving |  |
+
+Examples:
+
+```sh
+gregale workflows defaults set order-processing --app payments-api
+gregale workflows defaults set order-processing --app payments-api --dry-run
+```
+
+#### workflows defaults show
+
+Show saved workflow/app selectors, preference path, and local recovery readiness
+
+`gregale workflows defaults show`
+
+#### workflows defaults update
+
+Change saved workflow selectors while preserving omitted settings
+
+`gregale workflows defaults update [--app <SLUG>] [--dry-run] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | replace the saved recorded app selector |  |
+| `--dry-run` | preview updated selectors and local recovery readiness without saving |  |
+
+Examples:
+
+```sh
+gregale workflows defaults update --app billing-api --dry-run
+gregale workflows defaults update nightly-report --dry-run
+```
+
+#### workflows defaults clear
+
+Clear workflow recovery preferences without deleting run records
+
+`gregale workflows defaults clear [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview saved selectors and removal effects without deleting files |  |
+
+Examples:
+
+```sh
+gregale workflows defaults clear --dry-run
+```
+
+### workflows resume-wait
+
+Recover a saved Workflow run: observe or read diagnostics
+
+`gregale workflows resume-wait [--dry-run] [--run <UUID|PREFIX>] [--list] [--overview] [--current-connection] [--forget <UUID>] [--timeout <DURATION>] [--poll-interval <DURATION>] [--saved-workflow] [--latest] [--app <SLUG>] [--workflow <NAME>] [--diagnose]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview the selected run and action offline; no waiting, API access, or file writes |  |
+| `--run <UUID|PREFIX>` | saved run UUID or unique prefix (at least 8 characters), resolved on the current profile/API |  |
+| `--list` | list saved identifiers without API access |  |
+| `--overview` | group recorded statuses into in progress, finished, and unavailable; retains records |  |
+| `--current-connection` | filter --list or --overview by current profile and API; retain all records |  |
+| `--forget <UUID>` | remove one local record only; requires its recorded API/profile, makes no requests |  |
+| `--timeout <DURATION>` | maximum wait (default 10m) or overview duration (default 30s); positive |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+| `--saved-workflow` | use the workflow name and recorded app from local defaults; excludes --workflow, --app, and --forget |  |
+| `--latest` | select the most recently recorded workflow/app run from explicit selectors or --saved-workflow on the current profile/API |  |
+| `--app <SLUG>` | filter local workflow records by exact recorded app on the current profile/API; supports --list and --overview |  |
+| `--workflow <NAME>` | filter saved runs by exact Workflow name on the current profile/API; supports --list and --overview |  |
+| `--diagnose` | read exact recorded workflow diagnostics; accepts --workflow and --run |  |
+
+Examples:
+
+```sh
+gregale workflows resume-wait --saved-workflow --latest --dry-run
+gregale workflows resume-wait --list
+gregale workflows resume-wait --workflow order-processing --overview
+gregale workflows resume-wait --workflow order-processing --diagnose
+gregale workflows resume-wait --run RUN_ID
+```
 
 ### workflows list
 
@@ -7712,7 +7955,7 @@ Show what the edge rejected for an app: pre-auth blocks, validation failures, an
 
 Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
-`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
+`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7723,6 +7966,7 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--asn <AS>` | simulated client autonomous system for asn conditions (e.g. AS13335) |  |
+| `--verified-bot` | simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims) |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 | `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 | `--proposal <file|->` | compare against a proposed change: JSON {add,update,remove} file or - for stdin |  |
@@ -9083,12 +9327,19 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 ## run
 
-Run untrusted code in an isolated disposable microVM
+Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)
 
-`gregale run [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
+| `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
+| `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
+| `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
+| `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
+| `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
+| `--detach` | with --image, queue the run and print its id without waiting (-d) |  |
 | `--workflow-id <ID>` | caller-generated workflow grouping id |  |
 | `--step-label <LABEL>` | short label for this step within --workflow-id |  |
 | `--profile <P>` | preinstalled dependencies (data requires python313) | one of `standard` · `python-data-v1` |
@@ -9107,6 +9358,13 @@ Run untrusted code in an isolated disposable microVM
 | `--watch` | stream live output while waiting |  |
 | `--poll-interval <D>` | status polling interval with --wait |  |
 | `--wait-timeout <D>` | maximum client wait duration |  |
+
+Examples:
+
+```sh
+gregale run --image alpine echo hello
+gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
+```
 
 
 ## runs
@@ -10413,9 +10671,17 @@ Remove the linked project from this checkout
 
 ## profile
 
-Manage named API connections and isolated credentials
+List or manage named API connections and isolated credentials
 
 `gregale profile [<subcommand>]`
+
+Examples:
+
+```sh
+gregale profile
+gregale profile list
+gregale profile --help
+```
 
 ### profile add
 
@@ -10471,9 +10737,145 @@ Remove an inactive connection and its credentials
 
 ## context
 
-Show the linked project and default app context
+Show linked targets, configuration sources, and missing defaults
 
-`gregale context`
+`gregale context [<subcommand>] [--local-config] [--problems-only] [--check] [--verify] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--local-config` | offline project-root summary of preferences, required names, presets, and recovery records; invalid files fail |  |
+| `--problems-only` | show only invalid local files, broken references, and recovery issues; requires --local-config |  |
+| `--check` | fail when a linked project or default app is missing; does not verify remote resources |  |
+| `--verify` | read authenticated account and verify configured linked project/app/environment |  |
+| `--timeout <DURATION>` | overall verification deadline (default 10s; requires --verify) |  |
+
+Examples:
+
+```sh
+gregale context
+gregale context --check --json
+gregale context --local-config
+```
+
+### context save
+
+Save current linked targets as a named local preset
+
+`gregale context save [--replace] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--replace` | explicitly replace an existing preset |  |
+
+### context use
+
+Validate and apply a preset for the currently linked project
+
+`gregale context use [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | validate and preview without saving linked defaults |  |
+
+### context presets
+
+List or manage local target presets
+
+Examples:
+
+```sh
+gregale context presets
+gregale context presets list
+gregale context presets --help
+```
+
+#### context presets copy
+
+Copy a local preset as a starting point without changing active context
+
+`gregale context presets copy <source-name> <new-name>`
+
+Examples:
+
+```sh
+gregale context presets copy staging staging-eu
+```
+
+#### context presets rename
+
+Rename a local preset while preserving its targets and active context
+
+`gregale context presets rename <old-name> <new-name>`
+
+Examples:
+
+```sh
+gregale context presets rename staging staging-eu
+```
+
+#### context presets update
+
+Change selected preset targets without changing active context
+
+`gregale context presets update [--app <SLUG>] [--environment <SLUG>] [--clear-app] [--clear-environment] [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | validate and replace only the preset app |  |
+| `--environment <SLUG>` | validate and replace only the preset environment |  |
+| `--clear-app` | remove only the preset app |  |
+| `--clear-environment` | remove only the preset environment |  |
+| `--dry-run` | validate and preview without saving the preset |  |
+
+#### context presets list
+
+List preset targets and their source file
+
+`gregale context presets list`
+
+#### context presets show
+
+Show one saved target preset
+
+`gregale context presets show <name>`
+
+#### context presets delete
+
+Remove a local preset without changing linked targets
+
+`gregale context presets delete [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview targets and source path without deleting |  |
+
+Examples:
+
+```sh
+gregale context presets delete staging --dry-run
+```
+
+### context set
+
+Update selected linked defaults while preserving omitted settings
+
+`gregale context set [--dry-run] [--app <SLUG>] [--environment <SLUG>] [--clear-app] [--clear-environment]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | validate and display proposed defaults without saving |  |
+| `--app <SLUG>` | validate and replace the default app in the linked project |  |
+| `--environment <SLUG>` | validate and replace the default project environment |  |
+| `--clear-app` | remove only the default app locally |  |
+| `--clear-environment` | remove only the default environment locally |  |
+
+Examples:
+
+```sh
+gregale context set --environment staging
+gregale context set --app payments-api
+gregale context set --clear-environment
+```
 
 
 ## signup
@@ -10492,11 +10894,19 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (linked app or interactive picker)
 
-`gregale logs [<slug>] [--view <NAME>] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--view <NAME>` | reuse a named local log view (only app target may be supplied alongside) |  |
+| `--dry-run` | preview effective target, source, and filters offline; no authentication or remote reads |  |
+| `--view <NAME>` | reuse a local log view with compatible one-off filter overrides; saved view stays unchanged |  |
+| `--saved-view` | use the project-local preferred view and compatible overrides; excludes --view and other selectors |  |
+| `--clear-status` | remove the saved status filter for one ordinary HTTP view query; excludes --status |  |
+| `--clear-grep` | remove the saved text filter for one runtime view query; excludes --grep |  |
+| `--clear-level` | remove the saved level filter for one runtime view query; excludes --level |  |
+| `--clear-route` | remove the saved route filter for one HTTP view query; excludes --route |  |
+| `--latest-failure` | select latest failed deployment and read up to 500 retained build/deploy entries; accepts only an app target |  |
+| `--latest-request-error` | select newest retained HTTP 5xx row; default 15m window; accepts app, since, route |  |
 | `--interactive` | choose source, time window, and filters and show the equivalent command |  |
 | `--follow` | stream logs until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
@@ -10513,8 +10923,8 @@ Query runtime logs and HTTP request events (linked app or interactive picker)
 | `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
 | `--archive` | read durable logs for one instance and UTC day |  |
-| `--instance <ID>` | instance id for --archive |  |
-| `--date <YYYY-MM-DD>` | UTC day for --archive |  |
+| `--instance <ID>` | instance id for --archive (1..128 ASCII letters, numbers, dots, underscores, or hyphens) |  |
+| `--date <DAY>` | UTC day for --archive: today, yesterday, or YYYY-MM-DD |  |
 
 Examples:
 
@@ -10526,36 +10936,199 @@ gregale logs views save runtime-errors --since 1h --level error
 gregale logs my-api --view runtime-errors
 ```
 
+### logs defaults
+
+Show or manage the project-local preferred log view
+
+Examples:
+
+```sh
+gregale logs defaults
+gregale logs defaults --help
+```
+
+#### logs defaults set
+
+Save one existing log view name locally
+
+`gregale logs defaults set [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview the preference path and selected filters without saving |  |
+
+Examples:
+
+```sh
+gregale logs defaults set errors --dry-run
+```
+
+#### logs defaults show
+
+Show the preferred view, current filters, reference health, and preview command
+
+`gregale logs defaults show [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | target the preview command at an explicit, unverified app |  |
+
+Examples:
+
+```sh
+gregale logs defaults show --app payments-api
+```
+
+#### logs defaults clear
+
+Clear the local preference without changing saved views
+
+`gregale logs defaults clear [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview the preference removal without deleting files |  |
+
+Examples:
+
+```sh
+gregale logs defaults clear --dry-run
+```
+
 ### logs views
 
-Manage reusable local log filters
+List or manage reusable local log filters
+
+`gregale logs views <copy|list|show|rename|update|delete|save> [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <TEXT>` | list view names containing literal, case-sensitive text |  |
+| `--source <SOURCE>` | list only saved views of this log source | one of `runtime` · `http` |
+| `--details` | include saved filters and query/preview commands in JSON entries |  |
+| `--app <SLUG>` | target generated commands at an explicit, unverified app |  |
+
+Examples:
+
+```sh
+gregale logs views
+gregale logs views --source http
+gregale logs views --name errors
+gregale --json logs views --details
+gregale logs views list
+gregale logs views --help
+```
+
+#### logs views copy
+
+Copy saved filters as a starting point while preserving the source view
+
+`gregale logs views copy [--dry-run] <source-name> <new-name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview filters and destination without writing |  |
+
+Examples:
+
+```sh
+gregale logs views copy errors checkout-errors
+```
 
 #### logs views list
 
-List saved log views
+List saved log views and copyable query previews
 
-`gregale logs views list`
+`gregale logs views list [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <TEXT>` | list view names containing literal, case-sensitive text |  |
+| `--source <SOURCE>` | list only saved views of this log source; HTTP includes latest-error views | one of `runtime` · `http` |
+| `--details` | include saved filters and query/preview commands in JSON entries |  |
+| `--app <SLUG>` | target generated commands at an explicit, unverified app |  |
+
+Examples:
+
+```sh
+gregale logs views list
+gregale --json logs views list --details
+```
 
 #### logs views show
 
-Show saved filters
+Show saved filters and copyable query previews
 
-`gregale logs views show <name>`
+`gregale logs views show [--app <SLUG>] [--details] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | target generated commands at an explicit, unverified app |  |
+| `--details` | include saved filters and query/preview commands in JSON output |  |
+
+Examples:
+
+```sh
+gregale logs views show errors --app my-api
+gregale --json logs views show errors --app my-api --details
+```
+
+#### logs views rename
+
+Rename a saved view without changing filters or overwriting another view
+
+`gregale logs views rename [--dry-run] <old-name> <new-name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview filters, destination, and preferred-view impact without writing |  |
+
+#### logs views update
+
+Change selected filters while preserving view type and omitted settings
+
+`gregale logs views update [--dry-run] [--since <DURATION>] [--route <PATH>] [--grep <TEXT>] [--level <LEVEL>] [--status <N>] [--limit <N>] [--follow] [--clear-route] [--clear-grep] [--clear-level] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | validate proposed filters and show their run command without saving |  |
+| `--since <DURATION>` | replace relative window |  |
+| `--route <PATH>` | replace HTTP route |  |
+| `--grep <TEXT>` | replace runtime text filter |  |
+| `--level <LEVEL>` | replace runtime level |  |
+| `--status <N>` | replace HTTP status; 0 clears it |  |
+| `--limit <N>` | replace normal HTTP page size |  |
+| `--follow` | replace runtime follow mode; false disables it |  |
+| `--clear-route` | remove route filter |  |
+| `--clear-grep` | remove text filter |  |
+| `--clear-level` | remove level filter |  |
 
 #### logs views delete
 
 Delete a local log view
 
-`gregale logs views delete <name>`
+`gregale logs views delete [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview source, filters, and storage path without deleting |  |
+
+Examples:
+
+```sh
+gregale logs views delete checkout-errors --dry-run
+```
 
 #### logs views save
 
 Save filters as a named view
 
-`gregale logs views save [--source <SOURCE>] [--since <DURATION>] [--level <LEVEL>] [--grep <TEXT>] [--follow] [--status <100..599>] [--route <PATH>] [--limit <1..200>] [--replace] <name>`
+`gregale logs views save [--dry-run] [--latest-request-error] [--source <SOURCE>] [--since <DURATION>] [--level <LEVEL>] [--grep <TEXT>] [--follow] [--status <100..599>] [--route <PATH>] [--limit <1..200>] [--replace] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | preview proposed filters, replacement, and commands without saving |  |
+| `--latest-request-error` | save newest HTTP 5xx selection with a relative window and optional route |  |
 | `--source <SOURCE>` | runtime (default) or http | one of `runtime` · `http` |
 | `--since <DURATION>` | relative window (default 15m) |  |
 | `--level <LEVEL>` | runtime log level |  |
@@ -12087,6 +12660,147 @@ Manage sealed secrets and environment secret references
 
 `gregale secrets [<subcommand>]`
 
+### secrets requirements
+
+Manage local required secret names without reading or changing values
+
+#### secrets requirements check
+
+Compare saved required names with a dotenv example offline; exit 1 on differences or missing declaration
+
+`gregale secrets requirements check [--from-env-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-env-file <PATH>` | dotenv example (default: .env.example at the requirements project root); compare names only |  |
+
+Examples:
+
+```sh
+gregale secrets requirements check
+gregale secrets requirements check --from-env-file config/example.env
+```
+
+#### secrets requirements set
+
+Replace the project declaration with validated, deduplicated names
+
+`gregale secrets requirements set [--dry-run] [--from-env-file <PATH>] [<KEY>...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview current/proposed names and differences without writing |  |
+| `--from-env-file <PATH>` | import key names from a local dotenv file; excludes positional names, never stores values |  |
+
+Examples:
+
+```sh
+gregale secrets requirements set DATABASE_URL API_KEY --dry-run
+gregale secrets requirements set --from-env-file .env.example --dry-run
+```
+
+#### secrets requirements add
+
+Append required names while preserving existing names and skipping duplicates
+
+`gregale secrets requirements add [--dry-run] [--from-env-file <PATH>] [<KEY>...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview added names without writing |  |
+| `--from-env-file <PATH>` | merge key names from a local dotenv file; excludes positional names, never stores values |  |
+
+Examples:
+
+```sh
+gregale secrets requirements add REDIS_URL --dry-run
+gregale secrets requirements add --from-env-file .env.example --dry-run
+```
+
+#### secrets requirements remove
+
+Remove declared names; unknown names fail without changes
+
+`gregale secrets requirements remove [--dry-run] <KEY>...`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview removed names and explicit-empty outcome without writing |  |
+
+Examples:
+
+```sh
+gregale secrets requirements remove OLD_API_KEY --dry-run
+```
+
+#### secrets requirements show
+
+Show required names, declaration status, and source path
+
+`gregale secrets requirements show`
+
+#### secrets requirements clear
+
+Remove the local declaration; missing requirements mean unknown completeness
+
+`gregale secrets requirements clear`
+
+### secrets defaults
+
+Show or manage local saved secret comparison scopes
+
+Examples:
+
+```sh
+gregale secrets defaults
+gregale secrets defaults --help
+```
+
+#### secrets defaults set
+
+Replace saved comparison scope names
+
+`gregale secrets defaults set [--environments <SCOPE,...>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--environments <SCOPE,...>` | comma-separated scope names; 1–10 distinct names |  |
+
+#### secrets defaults show
+
+Show saved scopes and their source file
+
+`gregale secrets defaults show`
+
+#### secrets defaults clear
+
+Remove only the local comparison defaults
+
+`gregale secrets defaults clear`
+
+### secrets check
+
+Check required scoped secrets and current delivery evidence without reading values
+
+`gregale secrets check [--app <slug>] [--scope <SCOPE>] [--required <KEY>]... [--required-file <PATH>] [--missing-template <PATH>] [--environments <SCOPE,...|saved>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked app) |  |
+| `--scope <SCOPE>` | single environment scope (defaults to linked environment) |  |
+| `--required <KEY>` | required secret key name (repeatable) |  |
+| `--required-file <PATH>` | explicit JSON array of required keys; overrides project discovery |  |
+| `--missing-template <PATH>` | create a new private dotenv file containing only missing required names with empty values |  |
+| `--environments <SCOPE,...|saved>` | compare required names across explicit scopes or saved local scopes; excludes scope/template flags |  |
+
+Examples:
+
+```sh
+gregale secrets check
+gregale secrets check --app my-api --required DATABASE_URL
+gregale secrets check --required-file .gregale/required-secrets.json
+```
+
 ### secrets refs
 
 Manage destination-to-source names in a registered environment
@@ -12380,9 +13094,17 @@ Print the CLI version
 
 ## config
 
-Manage non-secret local CLI settings (config get|set|list)
+Show or manage non-secret local CLI settings (config [get|set|list])
 
 `gregale config [<subcommand>]`
+
+Examples:
+
+```sh
+gregale config
+gregale config list
+gregale config --help
+```
 
 ### config get
 

@@ -151,6 +151,26 @@
 969
 971
 972
-
-# Existing collision inherited from merged main at 45a0b575a (2026-10-12).
-981
+# Refreshed from main 2026-10-13: duplicates main gained independently,
+# not introduced by the PR that added them here.
+1000
+1027
+1028
+1029
+1030
+1031
+1032
+1033
+1034
+1035
+1036
+1037
+1038
+1039
+1111
+1112
+1113
+1114
+1115
+1116
+1117

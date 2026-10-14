@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointSourceCompensationTestStore struct {
@@ -120,18 +121,18 @@ func checkpointSourceCompensationFixture(t *testing.T, phase string) (*cloneCoor
 	t.Helper()
 	f, base, capture, buckets := checkpointReleaseFixture(t)
 	store := &checkpointSourceCompensationTestStore{checkpointReleaseLostReplyStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	var err error
 	if phase == "planned" {
 		f.lease, _, err = f.srv.prepareProjectEnvironmentCloneStableCaptureBarriers(t.Context(), f.lease)
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, _, _, err := f.srv.cloneCommonCheckpointPlan(t.Context(), f.lease, store)
+		p, _, _, err := f.srv.cloneCommonCheckpointPlan(t.Context(), f.lease, statetest.NewPg(store))
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.lease, err = f.srv.advanceCloneCommonCheckpointIntent(t.Context(), store, f.lease, []state.ProjectEnvironmentCloneResource{{Kind: "data_checkpoint", Name: p.SourceEnvironment, SourceID: p.OperationID, SourceVersion: cloneCheckpointDigest(p), Status: "planned"}})
+		f.lease, err = f.srv.advanceCloneCommonCheckpointIntent(t.Context(), statetest.NewPg(store), f.lease, []state.ProjectEnvironmentCloneResource{{Kind: "data_checkpoint", Name: p.SourceEnvironment, SourceID: p.OperationID, SourceVersion: cloneCheckpointDigest(p), Status: "planned"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,19 +156,19 @@ func checkpointSourceCompensationFixture(t *testing.T, phase string) (*cloneCoor
 	}
 	p := state.ProjectEnvironmentCloneCheckpointSourceCompensationPlan{Intent: f.lease.Operation.Resources[0]}
 	if phase == "released" {
-		r, err := store.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
+		r, err := store.PgStore.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
 		if err != nil {
 			t.Fatal(err)
 		}
 		p.Capture = r.Plan
 		p.Release = &r
 	} else {
-		p.Capture, _, _, err = f.srv.cloneCommonCheckpointPlan(t.Context(), f.lease, store)
+		p.Capture, _, _, err = f.srv.cloneCommonCheckpointPlan(t.Context(), f.lease, statetest.NewPg(store))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if phase == "release-planned" || phase == "release-requested" {
-			r, err := store.ReserveProjectEnvironmentCloneCheckpointRelease(t.Context(), f.lease, p.Capture, capture.receipt)
+			r, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointRelease(t.Context(), f.lease, p.Capture, capture.receipt)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -179,7 +180,7 @@ func checkpointSourceCompensationFixture(t *testing.T, phase string) (*cloneCoor
 			}
 			p.Release = &r
 		} else if phase == "unknown-release" {
-			r, err := store.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
+			r, err := store.PgStore.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,7 +198,7 @@ func checkpointSourceCompensationFixture(t *testing.T, phase string) (*cloneCoor
 
 func assertCheckpointSourceCompensationJournal(t *testing.T, f *cloneCoordinatorFixture, store *checkpointSourceCompensationTestStore, want string) {
 	t.Helper()
-	in, err := store.ProjectEnvironmentCloneCheckpointSourceCompensationForLease(t.Context(), f.lease)
+	in, err := store.PgStore.ProjectEnvironmentCloneCheckpointSourceCompensationForLease(t.Context(), f.lease)
 	if err != nil || in.State != want {
 		t.Fatal("source cleanup journal", in.State, err)
 	}
@@ -228,18 +229,18 @@ func TestPGCloneCheckpointSourceCompensationOriginalStates(t *testing.T) {
 				t.Fatal("rewrote original resources")
 			}
 			for _, bucket := range buckets {
-				m, err := store.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest)
+				m, err := store.PgStore.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest)
 				if err != nil {
 					t.Fatal("source access not restored", err)
 				}
-				if err = store.FinishObjectBucketMutation(t.Context(), m); err != nil {
+				if err = store.PgStore.FinishObjectBucketMutation(t.Context(), m); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if phase == "adopted" {
 				for _, s := range p.Capture.Sources {
 					if s.Kind == "object_storage" {
-						if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, s.ID); err != nil {
+						if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, s.ID); err != nil {
 							t.Fatal("target cleanup lost original plan after source reopening", err)
 						}
 					}
@@ -282,7 +283,7 @@ func TestPGCloneCheckpointSourceCompensationLostAcknowledgements(t *testing.T) {
 			if fault != "finish" {
 				assertCheckpointReleaseHeld(t, *f, store.checkpointReleaseLostReplyStore, buckets)
 			} else {
-				if err = store.UpsertAppEnvInScope(t.Context(), p.Capture.AccountID, f.apps[0].ID, "production", "CAPTURED", "changed"); err != nil {
+				if err = store.PgStore.UpsertAppEnvInScope(t.Context(), p.Capture.AccountID, f.apps[0].ID, "production", "CAPTURED", "changed"); err != nil {
 					t.Fatal("source configuration not reopened", err)
 				}
 			}
@@ -337,13 +338,13 @@ func TestPGCloneCheckpointSourceCompensationRejectsProofAndBypasses(t *testing.T
 		}
 		assertCheckpointSourceCompensationJournal(t, f, store, "requested")
 	}
-	if err := store.AbandonProjectEnvironmentCloneConfigurationFence(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err := store.PgStore.AbandonProjectEnvironmentCloneConfigurationFence(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("configuration abandonment bypass", err)
 	}
-	if err := store.AbandonProjectEnvironmentCloneObjectWriteFences(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err := store.PgStore.AbandonProjectEnvironmentCloneObjectWriteFences(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("object abandonment bypass", err)
 	}
-	if _, err := store.BeginProjectEnvironmentClonePostgresWriteFenceAbandonment(t.Context(), f.lease, p.Capture.Sources[0].ID); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.PgStore.BeginProjectEnvironmentClonePostgresWriteFenceAbandonment(t.Context(), f.lease, p.Capture.Sources[0].ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("postgres abandonment bypass", err)
 	}
 	assertCheckpointReleaseHeld(t, *f, store.checkpointReleaseLostReplyStore, buckets)

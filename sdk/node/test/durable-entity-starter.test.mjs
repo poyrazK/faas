@@ -1,3 +1,4 @@
+import {writePackedSDKRuntimeLock} from './fixtures/packed-sdk-runtime-lock.mjs';
 // Install the real packed SDK outside the checkout; no source-import shortcut.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,9 +21,10 @@ test('durable entity starter installs, typechecks, prepares its validator and ex
   // Request only the archive filename; the full generated SDK file inventory can exceed spawnSync's output buffer.
   const packedFilename = execFileSync('npm', ['pack', '--ignore-scripts', '--silent', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
   cpSync(join(temp, packedFilename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const env = {...process.env}; delete env.NODE_TEST_CONTEXT;
   const run = args => execFileSync('npm', args, {cwd: dest, env, encoding: 'utf8', timeout: 60000});
-  run(['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund']);
+  run(['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund']);
   run(['run', 'generate:client']);
   run(['run', 'generate:client:check']);
   const contractsPath = join(dest, 'contracts.mjs');

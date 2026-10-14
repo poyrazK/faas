@@ -63,11 +63,36 @@ func (s *server) getRouteAdvice(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("route advice"))
 		return
 	}
+	suggestions := append(routeadvisor.Advise(in), s.routeAdviceSettings(r.Context(), acct, app, in.Routes)...)
 	writeJSON(w, http.StatusOK, api.RouteAdviceResponse{
 		Slug: app.Slug, From: window.From.Format(time.RFC3339Nano), Until: window.Until.Format(time.RFC3339Nano),
 		WindowClamped: window.WindowClamped, CacheMaxAgeSeconds: maxAge,
-		RoutesAnalyzed: len(in.Routes), Suggestions: routeadvisor.Advise(in),
+		RoutesAnalyzed: len(in.Routes), Suggestions: suggestions,
 	})
+}
+
+// routeAdviceSettings adds the app-level wake-ahead and route-priority
+// suggestions (ADR-1152). A setting that cannot be read yields no suggestion.
+func (s *server) routeAdviceSettings(ctx context.Context, acct state.Account, app state.App, routes []routeadvisor.RouteStats) []api.RouteAdviceSuggestion {
+	in := routeadvisor.SettingInputs{App: app.Slug, Routes: routes}
+	wake, ok := s.store.(state.ServiceWakeAheadStore)
+	if !ok {
+		return nil
+	}
+	setting, err := wake.GetServiceWakeAhead(ctx, acct.ID, app.ID)
+	if err != nil {
+		return nil
+	}
+	in.WakeAheadEnabled = setting.Enabled
+	source, _, err := state.EffectiveRoutePriorities(ctx, s.store, acct.ID, app.ID)
+	if err != nil {
+		return nil
+	}
+	in.PrioritySource = source
+	evidence := s.routeEvidence()
+	in.Learned = evidence.WakeAheadLearned(ctx, acct, app)
+	in.Queue = evidence.PriorityQueue(ctx, app)
+	return routeadvisor.SettingSuggestions(in)
 }
 
 // routeAdviceCacheMaxAge parses the what-if cache lifetime; empty means the

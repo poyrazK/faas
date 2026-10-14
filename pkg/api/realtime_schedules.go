@@ -10,6 +10,7 @@ import (
 )
 
 type ManagedRealtimeScheduleRequest struct {
+	TTLSeconds         int               `json:"ttl_seconds,omitempty"`
 	Group              string            `json:"group,omitempty"`
 	Conditions         json.RawMessage   `json:"conditions,omitempty"`
 	OnConditionFailure string            `json:"on_condition_failure,omitempty"`
@@ -28,6 +29,7 @@ type ManagedRealtimeScheduleUpdate struct {
 	ExpectedVersion int64     `json:"expected_version"`
 }
 type ManagedRealtimeScheduleResponse struct {
+	TTLSeconds           int               `json:"ttl_seconds,omitempty"`
 	Group                string            `json:"group,omitempty"`
 	SkippedOccurrences   int64             `json:"skipped_occurrences"`
 	SkipReason           string            `json:"skip_reason,omitempty"`

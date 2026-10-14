@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -56,6 +57,21 @@ func (s *AppTaskSession) ExecuteWithOutput(ctx context.Context, req apptaskproto
 	return s.client.ExecuteWithOutput(ctx, req, receive)
 }
 
+// Interact runs one interactive session over the connected guest.
+func (s *AppTaskSession) Interact(ctx context.Context, req apptaskproto.Request, input <-chan apptaskproto.InputEvent, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	var zero apptaskproto.Result
+	if s == nil || s.client == nil {
+		return zero, fmt.Errorf("fcvm: nil app task session")
+	}
+	s.destroyMu.Lock()
+	destroyed := s.destroyed
+	s.destroyMu.Unlock()
+	if destroyed {
+		return zero, fmt.Errorf("fcvm: app task session destroyed")
+	}
+	return s.client.Interact(ctx, req, input, receive)
+}
+
 func (s *AppTaskSession) Destroy(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -69,7 +85,11 @@ func (s *AppTaskSession) Destroy(ctx context.Context) error {
 	s.destroyMu.Unlock()
 	var closeErr error
 	if s.conn != nil {
-		closeErr = s.conn.Close()
+		// A cancelled exchange may already have closed the connection; that
+		// is not a teardown failure.
+		if err := s.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			closeErr = err
+		}
 	}
 	if s.destroyVM != nil {
 		if err := s.destroyVM(ctx); err != nil {

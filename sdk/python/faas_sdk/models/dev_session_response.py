@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.app_response import AppResponse
     from ..models.dev_bucket_response import DevBucketResponse
     from ..models.dev_postgres_response import DevPostgresResponse
+    from ..models.dev_watch import DevWatch
 
 
 T = TypeVar("T", bound="DevSessionResponse")
@@ -33,6 +34,11 @@ class DevSessionResponse:
     buckets: list[DevBucketResponse] | Unset = UNSET
     """Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for
     principals with storage:manage or admin. Revoked bindings are excluded."""
+    watch: DevWatch | Unset = UNSET
+    """Watch mode (ADR-1170). The environment runs this development server instead of the production build, and
+    live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
+    next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
+    or does not require authentication."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +57,10 @@ class DevSessionResponse:
                 buckets_item = buckets_item_data.to_dict()
                 buckets.append(buckets_item)
 
+        watch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.watch, Unset):
+            watch = self.watch.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -63,6 +73,8 @@ class DevSessionResponse:
             field_dict["postgres"] = postgres
         if buckets is not UNSET:
             field_dict["buckets"] = buckets
+        if watch is not UNSET:
+            field_dict["watch"] = watch
 
         return field_dict
 
@@ -71,6 +83,7 @@ class DevSessionResponse:
         from ..models.app_response import AppResponse
         from ..models.dev_bucket_response import DevBucketResponse
         from ..models.dev_postgres_response import DevPostgresResponse
+        from ..models.dev_watch import DevWatch
 
         d = dict(src_dict)
         app = AppResponse.from_dict(d.pop("app"))
@@ -93,11 +106,19 @@ class DevSessionResponse:
 
                 buckets.append(buckets_item)
 
+        _watch = d.pop("watch", UNSET)
+        watch: DevWatch | Unset
+        if isinstance(_watch, Unset):
+            watch = UNSET
+        else:
+            watch = DevWatch.from_dict(_watch)
+
         dev_session_response = cls(
             app=app,
             expires_at=expires_at,
             postgres=postgres,
             buckets=buckets,
+            watch=watch,
         )
 
         dev_session_response.additional_properties = d

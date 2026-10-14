@@ -716,6 +716,7 @@ type AppIssue struct {
 	FixedDeploymentID        pgtype.UUID
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
+	SplitSourceIssueID       pgtype.UUID
 }
 
 type AppIssueImpactAlertPolicy struct {
@@ -1024,6 +1025,15 @@ type AppTask struct {
 	ExclusiveOperationID pgtype.UUID
 	ExclusiveGeneration  pgtype.Int8
 	BindingVerification  []byte
+}
+
+type AppTaskAttachSession struct {
+	TaskID            pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	NodeID            pgtype.Text
+	NodeRecordedAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
 }
 
 type AppTcpListener struct {
@@ -2306,6 +2316,12 @@ type DevSourcePatch struct {
 	ApplyError       pgtype.Text
 }
 
+type DevWatchSetting struct {
+	AppID     pgtype.UUID
+	Command   string
+	UpdatedAt pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -2507,6 +2523,7 @@ type EnvironmentGitSource struct {
 	SourceDefinitionDigest string
 	SourceVerifiedAt       pgtype.Timestamptz
 	Detached               bool
+	Provider               string
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -3566,6 +3583,17 @@ type GithubWebhookSecret struct {
 	UpgradedBy     string
 }
 
+type GitlabOauthConnection struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	Version           int64
+	ConnectedAt       pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type GooseDbVersion struct {
 	ID        int32
 	VersionID int64
@@ -3871,6 +3899,41 @@ type IssueEvent struct {
 	AttributionCheckedAt     pgtype.Timestamptz
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
+}
+
+type IssueGroupAssignment struct {
+	OriginalIssueID  pgtype.UUID
+	CanonicalIssueID pgtype.UUID
+}
+
+type IssueGroupLink struct {
+	IssueID          pgtype.UUID
+	CanonicalIssueID pgtype.UUID
+	AppID            pgtype.UUID
+	Environment      string
+	LinkedAt         pgtype.Timestamptz
+}
+
+type IssueGroupRollup struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Environment              string
+	Fingerprint              string
+	GroupingVersion          int32
+	Title                    string
+	State                    string
+	AssigneeAccountID        pgtype.UUID
+	FirstSeenAt              pgtype.Timestamptz
+	LastSeenAt               pgtype.Timestamptz
+	EventCount               int64
+	RegressionCount          int64
+	ResolvedAt               pgtype.Timestamptz
+	FixedDeploymentID        pgtype.UUID
+	FixedDeploymentCreatedAt pgtype.Timestamptz
+	IgnoredUntil             pgtype.Timestamptz
+	SplitSourceIssueID       pgtype.UUID
 }
 
 type IssueIngestToken struct {
@@ -3904,6 +3967,24 @@ type IssueResolution struct {
 	ActorAccountID    pgtype.UUID
 }
 
+type IssueSplitRule struct {
+	ID                           pgtype.UUID
+	AppID                        pgtype.UUID
+	Environment                  string
+	SourceIssueID                pgtype.UUID
+	TargetIssueID                pgtype.UUID
+	Priority                     int32
+	ExceptionType                string
+	ErrorCode                    string
+	Route                        string
+	SourceKind                   string
+	Enabled                      bool
+	InitialMovedEventCount       int64
+	UnavailableHistoryEventCount int64
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+}
+
 type Job struct {
 	ID                                pgtype.UUID
 	AccountID                         pgtype.UUID
@@ -3934,6 +4015,8 @@ type Job struct {
 	SchedulePolicy                    []byte
 	FailureRules                      []byte
 	ScheduleRevision                  int64
+	ImageEntrypoint                   []string
+	ImageCmd                          []string
 }
 
 type JobRegistryCredential struct {
@@ -4295,6 +4378,34 @@ type ManagedPostgresCutoverDrain struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type ManagedPostgresCutoverDrainPlan struct {
+	ID             pgtype.UUID
+	CutoverID      pgtype.UUID
+	AppID          pgtype.UUID
+	OwnerNodeID    pgtype.UUID
+	OwnerRevision  int64
+	FencedAt       pgtype.Timestamptz
+	InventoryCount int32
+	BlockerCode    string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverDrainPlanMember struct {
+	PlanID             pgtype.UUID
+	InstanceID         pgtype.UUID
+	DeploymentID       pgtype.UUID
+	NodeID             pgtype.UUID
+	WakeID             pgtype.UUID
+	InstanceKind       string
+	InstanceMode       string
+	ObservedState      string
+	DeploymentScope    string
+	MigratedFromNodeID pgtype.UUID
+	QualificationLive  bool
+	DrainID            pgtype.UUID
+	BlockerCode        string
+}
+
 type ManagedPostgresDatabase struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -4510,6 +4621,23 @@ type ManagedRealtimeChannelSnapshot struct {
 	ExpiresAt  pgtype.Timestamptz
 }
 
+type ManagedRealtimeChannelWebhookFilter struct {
+	WebhookID  pgtype.UUID
+	EndpointID pgtype.UUID
+	Channel    string
+	Metadata   []byte
+}
+
+type ManagedRealtimeCommitReceipt struct {
+	SourceID    pgtype.UUID
+	EventID     pgtype.UUID
+	ContentHash []byte
+	EndpointID  string
+	Channel     string
+	Sequence    int64
+	PublishedAt pgtype.Timestamptz
+}
+
 type ManagedRealtimeConnectionOwner struct {
 	ConnectionID   string
 	EndpointID     pgtype.UUID
@@ -4517,6 +4645,92 @@ type ManagedRealtimeConnectionOwner struct {
 	LeaseToken     string
 	LeaseExpiresAt pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type ManagedRealtimeConsumerGroup struct {
+	ID                         pgtype.UUID
+	EndpointID                 pgtype.UUID
+	Channel                    string
+	Name                       string
+	AssignedSequence           int64
+	Completed                  int64
+	LeaseSeconds               int32
+	MaxAttempts                int32
+	CreatedAt                  pgtype.Timestamptz
+	PausedAt                   pgtype.Timestamptz
+	Draining                   bool
+	OrderingMetadataKey        string
+	DeadLetterPolicy           string
+	LastFencingToken           int64
+	DeadLetterRetentionSeconds int32
+	ExpiredDeadLetters         int64
+	NextRetentionCheckAt       pgtype.Timestamptz
+	RetryPolicy                []byte
+	DeadlineMetadataKey        string
+	ExpiredDeliveries          int64
+	ClaimRatePerSecond         int32
+	ClaimRateBurst             int32
+	ClaimRateTat               pgtype.Timestamptz
+	ThrottledClaimRequests     int64
+	MessageFilter              []byte
+	FilteredMessages           int64
+	NextWorkerHealthCheckAt    pgtype.Timestamptz
+	PriorityMetadataKey        string
+	PriorityTurn               int32
+	CircuitEnabled             bool
+	CircuitThreshold           int32
+	CircuitCooldownSeconds     int32
+	CircuitFailures            int32
+	CircuitState               string
+	CircuitOpenUntil           pgtype.Timestamptz
+	CircuitProbeSequence       pgtype.Int8
+	CircuitProbeFencingToken   pgtype.Int8
+	CircuitReason              string
+	HistoryPrunedEvents        int64
+	DeduplicationMetadataKey   string
+	DeduplicationWindowSeconds int32
+	DuplicateMessages          int64
+}
+
+type ManagedRealtimeConsumerGroupAlert struct {
+	GroupID              pgtype.UUID
+	Enabled              bool
+	UnassignedThreshold  int64
+	OldestPendingSeconds int32
+	DeadLetterThreshold  int32
+	CooldownSeconds      int32
+	Breached             bool
+	ObservedBacklog      pgtype.Int8
+	ObservedAge          pgtype.Int8
+	ObservedDead         pgtype.Int4
+	ObservedAt           pgtype.Timestamptz
+	LastEventAt          pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+}
+
+type ManagedRealtimeConsumerGroupMessage struct {
+	GroupID             pgtype.UUID
+	Sequence            int64
+	Message             []byte
+	Status              string
+	Attempts            int32
+	Worker              string
+	TokenHash           []byte
+	LeaseUntil          pgtype.Timestamptz
+	AvailableAt         pgtype.Timestamptz
+	FailureCode         string
+	CredentialID        pgtype.UUID
+	OrderingKey         string
+	Ordered             bool
+	FencingToken        pgtype.Int8
+	DeadSince           pgtype.Timestamptz
+	ExpiryWarnedAt      pgtype.Timestamptz
+	DeliveryDeadline    pgtype.Timestamptz
+	DeadlineInvalid     bool
+	ProcessingStartedAt pgtype.Timestamptz
+	FirstClaimObserved  bool
+	Priority            int32
+	ReleaseCount        int64
 }
 
 type ManagedRealtimeDirectMessageDelivery struct {
@@ -4572,12 +4786,14 @@ type ManagedRealtimeDrainOperation struct {
 }
 
 type ManagedRealtimeDurableCursor struct {
-	EndpointID   pgtype.UUID
-	Principal    string
-	Subscription string
-	Channel      string
-	Sequence     int64
-	UpdatedAt    pgtype.Timestamptz
+	EndpointID           pgtype.UUID
+	Principal            string
+	Subscription         string
+	Channel              string
+	Sequence             int64
+	UpdatedAt            pgtype.Timestamptz
+	AcknowledgedSequence pgtype.Int8
+	AcknowledgedAt       pgtype.Timestamptz
 }
 
 type ManagedRealtimeEndpoint struct {
@@ -4614,6 +4830,44 @@ type ManagedRealtimeEventSchema struct {
 	Version    int32
 	Schema     []byte
 	CreatedAt  pgtype.Timestamptz
+}
+
+type ManagedRealtimeGroupDeliveryHistory struct {
+	ID           int64
+	GroupID      pgtype.UUID
+	Sequence     int64
+	Event        string
+	Attempt      int32
+	FencingToken pgtype.Int8
+	FailureCode  string
+	RecordedAt   pgtype.Timestamptz
+}
+
+type ManagedRealtimeGroupEventID struct {
+	GroupID   pgtype.UUID
+	EventHash []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type ManagedRealtimeGroupMetric struct {
+	GroupID                pgtype.UUID
+	BucketAt               pgtype.Timestamptz
+	FirstClaims            int64
+	Completed              int64
+	Retries                int64
+	DeadLetters            int64
+	QueueMilliseconds      pgtype.Numeric
+	ProcessingMilliseconds pgtype.Numeric
+}
+
+type ManagedRealtimeGroupSettlementReceipt struct {
+	GroupID        pgtype.UUID
+	Principal      string
+	IdempotencyKey pgtype.UUID
+	RequestHash    []byte
+	Result         []byte
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
 }
 
 type ManagedRealtimeInboxCursor struct {
@@ -4671,6 +4925,22 @@ type ManagedRealtimeInboxMessage struct {
 	Metadata                []byte
 }
 
+type ManagedRealtimeInboxMessageExpiration struct {
+	EndpointID pgtype.UUID
+	Channel    string
+	Sequence   int64
+	TtlSeconds int32
+	ExpiresAt  pgtype.Timestamptz
+}
+
+type ManagedRealtimeMessageExpiration struct {
+	EndpointID pgtype.UUID
+	Channel    string
+	Sequence   int64
+	TtlSeconds int32
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type ManagedRealtimeNotificationTimeline struct {
 	ID          int64
 	EndpointID  pgtype.UUID
@@ -4687,6 +4957,17 @@ type ManagedRealtimeNotificationTimeline struct {
 	NextAttempt pgtype.Timestamptz
 }
 
+type ManagedRealtimeOutboxObservation struct {
+	SourceID    pgtype.UUID
+	EventID     pgtype.UUID
+	EndpointID  string
+	Channel     string
+	Attempts    int32
+	BlockedCode pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
 type ManagedRealtimePresenceLease struct {
 	EndpointID     pgtype.UUID
 	Channel        string
@@ -4698,6 +4979,48 @@ type ManagedRealtimePresenceLease struct {
 	ExpiresAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	StateUpdatedAt pgtype.Timestamptz
+}
+
+type ManagedRealtimePrincipalAccess struct {
+	EndpointID            pgtype.UUID
+	Principal             string
+	DeniedChannels        []byte
+	SessionsRevokedBefore pgtype.Timestamptz
+	Revision              int64
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type ManagedRealtimePublisherCredential struct {
+	ID                   pgtype.UUID
+	EndpointID           pgtype.UUID
+	Name                 string
+	TokenHash            []byte
+	Channels             []string
+	EventTypes           []string
+	PublishesPerMinute   int32
+	MaxPayloadBytes      int32
+	Generation           int64
+	IssuedAt             pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	RevokedAt            pgtype.Timestamptz
+	RateWindow           pgtype.Timestamptz
+	RateCount            int32
+	AcceptedCount        int64
+	ReplayCount          int64
+	LastUsedAt           pgtype.Timestamptz
+	LastChannel          pgtype.Text
+	LastSequence         pgtype.Int8
+	MaxMessageTtlSeconds int32
+}
+
+type ManagedRealtimePublisherReceipt struct {
+	CredentialID   pgtype.UUID
+	IdempotencyKey string
+	ContentHash    []byte
+	Channel        string
+	Sequence       int64
+	PublishedAt    pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
 }
 
 type ManagedRealtimePushDelivery struct {
@@ -4774,6 +5097,24 @@ type ManagedRealtimeReadProgress struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type ManagedRealtimeReplayJob struct {
+	ID            pgtype.UUID
+	GroupID       pgtype.UUID
+	State         string
+	Rate          int32
+	Selection     []byte
+	Outcomes      []byte
+	ErrorCount    int64
+	LastError     string
+	Position      int32
+	CreatedAt     pgtype.Timestamptz
+	NextAt        pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	DryRun        bool
+	ReviewedJobID pgtype.UUID
+	StartedJobID  pgtype.UUID
+}
+
 type ManagedRealtimeSchedule struct {
 	EndpointID           pgtype.UUID
 	Channel              string
@@ -4805,6 +5146,7 @@ type ManagedRealtimeSchedule struct {
 	SkippedOccurrences   int64
 	SkipReason           string
 	ScheduleGroup        string
+	TtlSeconds           int32
 }
 
 type ManagedRealtimeScheduleHistory struct {
@@ -4825,6 +5167,42 @@ type ManagedRealtimeScheduleHistory struct {
 	CompletedOccurrences int64
 	SkippedOccurrences   int64
 	SkipReason           string
+}
+
+type ManagedRealtimeSubscriptionTicket struct {
+	TokenHash  []byte
+	EndpointID pgtype.UUID
+	Principal  string
+	Channels   []byte
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+type ManagedRealtimeWorkerCredential struct {
+	ID            pgtype.UUID
+	GroupID       pgtype.UUID
+	Name          string
+	TokenHash     []byte
+	Permissions   []string
+	Generation    int64
+	IssuedAt      pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
+	LastUsedAt    pgtype.Timestamptz
+	LastOperation pgtype.Text
+	UseCount      int64
+}
+
+type ManagedRealtimeWorkerHeartbeat struct {
+	ID           pgtype.UUID
+	GroupID      pgtype.UUID
+	Worker       string
+	Principal    string
+	CredentialID pgtype.UUID
+	Ready        bool
+	StatusCode   string
+	LastSeenAt   pgtype.Timestamptz
+	Lost         bool
 }
 
 type MeterGatewayUsageEvent struct {
@@ -5353,6 +5731,8 @@ type ObjectStorageMultipartUpload struct {
 	ProtectionSnapshot         []byte
 	ProtectionLeaseToken       string
 	ProtectionVerified         bool
+	ChecksumSnapshot           []byte
+	ChecksumVerified           bool
 }
 
 type ObjectStorageRequestMetric struct {
@@ -5701,12 +6081,17 @@ type OutboundAiBudgetAlert struct {
 }
 
 type OutboundAiPriceEntry struct {
-	PriceListID                  pgtype.UUID
-	ModelPrefix                  string
-	InputMillicentsPerMtok       int64
-	CachedInputMillicentsPerMtok pgtype.Int8
-	CacheWriteMillicentsPerMtok  pgtype.Int8
-	OutputMillicentsPerMtok      int64
+	PriceListID                    pgtype.UUID
+	ModelPrefix                    string
+	InputMillicentsPerMtok         int64
+	CachedInputMillicentsPerMtok   pgtype.Int8
+	CacheWriteMillicentsPerMtok    pgtype.Int8
+	OutputMillicentsPerMtok        int64
+	InputImageMillicentsPerMtok    pgtype.Int8
+	OutputImageMillicentsPerMtok   pgtype.Int8
+	MillicentsPerImage             pgtype.Int8
+	MillicentsPerAudioMinute       pgtype.Int8
+	MillicentsPerMillionCharacters pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -5714,6 +6099,52 @@ type OutboundAiPriceList struct {
 	IntegrationID pgtype.UUID
 	EffectiveFrom pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiReplay struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	IntegrationID        pgtype.UUID
+	LogID                pgtype.UUID
+	TargetIntegrationIds []pgtype.UUID
+	TargetModels         []string
+	State                string
+	ErrorCode            pgtype.Text
+	SourceOutputText     pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+}
+
+type OutboundAiReplayResult struct {
+	ReplayID            pgtype.UUID
+	Position            int16
+	TargetIntegrationID pgtype.UUID
+	Model               pgtype.Text
+	Status              pgtype.Int2
+	Outcome             pgtype.Text
+	ErrorCode           pgtype.Text
+	InputTokens         int64
+	OutputTokens        int64
+	CostMillicents      int64
+	DurationMs          int32
+	TtfbMs              pgtype.Int4
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType pgtype.Text
+	OutputText          string
+}
+
+type OutboundAiRequestContent struct {
+	LogID               pgtype.UUID
+	IntegrationID       pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	RequestBody         []byte
+	RequestTruncated    bool
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType pgtype.Text
+	RequestPath         pgtype.Text
 }
 
 type OutboundAiRequestLog struct {
@@ -5766,6 +6197,9 @@ type OutboundAiUsageDaily struct {
 	OutputTokens         int64
 	UpdatedAt            pgtype.Timestamptz
 	CostMillicents       int64
+	Images               int64
+	AudioSeconds         int64
+	Characters           int64
 }
 
 type OutboundAiUserUsageDaily struct {
@@ -5838,6 +6272,12 @@ type OutboundIntegration struct {
 	AiRequestLogEnabled            bool
 	AiUserDailyTokenLimit          pgtype.Int8
 	AiUserDailyCostLimitMillicents pgtype.Int8
+	AiRequestLogContent            bool
+	AiContentEmail                 string
+	AiContentPaymentCard           string
+	AiContentIban                  string
+	AiContentSecret                string
+	AiContentBlockedTerms          []string
 }
 
 type OutboundIntegrationApp struct {

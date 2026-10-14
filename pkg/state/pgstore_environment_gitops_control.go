@@ -38,6 +38,9 @@ func changedEnvironmentGitSource(source EnvironmentGitSource, update Environment
 	if update.Suspended != nil {
 		source.Suspended = *update.Suspended
 	}
+	if source.Spec.Provider == "gitlab" && (source.Spec.Mode != "report" || source.Spec.Prune) {
+		return source, ErrInvalidArgument
+	}
 	return source, nil
 }
 

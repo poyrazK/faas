@@ -103,3 +103,39 @@ func TestChaosInjectCommandRejectsAmbiguousFaults(t *testing.T) {
 		t.Fatal("chaos injection accepted two fault kinds")
 	}
 }
+
+func TestChaosRetryAfterPlan(t *testing.T) {
+	for _, tc := range []struct {
+		delay  string
+		status int
+		valid  bool
+	}{
+		{"1s", 429, true}, {"30s", 503, true}, {"", 429, true},
+		{"0s", 429, false}, {"-1s", 429, false}, {"1500ms", 429, false}, {"31s", 429, false}, {"invalid", 429, false}, {"1s", 500, false},
+	} {
+		spec := &testChaosSpec{Duration: "10s", Rules: []testChaosRule{{To: "inventory", Kind: "http_status", Percent: 100, StatusCode: tc.status, RetryAfter: tc.delay}}}
+		plan, err := spec.plan()
+		if (err == nil) != tc.valid {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+		if tc.valid && tc.delay == "1s" && plan.Rules[0].RetryAfterSeconds != 1 {
+			t.Fatal("retry header lost during conversion")
+		}
+	}
+}
+
+func TestChaosHTTPBodyFlagsRejectInvalidCombinations(t *testing.T) {
+	for _, flags := range [][]string{
+		{"--malformed-json", "--truncated-body"},
+		{"--response-lost", "--malformed-json"},
+		{"--response-lost", "--retry-after", "1s"},
+		{"--malformed-json", "--error", "503"},
+		{"--truncated-body", "--retry-after", "1s"},
+		{"--malformed-json", "--tcp-port", "6379"},
+	} {
+		args := append([]string{"inject", "--scenario", "body", "--target", "inventory"}, flags...)
+		if cmdChaos(args) == 0 {
+			t.Fatalf("accepted invalid body flags: %v", flags)
+		}
+	}
+}

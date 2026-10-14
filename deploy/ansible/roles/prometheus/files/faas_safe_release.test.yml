@@ -43,7 +43,7 @@ tests:
           - exp_labels:
               job: apid
               instance: serving
-              severity: page
+              severity: warn
               component: apid
               family: safe_release
               public_status: degraded
@@ -70,7 +70,7 @@ tests:
           - exp_labels:
               job: apid
               instance: a
-              severity: page
+              severity: warn
               component: apid
               family: safe_release
               public_status: degraded

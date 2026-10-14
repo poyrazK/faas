@@ -40,6 +40,10 @@ func ExtractOTLP(raw []byte, signal string) ([]api.IssueEvent, error) {
 			typ = "Exception"
 		}
 		event := api.IssueEvent{OccurredAt: time.Unix(0, int64(nanos)).UTC(), ExceptionType: typ, Message: values["exception.message"], StackTrace: values["exception.stacktrace"], TraceID: hex.EncodeToString(trace), SpanID: hex.EncodeToString(span), RequestID: values["gregale.request_id"], InvocationID: values["gregale.invocation_id"], SourceKind: "exception"}
+		event.GroupingStrategy = values["gregale.issue.grouping_strategy"]
+		event.FrameOrder = values["gregale.issue.frame_order"]
+		event.ErrorCode = values["gregale.issue.error_code"]
+		event.FingerprintOverride = values["gregale.issue.fingerprint_override"]
 		identity, _ := json.Marshal(event)
 		event.EventID = uuid.NewSHA1(uuid.NameSpaceOID, identity).String()
 		if explicit := values["gregale.issue.event_id"]; explicit != "" {

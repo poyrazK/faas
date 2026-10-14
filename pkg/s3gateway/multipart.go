@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -28,6 +29,7 @@ type completeMultipartUploadRequest struct {
 }
 
 type completeMultipartPart struct {
+	checksumXML
 	PartNumber int32  `xml:"PartNumber"`
 	ETag       string `xml:"ETag"`
 }
@@ -115,6 +117,10 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 	writeEncryptionHeaders(w.Header(), upload.Encryption.Selection)
+	if !upload.Checksum.Empty() {
+		w.Header().Set("X-Amz-Checksum-Algorithm", upload.Checksum.Algorithm)
+		w.Header().Set("X-Amz-Checksum-Type", upload.Checksum.Type)
+	}
 	writeS3XML(w, http.StatusOK, req.requestID, initiateMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: key, UploadID: upload.ID})
 }
 
@@ -137,6 +143,10 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 	}
 	integrity, err := newRequestIntegrityReader(r.Body, r.ContentLength, req.signature.PayloadHash, r.Header)
 	if err != nil {
+		h.writeAWSChunkedError(w, r, req.requestID, err)
+		return
+	}
+	if err := configurePartChecksum(r, req, upload.Checksum.Policy, integrity); err != nil {
 		h.writeAWSChunkedError(w, r, req.requestID, err)
 		return
 	}
@@ -176,7 +186,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		}
 	}()
 	body := io.Reader(integrity)
-	if !upload.Protection.Empty() {
+	if !upload.Protection.Empty() || !upload.Checksum.Empty() {
 		file, checksum, cleanup, ok := h.stageProtectedMultipartPart(w, r, req, integrity)
 		if !ok {
 			return
@@ -195,7 +205,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	signed, err := req.provider.PresignMultipartPart(transferCtx, req.bucket.PhysicalName, objectstorage.MultipartPartRequest{
-		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: r.ContentLength, ExpiresIn: api.ObjectMultipartPartURLTTLSeconds,
+		Checksum: partDigest(upload, integrity), Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: r.ContentLength, ExpiresIn: api.ObjectMultipartPartURLTTLSeconds,
 	})
 	if err != nil {
 		h.providerError(w, r, req, err, key)
@@ -260,6 +270,10 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
+	if !upload.Checksum.Empty() && (len(response.Header.Values(checksumHeader(upload.Checksum.Algorithm))) != 1 || response.Header.Get(checksumHeader(upload.Checksum.Algorithm)) != partDigest(upload, integrity).Value) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
 	if !h.multipartPartEncryption(w, r, req, upload, response.Header) {
 		return
 	}
@@ -269,6 +283,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 	}
 	safeToSettle = receipt.MultipartPartWriterID == ""
 	w.Header().Set("ETag", etag)
+	writeChecksumHeaders(w.Header(), partDigest(upload, integrity), false)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -310,9 +325,9 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 	}
 	items := make([]listedMultipartPart, 0, len(page.Items))
 	for _, part := range page.Items {
-		items = append(items, listedMultipartPart{PartNumber: part.PartNumber, ETag: part.ETag, Size: part.SizeBytes, LastModified: part.LastModified.UTC().Format(time.RFC3339Nano)})
+		items = append(items, listedMultipartPart{checksumXML: checksumXMLFor(part.Checksum), PartNumber: part.PartNumber, ETag: part.ETag, Size: part.SizeBytes, LastModified: part.LastModified.UTC().Format(time.RFC3339Nano)})
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
+	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{ChecksumAlgorithm: upload.Checksum.Algorithm, ChecksumType: upload.Checksum.Type, XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
 }
 
 func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {
@@ -518,6 +533,10 @@ func (h *Handler) admitPublicMultipart(w http.ResponseWriter, r *http.Request, r
 	if !ok {
 		return state.ObjectMultipartUpload{}, nil, false
 	}
+	policy, good := h.multipartChecksumPolicy(w, r, req)
+	if !good {
+		return state.ObjectMultipartUpload{}, nil, false
+	}
 	metadata, metadataErr := objectMetadataFromHeaders(r)
 	if metadataErr != nil {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
@@ -525,7 +544,7 @@ func (h *Handler) admitPublicMultipart(w http.ResponseWriter, r *http.Request, r
 	}
 	upload, err := store.ReserveObjectMultipartUpload(r.Context(), state.ObjectMultipartUpload{
 		ID: uuid.NewString(), AccountID: req.credential.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID,
-		Key: key, ContentType: metadata.ContentType, Protection: req.protection.Clone(), Encryption: req.encryption.Clone(), ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
+		Checksum: objectchecksum.Snapshot{Digest: objectchecksum.Digest{Policy: policy}}, Key: key, ContentType: metadata.ContentType, Protection: req.protection.Clone(), Encryption: req.encryption.Clone(), ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
 		Metadata: state.ObjectMultipartMetadata{
 			CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
 			ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,

@@ -283,6 +283,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
 		p.publishMemoryShadow(instances, rows, started)
+		p.publishQuietPaused(rows, started)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -314,6 +315,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		}
 		p.Reader.Replace(rows)
 		p.publishMemoryShadow(instances, rows, started)
+		p.publishQuietPaused(rows, started)
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		if p.Metrics != nil {
@@ -332,6 +334,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
 	p.publishMemoryShadow(instances, rows, started)
+	p.publishQuietPaused(rows, started)
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
@@ -487,6 +490,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			NodeID:           cached.NodeID,
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
+			QuietPaused:      in.QuietPaused,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			// Preserve the vmmd report timestamp. Using the local
@@ -723,6 +727,7 @@ func (p *Poller) decodeStatsSnapshot(
 			NodeID:           node.ID,
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
+			QuietPaused:      in.QuietPaused,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			SampledAt:        now,

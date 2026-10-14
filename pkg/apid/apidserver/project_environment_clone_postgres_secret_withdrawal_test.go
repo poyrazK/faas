@@ -107,7 +107,7 @@ func TestPGClonePostgresSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 			case "stale":
 				f.lease.Token = uuid.NewString()
 			case "runtime":
-				node, nodeErr := s.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+				node, nodeErr := s.PgStore.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
 				if nodeErr != nil {
 					t.Fatal(nodeErr)
 				}
@@ -115,7 +115,7 @@ func TestPGClonePostgresSecretWithdrawalOwnershipAndRecovery(t *testing.T) {
 				if err = f.pool.QueryRow(t.Context(), "SELECT source_deployment_id FROM project_environment_clone_workloads WHERE operation_id=$1 AND app_id=$2", f.lease.Operation.ID, published.Plan.Secrets[0].AppID).Scan(&deploymentID); err != nil {
 					t.Fatal(err)
 				}
-				instance, createErr := s.CreateInstance(t.Context(), published.Plan.Secrets[0].AppID, deploymentID, string(state.StateColdBooting), 256, node.ID, "")
+				instance, createErr := s.PgStore.CreateInstance(t.Context(), published.Plan.Secrets[0].AppID, deploymentID, string(state.StateColdBooting), 256, node.ID, "")
 				if createErr != nil {
 					t.Fatal(createErr)
 				}
@@ -270,7 +270,7 @@ func checkpointEmptyPgPublicationFixture(t *testing.T) (*cloneCoordinatorFixture
 	if err != nil {
 		t.Fatal("empty publication", err)
 	}
-	inputs, err := store.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+	inputs, err := store.PgStore.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
 	if err != nil || inputs.Publication == nil || len(inputs.Publication.Plan.Secrets) != 0 {
 		t.Fatal("fixture was not empty", err)
 	}
@@ -302,7 +302,7 @@ func TestPGClonePostgresSecretWithdrawalEmptyPublication(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease)
+			err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease)
 			if fault == "write" || fault == "changed" {
 				if err == nil || (fault == "changed" && !errors.Is(err, state.ErrConflict)) {
 					t.Fatal("unsafe empty withdrawal", err)
@@ -320,7 +320,7 @@ func TestPGClonePostgresSecretWithdrawalEmptyPublication(t *testing.T) {
 				if _, err = f.pool.Exec(t.Context(), "DROP TRIGGER reject_empty_withdrawal ON project_environment_clone_postgres_secret_withdrawals; DROP FUNCTION reject_empty_withdrawal()"); err != nil {
 					t.Fatal(err)
 				}
-				err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease)
+				err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease)
 			}
 			if err != nil {
 				t.Fatal("empty withdrawal", err)
@@ -343,20 +343,20 @@ func TestPGClonePostgresSecretWithdrawalEmptyPublication(t *testing.T) {
 				if _, err = f.pool.Exec(t.Context(), "DELETE FROM project_environment_clone_postgres_secret_withdrawals WHERE operation_id=$1", f.lease.Operation.ID); err != nil {
 					t.Fatal(err)
 				}
-				if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+				if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 					t.Fatal("missing empty receipt accepted", err)
 				}
-				if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+				if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 					t.Fatal("object withdrawal accepted missing predecessor", err)
 				}
 				return
 			}
 			setSecretRecipient, mfaIdentities, hostHMACKey = nil, nil, nil
 			reclaimCommonCheckpointWorker(t, f)
-			if err = s.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+			if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 				t.Fatal("object-only chain", err)
 			}
-			if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); err != nil {
+			if err = s.PgStore.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); err != nil {
 				t.Fatal("keyless empty replay", err)
 			}
 			replay, err := sqlc.New().ReadClonePostgresSecretWithdrawal(t.Context(), f.pool, opID)
@@ -375,7 +375,7 @@ func TestPGClonePostgresSecretWithdrawalRejectsInventedEmptyRoster(t *testing.T)
 		t.Fatal(err)
 	}
 	checkpointPgWithdrawalOwnershipFixture(t, f)
-	in, err := s.ProjectEnvironmentCloneCheckpointPgActivationForLease(t.Context(), f.lease)
+	in, err := s.PgStore.ProjectEnvironmentCloneCheckpointPgActivationForLease(t.Context(), f.lease)
 	if err != nil || len(in.Plan.Bindings) == 0 {
 		t.Fatal("fixture has no bindings", err)
 	}

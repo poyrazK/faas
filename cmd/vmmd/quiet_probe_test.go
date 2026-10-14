@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 957 — a quiet-paused guest is never probed, and a probe that overlapped
+// adr: 1151 — a quiet-paused guest is never probed, and a probe that overlapped
 // a pause is dropped, so pausing between requests never withdraws traffic or
 // restarts an instance.
 package main

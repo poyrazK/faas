@@ -74,6 +74,30 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int
 	// EndUser is empty when the call named no end user (ADR-994).
 	EndUser string
+	// ContentCaptured reports stored bodies for the call (ADR-996).
+	ContentCaptured bool
+}
+
+// OutboundAIRequestContent is one logged call's captured bodies (ADR-996):
+// the start of each as outboundd sent and received it, never headers.
+type OutboundAIRequestContent struct {
+	LogID string
+	// RequestPath is the call's escaped provider path; empty for captures
+	// made before ADR-997.
+	RequestPath         string
+	CreatedAt           time.Time
+	RequestBody         []byte
+	RequestTruncated    bool
+	ResponseBody        []byte
+	ResponseTruncated   bool
+	ResponseContentType string
+}
+
+// OutboundAIContentStore reads the content outboundd captured. It is
+// separate from OutboundAIControlStore so existing implementations do not
+// change.
+type OutboundAIContentStore interface {
+	GetOutboundAIRequestContent(ctx context.Context, accountID, integrationID, logID string) (OutboundAIRequestContent, error)
 }
 
 // OutboundAIControlStore owns the ADR-991 customer settings (guardrails and

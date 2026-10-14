@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func completePromotionProbe(t *testing.T, e testEnv, app state.App, target state.Deployment, output string) {
@@ -117,8 +118,8 @@ func TestBindingPromotionRequiresExactCandidateEvidenceAndChecksRetries(t *testi
 }
 
 type changingBindingPromotionStore struct {
-	*state.MemStore
-	before func()
+	MemStore *state.MemStore
+	before   func()
 }
 
 func (s *changingBindingPromotionStore) PromoteDeploymentWithBindings(ctx context.Context, id string, fence state.BindingPromotionFence, serving string) (state.BindingPromotionResult, error) {
@@ -129,11 +130,11 @@ func (s *changingBindingPromotionStore) PromoteDeploymentWithBindings(ctx contex
 func TestBindingPromotionRejectsConfigChangeAfterPassedCheck(t *testing.T) {
 	e, app, serving, candidate := promotionFixture(t)
 	completePromotionProbe(t, e, app, candidate, passedPostgresVerification)
-	e.s.store = &changingBindingPromotionStore{MemStore: e.store, before: func() {
+	e.s.store = statetest.NewMem(&changingBindingPromotionStore{MemStore: e.store, before: func() {
 		if err := e.store.UpsertAppEnv(context.Background(), e.acct.ID, app.ID, "FEATURE", "new-config"); err != nil {
 			t.Fatal(err)
 		}
-	}}
+	}})
 	r := e.do(t, http.MethodPost, "/v1/deployments/"+candidate.ID+"/promote", api.BindingPromotionRequest{}, nil)
 	var problem api.Problem
 	if err := json.Unmarshal(r.Body.Bytes(), &problem); err != nil {
@@ -229,12 +230,12 @@ func TestBindingPromotionUnsupportedWaiverDoesNotHideRuntimeBlockers(t *testing.
 }
 
 type changedPolicyBindingPromotionStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	accountID string
 }
 
 func (s *changedPolicyBindingPromotionStore) ReadBindingPromotionRevision(ctx context.Context, accountID, appID string) (string, error) {
-	if err := s.UpdateAccountPlan(ctx, s.accountID, api.Plan("unknown")); err != nil {
+	if err := s.MemStore.UpdateAccountPlan(ctx, s.accountID, api.Plan("unknown")); err != nil {
 		return "", err
 	}
 	return s.MemStore.ReadBindingPromotionRevision(ctx, accountID, appID)
@@ -243,7 +244,7 @@ func (s *changedPolicyBindingPromotionStore) ReadBindingPromotionRevision(ctx co
 func TestBindingPromotionReloadsPlanAfterRevisionCapture(t *testing.T) {
 	e, app, serving, candidate := promotionFixture(t)
 	completePromotionProbe(t, e, app, candidate, passedPostgresVerification)
-	e.s.store = &changedPolicyBindingPromotionStore{MemStore: e.store, accountID: e.acct.ID}
+	e.s.store = statetest.NewMem(&changedPolicyBindingPromotionStore{MemStore: e.store, accountID: e.acct.ID})
 	r := e.do(t, http.MethodPost, "/v1/deployments/"+candidate.ID+"/promote", api.BindingPromotionRequest{}, nil)
 	if r.Code != 403 {
 		t.Fatalf("stale account plan authorized promotion: %d %s", r.Code, r.Body.String())

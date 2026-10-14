@@ -69,6 +69,7 @@ const (
 	executionCapabilitiesFile     = "execution_capabilities.go"      // ADR-171 — Runs preflight capability DTOs
 	executionArtifactGrantsFile   = "execution_artifact_grants.go"   // ADR-171 — one-time cross-agent artifact capabilities
 	appTasksFile                  = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
+	imageRunsFile                 = "image_runs.go"                  // ADR-1161 — docker-run-shaped image run DTOs
 	projectsFile                  = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
 	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
@@ -89,12 +90,15 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/profiles/deployment-policy":         true, // session + CSRF adapter for automatic profiling policy
-	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check": true, // session + CSRF adapter for the profiling regression API
-	"POST /dashboard/apps/{slug}/profiles/investigations":            true, // session + CSRF adapter for the profiling investigation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":          true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":         true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":             true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                   true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -177,6 +181,11 @@ var routeExclude = map[string]bool{
 	"GET /auth/verify":                                           true, // magic-link consume (legacy; PR #1 closed; kept for compat)
 	"GET /oauth/callback":                                        true, // GitHub App install callback
 	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
+	"POST /v1/gitlab/connect":                                    true, // GitLab.com OAuth session + CSRF form
+	"GET /v1/gitlab/callback":                                    true, // GitLab.com OAuth browser callback
+	"GET /v1/gitlab/connection":                                  true, // GitLab.com session-only dashboard status
+	"DELETE /v1/gitlab/connection":                               true, // GitLab.com session-only disconnect
+	"POST /v1/gitlab/disconnect":                                 true, // GitLab.com session + CSRF form
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
 	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
@@ -1173,6 +1182,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
 		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
+		filepath.Join(root, "pkg", "api", "realtime_access.go"),
+		filepath.Join(root, "pkg", "api", "realtime_tickets.go"),
+		filepath.Join(root, "pkg", "api", "realtime_release_sdk_models.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),
 		filepath.Join(root, "pkg", "api", "realtime_schedules.go"),
@@ -1207,6 +1219,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
+		filepath.Join(root, "pkg", "api", imageRunsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),

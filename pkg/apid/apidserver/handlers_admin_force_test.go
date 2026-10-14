@@ -70,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -103,7 +104,7 @@ type intentInsertCall struct {
 // intent surface so the test can inject errors without standing
 // up a fake for every Store method.
 type fakeStoreForIntent struct {
-	state.Store
+	Store state.Store
 
 	inner *state.MemStore
 
@@ -177,7 +178,7 @@ func newForceHarness(t *testing.T, fake *fakeStoreForIntent) (*server, *state.Me
 	if fake != nil {
 		fake.Store = store
 		fake.inner = store
-		st = fake
+		st = statetest.NewStore(fake)
 	}
 	srv := newServer(st, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
 		WithOpsMetrics(context.Background(), ops).

@@ -112,7 +112,7 @@ func TestDevBucketsManifestAndFlagPrecedence(t *testing.T) {
 	if err != nil || len(fromFlags) != 2 || fromFlags[0].Name != "assets" || fromFlags[0].Permission != "read_write" {
 		t.Fatalf("flags = %+v, %v", fromFlags, err)
 	}
-	request := (devSourceConfig{}).sessionRequest("workspace", false, "", 0, fromFlags...)
+	request := (devSourceConfig{}).sessionRequest("workspace", false, "", 0, nil, fromFlags...)
 	if !reflect.DeepEqual(request.Buckets, fromFlags) {
 		t.Fatalf("request = %+v", request)
 	}

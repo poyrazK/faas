@@ -13,19 +13,33 @@ import (
 // postgresAIUserState reads one end user's settled UTC day and the
 // reservations of its live leases (ADR-994). Admission holds the
 // integration's admission-state row lock, so admissions for the same end
-// user are serialized.
+// user are serialized. A user without a row today is checked against the
+// day's tracking cap (ADR-996).
 func postgresAIUserState(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, today time.Time, endUser string) (aiBudgetState, error) {
 	var state aiBudgetState
+	var tracked bool
 	err := tx.QueryRow(ctx, `
 		SELECT COALESCE((SELECT input_tokens + output_tokens FROM outbound_ai_user_usage_daily
 		                  WHERE integration_id = $1 AND usage_date = $2::date AND end_user = $3), 0)::bigint,
 		       COALESCE((SELECT cost_millicents FROM outbound_ai_user_usage_daily
 		                  WHERE integration_id = $1 AND usage_date = $2::date AND end_user = $3), 0)::bigint,
-		       COALESCE(sum(ai_reserved_tokens), 0)::bigint, COALESCE(sum(ai_reserved_cost_millicents), 0)::bigint
+		       COALESCE(sum(ai_reserved_tokens), 0)::bigint, COALESCE(sum(ai_reserved_cost_millicents), 0)::bigint,
+		       EXISTS (SELECT 1 FROM outbound_ai_user_usage_daily
+		                WHERE integration_id = $1 AND usage_date = $2::date AND end_user = $3)
 		  FROM outbound_admission_leases
 		 WHERE integration_id = $1 AND ai_end_user = $3`, integrationID, today, endUser).
-		Scan(&state.userTokens, &state.userCost, &state.inflightUserTokens, &state.inflightUserCost)
-	return state, err
+		Scan(&state.userTokens, &state.userCost, &state.inflightUserTokens, &state.inflightUserCost, &tracked)
+	if err != nil || tracked {
+		return state, err
+	}
+	var users int64
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM outbound_ai_user_usage_daily
+		 WHERE integration_id = $1 AND usage_date = $2::date`, integrationID, today).Scan(&users); err != nil {
+		return state, err
+	}
+	state.userUntracked = users >= api.OutboundAIUsersPerDay
+	return state, nil
 }
 
 // insertAIUserUsageRollup adds a call that names an end user to that user's

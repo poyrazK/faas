@@ -1,0 +1,29 @@
+version: 1
+suites:
+  http-commit-loss:
+    scenarios:
+      - {scenario: commit-acknowledgement-loss, engine: real-vm, profile: warm}
+scenarios:
+  commit-acknowledgement-loss:
+    project: http-native-commit
+    source: ./app
+    timeout: 5m
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          GREGALE_NATIVE_COMMIT_LOSS: '1'
+          NATIVE_AUTH_CERT_PEM: '${env.GREGALE_NATIVE_AUTH_CERT_PEM}'
+          NATIVE_AUTH_KEY_PEM: '${env.GREGALE_NATIVE_AUTH_KEY_PEM}'
+          NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    cleanup:
+      - [node, ../test/native-commit-acceptance.mjs, cleanup]
+    requests:
+      - name: caller-baseline
+        method: GET
+        path: /
+        expect: {status: 200, json: {'/ready': true}}
+    command: [node, ../test/native-commit-acceptance.mjs, all]

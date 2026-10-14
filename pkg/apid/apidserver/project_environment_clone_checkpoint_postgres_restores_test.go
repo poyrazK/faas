@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointPostgresRestoreTestDriver struct {
@@ -71,7 +72,7 @@ func checkpointPostgresRestoreFixture(t *testing.T) (*cloneCoordinatorFixture, *
 	t.Helper()
 	f, base, release, _ := checkpointReleaseFixture(t)
 	store := &checkpointPostgresRestoreFailureStore{checkpointReleaseLostReplyStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	driver := &checkpointPostgresRestoreTestDriver{checkpointReleaseTestDriver: release}
 	var err error
 	f.lease, err = f.srv.releaseProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
@@ -104,11 +105,11 @@ func TestPGCloneCheckpointPostgresRestoreOriginalRecovery(t *testing.T) {
 	if err != nil || !complete || driver.creates != 1 || driver.captures != 1 || driver.releases != 1 || !reflect.DeepEqual(before, f.lease.Operation) {
 		t.Fatal("original restore recovery", complete, err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
 	if err != nil || receipt.State != "restored" || receipt.AdoptedDatabaseID != "" {
 		t.Fatal("fork adopted or not restored", receipt.State, err)
 	}
-	if _, _, err := store.AdoptProjectEnvironmentClonePostgresSnapshotRestore(t.Context(), f.lease, sourceID); !errors.Is(err, state.ErrConflict) {
+	if _, _, err := store.PgStore.AdoptProjectEnvironmentClonePostgresSnapshotRestore(t.Context(), f.lease, sourceID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("legacy adoption mutated checkpoint inventory", err)
 	}
 	if _, _, err := f.srv.restoreProjectEnvironmentClonePostgresSnapshots(t.Context(), f.lease); !errors.Is(err, errCloneCheckpointUnavailable) {
@@ -183,7 +184,7 @@ func TestPGCloneCheckpointPostgresRestoreRetentionLost(t *testing.T) {
 	if !errors.Is(err, state.ErrConflict) {
 		t.Fatal("expired retention accepted", err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, sourceID)
 	if err != nil || receipt.State != "requested" {
 		t.Fatal("restored committed without retention", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointReleaseTestDriver struct {
@@ -95,18 +96,18 @@ func checkpointReleaseFixture(t *testing.T, setup ...func(*cloneCoordinatorFixtu
 	f, base, provider, buckets := cloneCaptureBarrierFixture(t, setup...)
 	provider.drained = true
 	store := &checkpointReleaseLostReplyStore{cloneCaptureBarrierFailureStore: base}
-	f.srv.store = store
-	driver := &checkpointReleaseTestDriver{checkpointAdoptionTestDriver: &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: store}}}
+	f.srv.store = statetest.NewPg(store)
+	driver := &checkpointReleaseTestDriver{checkpointAdoptionTestDriver: &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}}}
 	return f, store, driver, buckets
 }
 
 func assertCheckpointReleaseHeld(t *testing.T, f cloneCoordinatorFixture, store *checkpointReleaseLostReplyStore, buckets []state.ObjectBucket) {
 	t.Helper()
-	if _, err := store.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
+	if _, err := store.PgStore.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
 		t.Fatal("configuration released on uncertainty", err)
 	}
 	for _, bucket := range buckets {
-		if _, err := store.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		if _, err := store.PgStore.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
 			t.Fatal("object source reopened", err)
 		}
 	}
@@ -130,19 +131,19 @@ func TestPGCloneCheckpointReleaseRecoversLostNativeReply(t *testing.T) {
 	if err != nil || driver.releases != 1 || driver.captures != 1 {
 		t.Fatal("release dispatched twice", err)
 	}
-	release, err := store.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
+	release, err := store.PgStore.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
 	if err != nil || release.State != "released" {
 		t.Fatal("release not committed", release, err)
 	}
-	if _, err := store.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("configuration still held", err)
 	}
 	for _, bucket := range buckets {
-		ticket, err := store.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest)
+		ticket, err := store.PgStore.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest)
 		if err != nil {
 			t.Fatal("source writes not restored", err)
 		}
-		if err := store.FinishObjectBucketMutation(t.Context(), ticket); err != nil {
+		if err := store.PgStore.FinishObjectBucketMutation(t.Context(), ticket); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -154,7 +155,7 @@ func TestPGCloneCheckpointReleaseRecoversLostNativeReply(t *testing.T) {
 	if resources[len(resources)-1].Kind != "data_checkpoint_release" {
 		t.Fatal("private release receipt missing")
 	}
-	if _, err := store.AdvanceProjectEnvironmentCloneOperation(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
+	if _, err := store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
 		state.CloneOperationCapturing, state.CloneOperationCopying, f.lease.Operation.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("release enabled unqualified copying", err)
 	}
@@ -337,7 +338,7 @@ func TestPGCloneCheckpointReleaseLateFailureRollsBackAllHolds(t *testing.T) {
 		t.Fatal("injected final failure did not stop release")
 	}
 	assertCheckpointReleaseHeld(t, f, store, buckets)
-	journal, err := store.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
+	journal, err := store.PgStore.ProjectEnvironmentCloneCheckpointReleaseForLease(t.Context(), f.lease)
 	if err != nil || journal.State != "requested" || journal.ObservationSHA256 != "" {
 		t.Fatal("partial release journal committed", journal, err)
 	}
@@ -376,7 +377,7 @@ func TestPGCloneCheckpointTargetsUseReleasedOriginals(t *testing.T) {
 		if target.State != "provisioning" || target.PublicRead || target.EnvironmentCloneOperationID != before.ID {
 			t.Fatal("target no longer private", target.ID)
 		}
-		if _, err := store.GetObjectBucket(t.Context(), target.AccountID, target.AppID, target.ID); !errors.Is(err, state.ErrNotFound) {
+		if _, err := store.PgStore.GetObjectBucket(t.Context(), target.AccountID, target.AppID, target.ID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("target exposed", err)
 		}
 	}

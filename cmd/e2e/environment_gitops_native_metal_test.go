@@ -29,9 +29,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// TestEnvironmentGitOpsNativeMetal follows one reviewed image through the
-// real apid, imaged, schedd, vmmd, guest and gateway processes. It is opt-in
-// because the qualification dispatcher is deliberately disabled in production
+// TestEnvironmentGitOpsNativeMetal follows a reviewed API and push worker
+// through the real apid, imaged, schedd, vmmd, guest, queue and gateway
+// processes. It is opt-in because the qualification dispatcher is deliberately disabled in production
 // until this acceptance path is proven. Run it with private jail and network
 // mounts in a disposable namespace.
 func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
@@ -52,7 +52,7 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	t.Cleanup(func() { registry.Close() })
 	// Keep the fixture independent of external DNS while exercising the
 	// production fallback for a validated, already-published local base.
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/acceptance-base:unreachable")
+	e2etest.PointDeployBaseAtUnreachable(t, registry.Host()+"/acceptance-base:unreachable")
 	storageRoot := filepath.Join(t.TempDir(), "storage")
 	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
 	stageNativeAcceptanceBase(t, storageRoot)
@@ -60,6 +60,8 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImage))
 	image, _ := e2etest.HelloImage("library/gitops-hello", helloBody)
 	imageRef := registry.AddImage("library/gitops-hello", image)
+	workerImage, _ := e2etest.HelloQueueWorkerImage("library/gitops-worker")
+	workerImageRef := registry.AddImage("library/gitops-worker", workerImage)
 	fcVersion, err := fcvm.DetectFirecrackerVersion(t.Context())
 	if err != nil {
 		t.Fatalf("detect Firecracker version: %v", err)
@@ -113,17 +115,32 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	worker, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-worker",
+		WorkloadName: "worker", Type: state.AppTypeApp, Status: state.AppActive,
+		WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 1,
+		Manifest: state.AppManifest{Port: 8080, ExecutionMode: api.ExecutionModeWorker, StartupDeadlineS: 30}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, err := store.CreateEnvironmentGitSource(t.Context(), account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{
 		RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main",
 		ManifestPath: "environments/production.yaml", Mode: "enforce", ApprovalPolicy: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	enabled := true
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
 		Project: project.Slug, Environment: "production", Workloads: map[string]api.EnvironmentWorkload{
 			"api": {App: app.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: imageRef, FullRootfs: true},
 				Runtime:   json.RawMessage(`{"port":8080,"healthz":"/healthz","startup_deadline_s":30,"execution_mode":"request"}`),
 				Variables: map[string]string{"MODE": "reviewed"}},
+			"worker": {App: worker.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: workerImageRef, FullRootfs: true},
+				Runtime: json.RawMessage(`{"port":8080,"startup_deadline_s":30,"execution_mode":"worker"}`),
+				QueueBindings: map[string]api.EnvironmentQueueBinding{
+					"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "worker", Enabled: &enabled, MaxConcurrency: 1},
+				},
+				QueueSmoke: map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}},
+			},
 		}})
 	if err != nil {
 		t.Fatal(err)
@@ -143,10 +160,11 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	}
 	// The graph claim itself can run for five minutes. Give the test enough
 	// time to observe its terminal result and the subsequent serving revision.
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	var sentID, sentBindingID string
 	for ctx.Err() == nil {
 		current, err := store.EnvironmentGitSource(ctx, account.ID, project.ID, "production")
 		if err != nil {
@@ -156,6 +174,40 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 			t.Fatal(err)
 		}
 		if current.AppliedRevisionID == source.ApprovedRevisionID {
+			if sentID == "" {
+				body, status := doReq(t, h, key, http.MethodPost,
+					"/v1/apps/"+worker.Slug+"/queues/send", api.QueueSendRequest{
+						Environment: "production", QueueName: "orders", Payload: json.RawMessage(`{"id":"serving-evidence"}`),
+					})
+				if status != http.StatusCreated {
+					t.Fatalf("queue admission failed after graph activation: %d %s", status, body)
+				}
+				var queued api.QueueSendResponse
+				if err := json.Unmarshal(body, &queued); err != nil || queued.ID == "" || queued.QueueBindingID == "" {
+					t.Fatalf("queue admission returned no scoped identity: %d %s %v", status, body, err)
+				}
+				sentID = queued.ID
+				sentBindingID = queued.QueueBindingID
+			}
+			invocation, err := store.InvocationByID(ctx, sentID)
+			if err != nil || invocation.AppID != worker.ID || invocation.Source != state.InvocationQueue ||
+				invocation.DeploymentScope != "production" || invocation.EnvironmentID != source.EnvironmentID ||
+				invocation.QueueBindingID != sentBindingID || invocation.QueueName != "orders" {
+				t.Fatalf("serving revision has no scoped queue delivery: %+v %v", invocation, err)
+			}
+			if invocation.State == state.InvocationFailed || invocation.State == state.InvocationDeadLetter {
+				t.Fatalf("serving revision queue delivery failed: %+v", invocation)
+			}
+			if invocation.State != state.InvocationCompleted {
+				select {
+				case <-ticker.C:
+				case <-ctx.Done():
+				}
+				continue
+			}
+			if invocation.Outcome == nil || *invocation.Outcome != state.OutcomeSuccess || invocation.Attempts == 0 {
+				t.Fatalf("completed queue delivery lacks success evidence: %+v", invocation)
+			}
 			visibleBody, visibleStatus := doReq(t, h, key, http.MethodGet,
 				"/v1/projects/"+project.Slug+"/environments/production/gitops", nil)
 			var visible api.EnvironmentGitOpsStatusResponse
@@ -168,7 +220,61 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 			if status != 200 || !strings.Contains(string(body), helloBody) {
 				t.Fatalf("approved revision did not serve through gateway: status=%d body=%s", status, body)
 			}
-			return
+			runs, err := store.ListEnvironmentGitOpsRuns(ctx, account.ID, source.ID, 1)
+			if err != nil || len(runs) != 1 || runs[0].Status != "converged" {
+				t.Fatalf("serving graph has no converged run: %+v %v", runs, err)
+			}
+			baselineRunID := runs[0].ID
+			// A time-limited incident override permits a console change. Once
+			// it expires, the serving graph must repair the owned variable.
+			if err := store.SetEnvironmentGitOpsOverride(ctx, account.ID, source.ID, state.EnvironmentGitOpsOverrideRequest{
+				Resource: "workload/api", Path: "variables/MODE", Reason: "native acceptance drift", ExpiresAt: time.Now().Add(15 * time.Second),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			driftBody, driftStatus := doReq(t, h, key, http.MethodPut,
+				"/v1/apps/"+app.Slug+"/env/MODE?scope=production", api.PutAppEnvRequest{Value: "console-drift"})
+			if driftStatus != http.StatusOK {
+				t.Fatalf("approved temporary console change failed: %d %s", driftStatus, driftBody)
+			}
+			driftDeadline := time.NewTimer(4 * time.Minute)
+			defer driftDeadline.Stop()
+			for {
+				values, err := store.ListAppEnvInScope(ctx, account.ID, app.ID, "production")
+				if err != nil {
+					t.Fatal(err)
+				}
+				runs, err := store.ListEnvironmentGitOpsRuns(ctx, account.ID, source.ID, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(values) == 1 && values[0].Key == "MODE" && values[0].Value == "reviewed" &&
+					len(runs) == 1 && runs[0].ID != baselineRunID && runs[0].Status == "converged" {
+					restoredSource, err := store.EnvironmentGitSource(ctx, account.ID, project.ID, "production")
+					if err != nil || restoredSource.AppliedRevisionID != source.ApprovedRevisionID {
+						t.Fatalf("drift repair lost serving revision: %+v %v", restoredSource, err)
+					}
+					body, status := doGetWithHost(t, client, gatewayAppURL(h, app.Slug), app.Slug+".apps.test.example", 30*time.Second)
+					if status != http.StatusOK || !strings.Contains(string(body), helloBody) {
+						t.Fatalf("drift repair lost gateway serving: status=%d body=%s", status, body)
+					}
+					return
+				}
+				select {
+				case <-ticker.C:
+				case <-ctx.Done():
+					t.Fatalf("GitOps drift repair timed out: values=%+v runs=%+v: %v", values, runs, ctx.Err())
+				case <-driftDeadline.C:
+					t.Fatalf("GitOps drift repair did not converge: values=%+v runs=%+v", values, runs)
+				}
+			}
+		}
+		latestWorker, latestErr := store.LatestDeployment(ctx, worker.ID)
+		if latestErr != nil && !errors.Is(latestErr, state.ErrNotFound) {
+			t.Fatal(latestErr)
+		}
+		if latestErr == nil && latestWorker.Status == state.DeployFailed {
+			t.Fatalf("reviewed worker deployment failed: code=%s error=%s", latestWorker.ErrorCode, latestWorker.Error)
 		}
 		latest, err := store.LatestDeployment(ctx, app.ID)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -185,6 +291,10 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	runs, _ := store.ListEnvironmentGitOpsRuns(context.Background(), account.ID, source.ID, 3)
 	for _, run := range runs {
 		t.Logf("GitOps run: status=%s error_code=%s", run.Status, run.ErrorCode)
+	}
+	if sentID != "" {
+		invocation, err := store.InvocationByID(context.Background(), sentID)
+		t.Logf("GitOps queue delivery: state=%s binding=%s err=%v", invocation.State, invocation.QueueBindingID, err)
 	}
 	t.Fatal("native GitOps revision did not reach serving before timeout")
 }

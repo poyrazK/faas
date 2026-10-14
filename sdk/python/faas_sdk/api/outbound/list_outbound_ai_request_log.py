@@ -60,6 +60,16 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -96,8 +106,8 @@ def sync_detailed(
 ) -> Response[OutboundAIRequestLogList | Problem]:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):
@@ -134,8 +144,8 @@ def sync(
 ) -> OutboundAIRequestLogList | Problem | None:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):
@@ -167,8 +177,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIRequestLogList | Problem]:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):
@@ -203,8 +213,8 @@ async def asyncio(
 ) -> OutboundAIRequestLogList | Problem | None:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):

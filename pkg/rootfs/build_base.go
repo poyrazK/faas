@@ -274,15 +274,17 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// spec §11 forbids.
 	passwdEntries := make(map[string]PasswdEntry)
 	resolver := in.Resolver
+	budgetBytes := limits.LayerExtractionBudgetBytes()
+	budget := newExtractionBudget(budgetBytes)
 	if len(in.Layers) > 0 {
 		// Layer zero may introduce /etc/passwd and files whose tar headers
 		// use that layer's named users. Spool it once so it can be applied
 		// first to discover the passwd table and then replayed with the
 		// resolver. Pull blob readers are generally forward-only, so this
 		// cannot rely on io.Seeker.
-		layer0, cleanup, err := spoolFullRootfsLayer(in.Layers[0])
+		layer0, cleanup, err := spoolFullRootfsLayer(in.Layers[0], budgetBytes)
 		if err != nil {
-			return BuildResult{}, fmt.Errorf("rootfs: spool layer 0: %w", err)
+			return BuildResult{}, layerApplyError(limits, 0, err)
 		}
 		defer cleanup()
 		// layer0 is a server-owned temporary spool created above; it is not
@@ -291,10 +293,12 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: open layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, nil)
+		// The resolved pass below rewrites the same entries, so the
+		// discovery pass has a budget of its own.
+		err = applyLayerGzWithResolverBudget(staging, f, nil, newExtractionBudget(budgetBytes))
 		_ = f.Close()
 		if err != nil {
-			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (pre-parse): %w", err)
+			return BuildResult{}, layerApplyError(limits, 0, err)
 		}
 		entries, perr := parseStagingPasswd(staging)
 		if perr != nil {
@@ -308,16 +312,16 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: reopen layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, resolver)
+		err = applyLayerGzWithResolverBudget(staging, f, resolver, budget)
 		_ = f.Close()
 		if err != nil {
-			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (resolved): %w", err)
+			return BuildResult{}, layerApplyError(limits, 0, err)
 		}
 	}
 	for i := 1; i < len(in.Layers); i++ {
 		layer := in.Layers[i]
-		if err := ApplyLayerGzWithResolver(staging, layer, resolver); err != nil {
-			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
+		if err := applyLayerGzWithResolverBudget(staging, layer, resolver, budget); err != nil {
+			return BuildResult{}, layerApplyError(limits, i, err)
 		}
 		// Re-parse the top-most /etc/passwd after each apply.
 		// Last-writer-wins semantics: if layer N+1 ships a
@@ -463,14 +467,21 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	return res, nil
 }
 
-func spoolFullRootfsLayer(r io.Reader) (string, func(), error) {
+// spoolFullRootfsLayer copies the compressed layer to a temporary file. The
+// copy stops past maxBytes: a compressed layer larger than the extraction
+// budget cannot fit it once extracted.
+func spoolFullRootfsLayer(r io.Reader, maxBytes int64) (string, func(), error) {
 	f, err := os.CreateTemp("", "faas-fullrootfs-layer-*.tar.gz")
 	if err != nil {
 		return "", func() {}, err
 	}
 	path := f.Name()
 	cleanup := func() { _ = os.Remove(path) }
-	if _, err := io.Copy(f, r); err != nil {
+	n, err := io.Copy(f, io.LimitReader(r, maxBytes+1))
+	if err == nil && n > maxBytes {
+		err = &ErrLayerExtractionExceedsBudget{EntryBytes: n, LimitBytes: maxBytes}
+	}
+	if err != nil {
 		_ = f.Close()
 		cleanup()
 		return "", func() {}, err

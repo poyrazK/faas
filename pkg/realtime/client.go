@@ -211,6 +211,7 @@ func (c *Client) PublishRetainedWithStatus(ctx context.Context, endpointID, chan
 		DataBase64:       encodeMessage(message),
 		Binary:           message.Binary,
 		RetainedSequence: sequence,
+		ExpiresAt:        message.ExpiresAt,
 	}, &response)
 	status := PublishStatus{Queued: response.Queued, QueueFull: response.QueueFull, Failed: response.Failed}
 	if response.Subscribers != nil {

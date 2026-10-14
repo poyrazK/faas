@@ -8,9 +8,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type unavailableWarmPoolCandidates struct{ *state.MemStore }
+type unavailableWarmPoolCandidates struct{ MemStore *state.MemStore }
 
 func (s unavailableWarmPoolCandidates) WarmPoolReconciliationAppIDs(context.Context, string) ([]string, error) {
 	return nil, state.ErrNotFound
@@ -27,7 +28,7 @@ func TestRunReaperWarmPoolCandidateReadFailureRetriesOwnedApps(t *testing.T) {
 		t.Fatal(err)
 	}
 	vmm := &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}
-	engine := newEngine(t, unavailableWarmPoolCandidates{f.store}, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(unavailableWarmPoolCandidates{f.store}), vmm, &fakeNotifier{}, "1.10.0")
 	NewLoop(nil, engine, testLog()).runReaper(ctx)
 	if vmm.pausedCalls != 1 || vmm.destroys != 0 {
 		t.Fatalf("candidate read failure lost pinned recovery: paused=%d destroy=%d", vmm.pausedCalls, vmm.destroys)

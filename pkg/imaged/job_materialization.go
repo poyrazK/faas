@@ -125,6 +125,10 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("pull image config: %v", err))
 	}
+	// Image runs (ADR-1161) resolve Docker-style commands from the image's
+	// own ENTRYPOINT and CMD, so keep them before the fallback below.
+	imageEntrypoint := append([]string{}, config.Entrypoint...)
+	imageCmd := append([]string{}, config.Cmd...)
 	// A job's command is staged later in job.json, but BuildFullRootfs also
 	// injects the stable app.json contract. Use the job command only when the
 	// source image has no command of its own so a valid manifest can be built.
@@ -179,7 +183,10 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	var publishErr error
 	_, claimAware := h.store.(state.JobImageMaterializationClaimer)
 	if publisher, ok := h.store.(state.JobImageMaterializationPublisher); ok && claimAware {
-		_, publishErr = publisher.JobPublishImageMaterialization(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, digest, key)
+		publishErr = recordJobImageConfig(ctx, h.store, job, owner, imageEntrypoint, imageCmd)
+		if publishErr == nil {
+			_, publishErr = publisher.JobPublishImageMaterialization(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, digest, key)
+		}
 	} else if claimAware {
 		publishErr = fmt.Errorf("claim-aware job materialization store does not support fenced publication")
 	} else {
@@ -195,6 +202,18 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	h.markJobRegistryCredentialUsed(ctx, job, ref.APIHost(), jobAuth)
 	h.log.Info("imaged: materialized job image", "job", job.ID, "digest", digest, "key", key)
 	return nil
+}
+
+// recordJobImageConfig stores the image's ENTRYPOINT and CMD under the same
+// claim fence as the publication that follows, so a ready job never carries
+// another artifact's config. Stores without the recorder skip it; apid then
+// re-queues image runs that need the config.
+func recordJobImageConfig(ctx context.Context, store any, job state.Job, owner string, entrypoint, cmd []string) error {
+	recorder, ok := store.(state.JobImageConfigRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder.JobRecordImageConfig(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, entrypoint, cmd)
 }
 
 // MaterializePendingJobs drains the bounded pending queue. Transient failures

@@ -33,7 +33,11 @@ func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ stat
 		cached, write := entry.Price.CachedInput, entry.Price.CacheWrite
 		out.Entries = append(out.Entries, api.OutboundAIPriceEntry{ModelPrefix: entry.Model,
 			InputMillicentsPerMTok: entry.Price.Input, CachedInputMillicentsPerMTok: &cached,
-			CacheWriteMillicentsPerMTok: &write, OutputMillicentsPerMTok: entry.Price.Output})
+			CacheWriteMillicentsPerMTok: &write, OutputMillicentsPerMTok: entry.Price.Output,
+			// ADR-997 media prices; absent ones stay absent.
+			InputImageMillicentsPerMTok: copyInt64(entry.Price.InputImage), OutputImageMillicentsPerMTok: copyInt64(entry.Price.OutputImage),
+			MillicentsPerImage: copyInt64(entry.Price.Image), MillicentsPerAudioMinute: copyInt64(entry.Price.AudioMinute),
+			MillicentsPerMillionCharacters: copyInt64(entry.Price.Characters)})
 	}
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	httpkit.WriteJSON(w, http.StatusOK, out)

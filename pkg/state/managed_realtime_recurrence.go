@@ -126,7 +126,7 @@ func sameRealtimeScheduleCreation(old, row ManagedRealtimeSchedule) bool {
 		deadline = old.InitialDeliverAt
 	}
 	sameEnd := old.EndAt == nil && row.EndAt == nil || old.EndAt != nil && row.EndAt != nil && old.EndAt.Equal(*row.EndAt)
-	return old.Group == row.Group && bytes.Equal(old.Conditions, row.Conditions) && old.OnConditionFailure == row.OnConditionFailure && old.IntervalSeconds == row.IntervalSeconds && old.MaxOccurrences == row.MaxOccurrences && sameEnd && old.MaxAttempts == row.MaxAttempts && old.BackoffSeconds == row.BackoffSeconds && deadline.Equal(row.DeliverAt) && old.Binary == row.Binary && bytes.Equal(old.Data, row.Data) && equalRealtimeMetadata(old.Metadata, row.Metadata)
+	return old.TTLSeconds == row.TTLSeconds && old.Group == row.Group && bytes.Equal(old.Conditions, row.Conditions) && old.OnConditionFailure == row.OnConditionFailure && old.IntervalSeconds == row.IntervalSeconds && old.MaxOccurrences == row.MaxOccurrences && sameEnd && old.MaxAttempts == row.MaxAttempts && old.BackoffSeconds == row.BackoffSeconds && deadline.Equal(row.DeliverAt) && old.Binary == row.Binary && bytes.Equal(old.Data, row.Data) && equalRealtimeMetadata(old.Metadata, row.Metadata)
 }
 
 func scheduledRealtimeMetadata(row ManagedRealtimeSchedule) map[string]string {

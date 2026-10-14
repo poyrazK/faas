@@ -40,13 +40,35 @@ func cmdAIPrices(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Effective from %s (EUR per million tokens)\n", list.EffectiveFrom.Format("2006-01-02 15:04 UTC"))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "MODEL PREFIX\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT")
+	_, _ = fmt.Fprintln(tw, "MODEL PREFIX\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT\tMEDIA")
 	for _, entry := range list.Entries {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", entry.ModelPrefix, financialMoney(entry.InputMillicentsPerMTok),
-			formatOptionalPrice(entry.CachedInputMillicentsPerMTok), formatOptionalPrice(entry.CacheWriteMillicentsPerMTok), financialMoney(entry.OutputMillicentsPerMTok))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.ModelPrefix, financialMoney(entry.InputMillicentsPerMTok),
+			formatOptionalPrice(entry.CachedInputMillicentsPerMTok), formatOptionalPrice(entry.CacheWriteMillicentsPerMTok),
+			financialMoney(entry.OutputMillicentsPerMTok), formatMediaPrices(entry))
 	}
 	_ = tw.Flush()
 	return 0
+}
+
+// formatMediaPrices lists an entry's media prices (ADR-997), or "-".
+func formatMediaPrices(entry api.OutboundAIPriceEntry) string {
+	var parts []string
+	for _, price := range []struct {
+		label string
+		value *int64
+	}{
+		{"input image tokens", entry.InputImageMillicentsPerMTok}, {"output image tokens", entry.OutputImageMillicentsPerMTok},
+		{"per image", entry.MillicentsPerImage}, {"per audio minute", entry.MillicentsPerAudioMinute},
+		{"per million characters", entry.MillicentsPerMillionCharacters},
+	} {
+		if price.value != nil {
+			parts = append(parts, price.label+" "+financialMoney(*price.value))
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, "; ")
 }
 
 func formatOptionalPrice(value *int64) string {
@@ -59,7 +81,8 @@ func formatOptionalPrice(value *int64) string {
 func cmdAIPricesSet(args []string) int {
 	fs := newFlagSet("ai prices set", flag.ContinueOnError)
 	var prices stringListFlag
-	fs.Var(&prices, "price", "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeatable; none clears)")
+	fs.Var(&prices, "price", "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, "+
+		"[,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeatable; none clears)")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || len(prices) == 0 {
 		return printErr("Invalid ai prices set arguments", errors.New(aiPricesUsage))
 	}
@@ -91,7 +114,10 @@ func cmdAIPricesSet(args []string) int {
 	return 0
 }
 
-// parseAIPriceSpec reads model=...,input=...,output=...[,cached=...][,cache-write=...].
+// parseAIPriceSpec reads model=... and its prices: input, output, cached,
+// cache-write, input-image and output-image per million tokens, image per
+// image, audio-minute per minute and characters per million characters
+// (ADR-997). A media-only model may leave input and output out.
 func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 	var entry api.OutboundAIPriceEntry
 	seen := map[string]bool{}
@@ -118,12 +144,23 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 			entry.CachedInputMillicentsPerMTok = &millicents
 		case "cache-write":
 			entry.CacheWriteMillicentsPerMTok = &millicents
+		case "input-image":
+			entry.InputImageMillicentsPerMTok = &millicents
+		case "output-image":
+			entry.OutputImageMillicentsPerMTok = &millicents
+		case "image":
+			entry.MillicentsPerImage = &millicents
+		case "audio-minute":
+			entry.MillicentsPerAudioMinute = &millicents
+		case "characters":
+			entry.MillicentsPerMillionCharacters = &millicents
 		default:
 			return entry, fmt.Errorf("%q: unknown key %q", spec, key)
 		}
 	}
-	if !seen["model"] || !seen["input"] || !seen["output"] {
-		return entry, fmt.Errorf("%q: model, input and output are required", spec)
+	media := seen["image"] || seen["audio-minute"] || seen["characters"]
+	if !seen["model"] || (!media && (!seen["input"] || !seen["output"])) {
+		return entry, fmt.Errorf("%q: model plus input and output, or an image, audio-minute or characters price, are required", spec)
 	}
 	return entry, nil
 }

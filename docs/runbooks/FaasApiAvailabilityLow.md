@@ -3,7 +3,7 @@
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metric: `gateway_platform_errors_total{app!="-"}` (5xx the gateway produced before any guest response byte) vs resolved-app 2xx+5xx `gateway_requests_total` (gatewayd-internal `/metrics`). Requests labelled `app="-"` never resolved to a tenant route and are excluded. A 5xx the customer's app returned itself is not platform unavailability and does not count.
 Spec: §12 (API availability 99.5% monthly).
-Severity: page.
+Severity: warn (ADR-1236). `FaasApiAvailabilityBurnRateHigh` is the page.
 
 ## Symptom
 
