@@ -300,10 +300,11 @@ happens to a detection:
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
 of them under load. To reject bad bodies, declare their shape with a
-`kind=validate` rule. Checks on headers and the URL add about 1 ms to each
-matched request. If your app sends more traffic than its check budget allows
-(roughly 500 requests per second), the rest pass unchecked and are counted
-as `inline_skipped`; the WAF never slows your app down to keep up.
+`kind=validate` rule. Checks on headers and the URL take about 1 ms of CPU
+per matched request, and can add several milliseconds when the node is busy.
+When your app's check budget (roughly 500 requests per second) or the node's
+check capacity runs out, the rest pass unchecked and are counted as
+`inline_skipped`; the WAF never slows your app down to keep up.
 
 Start in `observe`, look for false positives, then switch to `block`:
 
@@ -316,6 +317,21 @@ gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-ru
 
 `edge-rules update --kind waf` replaces the whole WAF action, so repeat every
 setting you want to keep (mode, exclusions, thresholds) in each update.
+
+Some legitimate traffic is known to score as an attack at paranoia level 1.
+Exclude these rule IDs on rules that match such routes, or narrow the rule's
+`--match-path` so it skips them:
+
+| Traffic | CRS rule IDs | Checked |
+|---|---|---|
+| GraphQL query in the URL (`GET /graphql?query={...}`) | 942190 | headers and URL, so `block` rejects it |
+| GraphQL request bodies | 932235, 942290 | body (reported only) |
+| Prose with SQL keywords after a semicolon (`...; select one from the list`) | 942350 | body (reported only) |
+| Content that is SQL, HTML or code: a docs search, a CMS editor, a snippet tool | 942100, 941160 | URL and body |
+
+The WAF accepts any `Content-Type`, or none, and the methods GET, HEAD,
+POST, OPTIONS, PUT, PATCH and DELETE; other methods are reported (rule
+911100).
 
 `warn` and `block` run at paranoia level 1. Level 2 detects more and
 produces more false positives; it is available in `observe` only. The
