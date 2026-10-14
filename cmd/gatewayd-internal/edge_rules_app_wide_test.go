@@ -15,7 +15,7 @@ func appWideHeadersAction(name string) state.EdgeRuleAction {
 	}}
 }
 
-// adr: 1166 — an "@app" rule reaches every host its own app serves (custom
+// adr: 1191 — an "@app" rule reaches every host its own app serves (custom
 // domains included, in evaluation order with host rules), never another app
 // of the same account, and the per-(host, app) cache keeps apps apart.
 func TestAppWideEdgeRules(t *testing.T) {
@@ -74,7 +74,7 @@ func TestAppWideEdgeRules(t *testing.T) {
 	}
 }
 
-// adr: 1166 — an "@app" fence holds the owning account's hosts only, and
+// adr: 1191 — an "@app" fence holds the owning account's hosts only, and
 // never an unclaimed host; an unscoped one holds any claimed host.
 func TestAppWideEdgeRuleFence(t *testing.T) {
 	matcher := newGatewaydEdgeRules(state.NewMemStore(), testLogger(), nil, nil)

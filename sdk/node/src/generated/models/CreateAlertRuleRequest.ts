@@ -11,7 +11,7 @@ export type CreateAlertRuleRequest = {
    */
   event_subscription_id?: string;
   /**
-   * ADR-998. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days).
+   * ADR-1192. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days).
    */
   edge_rule_id?: string;
   /**

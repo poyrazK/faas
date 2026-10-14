@@ -1,6 +1,6 @@
--- filename: 20261013141508273_alert_rules_edge_rule_activity.sql
+-- filename: 20261014093127861_alert_rules_edge_rule_activity.sql
 --
--- ADR-998: alert rules on edge-rule activity. Two metrics count the ADR-960
+-- ADR-1192: alert rules on edge-rule activity. Two metrics count the ADR-960
 -- hourly hit buckets: edge_rule_hits (enforced matches) and
 -- edge_rule_log_hits (log-mode matches). edge_rule_id optionally scopes a
 -- rule to one edge rule; it is deliberately not a foreign key because an

@@ -26,7 +26,7 @@ type edgeLoadKey struct {
 // leader releases its slot so surviving requests can retry with their own budget.
 // Generations let requests after invalidation start a fresh read independently.
 func (g *gatewaydEdgeRules) loadHost(ctx context.Context, host string) (*gateway.HostEntry, error) {
-	// ADR-1166: a host's set includes its app's app-wide rules, so cache,
+	// ADR-1191: a host's set includes its app's app-wide rules, so cache,
 	// coalescing and backoff are per (host, app).
 	cacheKey := gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx))
 	for {

@@ -1,6 +1,6 @@
 package alerts
 
-// ADR-998: alerts on edge-rule activity, read from the ADR-960 hourly hit
+// ADR-1192: alerts on edge-rule activity, read from the ADR-960 hourly hit
 // buckets. edge_rule_hits counts enforced matches, edge_rule_log_hits
 // log-mode matches; an empty EdgeRuleID sums every rule of the app.
 

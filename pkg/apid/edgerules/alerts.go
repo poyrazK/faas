@@ -1,6 +1,6 @@
 package edgerules
 
-// ADR-998: alert rules on edge-rule activity. The alert handlers stay in
+// ADR-1192: alert rules on edge-rule activity. The alert handlers stay in
 // apidserver; the edge-rule specific shape check and rule lookup live here.
 
 import (

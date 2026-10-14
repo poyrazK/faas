@@ -19,7 +19,7 @@ func WithEdgeRuleOwner(ctx context.Context, accountID string) context.Context {
 type edgeRuleAppKey struct{}
 
 // WithEdgeRuleApp records the app a request resolved to, so app-wide
-// edge rules (match_host "@app", ADR-1166) of that app apply to the host.
+// edge rules (match_host "@app", ADR-1191) of that app apply to the host.
 func WithEdgeRuleApp(ctx context.Context, appID string) context.Context {
 	if appID == "" {
 		return ctx

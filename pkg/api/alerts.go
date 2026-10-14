@@ -160,7 +160,7 @@ var AllowedAlertRuleMetrics = []string{
 	"workflow_pending_age_seconds",
 	"workflow_waiting_age_seconds",
 	"workflow_due_age_seconds",
-	// ADR-998: edge-rule activity from the ADR-960 hourly hit counts.
+	// ADR-1192: edge-rule activity from the ADR-960 hourly hit counts.
 	"edge_rule_hits",
 	"edge_rule_log_hits",
 
@@ -251,7 +251,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 // custom-domain and metric routes.
 type CreateAlertRuleRequest struct {
 	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
-	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"` // ADR-998
+	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"` // ADR-1192
 	PostDeployRollbackWindowSeconds *int    `json:"post_deploy_rollback_window_seconds,omitempty"`
 	Name                            string  `json:"name"`
 	Enabled                         *bool   `json:"enabled,omitempty"`
@@ -467,7 +467,7 @@ func TrimNonEmpty(s string) (string, bool) {
 	return t, t != ""
 }
 
-// Edge-rule activity metrics (ADR-998).
+// Edge-rule activity metrics (ADR-1192).
 const (
 	AlertMetricEdgeRuleHits    = "edge_rule_hits"
 	AlertMetricEdgeRuleLogHits = "edge_rule_log_hits"
@@ -479,7 +479,7 @@ const (
 var EdgeRuleAlertWindowSpecs = []string{"1h", "6h", "24h", "7d"}
 
 // IsEdgeRuleAlertMetric reports whether metric counts edge-rule hits
-// (ADR-998).
+// (ADR-1192).
 func IsEdgeRuleAlertMetric(metric string) bool {
 	return metric == AlertMetricEdgeRuleHits || metric == AlertMetricEdgeRuleLogHits
 }

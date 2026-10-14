@@ -35,7 +35,7 @@ func TestEdgeRulesRecipeCommand(t *testing.T) {
 		t.Fatalf("create request = %s", f.sawBody)
 	}
 
-	// adr: 1166 — without --host the rule covers every host the app serves.
+	// adr: 1191 — without --host the rule covers every host the app serves.
 	f = authedFakeAPI(t, `{"id":"r0","kind":"ip"}`, http.StatusCreated)
 	if code := cmdEdgeRules([]string{"recipe", "block-unverified-bots", "--app", "demo"}); code != 0 {
 		t.Fatalf("exit = %d", code)

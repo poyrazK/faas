@@ -53,7 +53,7 @@ class CreateAlertRuleRequest:
     """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
     event consumer metrics; webhook action and windows up to 24h are required."""
     edge_rule_id: UUID | Unset = UNSET
-    """ADR-998. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches);
+    """ADR-1192. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches);
     omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h,
     24h or 7d (hourly hit buckets, kept 14 days)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET

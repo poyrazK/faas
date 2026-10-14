@@ -634,7 +634,7 @@ func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard
 // dashboardEdgeRuleHostCoverage counts, for each hostname the app serves
 // (its platform host and verified custom domains), the enabled rules that
 // apply to it: host-specific, pattern ("*", "*.example.com") and app-wide
-// ("@app", ADR-1166) rules alike.
+// ("@app", ADR-1191) rules alike.
 func (s *server) dashboardEdgeRuleHostCoverage(ctx context.Context, log *slog.Logger, app state.App, rules []state.EdgeRule) []dashboard.EdgeRuleHostCoverage {
 	hosts := []dashboard.EdgeRuleHostCoverage{}
 	if parsed, err := url.Parse(appURLForDomain(app.Slug, s.domain)); err == nil && parsed.Hostname() != "" {

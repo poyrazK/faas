@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 1166 — "@app" is accepted on create and update; any other
+// adr: 1191 — "@app" is accepted on create and update; any other
 // "@"-prefixed match_host is reserved.
 func TestEdgeRuleAppWideMatchHost(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)

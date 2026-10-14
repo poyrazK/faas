@@ -110,7 +110,7 @@ func cmdEdgeRulesRecipe(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	// ADR-1166: by default the rule covers every host the app serves,
+	// ADR-1191: by default the rule covers every host the app serves,
 	// including custom domains added later; --host restricts it to one.
 	host := api.EdgeRuleAppHosts
 	if raw := strings.TrimSpace(*hostFlag); raw != "" {

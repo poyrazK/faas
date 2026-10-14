@@ -2,7 +2,7 @@ package api
 
 import "testing"
 
-// adr: 1166 — "@app" is the only accepted "@"-prefixed match_host, and as a
+// adr: 1191 — "@app" is the only accepted "@"-prefixed match_host, and as a
 // pattern it covers any host (callers scope it to the rule's app).
 func TestEdgeRuleAppHosts(t *testing.T) {
 	for host, ok := range map[string]bool{

@@ -60,4 +60,4 @@ coherent.
   `gregale edge-rules recipe <id>`) and start safe.
 - Adding a recipe is a reviewed code change to the catalog.
 - Recipes cover every hostname the app serves, custom domains included
-  (`match_host: "@app"`, ADR-1166); `--host` restricts one to a single host.
+  (`match_host: "@app"`, ADR-1191); `--host` restricts one to a single host.

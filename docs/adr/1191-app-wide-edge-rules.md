@@ -1,4 +1,4 @@
-# ADR-1166: App-wide edge rules (`match_host: "@app"`)
+# ADR-1191: App-wide edge rules (`match_host: "@app"`)
 
 - **Status:** accepted
 - **Date:** 2026-10-14

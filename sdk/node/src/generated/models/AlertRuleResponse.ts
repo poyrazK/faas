@@ -13,7 +13,7 @@ export type AlertRuleResponse = {
    */
   event_subscription_id?: string;
   /**
-   * ADR-998. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of the app.
+   * ADR-1192. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of the app.
    */
   edge_rule_id?: string;
   /**

@@ -76686,7 +76686,7 @@ components:
         edge_rule_id:
           type: string
           format: uuid
-          description: 'ADR-998. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of the app.'
+          description: 'ADR-1192. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of the app.'
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -76813,7 +76813,7 @@ components:
         edge_rule_id:
           type: string
           format: uuid
-          description: "ADR-998. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days)."
+          description: "ADR-1192. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days)."
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -77080,7 +77080,7 @@ components:
         match_host:
           type: string
           maxLength: 253
-          description: 'Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1166) covers every hostname the rule''s app serves, including custom domains added later.'
+          description: 'Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1191) covers every hostname the rule''s app serves, including custom domains added later.'
           example: api.example.com
         match_path:
           type: string
@@ -77164,7 +77164,7 @@ components:
       type: object
       required: [match_host, kind, action]
       properties:
-        match_host: { type: string, maxLength: 253, description: 'Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1166). Other values starting with `@` are reserved.' }
+        match_host: { type: string, maxLength: 253, description: 'Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other values starting with `@` are reserved.' }
         match_path: { type: string, maxLength: 2048, default: "/" }
         match_methods:
           type: array

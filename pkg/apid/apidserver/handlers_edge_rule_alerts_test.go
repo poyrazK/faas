@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 998 — edge-rule activity alerts accept a rule of the same app,
+// adr: 1192 — edge-rule activity alerts accept a rule of the same app,
 // hourly windows and webhook only; the rule id round-trips and the metric
 // family cannot change on update.
 func TestEdgeRuleActivityAlerts(t *testing.T) {

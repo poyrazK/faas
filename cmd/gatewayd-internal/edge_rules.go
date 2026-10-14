@@ -209,7 +209,7 @@ func (g *gatewaydEdgeRules) Converging(host, ownerAccountID string) bool {
 			continue
 		}
 		if api.IsEdgeRuleAppHosts(key.pattern) {
-			// ADR-1166: an app-wide rule covers only hosts an app serves, so
+			// ADR-1191: an app-wide rule covers only hosts an app serves, so
 			// its fence never holds an unclaimed host. The account check
 			// above already skipped other accounts' hosts.
 			if ownerAccountID != "" {

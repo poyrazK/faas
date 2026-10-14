@@ -161,7 +161,7 @@ func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
 
 // EdgeRuleAppHosts is the reserved match_host that covers every hostname
 // the rule's own app serves: its platform host and its custom domains,
-// including ones added later (ADR-1166). It is not a host pattern; the
+// including ones added later (ADR-1191). It is not a host pattern; the
 // gateway attaches such rules to whichever hosts resolve to the rule's app.
 const EdgeRuleAppHosts = "@app"
 

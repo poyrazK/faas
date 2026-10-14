@@ -86,7 +86,7 @@ func TestDashboardEdgeRuleRecipes(t *testing.T) {
 	if !strings.Contains(body, "Block unverified bots</strong> <span class=\"muted\">· added") {
 		t.Error("page does not mark the added recipe")
 	}
-	// adr: 1166 — the hosts section counts app-wide rules on every host and
+	// adr: 1191 — the hosts section counts app-wide rules on every host and
 	// app-wide rules show as covering every app host.
 	if !strings.Contains(body, "Hosts") || !strings.Contains(body, "2 rules apply") || !strings.Contains(body, "every app host") {
 		t.Error("page missing host coverage for app-wide rules")

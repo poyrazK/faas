@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1166 — AppWideEdgeRules returns only the app's enabled "@app" rules
+// adr: 1191 — AppWideEdgeRules returns only the app's enabled "@app" rules
 // in evaluation order, and MergeEdgeRulesInOrder keeps that order.
 func TestAppWideEdgeRules(t *testing.T) {
 	ctx := context.Background()

@@ -19,7 +19,7 @@ const (
 	edgeRuleB = "22222222-2222-4222-8222-222222222222"
 )
 
-// adr: 998 — edge-rule activity alerts count the ADR-960 hit buckets:
+// adr: 1192 — edge-rule activity alerts count the ADR-960 hit buckets:
 // enforced matches or log-mode matches, for one rule or the whole app, and
 // the webhook carries the rule id.
 func TestEvaluatorEdgeRuleActivity(t *testing.T) {
@@ -83,7 +83,7 @@ func (*failingEdgeRuleHitStore) EdgeRuleHitStatsForApp(context.Context, string, 
 	return nil, errors.New("database unavailable")
 }
 
-// adr: 998 — an unreadable hit store marks the rule degraded instead of
+// adr: 1192 — an unreadable hit store marks the rule degraded instead of
 // firing or clearing it.
 func TestEvaluatorEdgeRuleActivityDegraded(t *testing.T) {
 	base := state.NewMemStore()

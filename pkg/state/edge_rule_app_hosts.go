@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-1166: app-wide edge rules. A rule whose match_host is "@app" covers
+// ADR-1191: app-wide edge rules. A rule whose match_host is "@app" covers
 // every hostname its app serves; the gateway merges an app's app-wide rules
 // into the rule set of each host that resolves to that app.
 

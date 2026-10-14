@@ -3419,8 +3419,8 @@ const (
 	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
-	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-998
-	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-998
+	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-1192
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3611,7 +3611,7 @@ type UpdateAlertRuleParams struct {
 // constant.
 type AlertRule struct {
 	EventSubscriptionID string
-	// EdgeRuleID scopes an edge-rule activity alert to one rule (ADR-998);
+	// EdgeRuleID scopes an edge-rule activity alert to one rule (ADR-1192);
 	// empty counts every rule of the app. Immutable, and not a foreign key:
 	// a rule-set restore re-inserts rules under the same ids.
 	EdgeRuleID                      string

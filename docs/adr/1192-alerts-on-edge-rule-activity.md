@@ -1,4 +1,4 @@
-# ADR-998: Alerts on edge-rule activity
+# ADR-1192: Alerts on edge-rule activity
 
 - **Status:** accepted
 - **Date:** 2026-10-11

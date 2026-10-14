@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
 
-// adr: 1166 — an app-wide rule (match_host "@app") applies to whatever host
+// adr: 1191 — an app-wide rule (match_host "@app") applies to whatever host
 // the per-app trace simulates, custom domains included.
 func TestSimulateAppWideRule(t *testing.T) {
 	priority := 10
