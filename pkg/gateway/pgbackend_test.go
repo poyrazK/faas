@@ -416,6 +416,38 @@ func TestPGBackend_AdmitSeedsThenEvictInstance(t *testing.T) {
 	}
 }
 
+// ADR-1151: a frozen instance thaws under the same instance ID, so its route
+// is withdrawn without the stale-target quarantine that EvictInstance applies.
+func TestPGBackend_WithdrawInstanceDoesNotQuarantine(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		remove  func(b *gateway.PGBackend)
+		healthy int
+	}{
+		{name: "evict quarantines the ID", remove: func(b *gateway.PGBackend) { b.EvictInstance("app-1", "i-1") }, healthy: 0},
+		{name: "withdraw lets the thawed ID back", remove: func(b *gateway.PGBackend) { b.WithdrawInstance("app-1", "i-1") }, healthy: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sched := gateway.NewFakeScheduler("node-fake-1").WithInstanceID("i-1")
+			b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil)
+			if _, _, _, err := b.Admit(context.Background(), "app-1", "", "", "", 5); err != nil {
+				t.Fatalf("Admit: %v", err)
+			}
+			tc.remove(b)
+			if got := b.HealthyCount("app-1"); got != 0 {
+				t.Fatalf("HealthyCount after removal = %d, want 0", got)
+			}
+			// The same instance ID comes back, as a thaw returns it.
+			if _, _, _, err := b.Admit(context.Background(), "app-1", "", "", "", 5); err != nil {
+				t.Fatalf("Admit again: %v", err)
+			}
+			if got := b.HealthyCount("app-1"); got != tc.healthy {
+				t.Fatalf("HealthyCount after the same ID returns = %d, want %d", got, tc.healthy)
+			}
+		})
+	}
+}
+
 // TestPGBackend_FanOutAcrossMaxConcurrency (issue #168) — three Admits
 // fill the per-app targetSet; EvictInstance drops one, two remain.
 func TestPGBackend_FanOutAcrossMaxConcurrency(t *testing.T) {

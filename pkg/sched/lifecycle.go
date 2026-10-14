@@ -603,6 +603,22 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 			}
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		case state.StateFrozen:
+			// ADR-1151: a frozen VM of a superseded deployment is never
+			// thawed again. Park it while its snapshot is kept, stop it
+			// when the snapshot goes too.
+			if preserveSnapshot {
+				if err := e.ParkFrozen(ctx, fresh.ID, "superseded"); err != nil {
+					e.log.Warn("sched: park superseded frozen instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				}
+				continue
+			}
+			if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
+				e.log.Warn("sched: destroy superseded frozen instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
 		case state.StateSnapshotting:
 			// An in-flight snapshot is already releasing the serving slot;
 			// let it finish so the rollback cache remains valid.

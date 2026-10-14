@@ -4769,6 +4769,14 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
+	// in memory after its idle timeout before schedd parks it. 10 min gave
+	// the same capacity as 1 h in the ADR's simulation while holding fewer
+	// resident VMs.
+	FrozenTTLSeconds = 600
+	// FrozenMaxPerNode caps a node's frozen instances: each holds a
+	// Firecracker process, a jail uid and a network namespace.
+	FrozenMaxPerNode = 1000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to

@@ -151,6 +151,24 @@ service Vmmd {
   // only resumes Firecracker and re-attaches its liveness loops.
   rpc ResumeWarmInstance(ResumeWarmInstanceRequest) returns (ResumeWarmInstanceResponse);
 
+  // FreezeInstance (ADR-1151) pauses an idle running instance in place for
+  // the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
+  // stops its probes and, only when asked (memory pressure), reclaims its
+  // cgroup memory. The VM keeps its lease, netns and Firecracker process.
+  // Ineligible instances (warm pool, jobs, app tasks, builders, private
+  // network members, pending waitUntil tasks) fail with FailedPrecondition
+  // and code instance_not_freezable; an instance serving a request, stream
+  // or session fails with FailedPrecondition and code instance_busy, and
+  // keeps running. Freezing a frozen instance succeeds without pausing it
+  // again. A forward that reaches a frozen instance fails fast with
+  // Unavailable and code instance_frozen.
+  rpc FreezeInstance(FreezeInstanceRequest) returns (FreezeInstanceResponse);
+
+  // ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
+  // its probes. schedd admits the thaw first. Thawing a live instance that
+  // is not frozen is a successful no-op.
+  rpc ThawInstance(ThawInstanceRequest) returns (ThawInstanceResponse);
+
   // WaitBuilderReady blocks until a KeepWarm builder writes its durable
   // build-done marker and emits the guest-stage build-ready line. A builder
   // that exits before that handoff returns ready=false with its exit code.
@@ -1546,6 +1564,11 @@ message InstanceStats {
   bool quiet_paused = 21;
   // When the current quiet pause began; absent while running.
   google.protobuf.Timestamp quiet_paused_since = 22;
+  // ADR-1151: true while the instance is frozen (paused in place by
+  // FreezeInstance until schedd thaws or destroys it).
+  bool frozen = 23;
+  // ADR-1151: when the current freeze took effect; absent unless frozen.
+  google.protobuf.Timestamp frozen_since = 24;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -2572,6 +2595,41 @@ message ResumeWarmInstanceResponse {
   string instance = 1;
   bool image_healthcheck_verified = 2;
   bool supports_image_healthcheck_monitoring = 3;
+}
+
+// FreezeInstanceRequest (ADR-1151) names the instance to freeze. reclaim asks
+// vmmd to also reclaim the VM cgroup's memory after the pause; schedd sets it
+// only under memory pressure.
+message FreezeInstanceRequest {
+  string instance = 1;
+  bool reclaim = 2;
+}
+
+// FreezeInstanceResponse (ADR-1151) reports one freeze. Resident bytes are the
+// VM cgroup's memory.current before and after reclaim (equal when no reclaim
+// ran; zero when vmmd could not read the cgroup). All zero when the instance
+// was already frozen.
+message FreezeInstanceResponse {
+  string instance = 1;
+  int64 pause_micros = 2;
+  int64 reclaim_micros = 3;
+  int64 resident_bytes_before = 4;
+  int64 resident_bytes_after = 5;
+}
+
+// ThawInstanceRequest (ADR-1151) names the frozen instance to resume.
+// image_healthcheck_required asks vmmd to confirm the instance's stored boot
+// contract, as ResumeWarmInstance does; the thaw then runs the resume hook and
+// the image healthcheck before it returns.
+message ThawInstanceRequest {
+  string instance = 1;
+  bool image_healthcheck_required = 2;
+}
+
+// ThawInstanceResponse (ADR-1151) acknowledges the in-place resume.
+message ThawInstanceResponse {
+  string instance = 1;
+  bool image_healthcheck_verified = 2;
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a

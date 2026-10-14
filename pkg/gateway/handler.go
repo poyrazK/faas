@@ -623,6 +623,10 @@ type PublicAuthUnsealer interface {
 // last_request_at touches (spec §4.1) and to stamp x-faas-instance on
 // the request before proxying.
 type Target struct {
+	// frozenRefusal marks a target whose forward vmmd refused because the
+	// guest is frozen (ADR-1151). Set only on the failed copy handed to the
+	// stale-target callback; never cached.
+	frozenRefusal bool
 	// AppID is authoritative admission/cache identity. Lifecycle telemetry
 	// must not depend on an optional request header, especially for cron and
 	// other synthetic invocations.
@@ -7254,25 +7258,38 @@ haveApp:
 	// from a non-retry failure would make the two paths diverge in exactly the
 	// situation an operator is trying to read.
 	retireStaleTarget := func(failed Target) {
-		h.recordCircuitFailure(app.ID, failed.InstanceID)
-		// Evict synchronously with the transport failure so a
-		// concurrent request cannot pick this known-dead target.
-		// RecoverStaleTarget detaches and bounds lifecycle work in
-		// the production backend; it does not inherit the client
-		// cancellation even though the request context is passed in.
-		if evictor, ok := h.backend.(interface {
-			EvictInstance(appID, instanceID string)
-		}); ok {
-			evictor.EvictInstance(app.ID, failed.InstanceID)
-			h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
-				"instance_id", failed.InstanceID, "node_id", failed.NodeID)
+		frozen := failed.frozenRefusal
+		// A frozen guest (ADR-1151) is idle, not dead: withdraw its route
+		// without the stale-target quarantine or a circuit failure, so the
+		// recovery admission below can thaw it under the same instance ID.
+		if withdrawer, ok := h.backend.(interface {
+			WithdrawInstance(appID, instanceID string)
+		}); frozen && ok {
+			withdrawer.WithdrawInstance(app.ID, failed.InstanceID)
+		} else {
+			h.recordCircuitFailure(app.ID, failed.InstanceID)
+			// Evict synchronously with the transport failure so a
+			// concurrent request cannot pick this known-dead target.
+			// RecoverStaleTarget detaches and bounds lifecycle work in
+			// the production backend; it does not inherit the client
+			// cancellation even though the request context is passed in.
+			if evictor, ok := h.backend.(interface {
+				EvictInstance(appID, instanceID string)
+			}); ok {
+				evictor.EvictInstance(app.ID, failed.InstanceID)
+				h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
+					"instance_id", failed.InstanceID, "node_id", failed.NodeID)
+			}
 		}
 		if recovery, ok := h.backend.(staleTargetRecovery); ok {
 			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
 		}
 	}
-	staleSignal := &staleTargetSignal{
-		onStale: func() { retireStaleTarget(target) },
+	staleSignal := &staleTargetSignal{}
+	staleSignal.onStale = func() {
+		failed := target
+		failed.frozenRefusal = staleSignal.frozen.Load()
+		retireStaleTarget(failed)
 	}
 	//nolint:contextcheck // withStaleTargetSignal intentionally inherits r.Context.
 	r = r.WithContext(withStaleTargetSignal(r.Context(), staleSignal))
