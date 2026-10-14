@@ -1,27 +1,24 @@
+// adr: 1135
 package storage
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/klauspost/compress/zstd"
-	"golang.org/x/sys/unix"
 )
 
-// TestCacheMissMaterializeBench times a node-cache miss of a padded app drive.
-// Production stores app drives as zstd in GCS (a 2 GiB drive with ~90 MiB of
-// files is a ~90 MB object), yet compute-1 logged 4–11 s per miss. This
-// harness separates the local work by layer: decode alone, decode plus the
-// sparse cache write, and the full LocalCacheBackend fill. The object comes
-// from an in-memory store, so no network time is included.
+// TestCacheMissMaterializeBench times a node-cache miss of a padded app drive
+// in both remote encodings. Production stores app drives as zstd in GCS (a
+// 2 GiB drive with ~90 MiB of files is a ~90 MB object), yet compute-1 logged
+// 4–11 s per miss: the plain encoding makes the fill decode and scan every
+// logical byte. The extent encoding (ADR-1135) carries only the data extents.
+// Fills alternate between the encodings so host load hits both alike; the
+// object comes from an in-memory store, so no network time is included.
 //
 // Opt-in: FAAS_STORAGE_MISS_BENCH=1. FAAS_STORAGE_MISS_BENCH_LOGICAL_MIB (2048)
 // and FAAS_STORAGE_MISS_BENCH_DATA_MIB (120) shape the drive;
@@ -48,54 +45,32 @@ func TestCacheMissMaterializeBench(t *testing.T) {
 	// zeros everywhere else.
 	src := filepath.Join(dir, "src.ext4")
 	writeSparseDrive(t, src, logicalMiB, dataMiB)
+	t.Logf("host %d CPUs (GOMAXPROCS %d); drive %d MiB logical, %d MiB data",
+		runtime.NumCPU(), runtime.GOMAXPROCS(0), logicalMiB, dataMiB)
 
-	store := newMemoryGCSStore()
-	backend, err := newGCSStorageBackend("bench-bucket", snapshotCompressionZstd, store)
-	if err != nil {
-		t.Fatal(err)
-	}
 	const key = "apps/bench/drive.ext4"
-	f, err := os.Open(src)
-	if err != nil {
-		t.Fatal(err)
+	backends := map[string]*GCSStorageBackend{}
+	for _, name := range []string{"zstd", "zstd-extents"} {
+		store := newMemoryGCSStore()
+		backend, err := newGCSStorageBackend("bench-bucket", snapshotCompressionZstd, store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		backend.WithSparseExtents(name == "zstd-extents")
+		f, err := os.Open(src) //nolint:forbidigo // bench fixture under its own temp dir.
+		if err != nil {
+			t.Fatal(err)
+		}
+		put := timeIt(t, func() error { return backend.Put(ctx, key, f) })
+		_ = f.Close()
+		object := store.objects["bench-bucket/"+key]
+		t.Logf("%-13s object %.1f MB, encoding %q, compress+put %s",
+			name, float64(len(object.body))/1e6, object.metadata[gcsEncodingMetadata], put.Round(time.Millisecond))
+		backends[name] = backend
 	}
-	started := time.Now()
-	if err := backend.Put(ctx, key, f); err != nil {
-		t.Fatal(err)
-	}
-	_ = f.Close()
-	compressed := len(store.objects["bench-bucket/"+key].body)
-	t.Logf("host %d CPUs (GOMAXPROCS %d); drive %d MiB logical, %d MiB data; object %.1f MB; compress+put %s",
-		runtime.NumCPU(), runtime.GOMAXPROCS(0), logicalMiB, dataMiB, float64(compressed)/1e6, time.Since(started).Round(time.Millisecond))
 
-	for rep := 0; rep < 3; rep++ {
-		decode := timeIt(t, func() error {
-			rc, err := backend.Get(ctx, key)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = rc.Close() }()
-			_, err = io.Copy(io.Discard, rc)
-			return err
-		})
-		sparse := timeIt(t, func() error {
-			rc, err := backend.Get(ctx, key)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = rc.Close() }()
-			dst, err := os.CreateTemp(dir, "sparse-*")
-			if err != nil {
-				return err
-			}
-			defer func() { _ = os.Remove(dst.Name()) }()
-			defer func() { _ = dst.Close() }()
-			if _, _, err := CopySparse(ctx, dst, rc); err != nil {
-				return err
-			}
-			return dst.Sync()
-		})
-		fill := timeIt(t, func() error {
+	fill := func(backend *GCSStorageBackend) time.Duration {
+		return timeIt(t, func() error {
 			cacheDir, err := os.MkdirTemp(dir, "cache-*")
 			if err != nil {
 				return err
@@ -111,86 +86,12 @@ func TestCacheMissMaterializeBench(t *testing.T) {
 			}
 			return rc.Close()
 		})
-		t.Logf("rep %d: decode only %s | decode + sparse write + fsync %s | full cache fill %s",
-			rep, decode.Round(time.Millisecond), sparse.Round(time.Millisecond), fill.Round(time.Millisecond))
 	}
-
-	// Prototype: compress only the data extents and record the holes, so a
-	// miss decodes the drive's real bytes and leaves the rest as holes.
-	var encoded bytes.Buffer
-	var extents [][2]int64
-	encode := timeIt(t, func() error {
-		var err error
-		extents, err = encodeDataExtents(src, &encoded)
-		return err
-	})
-	t.Logf("extent prototype: %d extents, object %.1f MB, encode %s", len(extents), float64(encoded.Len())/1e6, encode.Round(time.Millisecond))
 	for rep := 0; rep < 3; rep++ {
-		restore := timeIt(t, func() error {
-			dst, err := os.CreateTemp(dir, "extents-*")
-			if err != nil {
-				return err
-			}
-			defer func() { _ = os.Remove(dst.Name()) }()
-			defer func() { _ = dst.Close() }()
-			return decodeDataExtents(bytes.NewReader(encoded.Bytes()), extents, int64(logicalMiB)<<20, dst)
-		})
-		t.Logf("rep %d: extent decode + write + fsync %s", rep, restore.Round(time.Millisecond))
+		plain := fill(backends["zstd"])
+		extents := fill(backends["zstd-extents"])
+		t.Logf("rep %d: cache fill zstd %s | zstd-extents %s", rep, plain.Round(time.Millisecond), extents.Round(time.Millisecond))
 	}
-}
-
-// encodeDataExtents compresses src's data ranges (SEEK_DATA/SEEK_HOLE) into w
-// as one zstd stream and returns the [offset, length] of each range.
-func encodeDataExtents(path string, w io.Writer) ([][2]int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	enc, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		return nil, err
-	}
-	var extents [][2]int64
-	for off := int64(0); off < info.Size(); {
-		data, err := unix.Seek(int(f.Fd()), off, unix.SEEK_DATA)
-		if err != nil {
-			break // ENXIO: no data after off
-		}
-		hole, err := unix.Seek(int(f.Fd()), data, unix.SEEK_HOLE)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.Copy(enc, io.NewSectionReader(f, data, hole-data)); err != nil {
-			return nil, err
-		}
-		extents = append(extents, [2]int64{data, hole - data})
-		off = hole
-	}
-	return extents, enc.Close()
-}
-
-// decodeDataExtents writes each extent at its offset and sizes dst to the
-// logical length, leaving holes everywhere else.
-func decodeDataExtents(r io.Reader, extents [][2]int64, logical int64, dst *os.File) error {
-	dec, err := zstd.NewReader(r, zstd.WithDecoderConcurrency(1))
-	if err != nil {
-		return err
-	}
-	defer dec.Close()
-	for _, e := range extents {
-		if _, err := io.CopyN(io.NewOffsetWriter(dst, e[0]), dec, e[1]); err != nil {
-			return err
-		}
-	}
-	if err := dst.Truncate(logical); err != nil {
-		return err
-	}
-	return dst.Sync()
 }
 
 func timeIt(t *testing.T, fn func() error) time.Duration {
