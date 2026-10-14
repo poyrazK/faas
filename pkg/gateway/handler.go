@@ -2362,7 +2362,7 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeR
 		h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
 		h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
 	}
-	owned := h.edgeRules.MatchRoute(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), host, r.URL.Path, r.Method)
+	owned := h.edgeRules.MatchRoute(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID), host, r.URL.Path, r.Method)
 	if owned == nil || owned.AccountID != hostApp.AccountID {
 		return nil, true
 	}
@@ -5842,7 +5842,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	r = r.WithContext(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID))
 	if app.AccountAbuseHeld {
 		api.WriteProblem(w, api.ErrAccountAbuseHold())
 		h.observe(r, rec.status, app.ID, "", false, Target{})

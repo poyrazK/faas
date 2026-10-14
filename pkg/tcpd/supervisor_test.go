@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,17 +65,47 @@ func TestSupervisorReadyOnlyAfterInitialListenersBind(t *testing.T) {
 		}
 	})
 
-	t.Run("bind failure does not report ready", func(t *testing.T) {
+	// One port that cannot be bound (another process holds it, as during a
+	// rolling restart) must not fail gatewayd-public's startup or keep the
+	// other listeners down. It is reported and retried on the next refresh.
+	t.Run("bind failure is reported and retried", func(t *testing.T) {
 		bindErr := errors.New("port already bound")
-		ready := false
+		var attempts atomic.Int32
+		bound := make(chan struct{})
 		supervisor := newSupervisor(func(_, _ string) (net.Listener, error) {
-			return nil, bindErr
-		}, func() { ready = true })
-		if err := supervisor.Serve(context.Background()); !errors.Is(err, bindErr) {
-			t.Fatalf("Serve error = %v, want bind failure", err)
+			if attempts.Add(1) == 1 {
+				return nil, bindErr
+			}
+			defer close(bound)
+			return net.Listen("tcp", "127.0.0.1:0")
+		}, nil)
+		ready := make(chan struct{})
+		supervisor.OnReady = func() { close(ready) }
+		reported := make(chan error, 4)
+		supervisor.OnError = func(err error) { reported <- err }
+		supervisor.RefreshInterval = 20 * time.Millisecond
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- supervisor.Serve(ctx) }()
+		for _, step := range []struct {
+			name string
+			ch   <-chan struct{}
+		}{{"ready", ready}, {"rebind", bound}} {
+			select {
+			case <-step.ch:
+			case err := <-done:
+				t.Fatalf("Serve returned before %s: %v", step.name, err)
+			case <-time.After(2 * time.Second):
+				t.Fatalf("supervisor did not reach %s", step.name)
+			}
 		}
-		if ready {
-			t.Fatal("supervisor reported ready despite a failed initial bind")
+		if err := <-reported; !errors.Is(err, bindErr) {
+			t.Fatalf("reported error = %v, want the bind failure", err)
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Serve after cancellation: %v", err)
 		}
 	})
 }

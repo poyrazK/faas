@@ -46,6 +46,8 @@ class CreateEdgeRuleRequest:
     """Body shape for POST /v1/apps/{slug}/edge-rules."""
 
     match_host: str
+    """Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other
+    values starting with `@` are reserved."""
     kind: CreateEdgeRuleRequestKind
     action: (
         EdgeRuleAsyncAction

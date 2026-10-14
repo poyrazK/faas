@@ -929,6 +929,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download": "DownloadJobArtifact",
 	"POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry":                        "RetryJobTask",
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs":                          "GetJobTaskLogs",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream":                   "StreamJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
@@ -1371,6 +1372,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/queues/send":                                       "QueueSend",
 	"POST /v1/apps/{slug}/queues/receive":                                    "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                                   "AckQueueRow",
+	"POST /v1/apps/{slug}/queues/{queue}/leases":                             "LeaseQueueMessages",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:ack":                         "AckQueueLeases",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:nack":                        "NackQueueLeases",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:extend":                      "ExtendQueueLeases",
 	"GET /v1/apps/{slug}/queues/state":                                       "QueueState",
 	"GET /v1/apps/{slug}/queues/peek":                                        "QueuePeek",
 	"GET /v1/apps/{slug}/queues/dead_letter":                                 "QueueDeadLetter",

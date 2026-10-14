@@ -3840,6 +3840,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '409': { description: The account already has an integration with this name. }
         '429': { description: The account has reached its customer integration limit. }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -3948,6 +3950,8 @@ paths:
         '204': { description: AI gateway settings updated; no body returned. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -3977,6 +3981,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIUsageResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4018,6 +4024,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIUserUsageResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4063,6 +4071,8 @@ paths:
               schema: { type: string, format: binary }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4094,6 +4104,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIPriceCatalogResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
 
   /v1/outbound/integrations/{integration}/ai-prices:
     parameters:
@@ -4115,6 +4127,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIPriceListResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     put:
@@ -4131,6 +4145,8 @@ paths:
         '204': { description: Price list replaced; no body returned. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4154,6 +4170,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundCredentialKeyList' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     post:
@@ -4174,6 +4192,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundCredentialKey' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
         '409': { description: A key with this label already exists. }
@@ -4200,6 +4220,8 @@ paths:
         '204': { description: Key removed. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4229,6 +4251,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIBudgetAlertList' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4263,6 +4287,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIRequestLogList' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4298,6 +4324,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIReplay' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: The call has no capture that can be resent.
@@ -4331,6 +4359,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIReplay' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4357,6 +4387,8 @@ paths:
         '204': { description: The policy was replaced. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4385,6 +4417,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIRequestContent' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4401,6 +4435,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIRouteList' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     post:
       tags: [outbound]
@@ -4420,6 +4456,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIRoute' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '409': { description: A route with this name already exists. }
         '429': { description: The account has reached its AI route limit. }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
@@ -4444,6 +4482,8 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundAIRoute' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
@@ -4455,6 +4495,8 @@ paths:
         '204': { description: Route deleted. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4479,6 +4521,8 @@ paths:
         '204': { description: Targets replaced. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -4804,6 +4848,8 @@ paths:
         '204': { description: App AI token limit updated; no body returned. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails:
@@ -4828,6 +4874,8 @@ paths:
         '204': { description: Guardrails replaced; no body returned. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/outbound-bindings/{integration}/usage:
@@ -27660,6 +27708,58 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Job whose task output is streamed.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Job-run identifier (UUIDv4) owning the task.
+      - name: idx
+        in: path
+        required: true
+        schema: { type: integer, minimum: 0 }
+        description: Zero-based index of the task within the run.
+      - name: since_seq
+        in: query
+        required: false
+        schema: { type: integer, minimum: 0, format: int64 }
+        description: "Resume the current attempt after this line sequence; 0 replays the attempt from its first line."
+    get:
+      tags: [jobs]
+      operationId: streamJobTaskLogs
+      summary: Stream a task's output live (SSE).
+      description: |
+        ADR-1163. Served by the compute gateway, not apid. Waits while the
+        task is queued, then relays the task VM's console output as it is
+        written, including each retry attempt in turn. Frames match the app
+        log stream: `event: log` (seq, instance, stream, line, written_at),
+        `event: gap` when the VM already dropped older lines, heartbeat
+        comments, and one final `event: end` whose `reason` is
+        `task_finished` (all output relayed), `stored_output` (the task ended
+        before its last VM's output could be streamed; read `GET .../logs`),
+        `timeout`, `node_unreachable` or `not_found`. Read the task for its
+        outcome; the stored output from `GET .../logs` remains available.
+      responses:
+        '200':
+          description: A text/event-stream of the task's output lines, ending with one `end` frame.
+          content:
+            text/event-stream: {}
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Live task output needs a plan with Jobs (not Free).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts:
     parameters:
       - name: name
@@ -37126,6 +37226,123 @@ paths:
         '204': { description: No body. The ack (or a re-ack) was accepted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ADR-1140 — pull leases for worker and job consumers.
+  /v1/apps/{slug}/queues/{queue}/leases:
+    post:
+      tags: [queues]
+      operationId: leaseQueueMessages
+      summary: Lease ready messages from a pull-bound queue.
+      description: |
+        Leases up to `max_messages` ready messages from a queue with an
+        enabled pull binding on this app. Each message stays hidden for the
+        visibility timeout and is redelivered with a new attempt if it is not
+        acked, nacked or extended in time. Unexpired leases never exceed the
+        binding's `max_concurrency`. An empty list means nothing is ready;
+        poll again with back-off. Authenticate with an API key carrying
+        `queues:consume`, `deploy:write` or `admin`, or with a workload
+        identity token for audience `gregale:queues` from a live instance of
+        this app.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseRequest' }
+      responses:
+        '200':
+          description: Leased messages, possibly none.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/{queue}/leases:ack:
+    post:
+      tags: [queues]
+      operationId: ackQueueLeases
+      summary: Complete leased messages.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
+      responses:
+        '200':
+          description: Receipts that completed their messages, and receipts that no longer own one.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/{queue}/leases:nack:
+    post:
+      tags: [queues]
+      operationId: nackQueueLeases
+      summary: Return leased messages for a retry.
+      description: |
+        Applies the message's retry policy and the plan's attempt budget:
+        the message returns to the queue after the back-off (or after
+        `delay_seconds` if later), or moves to the dead-letter queue once the
+        budget is spent. `error` is recorded as the attempt's last error.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
+      responses:
+        '200':
+          description: Receipts whose messages went back for a retry or to the dead-letter queue, and receipts that no longer own one.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/{queue}/leases:extend:
+    post:
+      tags: [queues]
+      operationId: extendQueueLeases
+      summary: Extend the visibility timeout of leased messages.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
+      responses:
+        '200':
+          description: Receipts whose visibility deadline moved, and receipts that no longer own their message.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # Issue #394 — queue introspection (read-only).
@@ -47918,6 +48135,12 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
       description: App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+    QueueLeaseQueue:
+      name: queue
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+      description: Queue name of an enabled pull binding on this app.
     Id32:
       name: id
       in: path
@@ -61506,7 +61729,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -76635,6 +76858,10 @@ components:
           type: string
           format: uuid
           description: 'Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to 24h are required.'
+        edge_rule_id:
+          type: string
+          format: uuid
+          description: 'ADR-1192. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of the app.'
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -76711,6 +76938,8 @@ components:
             - workflow_pending_age_seconds
             - workflow_waiting_age_seconds
             - workflow_due_age_seconds
+            - edge_rule_hits
+            - edge_rule_log_hits
         comparison:
           type: string
           enum: [gt, gte, lt, lte]
@@ -76756,6 +76985,10 @@ components:
           type: string
           format: uuid
           description: "Event subscription id in the create alert rule request: immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to 24h are required."
+        edge_rule_id:
+          type: string
+          format: uuid
+          description: "ADR-1192. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days)."
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -76766,7 +76999,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, edge_rule_hits, edge_rule_log_hits]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -76806,7 +77039,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, edge_rule_hits, edge_rule_log_hits]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -77022,7 +77255,7 @@ components:
         match_host:
           type: string
           maxLength: 253
-          description: 'Host glob. `*` matches any; `*.example.com` matches any subdomain.'
+          description: 'Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1191) covers every hostname the rule''s app serves, including custom domains added later.'
           example: api.example.com
         match_path:
           type: string
@@ -77106,7 +77339,7 @@ components:
       type: object
       required: [match_host, kind, action]
       properties:
-        match_host: { type: string, maxLength: 253 }
+        match_host: { type: string, maxLength: 253, description: 'Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other values starting with `@` are reserved.' }
         match_path: { type: string, maxLength: 2048, default: "/" }
         match_methods:
           type: array
@@ -78893,7 +79126,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -78974,7 +79207,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -79001,7 +79234,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
@@ -82545,6 +82778,70 @@ components:
         result: { type: object, additionalProperties: true }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
+
+    QueueLeaseRequest:
+      description: "ADR-1140 pull lease. Zero values lease one message for the default visibility timeout (30s) and return at once."
+      type: object
+      properties:
+        max_messages: { type: integer, minimum: 0, maximum: 100, description: "A lease also stops once its payloads and headers would pass 8 MiB; it always returns at least one ready message." }
+        visibility_timeout_seconds: { type: integer, minimum: 0, description: "At most the plan's async invocation deadline." }
+        wait_seconds: { type: integer, minimum: 0, maximum: 20, description: "When no message is ready, hold the call until one arrives or this many seconds pass, then return an empty list." }
+
+    QueueLeaseMessage:
+      description: "One leased message. Its receipt acts only while this lease is current."
+      type: object
+      required: [id, receipt, payload, attempt, enqueued_at, lease_expires_at]
+      properties:
+        id: { type: string }
+        receipt: { type: string, description: "Opaque; acts only while this lease is current." }
+        payload: { type: object, additionalProperties: true }
+        headers: { type: object, additionalProperties: { type: string } }
+        attempt: { type: integer, minimum: 1 }
+        enqueued_at: { type: string, format: date-time }
+        lease_expires_at: { type: string, format: date-time }
+
+    QueueLeaseResponse:
+      description: "Leased messages; empty when none were ready before the wait ended."
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/QueueLeaseMessage' }
+
+    QueueLeaseReceiptsRequest:
+      description: "Receipts for ack, nack or extend. delay_seconds and error apply to nack; visibility_timeout_seconds to extend."
+      type: object
+      required: [receipts]
+      properties:
+        receipts:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string }
+        delay_seconds: { type: integer, minimum: 0, maximum: 86400 }
+        error: { type: string, maxLength: 1024 }
+        visibility_timeout_seconds: { type: integer, minimum: 0 }
+
+    QueueLeaseReceiptFailure:
+      description: "A receipt that was not applied. lease_expired means it no longer owns its message."
+      type: object
+      required: [receipt, reason]
+      properties:
+        receipt: { type: string }
+        reason: { type: string, enum: [lease_expired, invalid_receipt] }
+
+    QueueLeaseReceiptsResponse:
+      description: "Per-receipt outcome of an ack, nack or extend call."
+      type: object
+      required: [succeeded, failed]
+      properties:
+        succeeded:
+          type: array
+          items: { type: string }
+        failed:
+          type: array
+          items: { $ref: '#/components/schemas/QueueLeaseReceiptFailure' }
 
     AccountTraceLookupResponse:
       type: object
@@ -96701,6 +96998,18 @@ components:
 
     DebuggerRegressionUnavailable:
       description: 'code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    AIGatewayUnavailable:
+      description: 'code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    AIGatewayPlanGated:
+      description: 'code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
