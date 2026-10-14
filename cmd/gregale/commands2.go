@@ -7763,10 +7763,18 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 		PrintWarn(os.Stderr, "deployment %s was superseded by a newer deployment before it went live", d.ID)
 		return 2
 	}
+	// The SSE terminal frame can carry only the lifecycle status; a failed
+	// build then printed "Deploy failed: build exited 1" without the
+	// dep_install_failed hint, why and fix the deployment row has (H10-74).
+	if d.ErrorCode == "" {
+		d = deploymentWithReceipt(ctx, c, d)
+	}
 	if onFailure != nil {
 		onFailure(d, "", d.Error)
 	}
-	return renderDeployFailure(d)
+	code := renderDeployFailure(d)
+	printBuildFailureExcerpt(ctx, c, os.Stderr, appSlug, d)
+	return code
 }
 
 // terminalExitForBuild maps a polled terminal BuildResponse to a CLI
