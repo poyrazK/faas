@@ -8,6 +8,8 @@ var errHostUnsupported = errors.New("dbvm: database VMs need a Linux host")
 
 func (r *Runtime) prepareJail(*databaseVM, string) error { return errHostUnsupported }
 
+func (r *Runtime) prepareSpareJail(*databaseVM, string) error { return errHostUnsupported }
+
 func unmountJail([]string) {}
 
 func removeJailCgroup(string, string) {}

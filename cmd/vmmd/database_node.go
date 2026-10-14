@@ -81,6 +81,9 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 	serving := probe.Register()
 	basesBuilt := probe.Register()
 	go buildDatabaseBases(ctx, rt, cfg.DatabaseVMs, images, basesBuilt, log)
+	if len(cfg.DatabaseVMs.Spares) > 0 {
+		go keepDatabaseSpares(ctx, rt, log)
+	}
 
 	serverTLS, err := cfg.LoadServerTLSWithVerifier(databaseNodeVerifier())
 	if err != nil {

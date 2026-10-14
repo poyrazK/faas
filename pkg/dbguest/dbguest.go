@@ -43,6 +43,10 @@ const (
 	// sets it only when the source's node is lost, so the source could not
 	// commit and archive past the target first.
 	RestoreUntilEndArg = "gregale.restore_until_end=1"
+	// SpareArg boots a spare (ADR-1027 wake latency): guest-init starts
+	// everything but leaves the volume drive alone until OpAdopt, after
+	// vmmd has pointed the drive at a tenant's volume.
+	SpareArg = "gregale.spare=1"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -80,6 +84,10 @@ const (
 	// until that segment is archived. A restore needs it: recovery to a
 	// time fails unless a commit after that time is archived.
 	OpFlushWAL Op = "flush_wal"
+	// OpAdopt makes a spare take the volume the host has just put behind
+	// its volume drive: the guest drops what it cached of the drive,
+	// mounts it and starts PostgreSQL. Accepted once, in StateSpare.
+	OpAdopt Op = "adopt"
 )
 
 // MaxFlushAhead bounds how far in the future OpFlushWAL's After may be.
@@ -90,10 +98,12 @@ type State string
 
 const (
 	StateNeedsBootstrap State = "needs_bootstrap"
-	StateStarting       State = "starting"
-	StateReady          State = "ready"
-	StateStopping       State = "stopping"
-	StateFailed         State = "failed"
+	// StateSpare: booted with no volume yet, waiting for OpAdopt.
+	StateSpare    State = "spare"
+	StateStarting State = "starting"
+	StateReady    State = "ready"
+	StateStopping State = "stopping"
+	StateFailed   State = "failed"
 )
 
 // Stable error codes carried in Response.Error. They never contain
@@ -111,6 +121,8 @@ const (
 	ErrCodeArchiveOff         = "archive_off"
 	ErrCodeRestoreFailed      = "restore_failed"
 	ErrCodeFlushFailed        = "flush_failed"
+	// ErrCodeNotSpare refuses OpAdopt outside StateSpare.
+	ErrCodeNotSpare = "not_spare"
 )
 
 // Request is one control request line.
@@ -141,7 +153,7 @@ type Response struct {
 // Validate rejects malformed requests before the guest acts on them.
 func (r Request) Validate() error {
 	switch r.Op {
-	case OpStatus, OpStop, OpBootstrap, OpBaseBackup:
+	case OpStatus, OpStop, OpBootstrap, OpBaseBackup, OpAdopt:
 		if r.SQL != "" || !r.After.IsZero() {
 			return fmt.Errorf("%s: unexpected arguments", r.Op)
 		}
@@ -203,6 +215,9 @@ func ArchiveEnabled(cmdline string) bool { return hasField(cmdline, ArchiveArg) 
 // RestoreUntilEnd reports whether a restore may end at the end of the
 // archive.
 func RestoreUntilEnd(cmdline string) bool { return hasField(cmdline, RestoreUntilEndArg) }
+
+// Spare reports whether the kernel command line boots a spare.
+func Spare(cmdline string) bool { return hasField(cmdline, SpareArg) }
 
 func hasField(cmdline, want string) bool {
 	for _, field := range strings.Fields(cmdline) {

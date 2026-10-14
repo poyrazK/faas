@@ -19,3 +19,11 @@ archive_socket = "{{ dbbackupd_socket_path | default('/run/faas-dbbackupd/dbback
 {% for major, image in database_vmmd_postgres_images.items() %}
 "{{ major }}" = "{{ image }}"
 {% endfor %}
+{% for spare in database_vmmd_spares %}
+
+[[database_vms.spares]]
+postgres_major = {{ spare.postgres_major }}
+vcpu_count = {{ spare.vcpu_count }}
+mem_mib = {{ spare.mem_mib }}
+count = {{ spare.count }}
+{% endfor %}

@@ -35,6 +35,7 @@ func (r *Runtime) startArchiveRelay(vm *databaseVM, id string, req BootRequest) 
 	if err := header.Validate(); err != nil {
 		return err
 	}
+	vm.header.Store(&header)
 	path := r.archiveUDSPath(vm)
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
@@ -53,7 +54,8 @@ func (r *Runtime) startArchiveRelay(vm *databaseVM, id string, req BootRequest) 
 			if err != nil {
 				return
 			}
-			go r.relayArchive(conn, header)
+			// A spare's header changes when a database adopts it.
+			go r.relayArchive(conn, *vm.header.Load())
 		}
 	}()
 	return nil

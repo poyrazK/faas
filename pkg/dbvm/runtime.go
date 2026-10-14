@@ -12,9 +12,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
@@ -81,6 +83,8 @@ type RuntimeConfig struct {
 	// its WAL: the runtime relays the guest's archive streams there, after
 	// a header naming the database it booted (ADR-1027 durability).
 	ArchiveSocket string
+	// Spares is how many spare VMs to keep booted per shape (spare.go).
+	Spares map[SpareShape]int
 }
 
 // BootRequest starts one database VM.
@@ -112,6 +116,8 @@ type Runtime struct {
 	// transfers are the stopped databases whose volumes are being
 	// exported or imported (transfer.go).
 	transfers map[string]bool
+	// filling serializes FillSpares.
+	filling sync.Mutex
 }
 
 type databaseVM struct {
@@ -123,8 +129,15 @@ type databaseVM struct {
 	exited chan struct{}
 	binds  []string
 	volume string
-	// archive is the relay listener for guest archive streams.
+	// archive is the relay listener for guest archive streams; header is
+	// what it stamps on them, the database the VM serves.
 	archive net.Listener
+	header  atomic.Pointer[dbarchive.Header]
+	// spare is the shape of a spare VM, waiting while no database has
+	// adopted it; spareDir is the host directory bound into its jail.
+	spare    SpareShape
+	waiting  bool
+	spareDir string
 }
 
 // NewRuntime validates cfg and resolves the Firecracker binary, whose real
@@ -317,6 +330,9 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if _, err := os.Stat(volume); err != nil {
 		return ErrVolumeNotFound
 	}
+	if req.RestoreTarget.IsZero() && r.startFromSpare(ctx, req) {
+		return nil
+	}
 	vm, err := r.reserve(req.ID)
 	if err != nil {
 		return err
@@ -381,13 +397,18 @@ func (r *Runtime) udsPath(vm *databaseVM) string {
 }
 
 func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
-	cfg, err := BuildConfig(Spec{
+	return r.writeSpecConfig(vm, Spec{
 		KernelPath: jailKernel, BasePath: jailBase, VolumePath: jailVolume, Major: req.Major,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
 		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
 		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd,
 	})
+}
+
+// writeSpecConfig writes the VM's Firecracker configuration into its jail.
+func (r *Runtime) writeSpecConfig(vm *databaseVM, spec Spec) error {
+	cfg, err := BuildConfig(spec)
 	if err != nil {
 		return err
 	}
@@ -513,12 +534,18 @@ func (r *Runtime) teardown(id string, vm *databaseVM) {
 	}
 	unmountJail(vm.binds)
 	_ = os.RemoveAll(vm.dir)
+	if vm.spareDir != "" {
+		// Only links live here; an adopted volume keeps its own name.
+		_ = os.RemoveAll(vm.spareDir)
+	}
 	removeJailCgroup(r.cfg.ParentCgroup, vm.jailID)
 	if vm.volume != "" {
 		_ = os.Chown(vm.volume, 0, 0)
 	}
 	_ = r.cfg.Leases.Release(vm.jailID)
 	r.mu.Lock()
-	delete(r.vms, id)
+	if r.vms[id] == vm {
+		delete(r.vms, id)
+	}
 	r.mu.Unlock()
 }

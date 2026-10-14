@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/dbvm"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -80,10 +81,18 @@ func TestDatabaseVmmdTemplateLoads(t *testing.T) {
 		"{{ database_vmmd_port }}", "50051",
 		"{{ fc_release | regex_replace('^v', '') }}", "1.7.0",
 		"{{ database_vmmd_volume_root }}", "/srv/db/volumes",
+		"{% if dbbackupd_enabled | default(false) | bool %}\n", "",
+		"{% endif %}\n", "",
+		"{{ dbbackupd_socket_path | default('/run/faas-dbbackupd/dbbackupd.sock') }}", "/run/faas-dbbackupd/dbbackupd.sock",
 		"{% for major, image in database_vmmd_postgres_images.items() %}\n", "",
+		"{% for spare in database_vmmd_spares %}\n", "",
 		"{% endfor %}\n", "",
 		"{{ major }}", "17",
 		"{{ image }}", testPinnedImage,
+		"{{ spare.postgres_major }}", "17",
+		"{{ spare.vcpu_count }}", "1",
+		"{{ spare.mem_mib }}", "512",
+		"{{ spare.count }}", "2",
 	).Replace(string(body))
 	if strings.Contains(rendered, "{{") || strings.Contains(rendered, "{%") {
 		t.Fatalf("unrendered template expressions:\n%s", rendered)
@@ -97,10 +106,37 @@ func TestDatabaseVmmdTemplateLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Role != "database" || cfg.ListenAddr != "tcp://100.64.7.1:50051" || cfg.TLSCertPath != "/etc/faas/tls/vmmd/server.crt" || cfg.DatabaseVMs == nil ||
-		cfg.DatabaseVMs.KernelPath != "/srv/fc/kernel/1.7.0" || cfg.DatabaseVMs.Images["17"] != testPinnedImage {
+		cfg.DatabaseVMs.KernelPath != "/srv/fc/kernel/1.7.0" || cfg.DatabaseVMs.Images["17"] != testPinnedImage ||
+		cfg.DatabaseVMs.ArchiveSocket != "/run/faas-dbbackupd/dbbackupd.sock" || len(cfg.DatabaseVMs.Spares) != 1 || cfg.DatabaseVMs.Spares[0].Count != 2 {
 		t.Fatalf("loaded %+v / %+v", cfg, cfg.DatabaseVMs)
 	}
 	if _, _, err := cfg.DatabaseVMs.runtimeConfig(fcvm.NewAllocator()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDatabaseVMConfigSpares(t *testing.T) {
+	base := DatabaseVMConfig{KernelPath: "/k", Bases: map[string]string{"17": "/b"}}
+	cfg := base
+	cfg.Spares = []DatabaseSpareConfig{{PostgresMajor: 17, VcpuCount: 1, MemMiB: 512, Count: 2}, {PostgresMajor: 16, VcpuCount: 2, MemMiB: 1024, Count: 1}}
+	rcfg, _, err := cfg.runtimeConfig(fcvm.NewAllocator())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rcfg.Spares[dbvm.SpareShape{Major: 17, VcpuCount: 1, MemSizeMiB: 512}] != 2 || len(rcfg.Spares) != 2 {
+		t.Fatalf("spares = %v", rcfg.Spares)
+	}
+	for name, spares := range map[string][]DatabaseSpareConfig{
+		"bad major": {{PostgresMajor: 13, VcpuCount: 1, MemMiB: 512, Count: 1}},
+		"no vcpus":  {{PostgresMajor: 17, MemMiB: 512, Count: 1}},
+		"tiny":      {{PostgresMajor: 17, VcpuCount: 1, MemMiB: 64, Count: 1}},
+		"no count":  {{PostgresMajor: 17, VcpuCount: 1, MemMiB: 512}},
+		"twice":     {{PostgresMajor: 17, VcpuCount: 1, MemMiB: 512, Count: 1}, {PostgresMajor: 17, VcpuCount: 1, MemMiB: 512, Count: 3}},
+	} {
+		cfg := base
+		cfg.Spares = spares
+		if _, _, err := cfg.runtimeConfig(fcvm.NewAllocator()); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

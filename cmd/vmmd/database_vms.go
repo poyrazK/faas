@@ -41,7 +41,31 @@ type DatabaseVMConfig struct {
 	// archives its WAL there through vmmd's relay; empty leaves archiving
 	// off.
 	ArchiveSocket string `toml:"archive_socket"`
+	// Spares keeps booted VMs a wake adopts instead of cold-booting
+	// (ADR-1027), per major and class shape:
+	//
+	//	[[database_vms.spares]]
+	//	postgres_major = 17
+	//	vcpu_count = 1
+	//	mem_mib = 512
+	//	count = 2
+	//
+	// Their memory is outside schedd's accounting: lower the node's
+	// admission_ceiling_mb by count x (mem_mib + 8) for every shape.
+	Spares []DatabaseSpareConfig `toml:"spares"`
 }
+
+// DatabaseSpareConfig is one spare pool.
+type DatabaseSpareConfig struct {
+	PostgresMajor int `toml:"postgres_major"`
+	VcpuCount     int `toml:"vcpu_count"`
+	MemMiB        int `toml:"mem_mib"`
+	Count         int `toml:"count"`
+}
+
+// databaseSpareInterval is how often vmmd tops the spare pools up; a wake
+// that adopts a spare refills its pool at once.
+const databaseSpareInterval = 10 * time.Second
 
 const (
 	defaultDatabaseJailBase     = "/srv/fc/dbjail"
@@ -96,6 +120,10 @@ func (c DatabaseVMConfig) runtimeConfig(leases dbvm.Leaser) (dbvm.RuntimeConfig,
 		images = append(images, databaseImage{major: major, image: image})
 	}
 	slices.SortFunc(images, func(a, b databaseImage) int { return a.major - b.major })
+	spares, err := c.spareShapes()
+	if err != nil {
+		return dbvm.RuntimeConfig{}, nil, err
+	}
 	return dbvm.RuntimeConfig{
 		JailBase:      orDefault(c.JailBase, defaultDatabaseJailBase),
 		VolumeRoot:    orDefault(c.VolumeRoot, defaultDatabaseVolumeRoot),
@@ -104,7 +132,53 @@ func (c DatabaseVMConfig) runtimeConfig(leases dbvm.Leaser) (dbvm.RuntimeConfig,
 		ParentCgroup:  orDefault(c.ParentCgroup, defaultDatabaseParentCgroup),
 		Leases:        leases,
 		ArchiveSocket: c.ArchiveSocket,
+		Spares:        spares,
 	}, images, nil
+}
+
+func (c DatabaseVMConfig) spareShapes() (map[dbvm.SpareShape]int, error) {
+	if len(c.Spares) == 0 {
+		return nil, nil
+	}
+	out := make(map[dbvm.SpareShape]int, len(c.Spares))
+	for _, s := range c.Spares {
+		shape := dbvm.SpareShape{Major: s.PostgresMajor, VcpuCount: s.VcpuCount, MemSizeMiB: s.MemMiB}
+		switch {
+		case s.PostgresMajor < dbguest.MinMajor || s.PostgresMajor > dbguest.MaxMajor:
+			return nil, fmt.Errorf("database_vms.spares: invalid PostgreSQL major %d", s.PostgresMajor)
+		case s.VcpuCount < 1 || s.VcpuCount > 32 || s.MemMiB < 128 || s.MemMiB > 65536:
+			return nil, fmt.Errorf("database_vms.spares: invalid shape %d vCPU / %d MiB", s.VcpuCount, s.MemMiB)
+		case s.Count < 1 || s.Count > 64:
+			return nil, fmt.Errorf("database_vms.spares: count %d must be 1-64", s.Count)
+		}
+		if _, dup := out[shape]; dup {
+			return nil, fmt.Errorf("database_vms.spares: PostgreSQL %d %d vCPU / %d MiB listed twice", s.PostgresMajor, s.VcpuCount, s.MemMiB)
+		}
+		out[shape] = s.Count
+	}
+	return out, nil
+}
+
+// keepDatabaseSpares tops the spare pools up until ctx ends, then stops
+// the spares no database adopted. A major whose base is still building
+// fails to boot spares until it is ready.
+func keepDatabaseSpares(ctx context.Context, rt *dbvm.Runtime, log *slog.Logger) {
+	ticker := time.NewTicker(databaseSpareInterval)
+	defer ticker.Stop()
+	for {
+		if n, err := rt.FillSpares(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("vmmd: database spares", "booted", n, "err", err)
+		} else if n > 0 {
+			log.Info("vmmd: booted database spares", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			stopped := rt.StopSpares(context.WithoutCancel(ctx))
+			log.Info("vmmd: stopped database spares", "count", stopped)
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func orDefault(v, fallback string) string {
@@ -194,6 +268,9 @@ func enableDatabaseVMs(ctx context.Context, impl *vmmdgrpc.Server, cfg *Database
 	}
 	var probe wire.ReadyzProbe
 	go buildDatabaseBases(ctx, rt, cfg, images, probe.Register(), log)
+	if len(cfg.Spares) > 0 {
+		go keepDatabaseSpares(ctx, rt, log)
+	}
 	impl.WithDatabases(rt)
 	log.Info("vmmd: database VMs enabled", "images", len(images), "bases", len(cfg.Bases))
 	return nil

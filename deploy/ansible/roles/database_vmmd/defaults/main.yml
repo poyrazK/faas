@@ -18,6 +18,12 @@ database_vmmd_postgres_images:
   "16": "docker.io/library/postgres@sha256:ec9f656f17c8b4dfebf49e58cf5c46d493d4846d4ea6d8b85d0637f68ee33bfc"
   "17": "docker.io/library/postgres@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df"
   "18": "docker.io/library/postgres@sha256:9551dd5bf356409a21b31248f49b33bba9bb1877365f3a7e933aecd9af3cf52d"
+# Spare database VMs a wake adopts instead of cold-booting (ADR-1027), per
+# major and class shape, e.g.
+#   - {postgres_major: 17, vcpu_count: 1, mem_mib: 512, count: 2}
+# Their memory is outside schedd's accounting: lower this node's
+# admission_ceiling_mb by count x (mem_mib + 8) for every entry.
+database_vmmd_spares: []
 # Host memory kept out of faas-db.slice for vmmd, pgproxyd and the OS. The
 # slice's MemoryMax fences every database VM together; schedd's
 # admission_ceiling_mb for this node should stay below it.

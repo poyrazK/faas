@@ -83,13 +83,20 @@ type databaseGuest struct {
 	stopOnce sync.Once
 }
 
-func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget time.Time, restoreUntilEnd bool) error {
+func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget time.Time, restoreUntilEnd, spare bool) error {
 	if log == nil {
 		log = slog.Default()
 	}
 	g := &databaseGuest{log: log, major: major, archive: archive, restoreTarget: restoreTarget, restoreUntilEnd: restoreUntilEnd,
 		exited: make(chan struct{}), done: make(chan struct{})}
-	g.prepare()
+	if spare {
+		// The volume drive is a placeholder until OpAdopt.
+		if g.prepareRuntime() {
+			g.setState(dbguest.StateSpare)
+		}
+	} else {
+		g.prepare()
+	}
 	control, err := listenGuestVsockBacklog(dbguest.ControlPort, 8)
 	if err != nil {
 		log.Error("database control listener unavailable", "err", err)
@@ -120,15 +127,23 @@ func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget t
 // whether the volume holds a cluster. Failures leave the guest serving
 // status so the host can read the stable error code before stopping it.
 func (g *databaseGuest) prepare() {
+	if g.prepareRuntime() {
+		g.mountVolume()
+	}
+}
+
+// prepareRuntime does everything before the volume: runtime mounts, the
+// database user, guest memory and the socket directory. It reports success.
+func (g *databaseGuest) prepareRuntime() bool {
 	if err := mountDatabaseRuntime(); err != nil {
 		g.fail(dbguest.ErrCodeVolumeFailed, "mount runtime filesystems", err)
-		return
+		return false
 	}
 	passwd, err := os.ReadFile("/etc/passwd")
 	uid, gid, ok := lookupPasswdUser(passwd, databaseOSUser)
 	if err != nil || !ok {
 		g.fail(dbguest.ErrCodeStartFailed, "find database user", err)
-		return
+		return false
 	}
 	g.uid, g.gid = uid, gid
 	meminfo, err := os.ReadFile("/proc/meminfo")
@@ -137,17 +152,58 @@ func (g *databaseGuest) prepare() {
 	}
 	if err != nil {
 		g.fail(dbguest.ErrCodeStartFailed, "read guest memory", err)
-		return
+		return false
 	}
 	if err := prepareDatabaseSocketDir(uid, gid); err != nil {
 		g.fail(dbguest.ErrCodeStartFailed, "prepare socket directory", err)
-		return
+		return false
 	}
+	return true
+}
+
+// mountVolume mounts the data volume and decides whether it holds a
+// cluster.
+func (g *databaseGuest) mountVolume() {
 	if err := unix.Mount(databaseVolumeDevice, databaseMountPoint, "ext4", unix.MS_NOATIME|unix.MS_NODEV|unix.MS_NOSUID, ""); err != nil {
 		g.fail(dbguest.ErrCodeVolumeFailed, "mount data volume", err)
 		return
 	}
 	g.decideClusterState()
+}
+
+// adopt takes the tenant volume vmmd put behind the spare's volume drive.
+// The kernel read the placeholder's first blocks when it probed the drive,
+// so those are dropped before mounting. A spare only serves an existing
+// cluster: bootstrap and restore boots never use one.
+func (g *databaseGuest) adopt() dbguest.Response {
+	if g.currentState() != dbguest.StateSpare {
+		resp := g.response()
+		resp.Error = dbguest.ErrCodeNotSpare
+		return resp
+	}
+	g.setState(dbguest.StateStarting)
+	if err := flushBlockDevice(databaseVolumeDevice); err != nil {
+		g.fail(dbguest.ErrCodeVolumeFailed, "drop the placeholder's cached blocks", err)
+		return g.response()
+	}
+	g.mountVolume()
+	switch g.currentState() {
+	case dbguest.StateStarting:
+		g.startPostgres()
+	case dbguest.StateNeedsBootstrap:
+		g.fail(dbguest.ErrCodeVolumeFailed, "adopted volume holds no cluster", nil)
+	}
+	return g.response()
+}
+
+// flushBlockDevice drops a block device's cached blocks (BLKFLSBUF).
+func flushBlockDevice(path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return unix.IoctlSetInt(int(f.Fd()), unix.BLKFLSBUF, 0)
 }
 
 func (g *databaseGuest) decideClusterState() {
@@ -236,6 +292,8 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 		resp = g.baseBackup()
 	case req.Op == dbguest.OpFlushWAL:
 		resp = g.flushArchive(req.After)
+	case req.Op == dbguest.OpAdopt:
+		resp = g.adopt()
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }

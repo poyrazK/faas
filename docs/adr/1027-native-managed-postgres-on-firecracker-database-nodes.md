@@ -727,6 +727,46 @@ and flag it uses exists from 14 on.
   Provision took 9.5–15.5 s for 14–17 and 27.7 s for 18; the restores
   9.2–13.5 s.
 
+### Spares
+
+A wake is a cold boot. Of a ~930 ms wake to ready, PostgreSQL itself is
+under 100 ms; the rest is the jail, Firecracker, the guest kernel and
+guest-init. A spare has done all of that before anyone asks.
+
+- **Spare boot.** vmmd boots a spare as a database VM of a given shape
+  (major, vCPUs, memory) with `gregale.spare=1` on its command line and a
+  1 MiB placeholder behind its volume drive. The placeholder lives in the
+  spare's own directory under the volume root (`.spares/<id>`), which is
+  bind-mounted into the jail as `spare/`. guest-init does everything but
+  touch the volume and waits in `StateSpare`.
+- **Adoption.** A start of a database whose shape has a waiting spare (and
+  that is not a restore boot) adopts it. The database's volume is
+  hard-linked into the spare's directory, which is visible in the jail
+  because the directory itself was bound before boot, so no mount has to
+  reach into jailer's mount namespace. It is chowned to the spare's jail
+  uid, and Firecracker's `PATCH /drives/volume` points the drive (and its
+  rate limiter) at the link. The VM is re-keyed to the database, the
+  archive relay stamps the database from then on, and guest-init's
+  `adopt` op drops the cached placeholder blocks (`BLKFLSBUF`; the kernel
+  read them when it probed the drive), mounts the volume and starts
+  PostgreSQL, or reports `needs_bootstrap` for a fresh volume. Any failure
+  destroys the spare, and the start cold-boots instead.
+- **One tenant, once.** A spare is adopted by one database and destroyed
+  when that database parks, exactly like a cold-booted VM; its directory,
+  holding only links, goes with it. No memory, RNG state or files pass
+  between tenants. vmmd tops the pools up every 10 s and right after each
+  adoption, stops waiting spares at shutdown, and `Recover` clears spare
+  directories after a crash.
+- **Configuration.** `[[database_vms.spares]]` (Ansible
+  `database_vmmd_spares`, empty by default) lists the pools. Spares use
+  node memory schedd does not see, so a node's `admission_ceiling_mb` must
+  leave room for them.
+- Metal (`TestMetalSpareAdoption`, PostgreSQL 17, 1 vCPU / 384 MiB): a
+  cold wake to ready 930 ms; booting a spare 662 ms ahead of time; a wake
+  into the spare to ready 382 ms. The data survived adoption, writes made
+  in the spare reached the volume, and after the park the pool refilled
+  and a second wake adopted again.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives

@@ -45,6 +45,31 @@ func (r *Runtime) prepareJail(vm *databaseVM, base string) error {
 	return os.Chmod(vm.volume, 0o600)
 }
 
+// prepareSpareJail binds the kernel and base like any VM's, and the spare's
+// directory in place of a volume: a database's volume is linked into it
+// when one adopts the spare.
+func (r *Runtime) prepareSpareJail(vm *databaseVM, base string) error {
+	if err := os.MkdirAll(vm.root, 0o755); err != nil {
+		return fmt.Errorf("dbvm: jail root: %w", err)
+	}
+	for _, b := range []struct{ src, name string }{{r.cfg.KernelPath, jailKernel}, {base, jailBase}} {
+		target := filepath.Join(vm.root, b.name)
+		if err := bindFile(b.src, target, true); err != nil {
+			return fmt.Errorf("dbvm: bind %s: %w", b.name, err)
+		}
+		vm.binds = append(vm.binds, target)
+	}
+	target := filepath.Join(vm.root, spareJailDir)
+	if err := os.Mkdir(target, 0o700); err != nil {
+		return fmt.Errorf("dbvm: spare dir in jail: %w", err)
+	}
+	if err := unix.Mount(vm.spareDir, target, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("dbvm: bind spare dir: %w", err)
+	}
+	vm.binds = append(vm.binds, target)
+	return nil
+}
+
 func bindFile(src, target string, readOnly bool) error {
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -79,6 +104,18 @@ func removeJailCgroup(parent, jailID string) {
 // jail directories and cgroups. Volumes are untouched; PostgreSQL recovers
 // from its WAL on the next boot.
 func (r *Runtime) Recover() error {
+	if err := r.recoverJails(); err != nil {
+		return err
+	}
+	// Spare directories hold only placeholders and links to volumes; the
+	// spares that used them are gone.
+	if err := os.RemoveAll(filepath.Join(r.cfg.VolumeRoot, spareRoot)); err != nil {
+		return fmt.Errorf("dbvm: recover spares: %w", err)
+	}
+	return nil
+}
+
+func (r *Runtime) recoverJails() error {
 	parent := filepath.Join(r.cfg.JailBase, filepath.Base(r.fcReal))
 	entries, err := os.ReadDir(parent)
 	if errors.Is(err, os.ErrNotExist) {
