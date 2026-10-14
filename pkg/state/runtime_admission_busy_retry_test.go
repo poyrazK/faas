@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -94,4 +95,15 @@ func busyAttempts(n int) []error {
 		out[i] = ErrApplicationStandardRuntimeBusy
 	}
 	return out
+}
+
+// runtimeAdmissionBusyBudget is the longest retryRuntimeAdmissionBusy sleeps
+// before reporting busy. Every attempt rolls back before it sleeps, so a
+// fail-fast assertion may allow this budget without permitting a lock wait.
+func runtimeAdmissionBusyBudget() time.Duration {
+	var total time.Duration
+	for n := 1; n < api.ApplicationStandardRuntimeLockAttempts; n++ {
+		total += min(api.ApplicationStandardRuntimeLockRetry<<(n-1), api.ApplicationStandardRuntimeLockMaxBackoff) + api.ApplicationStandardRuntimeLockRetry
+	}
+	return total
 }

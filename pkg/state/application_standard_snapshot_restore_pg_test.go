@@ -48,7 +48,8 @@ func TestPgStandardSnapshotRestoreCatalogContention(t *testing.T) {
 			if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), f.Target.State, f.Binding); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
 				t.Fatal("catalog lock bypassed fail-fast fence", err)
 			}
-			if time.Since(start) > time.Second {
+			// Busy replays roll back before each backoff; only a lock wait exceeds this.
+			if time.Since(start) > runtimeAdmissionBusyBudget()+time.Second {
 				t.Fatal("catalog contention held parent locks")
 			}
 			assertStandardRestoreNoGrant(t, s, f.Binding.Token)
