@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One leased message. Its receipt acts only while this lease is current.
+ */
 export type QueueLeaseMessage = {
   id: string;
   /**

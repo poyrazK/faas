@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
@@ -132,7 +133,7 @@ func (m *MemStore) AckQueueLeases(_ context.Context, accountID, appID, queueName
 		}
 		claim := InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
 		if err := m.completeInvocation(inv.ID, inv.Attempts, &claim, nil); err != nil {
-			if err == ErrNotFound {
+			if errors.Is(err, ErrNotFound) {
 				return QueueLeaseReasonExpired, nil
 			}
 			return "", err

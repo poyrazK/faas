@@ -16,6 +16,8 @@ T = TypeVar("T", bound="QueueLeaseReceiptFailure")
 
 @_attrs_define
 class QueueLeaseReceiptFailure:
+    """A receipt that was not applied. lease_expired means it no longer owns its message."""
+
     receipt: str
     reason: QueueLeaseReceiptFailureReason
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

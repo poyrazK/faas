@@ -37133,7 +37133,7 @@ paths:
             schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
       responses:
         '200':
-          description: Per-receipt outcome.
+          description: Receipts that completed their messages, and receipts that no longer own one.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
@@ -37163,7 +37163,7 @@ paths:
             schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
       responses:
         '200':
-          description: Per-receipt outcome.
+          description: Receipts whose messages went back for a retry or to the dead-letter queue, and receipts that no longer own one.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
@@ -37188,7 +37188,7 @@ paths:
             schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
       responses:
         '200':
-          description: Per-receipt outcome.
+          description: Receipts whose visibility deadline moved, and receipts that no longer own their message.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
@@ -82578,6 +82578,7 @@ components:
         wait_seconds: { type: integer, minimum: 0, maximum: 20, description: "When no message is ready, hold the call until one arrives or this many seconds pass, then return an empty list." }
 
     QueueLeaseMessage:
+      description: "One leased message. Its receipt acts only while this lease is current."
       type: object
       required: [id, receipt, payload, attempt, enqueued_at, lease_expires_at]
       properties:
@@ -82590,6 +82591,7 @@ components:
         lease_expires_at: { type: string, format: date-time }
 
     QueueLeaseResponse:
+      description: "Leased messages; empty when none were ready before the wait ended."
       type: object
       required: [messages]
       properties:
@@ -82612,6 +82614,7 @@ components:
         visibility_timeout_seconds: { type: integer, minimum: 0 }
 
     QueueLeaseReceiptFailure:
+      description: "A receipt that was not applied. lease_expired means it no longer owns its message."
       type: object
       required: [receipt, reason]
       properties:
@@ -82619,6 +82622,7 @@ components:
         reason: { type: string, enum: [lease_expired, invalid_receipt] }
 
     QueueLeaseReceiptsResponse:
+      description: "Per-receipt outcome of an ack, nack or extend call."
       type: object
       required: [succeeded, failed]
       properties:

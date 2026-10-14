@@ -1092,7 +1092,7 @@ export class QueuesService {
   }
   /**
    * Complete leased messages.
-   * @returns QueueLeaseReceiptsResponse Per-receipt outcome.
+   * @returns QueueLeaseReceiptsResponse Receipts that completed their messages, and receipts that no longer own one.
    * @throws ApiError
    */
   public static ackQueueLeases({
@@ -1138,7 +1138,7 @@ export class QueuesService {
    * `delay_seconds` if later), or moves to the dead-letter queue once the
    * budget is spent. `error` is recorded as the attempt's last error.
    *
-   * @returns QueueLeaseReceiptsResponse Per-receipt outcome.
+   * @returns QueueLeaseReceiptsResponse Receipts whose messages went back for a retry or to the dead-letter queue, and receipts that no longer own one.
    * @throws ApiError
    */
   public static nackQueueLeases({
@@ -1179,7 +1179,7 @@ export class QueuesService {
   }
   /**
    * Extend the visibility timeout of leased messages.
-   * @returns QueueLeaseReceiptsResponse Per-receipt outcome.
+   * @returns QueueLeaseReceiptsResponse Receipts whose visibility deadline moved, and receipts that no longer own their message.
    * @throws ApiError
    */
   public static extendQueueLeases({

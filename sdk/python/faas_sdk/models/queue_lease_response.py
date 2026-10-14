@@ -15,6 +15,8 @@ T = TypeVar("T", bound="QueueLeaseResponse")
 
 @_attrs_define
 class QueueLeaseResponse:
+    """Leased messages; empty when none were ready before the wait ended."""
+
     messages: list[QueueLeaseMessage]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

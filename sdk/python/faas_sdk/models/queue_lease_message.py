@@ -19,6 +19,8 @@ T = TypeVar("T", bound="QueueLeaseMessage")
 
 @_attrs_define
 class QueueLeaseMessage:
+    """One leased message. Its receipt acts only while this lease is current."""
+
     id: str
     receipt: str
     """Opaque; acts only while this lease is current."""

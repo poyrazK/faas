@@ -15,6 +15,8 @@ T = TypeVar("T", bound="QueueLeaseReceiptsResponse")
 
 @_attrs_define
 class QueueLeaseReceiptsResponse:
+    """Per-receipt outcome of an ack, nack or extend call."""
+
     succeeded: list[str]
     failed: list[QueueLeaseReceiptFailure]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
