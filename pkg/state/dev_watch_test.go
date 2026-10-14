@@ -24,7 +24,7 @@ func TestDevWatchStorePg(t *testing.T) {
 	runDevWatchStoreContract(t, s, ctx)
 }
 
-// adr: 1170 — the watch command is set, replaced and cleared per app.
+// adr: 1170 — the watch command and hostname are set, replaced and cleared per app.
 func runDevWatchStoreContract(t *testing.T, s devWatchStore, ctx context.Context) {
 	t.Helper()
 	acct, err := s.CreateAccount(ctx, "dev-watch-"+uuid.NewString()+"@example.com", api.PlanPro)
@@ -35,24 +35,27 @@ func runDevWatchStoreContract(t *testing.T, s devWatchStore, ctx context.Context
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.DevWatchCommand(ctx, app.ID); err != nil || got != "" {
-		t.Fatalf("unset watch command = %q, %v", got, err)
+	if got, err := s.DevWatch(ctx, app.ID); err != nil || got != (state.DevWatchSetting{}) {
+		t.Fatalf("unset watch mode = %+v, %v", got, err)
 	}
-	for _, command := range []string{"npm run dev", "next dev"} {
-		if err := s.SetDevWatchCommand(ctx, app.ID, command); err != nil {
+	for _, setting := range []state.DevWatchSetting{
+		{Command: "npm run dev"},
+		{Command: "next dev", Host: app.Slug + ".gregale.dev"},
+	} {
+		if err := s.SetDevWatch(ctx, app.ID, setting); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := s.DevWatchCommand(ctx, app.ID); err != nil || got != command {
-			t.Fatalf("watch command = %q, %v; want %q", got, err, command)
+		if got, err := s.DevWatch(ctx, app.ID); err != nil || got != setting {
+			t.Fatalf("watch mode = %+v, %v; want %+v", got, err, setting)
 		}
 	}
-	if err := s.SetDevWatchCommand(ctx, app.ID, ""); err != nil {
+	if err := s.SetDevWatch(ctx, app.ID, state.DevWatchSetting{Host: "ignored.gregale.dev"}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.DevWatchCommand(ctx, app.ID); err != nil || got != "" {
-		t.Fatalf("cleared watch command = %q, %v", got, err)
+	if got, err := s.DevWatch(ctx, app.ID); err != nil || got != (state.DevWatchSetting{}) {
+		t.Fatalf("cleared watch mode = %+v, %v", got, err)
 	}
-	if err := s.SetDevWatchCommand(ctx, app.ID, ""); err != nil {
-		t.Fatalf("clearing an unset command: %v", err)
+	if err := s.SetDevWatch(ctx, app.ID, state.DevWatchSetting{}); err != nil {
+		t.Fatalf("clearing unset watch mode: %v", err)
 	}
 }

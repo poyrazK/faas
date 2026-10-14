@@ -78,18 +78,20 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	usage := state.SummarizeObjectUsage(snapshot, s.Host.ObjectStorage().Accounting, now)
-	charges, err := s.Host.ObjectStorage().ChargeForUsage(usage)
+	charges, err := s.Host.ObjectStorage().ChargeForUsage(usage, api.MustLimitsFor(acct.Plan).ObjectStorage.Allowance())
 	if err != nil {
 		BucketProblem(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges))
+	httpkit.WriteJSON(w, 200, s.ObjectStorageUsageResponse(usage, charges, acct.Plan))
 }
 
-func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge) api.ObjectStorageUsageResponse {
+// ObjectStorageUsageResponse reports the account's effective policy: the
+// operator safety policy tightened by its plan's ceilings (ADR-1320).
+func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, plan api.Plan) api.ObjectStorageUsageResponse {
 	out := api.ObjectStorageUsageResponse{
 		Usage:       usage,
-		Policy:      s.Host.ObjectStorage().Accounting,
+		Policy:      api.MustLimitsFor(plan).ObjectStorage.Policy(s.Host.ObjectStorage().Accounting),
 		Charges:     charges,
 		BillingMode: "off",
 	}

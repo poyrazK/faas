@@ -15,7 +15,7 @@ import (
 )
 
 func cmdEventsSubscriptionDeliveryHealth(args []string) int {
-	flags, positional := splitArgsForFlags(args, "watch", "alerts-json", "resume")
+	flags, positional := splitArgsForFlags(args, "watch", "alerts-json", "resume", "confirmation-progress")
 	fs := newFlagSet("events subscription-delivery-health", flag.ContinueOnError)
 	window := fs.String("window", "5m", "observation window: 5m|15m|1h|6h|24h")
 	watchFlags := newDeliveryHealthWatchFlags(fs)
@@ -52,6 +52,7 @@ func cmdEventsSubscriptionDeliveryHealth(args []string) int {
 
 func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	r, e, sample := out.Routing, out.Execution, out.PendingSample
+	printLineageRetryJobHealth(e.LineageRetryJobs)
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | pending routing %d | processing routing %d | oldest pending %.0fs\n", oneLine(r.SubscriptionID), r.PendingRecipients, r.ProcessingRecipients, r.OldestAgeSeconds)
 	_, _ = fmt.Fprintf(osStdout, "Execution history %s (%s) | collection start %v | evidence lost %v\n", oneLine(e.HistoryStatus), oneLine(e.HistoryReason), e.CoverageStartedAt, e.CoverageLostAt)
 	_, _ = fmt.Fprintf(osStdout, "Window evidence %s (%s) | scope %s | collection start %v | lost through %v | retain until %v\n", oneLine(e.WindowHistoryStatus), oneLine(e.WindowHistoryReason), oneLine(e.WindowCoverage), e.WindowCoverageStartedAt, e.WindowCoverageLostThroughAt, e.WindowEvidenceRetainUntil)
@@ -71,6 +72,7 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	if counts := out.CapacityWaits; counts != nil {
 		_, _ = fmt.Fprintf(osStdout, "Capacity waits: consumer %d | app %d | account %d | complete %t | observed %s\n", counts.Consumer, counts.App, counts.Account, counts.Complete, counts.ObservedAt.Format("2006-01-02T15:04:05Z07:00"))
 	}
+	printEventConsumerCapacityPressure(out.CapacityPressure)
 	_, _ = fmt.Fprintf(osStdout, "Oldest pending sample: %d | truncated %t | waiting reasons %v\n", len(sample.Recipients), sample.Truncated, sample.WaitingReasons)
 	if len(sample.Recipients) > 0 {
 		first := sample.Recipients[0]
@@ -80,12 +82,13 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 }
 
 type deliveryHealthWatchFlags struct {
-	watch, alertsJSON *bool
-	resume            *bool
-	checkpoint        *string
-	ackInbox          *string
-	options           api.EventDeliveryHealthWatchOptions
-	slo               api.EventDeliveryHealthSLOOptions
+	confirmationProgress *bool
+	watch, alertsJSON    *bool
+	resume               *bool
+	checkpoint           *string
+	ackInbox             *string
+	options              api.EventDeliveryHealthWatchOptions
+	slo                  api.EventDeliveryHealthSLOOptions
 }
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
@@ -95,6 +98,7 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f.ackInbox = fs.String("ack-inbox", "", "atomically replaced JSON acknowledgement batch; requires checkpoint")
 	f.resume = fs.Bool("resume", false, "resume the selected checkpoint with fresh evidence")
 	f.alertsJSON = fs.Bool("alerts-json", false, "emit local lifecycle alert JSON lines on stderr")
+	f.confirmationProgress = fs.Bool("confirmation-progress", false, "print live receipt-budget confirmation progress on text stdout")
 	fs.DurationVar(&f.options.Interval, "interval", api.EventDeliveryHealthWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	fs.DurationVar(&f.options.Timeout, "timeout", api.EventDeliveryHealthWatchTimeoutDefault, "watch deadline (up to 24h)")
 	fs.DurationVar(&f.options.MaxAge, "max-age", api.EventDeliveryHealthWatchAgeDefault, "maximum component sample age (100ms-24h)")
@@ -104,6 +108,14 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	fs.DurationVar(&f.options.Paused, "pause-threshold", 0, "subscription pause duration threshold; zero disables")
 	fs.DurationVar(&f.options.CircuitBlocked, "circuit-threshold", 0, "locally sampled circuit restriction duration; zero disables")
 	fs.DurationVar(&f.options.CapacityBlocked, "capacity-threshold", 0, "locally sampled capacity wait duration; zero disables")
+	fs.Int64Var(&f.options.LineageStalled, "lineage-stalled-threshold", 0, "stalled pending retry-job count threshold; zero disables")
+	fs.Int64Var(&f.options.LineageRetentionRisk, "lineage-retention-risk-threshold", 0, "active retry-job retention-risk count threshold; zero disables")
+	fs.DurationVar(&f.options.LineagePaused, "lineage-paused-threshold", 0, "sustained fresh nonzero paused retry-job backlog duration; zero disables")
+	fs.DurationVar(&f.options.ReceiptBudgetFull, "receipt-budget-full-threshold", 0, "sustained fresh full capacity-command receipt budget duration; zero disables")
+	fs.IntVar(&f.options.ReceiptBudgetRemaining, "receipt-budget-remaining-threshold", 0, "warn when remaining receipt slots stay below N (1..128); zero disables")
+	fs.DurationVar(&f.options.ReceiptBudgetLowSustain, "receipt-budget-low-sustain", 0, "warning confirmation duration (100ms-24h; default 30s when remaining threshold enabled)")
+	fs.IntVar(&f.options.ReceiptBudgetRecoveryRemaining, "receipt-budget-recovery-threshold", 0, "remaining slots needed for recovery; must be at least the warning threshold")
+	fs.DurationVar(&f.options.ReceiptBudgetRecoverySustain, "receipt-budget-recovery-sustain", 0, "fresh recovery confirmation duration (100ms-24h; default 30s when recovery enabled)")
 	fs.Func("waiting-reason-count", "repeatable REASON=N pending recipient threshold", func(value string) error {
 		reason, raw, ok := strings.Cut(value, "=")
 		n, err := strconv.ParseInt(raw, 10, 64)
@@ -154,6 +166,9 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 	var err error
 	sloSelected, sloTarget := false, false
 	fs.Visit(func(option *flag.Flag) {
+		if (option.Name == "receipt-budget-low-sustain" || option.Name == "receipt-budget-recovery-threshold" || option.Name == "receipt-budget-recovery-sustain") && f.options.ReceiptBudgetRemaining == 0 {
+			err = fmt.Errorf("--%s requires an enabled --receipt-budget-remaining-threshold", option.Name)
+		}
 		if strings.HasPrefix(option.Name, "slo-") {
 			sloSelected = true
 			if option.Name != "slo-min-samples" && option.Name != "slo-sustain" {
@@ -164,6 +179,9 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 			err = fmt.Errorf("--%s requires --watch", option.Name)
 		}
 	})
+	if f.confirmationProgress != nil && *f.confirmationProgress && jsonOutput {
+		return fmt.Errorf("live confirmation progress uses text stdout; omit --confirmation-progress with --json")
+	}
 	if sloSelected && !sloTarget {
 		return fmt.Errorf("SLO sample/sustain settings require an SLO target")
 	}
@@ -214,6 +232,9 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 				}
 			}
 		}
+		if f.confirmationProgress != nil && *f.confirmationProgress {
+			printDeliveryHealthConfirmations(progress.Confirmations)
+		}
 		return nil
 	}
 	result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, sub, options)
@@ -233,10 +254,28 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 		for _, v := range result.SLO {
 			_, _ = fmt.Fprintf(osStdout, "SLO %s: %s (%s) | value %.6f | target %.6f | samples %d/%d | coverage %s | budget burn %.3fx\n", v.Metric, v.Status, v.Reason, v.Value, v.Threshold, v.Samples, v.MinimumSamples, v.Coverage, v.ErrorBudgetBurnRate)
 		}
+		printDeliveryHealthConfirmations(result.Confirmations)
 		_, _ = fmt.Fprintf(osStdout, "Watch stopped: %s | observations %d | alert sequence %d\n", result.StopReason, result.Observations, result.Sequence)
 	}
 	if err != nil {
 		return printErr("Delivery health watch stopped", err)
 	}
 	return 0
+}
+
+func printEventConsumerCapacityPressure(pressure *api.EventConsumerCapacityPressure) {
+	if pressure == nil {
+		return
+	}
+	blocker := pressure.BlockingScope
+	if blocker == "" {
+		blocker = "none observed"
+	}
+	_, _ = fmt.Fprintf(osStdout, "Capacity pressure: admission blocker %s | configured consumer ceiling %d (0=plan) | complete %t | observed %s\n", oneLine(blocker), pressure.ConfiguredMaxPendingDeliveries, pressure.Complete, pressure.ObservedAt.Format("2006-01-02T15:04:05Z07:00"))
+	for _, scope := range pressure.Scopes {
+		_, _ = fmt.Fprintf(osStdout, "  %s: live %d / %d | at limit %t | waiting %d | oldest waiting acceptance age %.0fs\n", oneLine(scope.Scope), scope.LiveDeliveries, scope.EffectiveLimit, scope.AtLimit, scope.WaitingRecipients, scope.OldestWaitingAgeSeconds)
+		if scope.AtLimit || scope.WaitingRecipients > 0 {
+			_, _ = fmt.Fprintf(osStdout, "    %s\n", oneLine(scope.Advice))
+		}
+	}
 }

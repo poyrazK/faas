@@ -3,6 +3,7 @@
 package secretscan
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -206,5 +207,39 @@ func TestUnquoteKey(t *testing.T) {
 		if got := string(unquoteKey([]byte(in))); got != want {
 			t.Errorf("unquoteKey(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// H10-9: the durable-entity starter's prepared validator bundle stores its
+// sources as base64, which the entropy fallback flagged as secrets.
+func TestScanFile_ValidatorBundleScansDecodedSources(t *testing.T) {
+	bundle := func(source string) []byte {
+		return []byte(`{
+  "runtime": "node22",
+  "entrypoint": "validator.mjs",
+  "files": [
+    {
+      "path": "validator.mjs",
+      "content": "` + base64.StdEncoding.EncodeToString([]byte(source)) + `"
+    }
+  ]
+}
+`)
+	}
+	clean := "// Pure isolated validator: no imports from the SDK, credentials or server code.\nexport default function validateRestore(input) {\n  return { valid: typeof input?.candidate === 'object' };\n}\n"
+	if got := ScanFile("gregale.validator.json", bundle(clean)); len(got) != 0 {
+		t.Fatalf("clean bundle findings = %+v, want none", got)
+	}
+	leaky := "const key = \"sk_live_" + "51HbQ2pL8vXk9mT3nR7wY4cZ\";\nexport default function v() { return key; }\n"
+	got := ScanFile("app/gregale.validator.json", bundle(leaky))
+	if len(got) == 0 {
+		t.Fatal("a secret inside a bundled source must still be found")
+	}
+	if got[0].File != "app/gregale.validator.json:validator.mjs" || got[0].Line != 1 {
+		t.Fatalf("finding at %s:%d, want app/gregale.validator.json:validator.mjs:1", got[0].File, got[0].Line)
+	}
+	// Not a bundle: scanned as ordinary text.
+	if got := ScanFile("gregale.validator.json", []byte("token = \"sk_live_"+"51HbQ2pL8vXk9mT3nR7wY4cZ\"\n")); len(got) == 0 {
+		t.Fatal("a malformed bundle must fall back to the text scan")
 	}
 }

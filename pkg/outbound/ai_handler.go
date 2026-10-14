@@ -9,6 +9,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // AIUsageBackend settles AI token usage after a response (ADR-988). It adds
@@ -18,7 +20,15 @@ type AIUsageBackend interface {
 	RecordAIUsage(context.Context, AIUsageRecord) error
 }
 
-const aiUsageRecordTimeout = 2 * time.Second
+// aiUsageRecordAttemptTimeout bounds one settlement attempt, and
+// aiUsageRecordRetryBackoff spaces the attempts. The preview soak (ADR-998)
+// dropped usage at a single 2 s attempt when calls of one integration queued
+// on its admission-state row; keyed retries (ADR-1120) now cover a slow
+// commit within the same overall bound.
+const (
+	aiUsageRecordAttemptTimeout = api.OutboundAISettlementAttemptTimeoutSeconds * time.Second
+	aiUsageRecordRetryBackoff   = 100 * time.Millisecond
+)
 
 // observedBody hands every byte read from the provider to the usage observer
 // as the gateway forwards it. Closing it closes the provider body.
@@ -119,6 +129,8 @@ type aiSettlement struct {
 	// which the binary audio response does not report (ADR-997).
 	media      aiMediaKind
 	characters int64
+	// leaseID keys the settlement (ADR-1120).
+	leaseID string
 }
 
 // speechUsage settles a successful speech call at its input characters when
@@ -189,11 +201,9 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	case caller == "":
 		caller = AIUsageCallerRuns
 	}
-	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiUsageRecordTimeout)
-	defer cancel()
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
-		EndUser: settlement.endUser,
+		EndUser: settlement.endUser, LeaseID: settlement.leaseID,
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
@@ -201,23 +211,39 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 			record.Log.Content = observer.capture.finish()
 		}
 	}
-	if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
-		alerts, err := alerter.RecordAIUsageAlerts(recordCtx, record)
-		if err != nil {
-			h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
-			return
+	write := func(ctx context.Context) ([]AIBudgetAlert, error) {
+		if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
+			return alerter.RecordAIUsageAlerts(ctx, record)
 		}
-		for _, alert := range alerts {
-			h.Metrics.ObserveAIBudgetAlert(alert.Budget, alert.ThresholdPercent)
-		}
-		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
-		return
+		return nil, recorder.RecordAIUsage(ctx, record)
 	}
-	if err := recorder.RecordAIUsage(recordCtx, record); err != nil {
+	alerts, err := h.recordAIUsage(context.WithoutCancel(ctx), record, metricIntegrationID, write)
+	if err != nil {
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
 		return
 	}
+	for _, alert := range alerts {
+		h.Metrics.ObserveAIBudgetAlert(alert.Budget, alert.ThresholdPercent)
+	}
 	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// recordAIUsage writes one settlement, retrying a failed attempt when the
+// call has a lease to key it: a timed-out commit may still land, and the
+// key makes the retry count the call once (ADR-1120). An invalid record is
+// never retried.
+func (h *Handler) recordAIUsage(ctx context.Context, record AIUsageRecord, metricIntegrationID string,
+	write func(context.Context) ([]AIBudgetAlert, error)) ([]AIBudgetAlert, error) {
+	for attempt := 1; ; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, aiUsageRecordAttemptTimeout)
+		alerts, err := write(attemptCtx)
+		cancel()
+		if err == nil || attempt >= api.OutboundAISettlementAttempts || record.LeaseID == "" || errors.Is(err, ErrInvalidIntegration) {
+			return alerts, err
+		}
+		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "retried")
+		time.Sleep(time.Duration(attempt) * aiUsageRecordRetryBackoff)
+	}
 }
 
 // observeContentPolicy counts the content policy's redactions and block and

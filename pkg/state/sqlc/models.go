@@ -246,6 +246,7 @@ type AlertRule struct {
 	Action                          string
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
+	EdgeRuleID                      pgtype.UUID
 }
 
 type ApiConsumer struct {
@@ -1943,6 +1944,10 @@ type DebugRegressionObservation struct {
 	DismissedUntil      pgtype.Timestamptz
 	ResolvedAt          pgtype.Timestamptz
 	SuspectedDependency []byte
+	Kind                string
+	ErrorRatePct        pgtype.Numeric
+	ErrorRateBasePct    pgtype.Numeric
+	ErrorCount          int32
 }
 
 type DeployToken struct {
@@ -2328,6 +2333,7 @@ type DevWatchSetting struct {
 	AppID     pgtype.UUID
 	Command   string
 	UpdatedAt pgtype.Timestamptz
+	Host      string
 }
 
 type DeveloperSyncHistory struct {
@@ -2395,6 +2401,7 @@ type EdgeRuleChangeLog struct {
 	Operation  string
 	MatchHosts []string
 	CreatedAt  pgtype.Timestamptz
+	AccountIds []pgtype.UUID
 }
 
 type EdgeRuleEvent struct {
@@ -2532,6 +2539,7 @@ type EnvironmentGitSource struct {
 	SourceVerifiedAt       pgtype.Timestamptz
 	Detached               bool
 	Provider               string
+	NotificationState      []byte
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -2845,16 +2853,70 @@ type EventDeliverySlot struct {
 }
 
 type EventExecutionCoverage struct {
-	SubscriptionID      pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	StartedAt           pgtype.Timestamptz
-	BaselineKnown       bool
-	LostAt              pgtype.Timestamptz
-	LossReason          string
-	LedgerStartedAt     pgtype.Timestamptz
-	LedgerBaselineKnown bool
-	LedgerLostThroughAt pgtype.Timestamptz
+	SubscriptionID            pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	StartedAt                 pgtype.Timestamptz
+	BaselineKnown             bool
+	LostAt                    pgtype.Timestamptz
+	LossReason                string
+	LedgerStartedAt           pgtype.Timestamptz
+	LedgerBaselineKnown       bool
+	LedgerLostThroughAt       pgtype.Timestamptz
+	ReconciliationRequestedAt pgtype.Timestamptz
+	LineageRepairProgress     []byte
+}
+
+type EventExecutionLineageCase struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	DiagnosticID     pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	RootInvocationID string
+	RootCreatedAt    pgtype.Timestamptz
+	Status           string
+	Reason           string
+	Revision         int64
+	RetryCount       int64
+	RecordedAt       pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetry struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	RequestID        pgtype.UUID
+	ExpectedRevision int64
+	Result           []byte
+	RetainUntil      pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetryControlReceipt struct {
+	SubscriptionID    pgtype.UUID
+	JobRequestID      pgtype.UUID
+	CommandID         pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Action            string
+	ExpectedCreatedAt pgtype.Timestamptz
+	Sequence          int64
+	Result            []byte
+	RecordedAt        pgtype.Timestamptz
+	RetainUntil       pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetryJob struct {
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	State          string
+	Snapshot       []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
 }
 
 type EventExecutionOutcome struct {
@@ -3173,6 +3235,17 @@ type EventSubscription struct {
 	SchemaVersions     []string
 }
 
+type EventSubscriptionCapacityCommand struct {
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
 type EventSubscriptionCircuitBreaker struct {
 	SubscriptionID pgtype.UUID
 	AccountID      pgtype.UUID
@@ -3183,15 +3256,16 @@ type EventSubscriptionCircuitBreaker struct {
 }
 
 type EventSubscriptionDeliveryControl struct {
-	SubscriptionID  pgtype.UUID
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	Paused          bool
-	RatePerSecond   int32
-	WindowStartedAt pgtype.Timestamptz
-	WindowCount     int32
-	UpdatedAt       pgtype.Timestamptz
-	PausedAt        pgtype.Timestamptz
+	SubscriptionID       pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Paused               bool
+	RatePerSecond        int32
+	WindowStartedAt      pgtype.Timestamptz
+	WindowCount          int32
+	UpdatedAt            pgtype.Timestamptz
+	PausedAt             pgtype.Timestamptz
+	MaxPendingDeliveries int32
 }
 
 type EventSubscriptionWorkBinding struct {
@@ -3791,6 +3865,15 @@ type InvocationPlainReplay struct {
 	ParentInvocationID pgtype.UUID
 	ReplayInvocationID pgtype.UUID
 	ReplayCreatedAt    pgtype.Timestamptz
+}
+
+type InvocationQueueLeaseReceipt struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	TokenHash        string
+	IssuedAt         pgtype.Timestamptz
+	LeaseExpiresAt   pgtype.Timestamptz
 }
 
 type InvocationWorkCancellation struct {
@@ -4498,6 +4581,19 @@ type ManagedPostgresRestoreProof struct {
 	Generation         int64
 	ObservedAt         pgtype.Timestamptz
 	DataResourceID     pgtype.Text
+}
+
+type ManagedPostgresRestoreVerification struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Evidence           string
+	VerifiedAt         pgtype.Timestamptz
 }
 
 type ManagedPostgresUsage struct {
@@ -5213,6 +5309,24 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	Lost         bool
 }
 
+type McpCatalogMonitor struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Payload   []byte
+}
+
+type McpOauthRetirement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BindingSha256 string
+	CreatedAt     pgtype.Timestamptz
+	RetainUntil   pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	State         pgtype.Text
+	Payload       []byte
+}
+
 type MeterGatewayUsageEvent struct {
 	NodeID     pgtype.UUID
 	EventID    pgtype.UUID
@@ -5607,6 +5721,9 @@ type ObjectStorageBillingPeriod struct {
 	EgressMillicents             int64
 	TotalMillicents              int64
 	FinalizedAt                  pgtype.Timestamptz
+	IncludedStoredByteHours      int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
 }
 
 type ObjectStorageBucketUsage struct {
@@ -6189,6 +6306,12 @@ type OutboundAiRouteTarget struct {
 	Position      int16
 	IntegrationID pgtype.UUID
 	Model         pgtype.Text
+}
+
+type OutboundAiSettlement struct {
+	LeaseID       pgtype.UUID
+	IntegrationID pgtype.UUID
+	SettledAt     pgtype.Timestamptz
 }
 
 type OutboundAiUsageDaily struct {
@@ -7938,6 +8061,7 @@ type RequestTelemetry struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetry202610 struct {
@@ -7975,6 +8099,7 @@ type RequestTelemetry202610 struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetry202611 struct {
@@ -8012,6 +8137,7 @@ type RequestTelemetry202611 struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetry202612 struct {
@@ -8049,6 +8175,7 @@ type RequestTelemetry202612 struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetryAppGap struct {
@@ -8111,6 +8238,7 @@ type RequestTelemetryDefault struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type ReservedIpInventory struct {
@@ -9177,6 +9305,19 @@ type WorkflowEventReceipt struct {
 	AdmittedAt  pgtype.Timestamptz
 }
 
+type WorkflowInitialRecoveryReview struct {
+	ID                      pgtype.UUID
+	AppID                   pgtype.UUID
+	FailureID               pgtype.UUID
+	PolicyVersion           int64
+	PreparedAt              pgtype.Timestamptz
+	ExpiresAt               pgtype.Timestamptz
+	SubmittedAt             pgtype.Timestamptz
+	JobID                   pgtype.UUID
+	Review                  []byte
+	CompletionNextObserveAt pgtype.Timestamptz
+}
+
 type WorkflowOperationEffect struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -9238,22 +9379,25 @@ type WorkflowRecoveryHistoryEvent struct {
 }
 
 type WorkflowRecoveryPolicy struct {
-	AppID                pgtype.UUID
-	Version              int64
-	Enabled              bool
-	Policy               []byte
-	UpdatedAt            pgtype.Timestamptz
-	ActorKind            string
-	ActorID              string
-	NextEvaluateAt       pgtype.Timestamptz
-	LastEvaluatedAt      pgtype.Timestamptz
-	JobCursor            pgtype.UUID
-	Status               string
-	NextExecuteAt        pgtype.Timestamptz
-	AutomaticFailures    int32
-	AutomaticPausedAt    pgtype.Timestamptz
-	AutomaticPauseReason string
-	NextHealthAt         pgtype.Timestamptz
+	AppID                     pgtype.UUID
+	Version                   int64
+	Enabled                   bool
+	Policy                    []byte
+	UpdatedAt                 pgtype.Timestamptz
+	ActorKind                 string
+	ActorID                   string
+	NextEvaluateAt            pgtype.Timestamptz
+	LastEvaluatedAt           pgtype.Timestamptz
+	JobCursor                 pgtype.UUID
+	Status                    string
+	NextExecuteAt             pgtype.Timestamptz
+	AutomaticFailures         int32
+	AutomaticPausedAt         pgtype.Timestamptz
+	AutomaticPauseReason      string
+	NextHealthAt              pgtype.Timestamptz
+	InitialFailureCursor      pgtype.UUID
+	AutomaticPollFailure      []byte
+	AutomaticPollNotification []byte
 }
 
 type WorkflowRecoveryPolicyControl struct {

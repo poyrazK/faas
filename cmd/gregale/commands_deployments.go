@@ -354,6 +354,10 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentSummary(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
+	case "get":
+		// inspect and deploy recovery hints print `deployment get <id>`;
+		// it is the explicit spelling of the default read (H10-6).
+		return cmdDeploymentGet(args[1:])
 	}
 	return cmdDeploymentGet(args)
 }

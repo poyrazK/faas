@@ -6,7 +6,11 @@ import type { AppEventPublicationVerification } from '../models/AppEventPublicat
 import type { AppEventPublishStatusResponse } from '../models/AppEventPublishStatusResponse.js';
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
+import type { CancelEventExecutionLineageRetryJobRequest } from '../models/CancelEventExecutionLineageRetryJobRequest.js';
+import type { ControlEventExecutionLineageCaseBackfillRequest } from '../models/ControlEventExecutionLineageCaseBackfillRequest.js';
+import type { ControlEventExecutionLineageRetryJobRequest } from '../models/ControlEventExecutionLineageRetryJobRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
+import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -14,6 +18,13 @@ import type { EventConsumerDeliveryHealth } from '../models/EventConsumerDeliver
 import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecutionHealth.js';
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
+import type { EventExecutionLineageCase } from '../models/EventExecutionLineageCase.js';
+import type { EventExecutionLineageCaseBackfill } from '../models/EventExecutionLineageCaseBackfill.js';
+import type { EventExecutionLineageCases } from '../models/EventExecutionLineageCases.js';
+import type { EventExecutionLineageRetryJob } from '../models/EventExecutionLineageRetryJob.js';
+import type { EventExecutionLineageRetryJobControls } from '../models/EventExecutionLineageRetryJobControls.js';
+import type { EventExecutionLineageRetryJobs } from '../models/EventExecutionLineageRetryJobs.js';
+import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
@@ -51,6 +62,9 @@ import type { EventSchema } from '../models/EventSchema.js';
 import type { EventSchemaRolloutRequest } from '../models/EventSchemaRolloutRequest.js';
 import type { EventSchemaRolloutResponse } from '../models/EventSchemaRolloutResponse.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
+import type { EventSubscriptionCapacityCommandReceipt } from '../models/EventSubscriptionCapacityCommandReceipt.js';
+import type { EventSubscriptionCapacityCommands } from '../models/EventSubscriptionCapacityCommands.js';
+import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { EventSubscriptionResumeRequest } from '../models/EventSubscriptionResumeRequest.js';
@@ -59,6 +73,7 @@ import type { EventSubscriptionSchemaVersionsResponse } from '../models/EventSub
 import type { PlatformTenantPublishEventResponse } from '../models/PlatformTenantPublishEventResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { PublishEventBatchRequest } from '../models/PublishEventBatchRequest.js';
 import type { PublishEventBatchResponse } from '../models/PublishEventBatchResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
@@ -69,10 +84,20 @@ import type { ReplayEventFanoutFailureRequest } from '../models/ReplayEventFanou
 import type { ReplayEventFanoutFailureResponse } from '../models/ReplayEventFanoutFailureResponse.js';
 import type { ReplayRetryableEventFanoutFailuresRequest } from '../models/ReplayRetryableEventFanoutFailuresRequest.js';
 import type { ReplayRetryableEventFanoutFailuresResponse } from '../models/ReplayRetryableEventFanoutFailuresResponse.js';
+import type { RequestEventExecutionLineageCaseBackfillRequest } from '../models/RequestEventExecutionLineageCaseBackfillRequest.js';
+import type { RetryEventExecutionLineageCaseRequest } from '../models/RetryEventExecutionLineageCaseRequest.js';
 import type { SetWorkflowRecoveryPolicyRequest } from '../models/SetWorkflowRecoveryPolicyRequest.js';
 import type { SuppressWorkflowRecoveryAutomaticActionRequest } from '../models/SuppressWorkflowRecoveryAutomaticActionRequest.js';
 import type { WorkflowEventReplayBackfillRequest } from '../models/WorkflowEventReplayBackfillRequest.js';
 import type { WorkflowEventReplayPreviewResponse } from '../models/WorkflowEventReplayPreviewResponse.js';
+import type { WorkflowInitialEvidenceDiagnosis } from '../models/WorkflowInitialEvidenceDiagnosis.js';
+import type { WorkflowInitialEvidenceRepairRequest } from '../models/WorkflowInitialEvidenceRepairRequest.js';
+import type { WorkflowInitialFailures } from '../models/WorkflowInitialFailures.js';
+import type { WorkflowInitialRecoveryPreview } from '../models/WorkflowInitialRecoveryPreview.js';
+import type { WorkflowInitialRecoveryReview } from '../models/WorkflowInitialRecoveryReview.js';
+import type { WorkflowInitialRecoveryReviewDecisionRequest } from '../models/WorkflowInitialRecoveryReviewDecisionRequest.js';
+import type { WorkflowInitialRecoveryReviewRequest } from '../models/WorkflowInitialRecoveryReviewRequest.js';
+import type { WorkflowInitialRecoveryReviews } from '../models/WorkflowInitialRecoveryReviews.js';
 import type { WorkflowRecoveryActionReceipt } from '../models/WorkflowRecoveryActionReceipt.js';
 import type { WorkflowRecoveryAutomaticAction } from '../models/WorkflowRecoveryAutomaticAction.js';
 import type { WorkflowRecoveryAutomaticQueue } from '../models/WorkflowRecoveryAutomaticQueue.js';
@@ -89,6 +114,7 @@ import type { WorkflowRecoveryPolicyReviews } from '../models/WorkflowRecoveryPo
 import type { WorkflowRecoveryReport } from '../models/WorkflowRecoveryReport.js';
 import type { WorkflowRecoveryReviewDecisionRequest } from '../models/WorkflowRecoveryReviewDecisionRequest.js';
 import type { WorkflowRecoveryReviewStatus } from '../models/WorkflowRecoveryReviewStatus.js';
+import type { WorkflowRetryEvidenceDiagnosis } from '../models/WorkflowRetryEvidenceDiagnosis.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -1493,8 +1519,814 @@ export class EventsService {
     });
   }
   /**
+   * Pause a retained lineage diagnostic scan.
+   * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Pauses a pending or waiting scan. Repeating pause on a paused scan leaves its metadata unchanged. Completed, cancelled and expired scans return 409. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress.
+   * @throws ApiError
+   */
+  public static pauseEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application whose retained diagnostic scan is being paused.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Reviewed original nonzero diagnostic scan UUID.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
+        413: `Request exceeds the 65536-byte body limit.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+      },
+    });
+  }
+  /**
+   * Resume a retained lineage diagnostic scan.
+   * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Resumes a paused scan from its saved cursor and fixed retained range. Repeating resume on a pending or waiting scan leaves metadata unchanged. Completed, cancelled and expired scans return 409. Active bulk retry jobs still govern whether the scheduler can scan. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress. Context: Resume a retained lineage diagnostic scan.
+   * @throws ApiError
+   */
+  public static resumeEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Resume a retained lineage diagnostic scan.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Resume a retained lineage diagnostic scan.
+     */
+    subscriptionId: string,
+    /**
+     * Reviewed original nonzero diagnostic scan UUID. Context: Resume a retained lineage diagnostic scan.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp. Context: Resume a retained lineage diagnostic scan.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Resume a retained lineage diagnostic scan.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Resume a retained lineage diagnostic scan.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan.`,
+      },
+    });
+  }
+  /**
+   * Cancel a retained lineage diagnostic scan.
+   * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Cancels unprocessed diagnostic work while keeping existing case records, cursor and counters. Repeating cancel on a cancelled, completed or expired scan returns its current terminal state unchanged. A cancelled scan cannot be resumed. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress. Context: Cancel a retained lineage diagnostic scan.
+   * @throws ApiError
+   */
+  public static cancelEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Cancel a retained lineage diagnostic scan.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Cancel a retained lineage diagnostic scan.
+     */
+    subscriptionId: string,
+    /**
+     * Reviewed original nonzero diagnostic scan UUID. Context: Cancel a retained lineage diagnostic scan.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp. Context: Cancel a retained lineage diagnostic scan.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Cancel a retained lineage diagnostic scan.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Cancel a retained lineage diagnostic scan.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan.`,
+      },
+    });
+  }
+  /**
+   * Inspect the latest bounded lineage diagnostic scan.
+   * Requires read scope. Reports the latest scan only, or not_requested. Counters describe examined retained receipts, not live blockers or complete history. Existing case revisions and forward repair progress are preserved. Expiry is visible immediately after the 30-day work deadline.
+   * @returns EventExecutionLineageCaseBackfill Latest scan status and counters.
+   * @throws ApiError
+   */
+  public static getEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug. Context: Inspect the latest bounded lineage diagnostic scan.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Inspect the latest bounded lineage diagnostic scan.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid identifier or scan guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed.`,
+        504: `Request timed out; repeat the same request UUID and previous-request guard.`,
+      },
+    });
+  }
+  /**
+   * Backfill missing lineage cases from retained admission evidence.
+   * Requires deploy/write scope and an existing execution coverage row. The request UUID and expected previous scan UUID fence retries and replacement of a completed, cancelled or expired scan. Only the latest scan is retained in coverage metadata; superseded requests fail their stale guards. Captures an upper receipt ID and resumes a separate bounded cursor. Waits for active bulk lineage retries on this subscription. Inserts missing unresolved/conflicting diagnostics with unique diagnostic IDs, without overwriting existing cases, associating roots, executing handlers or reconstructing outcomes. Retained receipt membership remains live during the scan. Missing or pruned evidence cannot be recovered. Work expires 30 days after request; a deliberate replacement needs a new UUID and the latest request UUID as its guard.
+   * @returns EventExecutionLineageCaseBackfill Current paused, cancelled, completed or expired scan, or an empty retained range.
+   * @throws ApiError
+   */
+  public static requestEventExecutionLineageCaseBackfill({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Backfill missing lineage cases from retained admission evidence.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Backfill missing lineage cases from retained admission evidence.
+     */
+    subscriptionId: string,
+    requestBody: RequestEventExecutionLineageCaseBackfillRequest,
+  }): CancelablePromise<EventExecutionLineageCaseBackfill> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or scan guard. Context: Backfill missing lineage cases from retained admission evidence.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed. Context: Backfill missing lineage cases from retained admission evidence.`,
+        504: `Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence.`,
+      },
+    });
+  }
+  /**
+   * Preview unresolved or conflicting retained lineage cases.
+   * Requires read scope. Optional exact reason filter; live pagination, not a reserved selection. Review case acceptance timestamps and revisions before submitting a fixed job selection.
+   * @returns EventExecutionLineageCases Retained eligible cases.
+   * @throws ApiError
+   */
+  public static previewEventExecutionLineageRetries({
+    slug,
+    subscriptionId,
+    reason,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Application slug. Context: Preview unresolved or conflicting retained lineage cases.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Preview unresolved or conflicting retained lineage cases.
+     */
+    subscriptionId: string,
+    /**
+     * Exact reason code; empty matches all reasons.
+     */
+    reason?: string,
+    /**
+     * Exclusive outbox cursor.
+     */
+    after?: number,
+    /**
+     * Page size; zero selects the default.
+     */
+    limit?: number,
+  }): CancelablePromise<EventExecutionLineageCases> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'reason': reason,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid identifier, selection or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case guard changed or retained request identity reused with another selection.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection.`,
+      },
+    });
+  }
+  /**
+   * List retained bulk lineage retry job summaries.
+   * Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Optional attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs, before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more plus per-job progress/retention diagnostics and the original creation guard. This list is not capped by the health sample or 500-job health scan. Continue with next_after and the same status and attention filters. Jobs created or changing into a filtered status or warning above the cursor can require restarting from the first page. No frozen snapshot or complete backlog count is claimed. Status completed/cancelled with attention is invalid. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
+   * @returns EventExecutionLineageRetryJobs Retained job summaries; an existing subscription with no jobs returns an empty array.
+   * @throws ApiError
+   */
+  public static listEventExecutionLineageRetryJobs({
+    slug,
+    subscriptionId,
+    status,
+    after,
+    limit = 50,
+    attention,
+  }: {
+    /**
+     * Application slug selecting the owner of this lineage operation. List retained bulk lineage retry job summaries.
+     */
+    slug: string,
+    /**
+     * Subscription UUID whose retained lineage records are inspected. List retained bulk lineage retry job summaries.
+     */
+    subscriptionId: string,
+    /**
+     * Omit for all retained states.
+     */
+    status?: 'pending' | 'paused' | 'completed' | 'cancelled',
+    /**
+     * Continuation cursor returned by next_after; pass unchanged with the same status filter.
+     */
+    after?: string,
+    /**
+     * Maximum number of retained records in this response; zero selects the default. List retained bulk lineage retry job summaries.
+     */
+    limit?: number,
+    /**
+     * Optional warning filter; applies only to active pending/paused jobs. Empty means ordinary retained listing.
+     */
+    attention?: '' | 'any' | 'stalled' | 'retention_risk',
+  }): CancelablePromise<EventExecutionLineageRetryJobs> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'status': status,
+        'after': after,
+        'limit': limit,
+        'attention': attention,
+      },
+      errors: {
+        400: `Invalid identifier, status filter or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Listing timed out.`,
+      },
+    });
+  }
+  /**
+   * Submit a fixed reviewed lineage retry selection.
+   * Requires deploy/write scope. At most 200 unique cases with expected revisions, original acceptance timestamps and diagnostic IDs when present. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
+   * @returns EventExecutionLineageRetryJob Previously paused, completed or cancelled job.
+   * @throws ApiError
+   */
+  public static createEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Submit a fixed reviewed lineage retry selection.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Submit a fixed reviewed lineage retry selection.
+     */
+    subscriptionId: string,
+    requestBody: CreateEventExecutionLineageRetryJobRequest,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier, selection or pagination. Context: Submit a fixed reviewed lineage retry selection.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case guard changed or retained request identity reused with another selection. Context: Submit a fixed reviewed lineage retry selection.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection.`,
+      },
+    });
+  }
+  /**
+   * List retained immutable bulk retry control receipts.
+   * Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Optional action, actor_id and credential_type filters combine with AND before pagination. Sequence cursors retain their original per-job meaning and may have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts remain in unfiltered history and match action filters but not nonempty attribution filters. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+   * @returns EventExecutionLineageRetryJobControls Immutable command receipts, oldest sequence first.
+   * @throws ApiError
+   */
+  public static listEventExecutionLineageRetryJobControls({
+    slug,
+    subscriptionId,
+    requestId,
+    expectedCreatedAt,
+    after,
+    limit = 50,
+    action,
+    actorId,
+    credentialType,
+  }: {
+    /**
+     * Application slug selecting the owner of this lineage operation. List retained immutable bulk retry control receipts.
+     */
+    slug: string,
+    /**
+     * Subscription UUID whose retained lineage records are inspected. List retained immutable bulk retry control receipts.
+     */
+    subscriptionId: string,
+    /**
+     * Original bulk retry submission UUID whose command receipts are listed. List retained immutable bulk retry control receipts.
+     */
+    requestId: string,
+    /**
+     * Original nonzero creation timestamp from the reviewed job.
+     */
+    expectedCreatedAt: string,
+    /**
+     * Opaque continuation boundary returned by the preceding control-history page. List retained immutable bulk retry control receipts.
+     */
+    after?: number,
+    /**
+     * Maximum number of retained records in this response; zero selects the default. List retained immutable bulk retry control receipts.
+     */
+    limit?: number,
+    /**
+     * Exact action filter; empty means all actions.
+     */
+    action?: '' | 'pause' | 'resume' | 'cancel',
+    /**
+     * Exact original actor UUID or store for internal calls. UUIDs must use hyphenated form; casing is normalized. Empty means all actors. Attribution-free legacy receipts do not match a nonempty actor filter.
+     */
+    actorId?: string,
+    /**
+     * Exact original credential type; empty means all types. Attribution-free legacy receipts do not match a nonempty filter.
+     */
+    credentialType?: '' | 'session' | 'api_key' | 'deploy_token' | 'platform_tenant_token' | 'internal',
+  }): CancelablePromise<EventExecutionLineageRetryJobControls> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/controls',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      query: {
+        'expected_created_at': expectedCreatedAt,
+        'after': after,
+        'limit': limit,
+        'action': action,
+        'actor_id': actorId,
+        'credential_type': credentialType,
+      },
+      errors: {
+        400: `Invalid identifier, creation guard, pagination or history filter.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Job creation guard changed; event_lineage_retry_job_changed.`,
+        504: `History read timed out.`,
+      },
+    });
+  }
+  /**
+   * Pause unprocessed cases in a retained bulk lineage retry job.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired.
+   * @returns EventExecutionLineageRetryJob Current job; control_receipt contains the immutable original outcome when command_id was supplied.
+   * @throws ApiError
+   */
+  public static pauseEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Pause unprocessed cases in a retained bulk lineage retry job.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Pause unprocessed cases in a retained bulk lineage retry job.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero submission UUID.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageRetryJobRequest,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/pause',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp. Context: Pause unprocessed cases in a retained bulk lineage retry job.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).`,
+        413: `Request exceeds the 65536-byte body limit. Context: Pause unprocessed cases in a retained bulk lineage retry job.`,
+        429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.`,
+        504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
+      },
+    });
+  }
+  /**
+   * Resume unprocessed cases in a paused bulk lineage retry job.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage retry job.
+   * @returns EventExecutionLineageRetryJob Current job; control_receipt contains the immutable original outcome when command_id was supplied. Context: Resume unprocessed cases in a paused bulk lineage retry job.
+   * @throws ApiError
+   */
+  public static resumeEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Resume unprocessed cases in a paused bulk lineage retry job.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Resume unprocessed cases in a paused bulk lineage retry job.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero submission UUID. Context: Resume unprocessed cases in a paused bulk lineage retry job.
+     */
+    requestId: string,
+    requestBody: ControlEventExecutionLineageRetryJobRequest,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/resume',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed). Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+      },
+    });
+  }
+  /**
+   * Cancel unprocessed cases in a retained bulk lineage retry job.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation. Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it. Optional nonzero command_id atomically records an immutable cancellation acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current job state with the original control_receipt. A completed or already cancelled job remains unchanged and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409 event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID beyond the cap returns 429 without cancelling, while known command repeats and cancellation without command_id remain available. Receipts expire with the original job.
+   * @returns EventExecutionLineageRetryJob Cancelled or previously terminal job, preserving evaluated results; optional control_receipt records the original command outcome.
+   * @throws ApiError
+   */
+  public static cancelEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Cancel unprocessed cases in a retained bulk lineage retry job.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Cancel unprocessed cases in a retained bulk lineage retry job.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero submission UUID. Context: Cancel unprocessed cases in a retained bulk lineage retry job.
+     */
+    requestId: string,
+    requestBody: CancelEventExecutionLineageRetryJobRequest,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier, command UUID or missing original creation timestamp.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Original creation timestamp does not match (event_lineage_retry_job_changed) or command UUID reused for another action (event_lineage_retry_control_command_changed).`,
+        413: `Request exceeds the 65536-byte body limit. Context: Cancel unprocessed cases in a retained bulk lineage retry job.`,
+        429: `New command UUID exceeds the shared 128-receipt cap; stable code event_lineage_retry_control_limit.`,
+        504: `Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained bulk lineage retry progress and per-case results.
+   * Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated results and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage status.
+   * @returns EventExecutionLineageRetryJob Retained job and case results.
+   * @throws ApiError
+   */
+  public static getEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestId,
+  }: {
+    /**
+     * Application slug. Context: Inspect retained bulk lineage retry progress and per-case results.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier. Context: Inspect retained bulk lineage retry progress and per-case results.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero submission UUID. Context: Inspect retained bulk lineage retry progress and per-case results.
+     */
+    requestId: string,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `Invalid identifier, selection or pagination. Context: Inspect retained bulk lineage retry progress and per-case results.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case guard changed or retained request identity reused with another selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
+      },
+    });
+  }
+  /**
+   * List retained lineage repair cases.
+   * Requires read scope. Cases cover recorded retained scans, not all historical gaps. No event payloads or handler errors are returned.
+   * @returns EventExecutionLineageCases Retained cases or the saved guarded retry result.
+   * @throws ApiError
+   */
+  public static listEventExecutionLineageCases({
+    slug,
+    subscriptionId,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Application slug. Context: List retained lineage repair cases.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Exclusive outbox ID cursor.
+     */
+    after?: number,
+    /**
+     * Page size; zero selects the server default.
+     */
+    limit?: number,
+  }): CancelablePromise<EventExecutionLineageCases> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid identifier, pagination or retry guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case revision or request identity changed.`,
+        504: `Lineage operation timed out; repeat the same guarded request.`,
+      },
+    });
+  }
+  /**
+   * Recheck one reviewed lineage case with an idempotent guard.
+   * Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
+   * @returns EventExecutionLineageCase Retained cases or the saved guarded retry result. Context: Recheck one reviewed lineage case with an idempotent guard.
+   * @throws ApiError
+   */
+  public static retryEventExecutionLineageCase({
+    slug,
+    subscriptionId,
+    outboxId,
+    requestBody,
+  }: {
+    /**
+     * Application slug. Context: Recheck one reviewed lineage case with an idempotent guard.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier. Context: Recheck one reviewed lineage case with an idempotent guard.
+     */
+    subscriptionId: string,
+    /**
+     * Retained case outbox identifier.
+     */
+    outboxId: number,
+    requestBody: RetryEventExecutionLineageCaseRequest,
+  }): CancelablePromise<EventExecutionLineageCase> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases/{outboxID}/retry',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'outboxID': outboxId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier, pagination or retry guard. Context: Recheck one reviewed lineage case with an idempotent guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case revision or request identity changed. Context: Recheck one reviewed lineage case with an idempotent guard.`,
+        504: `Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard.`,
+      },
+    });
+  }
+  /**
+   * Inspect durable execution coverage reconciliation.
+   * Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+   * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests.
+   * @throws ApiError
+   */
+  public static getEventExecutionReconciliation({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug. Context: Inspect durable execution coverage reconciliation.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier. Context: Inspect durable execution coverage reconciliation.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventExecutionReconciliation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid subscription identifier.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Subscription reconciliation request timed out.`,
+      },
+    });
+  }
+  /**
+   * Request a forward-only execution coverage boundary.
+   * Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+   * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests. Context: Request a forward-only execution coverage boundary.
+   * @throws ApiError
+   */
+  public static requestEventExecutionReconciliation({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug. Context: Request a forward-only execution coverage boundary.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier. Context: Request a forward-only execution coverage boundary.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventExecutionReconciliation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid subscription identifier. Context: Request a forward-only execution coverage boundary.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary.`,
+      },
+    });
+  }
+  /**
    * Inspect consumer execution health over a retained history window.
-   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
+   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown until requested forward-only reconciliation establishes a new boundary. Counts are not unique event totals. Completion latency starts at original event acceptance.
    * @returns EventConsumerExecutionHealth Retained execution states and windowed handler outcomes.
    * @throws ApiError
    */
@@ -2050,6 +2882,143 @@ export class EventsService {
     });
   }
   /**
+   * Set a lower live-delivery ceiling for one event consumer.
+   * Set a lower live-delivery ceiling for one event consumer. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. The explicit integer counts pending plus dispatching invocations. Zero restores the current plan limit; positive values cannot exceed it. Lowering does not evict existing work. Pause, rate and circuit state are preserved; plan downgrades clamp the effective ceiling. Routing and replay share this limit.
+   * @returns EventSubscriptionDeliveryControl Set consumer delivery capacity: current control configuration and waiting recipient counts.
+   * @throws ApiError
+   */
+  public static setEventSubscriptionCapacity({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug for this operation: set the live-delivery ceiling for one event consumer.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier for this operation: set the live-delivery ceiling for one event consumer.
+     */
+    subscriptionId: string,
+    requestBody: EventSubscriptionCapacityRequest,
+  }): CancelablePromise<EventSubscriptionDeliveryControl> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Set consumer delivery capacity: invalid subscription identifier, missing capacity or capacity outside the current plan ceiling.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
+        429: `New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.`,
+        504: `Set consumer delivery capacity: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * List retained original capacity-command receipts.
+   * Requires apps:read or admin and MFA. Read-only newest-first pagination by recorded_at and command UUID descending. Outcome and expiry filters apply before the page limit. Each page has a fresh ownership and receipt snapshot; cursors are bound to account, app, subscription and normalized outcome filter, but do not freeze history. New commands and expiry can affect later pages. Listing never applies commands, prunes evidence or extends retention. Empty history does not prove commands never ran. Recording order does not establish delivery or execution order. Responses use Cache-Control no-store.
+   * @returns EventSubscriptionCapacityCommands Scoped page of original receipts and a continuation cursor when more matching retained receipts exist.
+   * @throws ApiError
+   */
+  public static listEventSubscriptionCapacityCommands({
+    slug,
+    subscriptionId,
+    outcome = 'any',
+    limit = 25,
+    after,
+  }: {
+    /**
+     * Owned application slug.
+     */
+    slug: string,
+    /**
+     * Owned active subscription or retained delivery control identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Original successful command outcome to include. Omission is equivalent to any.
+     */
+    outcome?: 'any' | 'applied' | 'unchanged',
+    /**
+     * Maximum receipts in this page. Omission uses 25. Explicit zero is invalid.
+     */
+    limit?: number,
+    /**
+     * Opaque next_after from the preceding page with the same owned scope and outcome filter. Page size may change. This cursor is a boundary rather than an authorization credential.
+     */
+    after?: string,
+  }): CancelablePromise<EventSubscriptionCapacityCommands> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'outcome': outcome,
+        'limit': limit,
+        'after': after,
+      },
+      errors: {
+        400: `Invalid UUID, outcome filter, page limit or scoped cursor.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Read-only command history timed out.`,
+      },
+    });
+  }
+  /**
+   * Read retained original capacity-command evidence.
+   * Requires apps:read or admin and MFA. Returns the original successful command request values and outcome without applying a change, consuming receipt capacity, pruning records or extending retention. The fixed retention deadline is thirty days after success. A missing or expired receipt is unavailable evidence and does not prove the command never ran. The receipt does not describe current configuration and does not establish an ordering or execution guarantee.
+   * @returns EventSubscriptionCapacityCommandReceipt Immutable original successful capacity-command receipt. Cache-Control is no-store.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionCapacityCommand({
+    slug,
+    subscriptionId,
+    commandId,
+  }: {
+    /**
+     * Owned application slug. Context: Read retained original capacity-command evidence.
+     */
+    slug: string,
+    /**
+     * Owned active subscription or retained delivery control identifier. Context: Read retained original capacity-command evidence.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero hyphenated command UUID.
+     */
+    commandId: string,
+  }): CancelablePromise<EventSubscriptionCapacityCommandReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'commandID': commandId,
+      },
+      errors: {
+        400: `Invalid subscription or command UUID.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `No owned target or unexpired command receipt is available. Receipt absence does not prove the command never ran.`,
+        504: `Read-only capacity-command lookup timed out.`,
+      },
+    });
+  }
+  /**
    * Inspect app-wide recovery notification retry backlog.
    * Requires apps:read or admin and MFA. Reads original-generation retry outcomes across a bounded page of owned retained recovery jobs containing saved retry requests. Defaults to failed, pending, and inconclusive requests. Totals cover every request in scanned jobs before status filtering and are explicitly job-page scoped. Empty filtered pages may still have a next cursor. Each page is a fresh read-only snapshot; refresh from the beginning to see newer jobs or updated previously scanned jobs.
    * @returns EventRecoveryNotificationRetryBacklog Original-generation retry requests and explicitly page-scoped counts.
@@ -2482,7 +3451,7 @@ export class EventsService {
   }
   /**
    * Configure a recovery policy
-   * Updates an app policy with optimistic version checks. Preview prepares plans from retained native evidence. Opt-in automatic_retry authorizes bounded retries of saved failures for explicit workflows and failure statuses. Requires deploy write permission and MFA; cancellation remains manual.
+   * Updates an app policy with optimistic version checks. Preview prepares plans from retained native evidence. Opt-in automatic_retry authorizes bounded retries of saved failures; automatic_initial authorizes bounded generation-zero recovery with explicit workflow and failure-status filters. Enabling automatic_initial requires the workflow runtime. Requires deploy write permission and MFA; cancellation remains manual.
    * @returns WorkflowRecoveryPolicyResponse Result of setWorkflowRecoveryPolicy.
    * @throws ApiError
    */
@@ -2513,6 +3482,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }
@@ -2552,7 +3522,7 @@ export class EventsService {
   /**
    * Preview a recovery policy replacement
    * Read-only impact of replacing the observed policy version. Every replacement suppresses old pending automatic intents and preserves unresolved applied children and spent charges. Inspects up to five newest matching recovery jobs and returns up to 25 candidate decisions. Retained preparation targets continue to prevent duplicate plans. Requires read access and MFA. No plans, controls, retries or notifications are written. Advisory evidence can change before a separately authorized version-fenced update.
-   * @returns WorkflowRecoveryPolicyChangePreview Result of previewWorkflowRecoveryPolicyChange.
+   * @returns WorkflowRecoveryPolicyChangePreview Read-only proposed-policy snapshot with parent-job and bounded initial-failure candidates. No reviews, jobs or notifications are created.
    * @throws ApiError
    */
   public static previewWorkflowRecoveryPolicyChange({
@@ -2619,6 +3589,451 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Prepare a durable first-recovery review
+   * Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Initial recovery review
+   * @throws ApiError
+   */
+  public static prepareWorkflowInitialRecoveryReview({
+    slug,
+    failureId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Captured initial workflow failure identifier.
+     */
+    failureId: string,
+    requestBody: WorkflowInitialRecoveryReviewRequest,
+  }): CancelablePromise<WorkflowInitialRecoveryReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-reviews',
+      path: {
+        'slug': slug,
+        'failureID': failureId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Diagnose pending retry parent evidence
+   * Read-only diagnosis of the exact parent generation and item required by the frozen pending retry plan. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
+   * @returns WorkflowRetryEvidenceDiagnosis Consistent retained evidence diagnosis.
+   * @returns Problem Error.
+   * @throws ApiError
+   */
+  public static diagnoseWorkflowRetryParentEvidence({
+    slug,
+    reviewId,
+    actionId,
+  }: {
+    /**
+     * Application slug used to diagnose pending retry parent evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier.
+     */
+    actionId: string,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+    });
+  }
+  /**
+   * Save verified pending retry parent terminal evidence
+   * Requires deploy write and MFA. Re-inspects the exact parent generation, item and admission lineage under lock. Repair applies only to pending actions and does not authorize child submission. Parent and child repair receipts are separate. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowRetryEvidenceDiagnosis Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified pending retry parent terminal evidence failed.
+   * @throws ApiError
+   */
+  public static repairWorkflowRetryParentEvidence({
+    slug,
+    reviewId,
+    actionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to save verified pending retry parent terminal evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to save verified pending retry parent terminal evidence.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier used to save verified pending retry parent terminal evidence.
+     */
+    actionId: string,
+    requestBody: WorkflowInitialEvidenceRepairRequest,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent/repair',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Diagnose retained automatic retry evidence
+   * Read-only exact retry-generation diagnosis with frozen parent and child lineage checks. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
+   * @returns WorkflowRetryEvidenceDiagnosis Diagnose retained automatic retry evidence. Consistent retained evidence diagnosis.
+   * @returns Problem Diagnose retained automatic retry evidence failed.
+   * @throws ApiError
+   */
+  public static diagnoseWorkflowRetryEvidence({
+    slug,
+    reviewId,
+    actionId,
+  }: {
+    /**
+     * Application slug used to diagnose retained automatic retry evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to diagnose retained automatic retry evidence.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier used to diagnose retained automatic retry evidence.
+     */
+    actionId: string,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+    });
+  }
+  /**
+   * Save verified automatic retry terminal evidence
+   * Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowRetryEvidenceDiagnosis Save verified automatic retry terminal evidence. Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified automatic retry terminal evidence failed.
+   * @throws ApiError
+   */
+  public static repairWorkflowRetryEvidence({
+    slug,
+    reviewId,
+    actionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to save verified automatic retry terminal evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to save verified automatic retry terminal evidence.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier used to save verified automatic retry terminal evidence.
+     */
+    actionId: string,
+    requestBody: WorkflowInitialEvidenceRepairRequest,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/repair',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Diagnose retained initial recovery evidence
+   * Read-only exact-generation diagnosis. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
+   * @returns WorkflowInitialEvidenceDiagnosis Diagnose retained initial recovery evidence. Consistent retained evidence diagnosis.
+   * @returns Problem Diagnose retained initial recovery evidence failed.
+   * @throws ApiError
+   */
+  public static diagnoseWorkflowInitialEvidence({
+    slug,
+    reviewId,
+  }: {
+    /**
+     * Application slug used to diagnose retained initial recovery evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to diagnose retained initial recovery evidence.
+     */
+    reviewId: string,
+  }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+    });
+  }
+  /**
+   * Save verified initial recovery terminal evidence
+   * Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowInitialEvidenceDiagnosis Save verified initial recovery terminal evidence. Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified initial recovery terminal evidence failed.
+   * @throws ApiError
+   */
+  public static repairWorkflowInitialEvidence({
+    slug,
+    reviewId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to save verified initial recovery terminal evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to save verified initial recovery terminal evidence.
+     */
+    reviewId: string,
+    requestBody: WorkflowInitialEvidenceRepairRequest,
+  }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence/repair',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect a durable first-recovery review
+   * Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Inspect a durable first-recovery review result.
+   * @throws ApiError
+   */
+  public static getWorkflowInitialRecoveryReview({
+    slug,
+    reviewId,
+  }: {
+    /**
+     * Application slug for inspect a durable first-recovery review.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier for inspect a durable first-recovery review.
+     */
+    reviewId: string,
+  }): CancelablePromise<WorkflowInitialRecoveryReview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Submit or cancel a durable first-recovery review
+   * Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Submit or cancel a durable first-recovery review result.
+   * @throws ApiError
+   */
+  public static decideWorkflowInitialRecoveryReview({
+    slug,
+    reviewId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to submit or cancel a durable first-recovery review.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to submit or cancel a durable first-recovery review.
+     */
+    reviewId: string,
+    requestBody: WorkflowInitialRecoveryReviewDecisionRequest,
+  }): CancelablePromise<WorkflowInitialRecoveryReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/decision',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List retained first-recovery reviews
+   * List retained first-recovery reviews. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReviews List retained first-recovery reviews result.
+   * @throws ApiError
+   */
+  public static listWorkflowInitialRecoveryReviews({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Application slug used to list retained first-recovery reviews.
+     */
+    slug: string,
+    /**
+     * Opaque cursor from the previous page.
+     */
+    after?: string,
+    /**
+     * Maximum number of results to return.
+     */
+    limit?: number,
+  }): CancelablePromise<WorkflowInitialRecoveryReviews> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/initial-recovery-reviews',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List captured initial workflow failures
+   * Read-only, policy-independent generation-zero failure inbox. Capture is prospective and partial, retained for 30 days with at most 10000 entries per app. Newest-first cursors bind the account, app, workflow filter and observation ceiling. Retention may remove entries between pages. Evidence alone does not prove that a run can safely resume. No run inputs, outputs or error text are returned.
+   * @returns WorkflowInitialFailures Retained initial failures.
+   * @throws ApiError
+   */
+  public static listWorkflowInitialFailures({
+    slug,
+    workflow,
+    after,
+    limit = 25,
+  }: {
+    /**
+     * Application slug used to list captured initial workflow failures.
+     */
+    slug: string,
+    /**
+     * Workflow name to filter captured failures.
+     */
+    workflow?: string,
+    /**
+     * Opaque cursor from the previous page used to list captured initial workflow failures.
+     */
+    after?: string,
+    /**
+     * Maximum number of results to return used to list captured initial workflow failures.
+     */
+    limit?: number,
+  }): CancelablePromise<WorkflowInitialFailures> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-failures',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'workflow': workflow,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Review first recovery eligibility for a captured failure
+   * Read-only consistent live inspection of retained generation-zero evidence, current generation, safe resume diagnostics and operation ownership. Returns a generation-fenced target only when eligible. Cached later eligibility and policy existence do not authorize recovery. This does not prepare a policy review or admit a run. Operators may submit the exact reviewed target through event recovery creation with a stable request_id; creation and worker admission recheck evidence retention and generation, and resume rechecks safety and capacity. No automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryPreview Live first recovery diagnostic.
+   * @throws ApiError
+   */
+  public static previewWorkflowInitialRecovery({
+    slug,
+    failureId,
+  }: {
+    /**
+     * Application slug for review first recovery eligibility for a captured failure.
+     */
+    slug: string,
+    /**
+     * Captured initial workflow failure identifier for review first recovery eligibility for a captured failure.
+     */
+    failureId: string,
+  }): CancelablePromise<WorkflowInitialRecoveryPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview',
+      path: {
+        'slug': slug,
+        'failureID': failureId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
       },
     });
   }

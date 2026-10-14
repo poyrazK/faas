@@ -61,8 +61,11 @@ type Integration struct {
 	// AccountID and Name are loaded from the trusted integration row. They
 	// let outboundd attribute its platform-owned dependency span without
 	// trusting caller headers or exposing credentials.
-	AccountID                      string
-	Name                           string
+	AccountID string
+	Name      string
+	// AccountPlan is the owning account's plan; customer AI integrations
+	// need a plan entitled to the AI gateway (ADR-998).
+	AccountPlan                    api.Plan
 	Origin                         *url.URL
 	TokenHash                      [32]byte
 	AppIDs                         map[string]struct{}
@@ -338,6 +341,9 @@ type AdmissionSpec struct {
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int
 	LeaseTTL                       time.Duration
+	// PolicyRevision is the resolved policy's revision. A backend that reads
+	// the provider cooldown while it admits compares it with the stored one.
+	PolicyRevision int64
 }
 
 // Decision describes an admission or a deterministic rejection. A granted
@@ -351,6 +357,14 @@ type Decision struct {
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int
+	// CircuitClosed reports that the configured circuit breaker was closed
+	// under this policy when the call was admitted, so the call needs no
+	// separate breaker check (ADR-1120). False means "ask the breaker".
+	CircuitClosed bool
+	// ProviderGate is the provider cooldown as admission read it under the
+	// call's policy revision, or nil when the caller must ask the cooldown
+	// backend (ADR-1120).
+	ProviderGate *ProviderCooldownDecision
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on

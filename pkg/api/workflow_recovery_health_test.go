@@ -16,6 +16,7 @@ func TestRecoveryPolicyHealth(t *testing.T) {
 		{"idle", "", "healthy", 0, false, false, false, false, 1},
 		{"running", "retry_running", "healthy", 1, false, false, false, false, 1},
 		{"unknown", "evidence_unknown", "blocked", 1, false, false, false, false, 1},
+		{"job_paused", "job_paused", "blocked", 1, false, false, false, false, 1},
 		{"quota", "execution_quota", "blocked", 1, true, false, false, false, 1},
 		{"budget_reopened", "hourly_budget", "healthy", 1, true, false, false, false, 1},
 		{"cooldown_expired", "cooldown", "healthy", 1, true, false, false, false, 1},

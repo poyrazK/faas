@@ -46,7 +46,10 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		}
 		return 0
 	case "clear":
-		current = nil
+		// An empty list, not nil: a nil slice encodes as null, which the API
+		// reads as "leave unchanged", so clear reported success and kept the
+		// list (production-us hunt #10, H10-37).
+		current = []string{}
 	case "add", "remove":
 		if len(args) != 2 || args[1] == "" {
 			PrintUsage(os.Stderr, "usage: gregale app <slug> egress-allowlist "+action+" <cidr>", "apps")

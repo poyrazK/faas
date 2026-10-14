@@ -645,6 +645,9 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	if hook.Scope == state.AppWebhookScopePlatformTenant {
 		source = "urn:gregale:platform-tenant:" + hook.PlatformTenantID
 		subject = "platform-tenants/" + hook.PlatformTenantID
+	} else if hook.Scope == state.AppWebhookScopeAccount && row.AppID == "" {
+		source = "urn:gregale:account:" + row.AccountID
+		subject = "accounts/" + row.AccountID
 	}
 	evt := webhookout.Event{
 		ID:         row.ID,

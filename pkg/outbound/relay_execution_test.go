@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound/relaywire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -76,7 +78,7 @@ func TestRunRelayRequestsUseTheGrantAndAuthorizer(t *testing.T) {
 			t.Fatal(err)
 		}
 		integration.AccountID = "account-1"
-		integration.OwnerKind = IntegrationOwnerCustomer
+		integration.OwnerKind, integration.AccountPlan = IntegrationOwnerCustomer, api.PlanPro
 		integration.ProviderAuthMode = ProviderAuthManaged
 		integration.CredentialSource = CredentialSourceCustomerSealed
 		integration.AllowedMethods = []string{http.MethodPost}
