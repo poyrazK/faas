@@ -528,6 +528,7 @@ export type { EnvironmentDesiredRevision } from './EnvironmentDesiredRevision.js
 export type { EnvironmentFieldOwnershipRequest } from './EnvironmentFieldOwnershipRequest.js';
 export type { EnvironmentFieldOwnershipResponse } from './EnvironmentFieldOwnershipResponse.js';
 export type { EnvironmentGitOpsChange } from './EnvironmentGitOpsChange.js';
+export type { EnvironmentGitOpsChangedWebhookPayload } from './EnvironmentGitOpsChangedWebhookPayload.js';
 export type { EnvironmentGitOpsEnvironment } from './EnvironmentGitOpsEnvironment.js';
 export type { EnvironmentGitOpsOverrideRequest } from './EnvironmentGitOpsOverrideRequest.js';
 export type { EnvironmentGitOpsPlan } from './EnvironmentGitOpsPlan.js';
@@ -1609,6 +1610,7 @@ export type { PreflightVerdict } from './PreflightVerdict.js';
 export type { PrepareManagedPostgresCutoverRequest } from './PrepareManagedPostgresCutoverRequest.js';
 export type { PreviewArtifactResponse } from './PreviewArtifactResponse.js';
 export type { PreviewCreatedWebhookPayload } from './PreviewCreatedWebhookPayload.js';
+export type { PreviewEnvironmentGitPlanResponse } from './PreviewEnvironmentGitPlanResponse.js';
 export type { PreviewEnvironmentGitRevisionRequest } from './PreviewEnvironmentGitRevisionRequest.js';
 export type { PreviewEnvironmentGitRevisionResponse } from './PreviewEnvironmentGitRevisionResponse.js';
 export type { PreviewEnvironmentMemberResponse } from './PreviewEnvironmentMemberResponse.js';

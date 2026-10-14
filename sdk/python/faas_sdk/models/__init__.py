@@ -1054,6 +1054,13 @@ from .environment_field_ownership_request_manager import EnvironmentFieldOwnersh
 from .environment_field_ownership_response import EnvironmentFieldOwnershipResponse
 from .environment_field_ownership_response_status import EnvironmentFieldOwnershipResponseStatus
 from .environment_git_ops_change import EnvironmentGitOpsChange
+from .environment_git_ops_changed_webhook_payload import EnvironmentGitOpsChangedWebhookPayload
+from .environment_git_ops_changed_webhook_payload_axis import EnvironmentGitOpsChangedWebhookPayloadAxis
+from .environment_git_ops_changed_webhook_payload_previous_status import (
+    EnvironmentGitOpsChangedWebhookPayloadPreviousStatus,
+)
+from .environment_git_ops_changed_webhook_payload_status import EnvironmentGitOpsChangedWebhookPayloadStatus
+from .environment_git_ops_changed_webhook_payload_version import EnvironmentGitOpsChangedWebhookPayloadVersion
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
 from .environment_git_ops_plan import EnvironmentGitOpsPlan
 from .environment_git_ops_run import EnvironmentGitOpsRun
@@ -3136,6 +3143,8 @@ from .preview_durable_entity_quota_policy_body import PreviewDurableEntityQuotaP
 from .preview_durable_entity_quota_policy_body_limits import PreviewDurableEntityQuotaPolicyBodyLimits
 from .preview_durable_entity_quota_policy_response_200 import PreviewDurableEntityQuotaPolicyResponse200
 from .preview_durable_entity_retirement_response_200 import PreviewDurableEntityRetirementResponse200
+from .preview_environment_git_plan_response import PreviewEnvironmentGitPlanResponse
+from .preview_environment_git_plan_response_provider import PreviewEnvironmentGitPlanResponseProvider
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
 from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
@@ -5533,6 +5542,11 @@ __all__ = (
     "EnvironmentFieldOwnershipResponse",
     "EnvironmentFieldOwnershipResponseStatus",
     "EnvironmentGitOpsChange",
+    "EnvironmentGitOpsChangedWebhookPayload",
+    "EnvironmentGitOpsChangedWebhookPayloadAxis",
+    "EnvironmentGitOpsChangedWebhookPayloadPreviousStatus",
+    "EnvironmentGitOpsChangedWebhookPayloadStatus",
+    "EnvironmentGitOpsChangedWebhookPayloadVersion",
     "EnvironmentGitOpsOverrideRequest",
     "EnvironmentGitOpsPlan",
     "EnvironmentGitOpsRun",
@@ -7417,6 +7431,8 @@ __all__ = (
     "PreviewDurableEntityQuotaPolicyBodyLimits",
     "PreviewDurableEntityQuotaPolicyResponse200",
     "PreviewDurableEntityRetirementResponse200",
+    "PreviewEnvironmentGitPlanResponse",
+    "PreviewEnvironmentGitPlanResponseProvider",
     "PreviewEnvironmentGitRevisionRequest",
     "PreviewEnvironmentGitRevisionResponse",
     "PreviewEnvironmentMemberResponse",

@@ -29187,16 +29187,17 @@ paths:
       - projects
       operationId: previewEnvironmentGitPlan
       summary: Preview field changes for an immutable commit without approval or writes.
+      description: Requires environment read scope and a bound Git source. Verifies the immutable commit, repository identity and definition scope, then observes current intent and ownership. Values are redacted. The candidate plan cannot approve, adopt, deploy or certify runtime readiness. Request a fresh plan after source or environment changes.
       requestBody:
         required: true
-        description: Preview field changes for an immutable commit without approval or writes. request.
+        description: Immutable commit to assess using the bound Git source.
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/PreviewEnvironmentGitRevisionRequest'
       responses:
         '200':
-          description: Preview field changes for an immutable commit without approval or writes. result.
+          description: Read-only field plan with redacted values and current observation metadata.
           content:
             application/json:
               schema:

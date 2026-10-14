@@ -1070,6 +1070,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
 		filepath.Join(root, "pkg", "api", devBucketsFile),

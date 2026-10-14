@@ -1,3 +1,4 @@
+// adr: 1155 — candidate assessment and customer status feedback contracts.
 package webhook
 
 import (
@@ -7,11 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
 func TestDispatcherGitOpsAccountEventWithoutApp(t *testing.T) {
@@ -21,10 +25,14 @@ func TestDispatcherGitOpsAccountEventWithoutApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	loader, sealed := identityForSealedBlob(t)
-	received := make(chan []byte, 1)
+	type receivedRequest struct {
+		body   []byte
+		header http.Header
+	}
+	received := make(chan receivedRequest, 1)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		received <- body
+		received <- receivedRequest{body: body, header: r.Header.Clone()}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(target.Close)
@@ -43,7 +51,12 @@ func TestDispatcherGitOpsAccountEventWithoutApp(t *testing.T) {
 	d.Sleeper = (&recordingSleeper{}).Sleep
 	d.cycle(context.Background())
 	select {
-	case body := <-received:
+	case request := <-received:
+		body := request.body
+		unix, err := strconv.ParseInt(request.header.Get("X-Faas-Webhook-Timestamp"), 10, 64)
+		if err != nil || request.header.Get("X-Faas-Delivery-Id") != delivery.ID || webhookout.NewSigner([]byte("test-secret")).Verify(unix, delivery.ID, body, strings.TrimPrefix(request.header.Get("X-Faas-Webhook-Signature"), "sha256=")) != nil {
+			t.Fatal("account-only delivery was not signed over its exact body and identity")
+		}
 		var envelope struct {
 			Source, Subject, Type string
 			ID                    string `json:"id"`
@@ -53,5 +66,10 @@ func TestDispatcherGitOpsAccountEventWithoutApp(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("account-only GitOps delivery was not dispatched")
+	}
+	d.inflight.Wait()
+	completed, err := store.AppWebhookDeliveryByID(t.Context(), delivery.ID)
+	if err != nil || completed.Status != state.AppWebhookDeliverySucceeded {
+		t.Fatalf("account delivery did not complete: %+v %v", completed, err)
 	}
 }

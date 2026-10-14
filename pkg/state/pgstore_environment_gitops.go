@@ -297,11 +297,6 @@ func validateGitOpsRunFinish(lease EnvironmentGitOpsLease, status string, plan, 
 	if json.Unmarshal(plan, &object) != nil || object == nil || json.Unmarshal(steps, &array) != nil || array == nil || now.IsZero() || next.Before(now) {
 		return ErrInvalidArgument
 	}
-	var notificationPlan api.EnvironmentGitOpsPlan
-	_ = json.Unmarshal(plan, &notificationPlan)
-	if err := pgEnvironmentGitNotification(ctx, tx, lease.Source.ID, "drift", environmentGitReportNotificationStatus(status, notificationPlan), lease.RunID, errorCode, notificationPlan, now); err != nil {
-		return err
-	}
 	if status == "converged" {
 		var verified environmentsync.Plan
 		if json.Unmarshal(plan, &verified) != nil || !verified.CanApply() || verified.HasDrift() ||
@@ -364,6 +359,11 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 	}
 	if count != 1 {
 		return ErrConflict
+	}
+	var notificationPlan api.EnvironmentGitOpsPlan
+	_ = json.Unmarshal(plan, &notificationPlan)
+	if err := pgEnvironmentGitNotification(ctx, tx, lease.Source.ID, "drift", environmentGitReportNotificationStatus(status, notificationPlan), lease.RunID, errorCode, notificationPlan, now); err != nil {
+		return err
 	}
 	if status == "converged" {
 		if _, err := q.SetEnvironmentAppliedRevision(ctx, tx, sqlc.SetEnvironmentAppliedRevisionParams{SourceID: mustPgUUID(lease.Source.ID), Generation: lease.Source.Generation}); err != nil {

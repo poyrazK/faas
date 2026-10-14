@@ -13039,7 +13039,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
 
-`gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -13051,11 +13051,14 @@ Inspect the source and recent reconciliation attempts
 
 Bind the verified project repository to a definition
 
-`gregale projects environments gitops bind [--manifest-path <PATH>] [--ref <REF>] [--mode <MODE>] [--prune] <project> <environment>`
+`gregale projects environments gitops bind [--manifest-path <PATH>] [--provider <PROVIDER>] [--repository <GROUP/PROJECT>] [--approval-policy <POLICY>] [--ref <REF>] [--mode <MODE>] [--prune] <project> <environment>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--manifest-path <PATH>` | Environment definition path in Git |  |
+| `--provider <PROVIDER>` | github (default) or gitlab |  |
+| `--repository <GROUP/PROJECT>` | GitLab.com repository path |  |
+| `--approval-policy <POLICY>` | manual or protected_branch (GitHub only) |  |
 | `--ref <REF>` | Git ref selecting revision candidates |  |
 | `--mode <MODE>` | report (default; enforcement unavailable in preview) |  |
 | `--prune` | Allow removal of previously owned fields |  |
@@ -13094,6 +13097,24 @@ Fetch an immutable commit and output a review receipt
 | Flag | Meaning | |
 |---|---|---|
 | `--commit <SHA>` | Exact lowercase GitHub commit SHA |  |
+
+##### projects environments gitops plan
+
+Preview candidate field changes without approval or writes
+
+`gregale projects environments gitops plan --commit <SHA> [--format <FORMAT>] [--fail-on-blocked] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--commit <SHA>` | Exact immutable commit SHA | required |
+| `--format <FORMAT>` | json (default) or markdown |  |
+| `--fail-on-blocked` | Exit 2 after printing ownership or unsupported-operation blockers |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops plan shop staging --commit COMMIT_SHA --format markdown --fail-on-blocked
+```
 
 ##### projects environments gitops approve
 
@@ -14242,7 +14263,7 @@ Create a receiver; omitted signing secret is generated and shown once
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | HTTPS receiver URL | required |
-| `--event <EVENT>` | distinct release event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` |
+| `--event <EVENT>` | distinct release event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
 | `--retry-policy <POLICY>` | delivery retry policy | one of `default` · `aggressive` · `none` |
@@ -14263,7 +14284,7 @@ Update a receiver
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | replacement HTTPS receiver URL |  |
-| `--event <EVENT>` | replacement release event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` |
+| `--event <EVENT>` | replacement release event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
 | `--enable` | enable the receiver; mutually exclusive with --disable |  |
 | `--disable` | disable the receiver; mutually exclusive with --enable |  |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |

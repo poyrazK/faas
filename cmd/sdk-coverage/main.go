@@ -427,6 +427,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/environment-field-ownership":                                   "ReleaseEnvironmentFieldOwnership",
 
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              "PreviewEnvironmentGitPlan",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
 	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",

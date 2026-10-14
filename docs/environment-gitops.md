@@ -228,6 +228,10 @@ response could not be validated. See the
 [GitHub Actions and GitLab CI examples](../examples/gitops-ci/README.md) for
 summaries, artifacts and read-only `project_environments:read` credentials.
 
+Before adoption, unmanaged edits can change the plan hash while the managed
+intent counter remains zero. The hash includes the actual observed fields;
+candidate plans always require a fresh request and grant no write authority.
+
 ## Receive drift and source notifications
 
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
@@ -243,7 +247,8 @@ current observations. The independent `source` axis reports `verified`,
 `blocked` or `unavailable`; an outage preserves the last approved definition.
 An initial healthy result establishes a silent baseline. Failures and later
 recoveries notify; unchanged status stays quiet. Stale reports cannot change
-the current baseline. Drift reporting retains its operator opt-in; source
+the current baseline. New receivers get future transitions; inspect GitOps
+status for the current report. Drift reporting retains its operator opt-in; source
 notifications follow completed polls. Existing fleet stale-poll alerts remain
 separate from confirmed access loss.
 

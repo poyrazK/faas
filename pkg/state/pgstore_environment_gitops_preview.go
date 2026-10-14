@@ -27,8 +27,14 @@ func (s *PgStore) PreviewEnvironmentGitOpsCommit(ctx context.Context, expected E
 		return api.PreviewEnvironmentGitPlanResponse{}, mapErr(err)
 	}
 	source := environmentGitSourceFromSQL(row, scope.EnvironmentSlug)
-	if source.Detached || source.Generation != expected.Generation || source.Spec != expected.Spec {
+	if source.Detached {
+		return api.PreviewEnvironmentGitPlanResponse{}, ErrNotFound
+	}
+	if source.Generation != expected.Generation || source.Spec != expected.Spec {
 		return api.PreviewEnvironmentGitPlanResponse{}, ErrConflict
+	}
+	if desired.Definition.Project != scope.ProjectSlug || desired.Definition.Environment != source.EnvironmentSlug {
+		return api.PreviewEnvironmentGitPlanResponse{}, ErrInvalidArgument
 	}
 	observation, _, err := readEnvironmentGitOpsIntent(ctx, tx, source, desired)
 	if err != nil {

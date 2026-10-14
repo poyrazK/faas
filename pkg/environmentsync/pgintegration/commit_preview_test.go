@@ -1,3 +1,4 @@
+// adr: 1155 — candidate assessment and customer status feedback contracts.
 package pgintegration_test
 
 import (
@@ -34,6 +35,21 @@ func TestGitOpsCommitPreviewBeforeApprovalHasNoAuthority(t *testing.T) {
 		foreign.AccountID = uuid.NewString()
 		if _, err := previewer.PreviewEnvironmentGitOpsCommit(t.Context(), foreign, strings.Repeat("a", 40), desired); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("foreign account preview: %v", err)
+		}
+		for _, axis := range []string{"project", "environment"} {
+			definition := desired.Definition
+			if axis == "project" {
+				definition.Project = "another-project"
+			} else {
+				definition.Environment = "another-environment"
+			}
+			candidate, err := environmentsync.Compile(definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := previewer.PreviewEnvironmentGitOpsCommit(t.Context(), source, strings.Repeat("a", 40), candidate); !errors.Is(err, state.ErrInvalidArgument) {
+				t.Fatalf("wrong %s definition accepted: %v", axis, err)
+			}
 		}
 		suspended := true
 		if _, err := store.(state.EnvironmentGitOpsControlStore).UpdateEnvironmentGitSource(t.Context(), source.AccountID, source.ID, state.EnvironmentGitSourceUpdate{ExpectedGeneration: source.Generation, Suspended: &suspended}); err != nil {

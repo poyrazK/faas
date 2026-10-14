@@ -14,21 +14,40 @@ def test_candidate_preview_preserves_read_only_observation() -> None:
         assert request.method == "POST"
         assert request.url.path == "/v1/projects/shop/environments/staging/gitops/plan"
         assert json.loads(request.content) == {"commit_sha": sha}
-        return httpx.Response(200, json={
-            "source_id": "11111111-2222-4333-8444-555555555555", "provider": "gitlab",
-            "project": "shop", "environment": "staging", "observed_at": "2026-10-13T00:00:00Z",
-            "read_only": True, "values_redacted": True,
-            "plan": {"manager": "source", "revision": "candidate:" + sha, "commit_sha": sha,
-                     "generation": 0, "observed_version": 7, "desired_digest": "b" * 64,
-                     "plan_hash": "c" * 64, "changes": [], "blocking_reasons": []},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "source_id": "11111111-2222-4333-8444-555555555555",
+                "provider": "gitlab",
+                "project": "shop",
+                "environment": "staging",
+                "observed_at": "2026-10-13T00:00:00Z",
+                "read_only": True,
+                "values_redacted": True,
+                "plan": {
+                    "manager": "source",
+                    "revision": "candidate:" + sha,
+                    "commit_sha": sha,
+                    "generation": 0,
+                    "observed_version": 7,
+                    "desired_digest": "b" * 64,
+                    "plan_hash": "c" * 64,
+                    "changes": [],
+                    "blocking_reasons": [],
+                },
+            },
+        )
 
-    client = FaaSClient(base_url="https://api.example.test", token="token",
-                        httpx_args={"transport": httpx.MockTransport(handle)})
+    client = FaaSClient(
+        base_url="https://api.example.test", token="token", httpx_args={"transport": httpx.MockTransport(handle)}
+    )
     try:
-        preview = preview_environment_git_plan.sync(slug="shop", environment="staging",
-                                                   client=client.inner,
-                                                   body=PreviewEnvironmentGitRevisionRequest(commit_sha=sha))
+        preview = preview_environment_git_plan.sync(
+            slug="shop",
+            environment="staging",
+            client=client.inner,
+            body=PreviewEnvironmentGitRevisionRequest(commit_sha=sha),
+        )
         assert preview is not None
         assert preview.read_only is True
         assert preview.values_redacted is True

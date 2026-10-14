@@ -2526,6 +2526,7 @@ type EnvironmentGitSource struct {
 	SourceVerifiedAt       pgtype.Timestamptz
 	Detached               bool
 	Provider               string
+	NotificationState      []byte
 }
 
 type EnvironmentGitSourcePoll struct {

@@ -1,3 +1,4 @@
+// adr: 1155 — candidate assessment and customer status feedback contracts.
 package dashboard
 
 import (
