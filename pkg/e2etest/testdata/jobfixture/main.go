@@ -16,7 +16,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|oom|contract|customer-operation|customer-workflow")
+		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -36,6 +36,13 @@ func main() {
 			}
 		}
 		time.Sleep(duration)
+	case "ticks":
+		// ADR-1163: lines spaced out in time, so a live reader sees the
+		// first one well before the task ends.
+		for i := 1; i <= 3; i++ {
+			fmt.Printf("tick %d\n", i)
+			time.Sleep(3 * time.Second)
+		}
 	case "oom":
 		// Retain and touch more than the test VM's 512 MiB allocation.
 		// Disabling GC prevents the runtime from reclaiming older chunks.

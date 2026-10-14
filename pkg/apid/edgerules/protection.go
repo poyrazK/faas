@@ -77,6 +77,15 @@ func (s *Service) AppEdgeProtection(ctx context.Context, app state.App, rng stri
 	return resp
 }
 
+// windowedCount is the count of a per-app counter's increments within rng,
+// grouped by the caller's "sum by". These counters are created on their
+// first increment, which increase() never sees, so three WAF blocks summed
+// to 0 and a throttle 429 to "none" (H10-13). A series that existed at the
+// window start is counted by increase(); one born inside it by its value.
+func windowedCount(selector, rng string) string {
+	return fmt.Sprintf("((increase(%s[%s]) and %s offset %s) or %s)", selector, rng, selector, rng, selector)
+}
+
 type edgeProtectionQuery struct {
 	query string
 	apply func(labels map[string]string, count int64)
@@ -87,7 +96,7 @@ type edgeProtectionQuery struct {
 func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) []edgeProtectionQuery {
 	return []edgeProtectionQuery{
 		{
-			fmt.Sprintf(`sum by (outcome) (increase(gateway_pre_auth_rate_limit_total{app=%q,outcome=~"blocked|route_blocked|would_block|route_would_block"}[%s]))`, appID, rng),
+			"sum by (outcome) " + windowedCount(fmt.Sprintf(`gateway_pre_auth_rate_limit_total{app=%q,outcome=~"blocked|route_blocked|would_block|route_would_block"}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				if strings.HasSuffix(labels["outcome"], "would_block") {
 					resp.PreAuth.WouldBlock += count
@@ -97,19 +106,19 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 			},
 		},
 		{
-			fmt.Sprintf(`sum by (mode) (increase(gateway_validate_failures_total{app_id=%q}[%s]))`, appID, rng),
+			"sum by (mode) " + windowedCount(fmt.Sprintf(`gateway_validate_failures_total{app_id=%q}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				resp.ValidationFailures = append(resp.ValidationFailures, api.EdgeProtectionCount{Name: labels["mode"], Count: count})
 			},
 		},
 		{
-			fmt.Sprintf(`sum by (kind, status) (increase(gateway_edge_rejections_total{app=%q}[%s]))`, appID, rng),
+			"sum by (kind, status) " + windowedCount(fmt.Sprintf(`gateway_edge_rejections_total{app=%q}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				resp.Rejections = append(resp.Rejections, api.EdgeProtectionRejection{Gate: labels["kind"], Status: labels["status"], Count: count})
 			},
 		},
 		{
-			fmt.Sprintf(`sum by (outcome) (increase(gateway_waf_inspections_total{app=%q}[%s]))`, appID, rng),
+			"sum by (outcome) " + windowedCount(fmt.Sprintf(`gateway_waf_inspections_total{app=%q}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				switch labels["outcome"] {
 				case "detected":
@@ -123,7 +132,7 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 			},
 		},
 		{
-			fmt.Sprintf(`sum by (outcome) (increase(gateway_waf_inline_checks_total{app=%q,outcome=~"warned|blocked|skipped"}[%s]))`, appID, rng),
+			"sum by (outcome) " + windowedCount(fmt.Sprintf(`gateway_waf_inline_checks_total{app=%q,outcome=~"warned|blocked|skipped"}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				switch labels["outcome"] {
 				case "warned":
@@ -136,13 +145,13 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 			},
 		},
 		{
-			fmt.Sprintf(`sum by (category) (increase(gateway_waf_detections_total{app=%q}[%s]))`, appID, rng),
+			"sum by (category) " + windowedCount(fmt.Sprintf(`gateway_waf_detections_total{app=%q}`, appID), rng),
 			func(labels map[string]string, count int64) {
 				resp.WAF.Categories = append(resp.WAF.Categories, api.EdgeProtectionCount{Name: labels["category"], Count: count})
 			},
 		},
 		{
-			fmt.Sprintf(`topk(%d, sum by (rule_id) (increase(gateway_waf_rule_matches_total{app=%q}[%s])))`, api.EdgeProtectionWAFTopRules, appID, rng),
+			fmt.Sprintf("topk(%d, sum by (rule_id) %s)", api.EdgeProtectionWAFTopRules, windowedCount(fmt.Sprintf(`gateway_waf_rule_matches_total{app=%q}`, appID), rng)),
 			func(labels map[string]string, count int64) {
 				resp.WAF.TopRules = append(resp.WAF.TopRules, api.EdgeProtectionCount{Name: labels["rule_id"], Count: count})
 			},

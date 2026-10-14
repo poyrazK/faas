@@ -2,6 +2,7 @@ from typing import Literal
 
 DebugEvidenceExplanationDiagnosis = Literal[
     "cold_start",
+    "dependency_failure",
     "dependency_regression",
     "insufficient_evidence",
     "no_issue_observed",
@@ -12,6 +13,7 @@ DebugEvidenceExplanationDiagnosis = Literal[
 
 DEBUG_EVIDENCE_EXPLANATION_DIAGNOSIS_VALUES: set[DebugEvidenceExplanationDiagnosis] = {
     "cold_start",
+    "dependency_failure",
     "dependency_regression",
     "insufficient_evidence",
     "no_issue_observed",

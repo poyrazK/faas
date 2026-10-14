@@ -45,7 +45,12 @@ def test_app_manifest_service_binding_transport_rejects_invalid_wire_values() ->
 
 def test_gitlab_source_request_round_trip() -> None:
     request = CreateEnvironmentGitSourceRequest.from_dict(
-        {"provider": "gitlab", "repository": "team/subgroup/service", "ref": "refs/heads/main", "manifest_path": "environments/production.yaml"}
+        {
+            "provider": "gitlab",
+            "repository": "team/subgroup/service",
+            "ref": "refs/heads/main",
+            "manifest_path": "environments/production.yaml",
+        }
     )
     assert request.to_dict()["provider"] == "gitlab"
     assert request.to_dict()["repository"] == "team/subgroup/service"

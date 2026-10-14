@@ -2,7 +2,9 @@
 #
 # Severity → notification mapping (locked to deploy/ansible/roles/prometheus/files/faas.rules.yml):
 #   info  → suppressed (no receiver; surfaces in Prometheus / Grafana only).
-#   warn  → ticket email and/or chat via faas-warn receiver.
+#   warn  → ticket email and/or chat via faas-warn receiver, as a review
+#           queue: grouped by family, repeated once a day (ADR-1236). The
+#           am_*_warn_webhook_url_file channels keep it out of the page chat.
 #   page  → operator email + Pushover and/or chat via faas-page receiver.
 # FaasWatchdog (always firing) → faas-heartbeat, the dead-man's switch: an
 # external monitor alerts when its periodic posts stop.
@@ -37,9 +39,12 @@
 {% set am_discord_enabled = am_discord_path | length > 0 %}
 {% set am_slack_enabled = am_slack_path | length > 0 %}
 {% set am_chat_enabled = am_discord_enabled or am_slack_enabled %}
+{% set am_discord_warn_path = am_discord_warn_webhook_url_file | default('') | trim or am_discord_path %}
+{% set am_slack_warn_path = am_slack_warn_webhook_url_file | default('') | trim or am_slack_path %}
+{% set am_warn_chat_enabled = am_discord_warn_path | length > 0 or am_slack_warn_path | length > 0 %}
 {% set am_heartbeat_enabled = am_heartbeat_path | length > 0 %}
 {% set am_notifications_enabled = am_email_enabled or am_pushover_enabled or am_chat_enabled %}
-{% set am_warn_enabled = am_email_enabled or am_chat_enabled %}
+{% set am_warn_enabled = am_email_enabled or am_warn_chat_enabled %}
 
 {% if am_email_enabled %}
 global:
@@ -103,7 +108,9 @@ route:
 {% else %}
       receiver: faas-silent
 {% endif %}
-      repeat_interval: 4h
+      group_by: {{ am_warn_group_by | to_json }}
+      group_interval: {{ am_warn_group_interval }}
+      repeat_interval: {{ am_warn_repeat_interval }}
     # info-severity: no receiver — the matcher matches but no route fires.
     - matchers:
         - severity = "info"
@@ -138,17 +145,15 @@ receivers:
         title: "faas page"
         url: "{{ am_alerts_url | default('http://127.0.0.1:9095/alerts') }}"
 {% endif %}
-{% if am_discord_enabled %}
-    # Discord's Slack-compatible endpoint (webhook URL + /slack): Alertmanager
-    # 0.27 rejects discord_configs whose URL comes from a file.
+{% if am_chat_enabled %}
+    # Discord uses its Slack-compatible endpoint (webhook URL + /slack):
+    # Alertmanager 0.27 rejects discord_configs whose URL comes from a file.
+    # One list, so Discord and Slack together do not repeat the key.
     slack_configs:
-      - api_url_file: "{{ am_discord_path }}"
+{% for path in [am_discord_path, am_slack_path] if path | length > 0 %}
+      - api_url_file: "{{ path }}"
         send_resolved: true
-{% endif %}
-{% if am_slack_enabled %}
-    slack_configs:
-      - api_url_file: "{{ am_slack_path }}"
-        send_resolved: true
+{% endfor %}
 {% endif %}
 
   - name: faas-warn
@@ -162,17 +167,13 @@ receivers:
         headers:
           X-Faas-Alert: "warn"
 {% endif %}
-{% if am_discord_enabled %}
-    # Discord's Slack-compatible endpoint (webhook URL + /slack): Alertmanager
-    # 0.27 rejects discord_configs whose URL comes from a file.
+{% if am_warn_chat_enabled %}
+    # The warn-only webhooks when set, else the page webhooks.
     slack_configs:
-      - api_url_file: "{{ am_discord_path }}"
+{% for path in [am_discord_warn_path, am_slack_warn_path] if path | length > 0 %}
+      - api_url_file: "{{ path }}"
         send_resolved: true
-{% endif %}
-{% if am_slack_enabled %}
-    slack_configs:
-      - api_url_file: "{{ am_slack_path }}"
-        send_resolved: true
+{% endfor %}
 {% endif %}
 
   - name: faas-heartbeat

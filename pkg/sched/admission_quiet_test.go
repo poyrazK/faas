@@ -1,4 +1,4 @@
-// adr: 957 — under quiet pause admission the vCPU and CPU gates count only
+// adr: 1151 — under quiet pause admission the vCPU and CPU gates count only
 // active instances, and every booking stays within the overcommit cap.
 package sched
 

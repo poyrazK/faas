@@ -65,6 +65,48 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	if err != nil || lease.CallerWorkload != "worker" || len(lease.Rules) != 1 || lease.Rules[0].StatusCode != 503 {
 		t.Fatalf("ScenarioTestChaosForCall = (%+v, %v)", lease, err)
 	}
+	strictRule := chaos.Rule{From: "primary", To: "worker", Kind: chaos.KindHTTPStatus, StatusCode: 503, Percent: 100, CorrelationScope: "0123456789abcdef"}
+	strictPlan := chaos.Plan{DurationMS: 10_000, Rules: []chaos.Rule{strictRule}}
+	strictLease, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, strictPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injections := []chaos.InjectionBatch{}
+	for _, id := range []string{chaos.RuleID(strictRule), chaos.CorrelationSupportID(strictRule), chaos.CorrelationCounterID(strictRule, 1)} {
+		injections = append(injections, chaos.InjectionBatch{RunID: runID, CallerApp: callerApp.ID, Generation: strictLease.Generation, RuleID: id, Count: 2})
+	}
+	if err := s.RecordScenarioTestChaosInjections(ctx, injections); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil || evidence.Generation != strictLease.Generation || len(evidence.Matches) != 3 {
+		t.Fatalf("strict persisted counters: %+v %v", evidence, err)
+	}
+	for _, match := range evidence.Matches {
+		if match.Count != 2 {
+			t.Fatalf("strict counter lost: %+v", match)
+		}
+	}
+	strictRule.CorrelationScope = "fedcba9876543210"
+	strictPlan.Rules = []chaos.Rule{strictRule}
+	replacement, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, strictPlan)
+	if err != nil || replacement.Generation == strictLease.Generation {
+		t.Fatalf("strict replacement: %+v %v", replacement, err)
+	}
+	if err := s.RecordScenarioTestChaosInjections(ctx, injections); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil || evidence.Generation != replacement.Generation || len(evidence.Matches) != 0 {
+		t.Fatalf("stale strict generation escaped: %+v %v", evidence, err)
+	}
+	if err := s.ClearScenarioTestChaosPlan(ctx, accountID, runID); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil || len(evidence.Matches) != 0 {
+		t.Fatalf("strict clear retained counters: %+v %v", evidence, err)
+	}
 	for _, rule := range []chaos.Rule{
 		{Kind: chaos.KindTCPLatency, LatencyMS: 100},
 		{Kind: chaos.KindTCPBandwidth, RateKiBPerSecond: 32, Direction: chaos.DirectionDownstream},

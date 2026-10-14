@@ -11,7 +11,7 @@ export type JobResponse = {
   id: string;
   account_id: string;
   name: string;
-  kind: 'batch' | 'recurring';
+  kind: 'batch' | 'recurring' | 'image_run';
   /**
    * Recurring five-field cron expression, when configured.
    */

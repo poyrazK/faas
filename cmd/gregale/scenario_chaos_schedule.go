@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -43,6 +44,18 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 		totalDuration += phase.Duration
 	}
 	for i, phase := range phases {
+		if i > 0 && !waitUntilTestChaosSchedule(ctx, startedAt.Add(offset)) {
+			return result, ctx.Err()
+		}
+		release := func() {}
+		if clock != nil && clock.correlationGate != nil {
+			if i > 0 {
+				clock.correlationGate.Lock()
+			}
+			var once sync.Once
+			release = func() { once.Do(clock.correlationGate.Unlock) }
+		}
+		defer release()
 		phaseTransitioned := false
 		if i == 0 {
 			clock.start(startedAt)
@@ -59,6 +72,7 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 				}
 				clock.transition(i, time.Now())
 				phaseTransitioned = true
+				release()
 				activeCaptured = true
 				captureErr := captureTestChaosMatches(ctx, client, runID, active)
 				result.Phases[activeIndex] = active
@@ -87,6 +101,7 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 				clock.transition(i, time.Now())
 			}
 		}
+		release()
 		offset += phase.Duration
 	}
 	if !waitUntilTestChaosSchedule(ctx, startedAt.Add(offset)) {

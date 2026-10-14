@@ -161,6 +161,9 @@ func (s *PgStore) acquireSessionAdvisoryLockConn(ctx context.Context, l sessionA
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			_ = conn.Hijack().Close(closeCtx)
 			cancel()
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
 			return nil, nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
 		}
 		if locked {
@@ -3188,7 +3191,7 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 		   join apps a on a.id = i.app_id
 		   join accounts ac on ac.id = a.account_id
 		  where (
-		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen'))
 		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting'))
 		  )%s
 		  order by i.started_at asc, i.id asc
@@ -4741,8 +4744,13 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"app_secrets", `delete from app_secrets where app_id = $1`},
 		{"app_trusted_signers", `delete from app_trusted_signers where app_id = $1`},
 		{"builder_usage", `delete from builder_usage where app_id = $1`},
-		{"usage_minutes", `delete from usage_minutes where app_id = $1`},
-		{"usage_daily", `delete from usage_daily where app_id = $1`},
+		// usage_minutes and usage_daily are deliberately retained (ADR-1162):
+		// they are the account's billing evidence. The month's included
+		// allowance, overage deliveries, the spend cap, invoice credits and
+		// the reconciler all sum them, so a mid-month purge would hand the
+		// deleted app's usage back as allowance. Neither table has an FK to
+		// apps; the 13-month usage retention cron and account deletion
+		// remove them.
 		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
 		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
 		{"log_events", `delete from log_events where app_id = $1`},
@@ -7751,7 +7759,7 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return s.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7760,7 +7768,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin update traffic tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
+	defer s.finishMCPAdmission(ctx, tx, admission, &resultErr)
 
 	if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
 		return Deployment{}, err
@@ -7842,6 +7851,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, ErrConflict
 	}
 
+	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
+		return Deployment{}, err
+	}
+
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return Deployment{}, err
 	}
@@ -7851,6 +7864,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			return Deployment{}, err
 		}
 		if current.TrafficPercent == 100 {
+			if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
+				return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return Deployment{}, fmt.Errorf("state: commit checked promotion: %w", err)
 			}
@@ -7971,6 +7987,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	d, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: read deployment after stamp: %w", err)
+	}
+	if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
+		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: commit update traffic: %w", err)
@@ -8804,6 +8823,19 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 	// failure must leave the existing release untouched; attempting to zero
 	// and restore the live sibling would bypass the serving-transition fence.
 	if held && failedTraffic == 0 {
+		return nil
+	}
+	// The remaining live rows already carry all traffic: the failed row was
+	// not serving (a rollback target being re-primed, a 0% candidate). Moving
+	// everything to one fallback collapsed a 50/50 split to 100/0 when a
+	// rollback target failed verification (H10-11).
+	var remaining int
+	if err := tx.QueryRow(ctx, `
+		SELECT coalesce(sum(traffic_percent), 0) FROM deployments
+		 WHERE app_id=$1 AND id<>$2 AND status='live' AND deleted_at IS NULL`, appID, failedID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining == 100 {
 		return nil
 	}
 	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
@@ -17122,7 +17154,7 @@ func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, l
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where app_id = $1 and state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+		 where app_id = $1 and state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 		 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
@@ -17166,7 +17198,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','draining','snapshotting','warm')
+		 where state in ('running','waking','cold_booting','draining','snapshotting','warm','frozen')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -17246,7 +17278,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
-		   and i.state in ('waking', 'cold_booting', 'running', 'draining', 'snapshotting', 'warm')
+		   and i.state in ('waking', 'cold_booting', 'running', 'draining', 'snapshotting', 'warm', 'frozen')
 		   and ($2 = '' or i.id::text < $2)
 		 order by i.id::text desc
 		 limit $3`, accountID, before, limit)
@@ -21699,9 +21731,10 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 }
 
 // CurrentMonthOverageCents returns the account's derived compute overage in
-// integer cents for the current UTC month. It removes the account plan's
-// included calendar-month allowance before converting the remainder to
-// cents. Integer math only — never float on money (CLAUDE.md).
+// integer cents for the current UTC month. It removes the month's included
+// allowance (the largest plan grant recorded this month, ADR-1162) before
+// converting the remainder to cents. Integer math only — never float on
+// money (CLAUDE.md).
 //
 // Hand-written: the formula is meterd-internal and not on the read
 // surface. The migration on usage_minutes is unchanged; we SELECT
@@ -21729,7 +21762,21 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 		accountID, monthStart).Scan(&mbSeconds, &plan); err != nil {
 		return 0, err
 	}
-	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
+	snapshots, err := s.ListFinancialPriceSnapshots(ctx, accountID, monthStart)
+	if err != nil {
+		return 0, err
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+}
+
+// monthOverageCents applies the month's recorded plan history (ADR-1162):
+// the largest grant activated so far, never less than the current plan's
+// allowance, whose activation may not be captured yet. This is the same
+// allowance the provider pusher removes, so the spend cap, the dashboard and
+// the provider agree.
+func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64) int64 {
+	included := max(MonthComputeIncludedMBSeconds(current, snapshots, now), api.IncludedMBSeconds(current))
+	return api.OverageCentsForBillableMBSeconds(api.BillableMBSecondsAbove(included, mbSeconds))
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows

@@ -25,6 +25,8 @@ type realtimeInboxRequest struct {
 }
 
 type realtimeInboxResponse struct {
+	Ticket       *state.RealtimeSubscriptionTicket    `json:"ticket,omitempty"`
+	Access       *state.ManagedRealtimeAccess         `json:"access,omitempty"`
 	Preferences  *api.RealtimeNotificationPreferences `json:"preferences,omitempty"`
 	ReadProgress *state.ManagedRealtimeReadProgress   `json:"read_progress,omitempty"`
 	History      state.ManagedRealtimeChannelHistory  `json:"history"`
@@ -121,3 +123,25 @@ func (c *RealtimeHistoryClientImpl) InboxNotificationPreferences(ctx context.Con
 }
 
 var _ realtime.ManagedRealtimeNotificationPreferencesClient = (*RealtimeHistoryClientImpl)(nil)
+
+func (c *RealtimeHistoryClientImpl) ReadRealtimeAccess(ctx context.Context, ep, principal string) (state.ManagedRealtimeAccess, error) {
+	response, err := c.inboxOperation(ctx, realtimeInboxRequest{Action: "access_read", EndpointID: ep, Principal: principal})
+	if err != nil {
+		return state.ManagedRealtimeAccess{}, err
+	}
+	if response.Access == nil {
+		return state.ManagedRealtimeAccess{}, fmt.Errorf("apidgrpc: missing realtime access state")
+	}
+	return *response.Access, nil
+}
+
+func (c *RealtimeHistoryClientImpl) ReadSubscriptionTicket(ctx context.Context, ep, token string) (state.RealtimeSubscriptionTicket, error) {
+	out, err := c.inboxOperation(ctx, realtimeInboxRequest{Action: "ticket_read", EndpointID: ep, Consumer: token})
+	if err != nil {
+		return state.RealtimeSubscriptionTicket{}, err
+	}
+	if out.Ticket == nil {
+		return state.RealtimeSubscriptionTicket{}, fmt.Errorf("apidgrpc: ticket unavailable")
+	}
+	return *out.Ticket, nil
+}

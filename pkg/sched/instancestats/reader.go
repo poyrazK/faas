@@ -81,9 +81,12 @@ type InstanceStat struct {
 	// "not-yet-observed" case only by the reader's Validity,
 	// not the field.
 	InflightRequests int64
-	// QuietPaused (ADR-957) is true while vmmd holds the instance
+	// QuietPaused (ADR-1151) is true while vmmd holds the instance
 	// quiet-paused between requests.
 	QuietPaused bool
+	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
+	// place.
+	Frozen bool
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller

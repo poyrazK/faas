@@ -7,7 +7,7 @@ import (
 )
 
 // quietPausedSnapshot is the set of instances each node reported
-// quiet-paused (ADR-957) in one tick, and when that tick read them.
+// quiet-paused (ADR-1151) in one tick, and when that tick read them.
 type quietPausedSnapshot struct {
 	byNode map[string]map[string]struct{}
 	asOf   time.Time

@@ -22,12 +22,14 @@ T = TypeVar("T", bound="ManagedRealtimeScheduleRequest")
 
 @_attrs_define
 class ManagedRealtimeScheduleRequest:
-    """Scheduled channel publish payload with recurrence and retry settings."""
+    """Scheduled channel publish payload with recurrence, retry settings, and optional message TTL."""
 
     data_base64: str
     """At most 4096 decoded bytes."""
     deliver_at: datetime.datetime
     """Future time within 30 days of creation."""
+    ttl_seconds: int | Unset = 0
+    """Message lifetime in seconds from publication of each occurrence; zero disables expiry."""
     group: str | Unset = UNSET
     """Optional immutable channel-scoped group label; at most 128 UTF-8 bytes."""
     conditions: list[Any] | Unset = UNSET
@@ -53,6 +55,8 @@ class ManagedRealtimeScheduleRequest:
         data_base64 = self.data_base64
 
         deliver_at = self.deliver_at.isoformat()
+
+        ttl_seconds = self.ttl_seconds
 
         group = self.group
 
@@ -94,6 +98,8 @@ class ManagedRealtimeScheduleRequest:
                 "deliver_at": deliver_at,
             }
         )
+        if ttl_seconds is not UNSET:
+            field_dict["ttl_seconds"] = ttl_seconds
         if group is not UNSET:
             field_dict["group"] = group
         if conditions is not UNSET:
@@ -125,6 +131,8 @@ class ManagedRealtimeScheduleRequest:
         data_base64 = d.pop("data_base64")
 
         deliver_at = datetime.datetime.fromisoformat(d.pop("deliver_at"))
+
+        ttl_seconds = d.pop("ttl_seconds", UNSET)
 
         group = d.pop("group", UNSET)
 
@@ -175,6 +183,7 @@ class ManagedRealtimeScheduleRequest:
         managed_realtime_schedule_request = cls(
             data_base64=data_base64,
             deliver_at=deliver_at,
+            ttl_seconds=ttl_seconds,
             group=group,
             conditions=conditions,
             on_condition_failure=on_condition_failure,

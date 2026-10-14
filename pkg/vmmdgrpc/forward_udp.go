@@ -42,7 +42,7 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	}
 	s.beginActivity(init.Instance)
 	defer s.endActivity(init.Instance)
-	if err := s.resumeQuiet(stream.Context(), init.Instance); err != nil {
+	if err := s.prepareGuest(stream.Context(), init.Instance); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(stream.Context())

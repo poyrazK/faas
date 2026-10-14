@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -65,7 +66,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		if !u.Protection.Equal(preparation.protection) || u.EncryptionDefaultRevision != preparation.defaultRevision || !u.Encryption.Equal(preparation.encryption) || pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
+		if u.Checksum.Policy != preparation.checksum.Policy || ObjectMultipartIsCompleting(u.State) && !u.Checksum.Equal(preparation.checksum) || !u.Protection.Equal(preparation.protection) || u.EncryptionDefaultRevision != preparation.defaultRevision || !u.Encryption.Equal(preparation.encryption) || pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
 			return ErrConflict
 		}
 	}
@@ -170,7 +171,11 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: multipartCompletionOperation(preparation.conditions), CompletionIfMatch: preparation.conditions.IfMatch, CompletionIfNoneMatch: preparation.conditions.IfNoneMatch, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
+		checksum, e := json.Marshal(preparation.checksum)
+		if e != nil {
+			return e
+		}
+		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ChecksumSnapshot: checksum, ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: multipartCompletionOperation(preparation.conditions), CompletionIfMatch: preparation.conditions.IfMatch, CompletionIfNoneMatch: preparation.conditions.IfNoneMatch, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrConflict
 		}

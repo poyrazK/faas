@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 976 — local retirement moves the original capture directory out of
+// adr: 1039 — local retirement moves the original capture directory out of
 // the public namespace before any receipt-bound file removal.
 package storage
 
