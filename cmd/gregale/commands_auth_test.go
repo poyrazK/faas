@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
@@ -351,18 +350,16 @@ func TestAuthTemplatePinsVerifiedMigrations(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^FROM supabase/gotrue@sha256:[0-9a-f]{64} AS gotrue$`).Match(dockerfile) || !strings.Contains(string(dockerfile), "sha256sum --check --strict") {
 		t.Fatal("GoTrue stage is not digest-pinned and migration-verified")
 	}
-	manifest, err := os.Open("templates/auth/migrations.sha256")
+	manifest, err := os.ReadFile("templates/auth/migrations.sha256")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manifest.Close()
 	line := regexp.MustCompile(`^[0-9a-f]{64}  ([0-9a-z_]+(\.postgres)?\.up\.sql)$`)
 	pinned := map[string]bool{}
-	scanner := bufio.NewScanner(manifest)
-	for scanner.Scan() {
-		m := line.FindStringSubmatch(scanner.Text())
+	for _, text := range strings.Split(strings.TrimRight(string(manifest), "\n"), "\n") {
+		m := line.FindStringSubmatch(text)
 		if m == nil || pinned[m[1]] {
-			t.Fatalf("invalid or duplicate manifest line %q", scanner.Text())
+			t.Fatalf("invalid or duplicate manifest line %q", text)
 		}
 		pinned[m[1]] = true
 	}

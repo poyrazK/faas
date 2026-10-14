@@ -92,7 +92,7 @@ func authAdminKeyCreate(ctx context.Context, client *api.Client, app, scope stri
 		return jsonOut(writeJSON(map[string]string{"id": keyID, "key": key, "app": app, "dashboard_url": dashboard}))
 	}
 	PrintOK(osStdout, "Created admin key %s for %s", keyID, app)
-	fmt.Fprintf(osStdout, "  key:       %s\n  dashboard: %s\n", key, dashboard)
+	_, _ = fmt.Fprintf(osStdout, "  key:       %s\n  dashboard: %s\n", key, dashboard)
 	PrintWarn(osStderr, "the key is shown once and only its hash is stored; keep it in a password manager")
 	return 0
 }
@@ -116,11 +116,11 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		return jsonOut(writeJSON(map[string]any{"admin_keys": rows}))
 	}
 	if len(rows) == 0 {
-		fmt.Fprintf(osStdout, "No admin keys for %s. Create one with `gregale auth admin-key create %s`.\n", app, app)
+		_, _ = fmt.Fprintf(osStdout, "No admin keys for %s. Create one with `gregale auth admin-key create %s`.\n", app, app)
 		return 0
 	}
 	for _, row := range rows {
-		fmt.Fprintf(osStdout, "%s  created %s\n", row.ID, row.CreatedAt)
+		_, _ = fmt.Fprintf(osStdout, "%s  created %s\n", row.ID, row.CreatedAt)
 	}
 	return 0
 }
@@ -256,7 +256,7 @@ func authAdminRequest(origin, key, path string, body, out any) error {
 	if err != nil {
 		return fmt.Errorf("reach the Auth app: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, api.AuthAdminBodyBytes))
 	if err != nil {
 		return fmt.Errorf("read the Auth app response: %w", err)
@@ -293,7 +293,7 @@ func renderAuthImport(result authImportResult) int {
 			PrintOK(osStdout, "Imported %d of %d users", result.Created, result.Records)
 		}
 		for _, skipped := range result.Skipped {
-			fmt.Fprintf(osStdout, "  record %d: %s\n", skipped.Record, skipped.Code)
+			_, _ = fmt.Fprintf(osStdout, "  record %d: %s\n", skipped.Record, skipped.Code)
 		}
 		if result.Failed != nil {
 			PrintWarn(osStderr, "stopped at record %d: %s; re-run the same file to continue", result.Failed.FirstRecord, result.Failed.Error)
@@ -346,6 +346,16 @@ func readAuthImportFile(path string) ([]json.RawMessage, error) {
 	return records, nil
 }
 
+// supportedAuthPasswordHash accepts the hash families GoTrue v2.197.0 verifies.
+func supportedAuthPasswordHash(hash string) bool {
+	for _, prefix := range []string{"$2a$", "$2b$", "$2y$", "$argon2", "$fbscrypt$"} {
+		if strings.HasPrefix(hash, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 var (
 	authImportEmail = regexp.MustCompile(`^[^\s@]+@[^\s@]+$`)
 	authImportUUID  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -373,7 +383,7 @@ func validateAuthImportRecord(raw json.RawMessage, seen map[string]bool) string 
 		return "invalid_id"
 	}
 	if value, ok := record["password_hash"]; ok {
-		if json.Unmarshal(value, &hash) != nil || len(hash) > 512 || !(strings.HasPrefix(hash, "$2a$") || strings.HasPrefix(hash, "$2b$") || strings.HasPrefix(hash, "$2y$") || strings.HasPrefix(hash, "$argon2") || strings.HasPrefix(hash, "$fbscrypt$")) {
+		if json.Unmarshal(value, &hash) != nil || len(hash) > 512 || !supportedAuthPasswordHash(hash) {
 			return "unsupported_password_hash"
 		}
 	}

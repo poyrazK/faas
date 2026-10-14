@@ -151,8 +151,8 @@ func cmdAuthCreate(args []string) int {
 	if !jsonOutput {
 		issuer := external + "/auth/v1"
 		PrintOK(osStdout, "Auth is deployed for %s", app.Slug)
-		fmt.Fprintf(osStdout, "  issuer:   %s\n  jwks:     %s/.well-known/jwks.json\n  audience: %s\n", issuer, issuer, authAudience)
-		fmt.Fprintf(osStdout, "Verify these tokens in a Data API:\n  gregale data-api create <name> --database %s --issuer %s --jwks-url %s/.well-known/jwks.json --audience %s\n", opts.database, issuer, issuer, authAudience)
+		_, _ = fmt.Fprintf(osStdout, "  issuer:   %s\n  jwks:     %s/.well-known/jwks.json\n  audience: %s\n", issuer, issuer, authAudience)
+		_, _ = fmt.Fprintf(osStdout, "Verify these tokens in a Data API:\n  gregale data-api create <name> --database %s --issuer %s --jwks-url %s/.well-known/jwks.json --audience %s\n", opts.database, issuer, issuer, authAudience)
 	}
 	return 0
 }
@@ -421,7 +421,7 @@ func cmdAuthStatus(args []string) int {
 		state = "ready"
 	}
 	PrintOK(osStdout, "Auth for %s is %s", status.App, state)
-	fmt.Fprintf(osStdout, "  issuer:   %s\n  jwks:     %s\n  audience: %s\n", status.Issuer, status.JWKSURL, status.Audience)
+	_, _ = fmt.Fprintf(osStdout, "  issuer:   %s\n  jwks:     %s\n  audience: %s\n", status.Issuer, status.JWKSURL, status.Audience)
 	return 0
 }
 
@@ -437,7 +437,7 @@ func authReady(ctx context.Context, endpoint string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return resp.StatusCode == http.StatusOK
 }

@@ -60,9 +60,11 @@ func newAuthUser(t *testing.T, owner *pgx.Conn, email string) authUser {
 	return u
 }
 
-func actAs(t *testing.T, conn *pgx.Conn, u authUser) {
+func actAs(ctx context.Context, t *testing.T, conn *pgx.Conn, u authUser) {
 	t.Helper()
-	executeSQL(t, conn, `SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text, 'session_id', $2::text)::text, false)`, u.id.String(), u.session.String())
+	if _, err := conn.Exec(ctx, `SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text, 'session_id', $2::text)::text, false)`, u.id.String(), u.session.String()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func sqlCode(t *testing.T, conn *pgx.Conn, query string, args ...any) (string, string) {
@@ -108,7 +110,7 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 	_, owner := installAuthorization(t, f)
 	alice, bob, carol := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test"), newAuthUser(t, owner, "carol@example.test")
 
-	actAs(t, owner, alice)
+	actAs(ctx, t, owner, alice)
 	var org uuid.UUID
 	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
 		t.Fatal(err)
@@ -120,7 +122,7 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'carol@example.test', 'member', $2, 3600)`, org, carolInvite)
 
 	// Invitations bind to the invited, confirmed address, and work once.
-	actAs(t, owner, bob)
+	actAs(ctx, t, owner, bob)
 	wantSQLError(t, owner, "42501", "invitation_email_mismatch", `SELECT gregale_auth.accept_invitation($1)`, carolInvite)
 	executeSQL(t, owner, `SELECT gregale_auth.accept_invitation($1)`, bobInvite)
 	wantSQLError(t, owner, "P0002", "invitation_invalid", `SELECT gregale_auth.accept_invitation($1)`, bobInvite)
@@ -137,7 +139,7 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 		t.Fatalf("read-only issuance next to authorization helpers: %v", err)
 	}
 	reader := f.connect(t, f.readonly.name)
-	actAs(t, reader, bob)
+	actAs(ctx, t, reader, bob)
 	resource := "org/" + org.String() + "/doc/42"
 	if !queryBool(t, reader, `SELECT gregale_auth.has_permission($1, 'org:read')`, org) || queryBool(t, reader, `SELECT gregale_auth.has_permission($1, 'members:manage')`, org) {
 		t.Fatal("member permissions wrong")
@@ -145,7 +147,7 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 	if queryBool(t, reader, `SELECT gregale_auth.authorize('read', $1)`, resource) {
 		t.Fatal("authorize allowed an action no policy grants")
 	}
-	actAs(t, owner, alice)
+	actAs(ctx, t, owner, alice)
 	executeSQL(t, owner, `SELECT gregale_auth.apply_authz($1)`, `{"roles":{"editor":["doc:write","org:read"]},"policies":[{"action":"read","resource":"doc","permission":"org:read"},{"action":"write","resource":"doc","permission":"doc:write"}]}`)
 	if !queryBool(t, reader, `SELECT gregale_auth.authorize('read', $1)`, resource) || queryBool(t, reader, `SELECT gregale_auth.authorize('write', $1)`, resource) {
 		t.Fatal("policy evaluation wrong for a member")
@@ -155,7 +157,7 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 			t.Fatalf("authorize allowed malformed resource %q", malformed)
 		}
 	}
-	actAs(t, reader, carol)
+	actAs(ctx, t, reader, carol)
 	if queryBool(t, reader, `SELECT gregale_auth.authorize('read', $1)`, resource) {
 		t.Fatal("non-member authorized")
 	}
@@ -164,7 +166,7 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 
 	// Role changes take effect on the next check; so does revocation.
 	executeSQL(t, owner, `SELECT gregale_auth.set_member_role($1, $2, 'editor')`, org, bob.id)
-	actAs(t, reader, bob)
+	actAs(ctx, t, reader, bob)
 	if !queryBool(t, reader, `SELECT gregale_auth.authorize('write', $1)`, resource) {
 		t.Fatal("role change not effective")
 	}
@@ -184,10 +186,10 @@ func TestSQLAuthorizationMembershipsPoliciesAndRevocation(t *testing.T) {
 	// Ownership rules: no last-owner removal, only owners touch owners.
 	wantSQLError(t, owner, "23514", "last_owner", `SELECT gregale_auth.set_member_role($1, $2, 'member')`, org, alice.id)
 	wantSQLError(t, owner, "23514", "last_owner", `SELECT gregale_auth.remove_member($1, $2)`, org, alice.id)
-	actAs(t, owner, bob)
+	actAs(ctx, t, owner, bob)
 	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.remove_member($1, $2)`, org, alice.id)
 	executeSQL(t, owner, `SELECT gregale_auth.remove_member($1, $2)`, org, bob.id)
-	actAs(t, owner, carol)
+	actAs(ctx, t, owner, carol)
 	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.list_members($1)`, org)
 	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '{}', false)`)
 	wantSQLError(t, owner, "28000", "not_authenticated", `SELECT gregale_auth.list_organizations()`)
@@ -198,7 +200,7 @@ func TestSQLAuthorizationHelpersServeDataAPIRowLevelSecurity(t *testing.T) {
 	ctx := context.Background()
 	_, owner := installAuthorization(t, f)
 	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
-	actAs(t, owner, alice)
+	actAs(ctx, t, owner, alice)
 	var org uuid.UUID
 	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
 		t.Fatal(err)
@@ -221,7 +223,7 @@ INSERT INTO api.docs VALUES (1, '`+org.String()+`', 'secret plans');`)
 	executeSQL(t, owner, `SELECT gregale_auth.apply_authz('{"policies":[{"action":"read","resource":"doc","permission":"org:read"}]}')`)
 	reader := f.connect(t, api.name)
 	count := func(u authUser) int {
-		actAs(t, reader, u)
+		actAs(ctx, t, reader, u)
 		var n int
 		if err := reader.QueryRow(ctx, `SELECT count(*) FROM api.docs`).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -254,7 +256,7 @@ func TestSQLSubjectAuthorizationForRealtimeIsOwnerOnlyAndUserLevel(t *testing.T)
 	ctx := context.Background()
 	_, owner := installAuthorization(t, f)
 	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
-	actAs(t, owner, alice)
+	actAs(ctx, t, owner, alice)
 	var org uuid.UUID
 	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
 		t.Fatal(err)
