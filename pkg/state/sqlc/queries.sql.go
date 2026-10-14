@@ -23616,11 +23616,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id)
 VALUES($1,$2,$3,$4,$5,$6,
- $7,$8,$9,$10,$11,$12,
- $13,$14,$15,$16,$17,$18,$19)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id, synthetic_check_id
+ $7,$8,$9,$10,$11,$12,$13,
+ $14,$15,$16,$17,$18,$19,$20)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -23634,6 +23634,7 @@ type InsertCustomerAlertRuleParams struct {
 	WindowSpec                      string
 	FailureSource                   pgtype.Text
 	EventSubscriptionID             pgtype.UUID
+	EdgeRuleID                      pgtype.UUID
 	Action                          string
 	WebhookUrl                      string
 	WebhookSecretSealed             []byte
@@ -23657,6 +23658,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.WindowSpec,
 		arg.FailureSource,
 		arg.EventSubscriptionID,
+		arg.EdgeRuleID,
 		arg.Action,
 		arg.WebhookUrl,
 		arg.WebhookSecretSealed,
@@ -23691,6 +23693,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
 		&i.CustomMetricName,
 		&i.SloID,
 		&i.SyntheticCheckID,
@@ -31171,6 +31174,55 @@ func (q *Queries) IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const jobTaskLogTarget = `-- name: JobTaskLogTarget :one
+SELECT t.status,
+       t.attempt,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = $1::uuid
+  AND j.name = $2::text
+  AND j.status <> 'deleted'
+  AND r.id = $3::uuid
+  AND t.task_index = $4::int
+`
+
+type JobTaskLogTargetParams struct {
+	AccountID pgtype.UUID
+	JobName   string
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+type JobTaskLogTargetRow struct {
+	Status     string
+	Attempt    int32
+	InstanceID string
+	NodeID     string
+}
+
+// ADR-1163: the job task a live log stream follows, scoped to the account
+// and job name, with the node of its current instance (if any).
+func (q *Queries) JobTaskLogTarget(ctx context.Context, db DBTX, arg JobTaskLogTargetParams) (JobTaskLogTargetRow, error) {
+	row := db.QueryRow(ctx, jobTaskLogTarget,
+		arg.AccountID,
+		arg.JobName,
+		arg.RunID,
+		arg.TaskIndex,
+	)
+	var i JobTaskLogTargetRow
+	err := row.Scan(
+		&i.Status,
+		&i.Attempt,
+		&i.InstanceID,
+		&i.NodeID,
+	)
+	return i, err
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
@@ -34156,7 +34208,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -34199,6 +34251,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
 			&i.CustomMetricName,
 			&i.SloID,
 			&i.SyntheticCheckID,
@@ -34214,7 +34267,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -34249,6 +34302,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
 			&i.CustomMetricName,
 			&i.SloID,
 			&i.SyntheticCheckID,
@@ -36253,7 +36307,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -36288,6 +36342,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
 			&i.CustomMetricName,
 			&i.SloID,
 			&i.SyntheticCheckID,
@@ -61596,7 +61651,7 @@ func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, d
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -61625,6 +61680,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
 		&i.CustomMetricName,
 		&i.SloID,
 		&i.SyntheticCheckID,
@@ -78240,7 +78296,7 @@ UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean
  webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($10::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id, synthetic_check_id
+WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -78297,6 +78353,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
 		&i.CustomMetricName,
 		&i.SloID,
 		&i.SyntheticCheckID,

@@ -307,7 +307,10 @@ dead-lettered timeout if no attempts remain; it is never counted as a
 customer cancellation.
 
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
-1 MiB) to retrieve a larger tail when the response is truncated.
+1 MiB) to retrieve a larger tail when the response is truncated. Pass
+`--follow` (`-f`) to stream a task's output while it runs: the stream waits
+while the task is queued, follows each retry attempt in turn, and ends when
+the task finishes (ADR-1163).
 
 ## Image runs
 
@@ -338,6 +341,5 @@ Image runs use your plan's Job limits for memory, deadline (by default the
 plan's maximum) and concurrent tasks. Plans cache a limited number of images
 (`api.ImageRunCachedImages`: Hobby 3, Pro 10, Scale 25); starting a run for a
 new image evicts the least recently used cached image that has no queued or
-running work. Free plans do not include Jobs or image runs. Output is the
-task's stored log tail (up to 1 MiB), printed when the task ends; image runs
-have no interactive stdin yet.
+running work. Free plans do not include Jobs or image runs. Output streams
+while the command runs (ADR-1163); image runs have no interactive stdin yet.

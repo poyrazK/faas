@@ -3404,6 +3404,15 @@ from .queue_binding_status_response_mode import QueueBindingStatusResponseMode
 from .queue_binding_status_response_workload_class import QueueBindingStatusResponseWorkloadClass
 from .queue_dead_letter_message import QueueDeadLetterMessage
 from .queue_dead_letter_response import QueueDeadLetterResponse
+from .queue_lease_message import QueueLeaseMessage
+from .queue_lease_message_headers import QueueLeaseMessageHeaders
+from .queue_lease_message_payload import QueueLeaseMessagePayload
+from .queue_lease_receipt_failure import QueueLeaseReceiptFailure
+from .queue_lease_receipt_failure_reason import QueueLeaseReceiptFailureReason
+from .queue_lease_receipts_request import QueueLeaseReceiptsRequest
+from .queue_lease_receipts_response import QueueLeaseReceiptsResponse
+from .queue_lease_request import QueueLeaseRequest
+from .queue_lease_response import QueueLeaseResponse
 from .queue_peek_message import QueuePeekMessage
 from .queue_peek_response import QueuePeekResponse
 from .queue_receive_response import QueueReceiveResponse
@@ -7621,6 +7630,15 @@ __all__ = (
     "QueueBindingStatusResponseWorkloadClass",
     "QueueDeadLetterMessage",
     "QueueDeadLetterResponse",
+    "QueueLeaseMessage",
+    "QueueLeaseMessageHeaders",
+    "QueueLeaseMessagePayload",
+    "QueueLeaseReceiptFailure",
+    "QueueLeaseReceiptFailureReason",
+    "QueueLeaseReceiptsRequest",
+    "QueueLeaseReceiptsResponse",
+    "QueueLeaseRequest",
+    "QueueLeaseResponse",
     "QueuePeekMessage",
     "QueuePeekResponse",
     "QueueReceiveResponse",

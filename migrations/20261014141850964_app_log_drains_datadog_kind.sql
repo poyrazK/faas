@@ -1,4 +1,4 @@
--- filename: 20261013221554743_app_log_drains_datadog_kind.sql
+-- filename: 20261014141850964_app_log_drains_datadog_kind.sql
 
 -- +goose Up
 -- +goose StatementBegin

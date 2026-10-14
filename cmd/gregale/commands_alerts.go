@@ -122,6 +122,7 @@ func cmdAlertAdd(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
+	edgeRule := fs.String("edge-rule-id", "", "edge rule id for edge_rule_hits / edge_rule_log_hits (empty = every rule of the app; ADR-1192)")
 	metric := fs.String("metric", "", "metric (closed set; includes MCP task, event retention, and event storage metrics)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
@@ -182,6 +183,7 @@ func cmdAlertAdd(args []string) int {
 		Threshold:                       *threshold,
 		WindowSpec:                      *windowSpec,
 		EventSubscriptionID:             *eventSubscription,
+		EdgeRuleID:                      *edgeRule,
 		FailureSource:                   *failureSource,
 		ChannelIDs:                      channels,
 		CustomMetricName:                *customMetric,

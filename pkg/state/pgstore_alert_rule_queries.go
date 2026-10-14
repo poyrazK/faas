@@ -59,6 +59,9 @@ func customerAlertRule(row sqlc.AlertRule) AlertRule {
 	if row.EventSubscriptionID.Valid {
 		r.EventSubscriptionID = uuid.UUID(row.EventSubscriptionID.Bytes).String()
 	}
+	if row.EdgeRuleID.Valid {
+		r.EdgeRuleID = uuid.UUID(row.EdgeRuleID.Bytes).String()
+	}
 	if row.AppID.Valid {
 		r.AppID = uuid.UUID(row.AppID.Bytes).String()
 	}
@@ -102,6 +105,10 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if err != nil {
 		return AlertRule{}, err
 	}
+	edgeRule, err := alertPgUUID(in.EdgeRuleID)
+	if err != nil {
+		return AlertRule{}, err
+	}
 	source := pgtype.Text{}
 	if in.FailureSource != "" {
 		source = pgtype.Text{String: string(in.FailureSource), Valid: true}
@@ -118,7 +125,7 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if err != nil {
 		return AlertRule{}, err
 	}
-	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{EventSubscriptionID: sub, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID}))
+	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID}))
 }
 func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
 	rule, err := alertPgUUID(id)

@@ -343,6 +343,19 @@ const QueueBindingMaxConcurrency = 10000
 // one binding can run, so a binding allowed thousands of concurrent records
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
+
+// Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
+// takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
+// timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the
+// ceiling is the plan's MaxAsyncInvocationDeadlineSeconds. A lease stops
+// adding messages once their payloads and headers would pass
+// QueueLeaseMaxResponseBytes, but always returns at least one. A lease that
+// finds nothing waits up to QueueLeaseMaxWaitSeconds for a message.
+const QueueLeaseMaxMessages = 100
+const QueueLeaseMaxReceipts = 100
+const QueueLeaseDefaultVisibilitySeconds = 30
+const QueueLeaseMaxResponseBytes = 8 << 20
+const QueueLeaseMaxWaitSeconds = 20
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 
@@ -5388,6 +5401,13 @@ const (
 	// TCP session. TCP ingress is long-lived, so this is a safety ceiling for a
 	// runaway connection rather than an HTTP request-body limit.
 	RawTCPStreamMaxBytes int64 = 1 * 1024 * 1024 * 1024
+
+	// RawTCPLookupCacheTTL is how long the public TCP edge reuses a listener's
+	// route-by-port, TLS domain and live-deployment lookups across new
+	// connections, so a connection flood does not cost every query per
+	// connection. The app and listener-intent reads, which reject a stale
+	// route, and instance selection are never cached.
+	RawTCPLookupCacheTTL = time.Second
 
 	// Post-response tail (issue #667 / ADR-078).
 	//
