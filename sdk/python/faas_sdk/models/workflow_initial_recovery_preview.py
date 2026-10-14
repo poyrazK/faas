@@ -18,7 +18,10 @@ T = TypeVar("T", bound="WorkflowInitialRecoveryPreview")
 
 @_attrs_define
 class WorkflowInitialRecoveryPreview:
+    """Safety preview for creating the first recovery job from a captured failure."""
+
     failure: WorkflowInitialFailure
+    """One captured generation-zero workflow failure."""
     observed_at: datetime.datetime
     reason: str
     """Stable diagnostic reason such as eligible, changed, run_not_retained, capacity or resume_ineligible."""

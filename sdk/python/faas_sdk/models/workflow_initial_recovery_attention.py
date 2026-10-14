@@ -29,6 +29,7 @@ class WorkflowInitialRecoveryAttention:
     observed_at: datetime.datetime
     block_reason: str | Unset = UNSET
     diagnosis: WorkflowInitialEvidenceDiagnosis | Unset = UNSET
+    """Consistent diagnosis of retained evidence for an initial recovery review."""
     operator_action: str | Unset = UNSET
     evidence_url: str | Unset = UNSET
     cli_command: str | Unset = UNSET

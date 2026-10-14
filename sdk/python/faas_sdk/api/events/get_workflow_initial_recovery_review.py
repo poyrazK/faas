@@ -81,11 +81,12 @@ def sync_detailed(
 ) -> Response[Problem | WorkflowInitialRecoveryReview]:
     """Inspect a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation
+    captures retained generation-zero evidence and a live safety preview. Submit repeats evidence,
+    safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications
+    use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority
+    block submission and pending admission. Submission is explicit; no automatic first recovery is
+    enabled.
 
     Args:
         slug (str):
@@ -119,11 +120,12 @@ def sync(
 ) -> Problem | WorkflowInitialRecoveryReview | None:
     """Inspect a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation
+    captures retained generation-zero evidence and a live safety preview. Submit repeats evidence,
+    safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications
+    use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority
+    block submission and pending admission. Submission is explicit; no automatic first recovery is
+    enabled.
 
     Args:
         slug (str):
@@ -152,11 +154,12 @@ async def asyncio_detailed(
 ) -> Response[Problem | WorkflowInitialRecoveryReview]:
     """Inspect a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation
+    captures retained generation-zero evidence and a live safety preview. Submit repeats evidence,
+    safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications
+    use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority
+    block submission and pending admission. Submission is explicit; no automatic first recovery is
+    enabled.
 
     Args:
         slug (str):
@@ -188,11 +191,12 @@ async def asyncio(
 ) -> Problem | WorkflowInitialRecoveryReview | None:
     """Inspect a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation
+    captures retained generation-zero evidence and a live safety preview. Submit repeats evidence,
+    safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications
+    use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority
+    block submission and pending admission. Submission is explicit; no automatic first recovery is
+    enabled.
 
     Args:
         slug (str):

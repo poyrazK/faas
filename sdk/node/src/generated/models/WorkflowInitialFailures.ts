@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { WorkflowInitialFailure } from './WorkflowInitialFailure.js';
+/**
+ * Page of captured initial workflow failures.
+ */
 export type WorkflowInitialFailures = {
   observed_at: string;
   coverage: 'partial';

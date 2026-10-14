@@ -20,6 +20,8 @@ T = TypeVar("T", bound="WorkflowInitialEvidenceDiagnosis")
 
 @_attrs_define
 class WorkflowInitialEvidenceDiagnosis:
+    """Consistent diagnosis of retained evidence for an initial recovery review."""
+
     review_id: UUID
     run_id: UUID
     resume_count: int
@@ -37,6 +39,7 @@ class WorkflowInitialEvidenceDiagnosis:
     the first confirmed terminal result wins across later resumes. Omitted for routing recovery and items not
     admitted."""
     repair: WorkflowInitialEvidenceRepairReceipt | Unset = UNSET
+    """Recorded result of an initial recovery evidence repair."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

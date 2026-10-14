@@ -16,6 +16,8 @@ T = TypeVar("T", bound="WorkflowInitialRecoveryReviewEvent")
 
 @_attrs_define
 class WorkflowInitialRecoveryReviewEvent:
+    """Notification carrying an initial recovery review and its captured evidence."""
+
     status: WorkflowInitialRecoveryReviewEventStatus
     reason: str
     occurred_at: datetime.datetime

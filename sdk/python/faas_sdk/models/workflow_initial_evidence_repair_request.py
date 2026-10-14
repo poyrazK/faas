@@ -11,6 +11,8 @@ T = TypeVar("T", bound="WorkflowInitialEvidenceRepairRequest")
 
 @_attrs_define
 class WorkflowInitialEvidenceRepairRequest:
+    """Policy-fenced request to repair retained initial recovery evidence."""
+
     request_id: UUID
     reason: str
 

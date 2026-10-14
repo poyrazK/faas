@@ -28,6 +28,7 @@ class WorkflowRecoveryInitialQueueEvidence:
 
     stage: WorkflowRecoveryInitialQueueEvidenceStage
     diagnosis: WorkflowInitialEvidenceDiagnosis
+    """Consistent diagnosis of retained evidence for an initial recovery review."""
     evidence_url: str
     cli_command: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

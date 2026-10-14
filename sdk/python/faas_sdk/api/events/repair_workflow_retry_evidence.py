@@ -81,7 +81,8 @@ def sync_detailed(
         slug (str):
         review_id (UUID):
         action_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,7 +125,8 @@ def sync(
         slug (str):
         review_id (UUID):
         action_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,7 +164,8 @@ async def asyncio_detailed(
         slug (str):
         review_id (UUID):
         action_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,7 +206,8 @@ async def asyncio(
         slug (str):
         review_id (UUID):
         action_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

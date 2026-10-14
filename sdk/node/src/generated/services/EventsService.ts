@@ -2644,7 +2644,13 @@ export class EventsService {
     failureId,
     requestBody,
   }: {
+    /**
+     * Application slug.
+     */
     slug: string,
+    /**
+     * Captured initial workflow failure identifier.
+     */
     failureId: string,
     requestBody: WorkflowInitialRecoveryReviewRequest,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
@@ -2677,8 +2683,17 @@ export class EventsService {
     reviewId,
     actionId,
   }: {
+    /**
+     * Application slug used to diagnose pending retry parent evidence.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier.
+     */
     reviewId: string,
+    /**
+     * Frozen retry action identifier.
+     */
     actionId: string,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
     return __request(OpenAPI, {
@@ -2695,7 +2710,7 @@ export class EventsService {
    * Save verified pending retry parent terminal evidence
    * Requires deploy write and MFA. Re-inspects the exact parent generation, item and admission lineage under lock. Repair applies only to pending actions and does not authorize child submission. Parent and child repair receipts are separate. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
    * @returns WorkflowRetryEvidenceDiagnosis Retained repair receipt and evidence diagnosis.
-   * @returns Problem Error.
+   * @returns Problem Save verified pending retry parent terminal evidence failed.
    * @throws ApiError
    */
   public static repairWorkflowRetryParentEvidence({
@@ -2704,8 +2719,17 @@ export class EventsService {
     actionId,
     requestBody,
   }: {
+    /**
+     * Application slug used to save verified pending retry parent terminal evidence.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier used to save verified pending retry parent terminal evidence.
+     */
     reviewId: string,
+    /**
+     * Frozen retry action identifier used to save verified pending retry parent terminal evidence.
+     */
     actionId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
@@ -2724,8 +2748,8 @@ export class EventsService {
   /**
    * Diagnose retained automatic retry evidence
    * Read-only exact retry-generation diagnosis with frozen parent and child lineage checks. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
-   * @returns WorkflowRetryEvidenceDiagnosis Consistent retained evidence diagnosis.
-   * @returns Problem Error.
+   * @returns WorkflowRetryEvidenceDiagnosis Diagnose retained automatic retry evidence. Consistent retained evidence diagnosis.
+   * @returns Problem Diagnose retained automatic retry evidence failed.
    * @throws ApiError
    */
   public static diagnoseWorkflowRetryEvidence({
@@ -2733,8 +2757,17 @@ export class EventsService {
     reviewId,
     actionId,
   }: {
+    /**
+     * Application slug used to diagnose retained automatic retry evidence.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier used to diagnose retained automatic retry evidence.
+     */
     reviewId: string,
+    /**
+     * Frozen retry action identifier used to diagnose retained automatic retry evidence.
+     */
     actionId: string,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
     return __request(OpenAPI, {
@@ -2750,8 +2783,8 @@ export class EventsService {
   /**
    * Save verified automatic retry terminal evidence
    * Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
-   * @returns WorkflowRetryEvidenceDiagnosis Retained repair receipt and evidence diagnosis.
-   * @returns Problem Error.
+   * @returns WorkflowRetryEvidenceDiagnosis Save verified automatic retry terminal evidence. Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified automatic retry terminal evidence failed.
    * @throws ApiError
    */
   public static repairWorkflowRetryEvidence({
@@ -2760,8 +2793,17 @@ export class EventsService {
     actionId,
     requestBody,
   }: {
+    /**
+     * Application slug used to save verified automatic retry terminal evidence.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier used to save verified automatic retry terminal evidence.
+     */
     reviewId: string,
+    /**
+     * Frozen retry action identifier used to save verified automatic retry terminal evidence.
+     */
     actionId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
@@ -2780,15 +2822,21 @@ export class EventsService {
   /**
    * Diagnose retained initial recovery evidence
    * Read-only exact-generation diagnosis. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
-   * @returns WorkflowInitialEvidenceDiagnosis Consistent retained evidence diagnosis.
-   * @returns Problem Error.
+   * @returns WorkflowInitialEvidenceDiagnosis Diagnose retained initial recovery evidence. Consistent retained evidence diagnosis.
+   * @returns Problem Diagnose retained initial recovery evidence failed.
    * @throws ApiError
    */
   public static diagnoseWorkflowInitialEvidence({
     slug,
     reviewId,
   }: {
+    /**
+     * Application slug used to diagnose retained initial recovery evidence.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier used to diagnose retained initial recovery evidence.
+     */
     reviewId: string,
   }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
     return __request(OpenAPI, {
@@ -2802,9 +2850,9 @@ export class EventsService {
   }
   /**
    * Save verified initial recovery terminal evidence
-   * Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
-   * @returns WorkflowInitialEvidenceDiagnosis Retained repair receipt and evidence diagnosis.
-   * @returns Problem Error.
+   * Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowInitialEvidenceDiagnosis Save verified initial recovery terminal evidence. Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified initial recovery terminal evidence failed.
    * @throws ApiError
    */
   public static repairWorkflowInitialEvidence({
@@ -2812,7 +2860,13 @@ export class EventsService {
     reviewId,
     requestBody,
   }: {
+    /**
+     * Application slug used to save verified initial recovery terminal evidence.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier used to save verified initial recovery terminal evidence.
+     */
     reviewId: string,
     requestBody: WorkflowInitialEvidenceRepairRequest,
   }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
@@ -2829,15 +2883,21 @@ export class EventsService {
   }
   /**
    * Inspect a durable first-recovery review
-   * Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
-   * @returns WorkflowInitialRecoveryReview Initial recovery review
+   * Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Inspect a durable first-recovery review result.
    * @throws ApiError
    */
   public static getWorkflowInitialRecoveryReview({
     slug,
     reviewId,
   }: {
+    /**
+     * Application slug for inspect a durable first-recovery review.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier for inspect a durable first-recovery review.
+     */
     reviewId: string,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
     return __request(OpenAPI, {
@@ -2857,8 +2917,8 @@ export class EventsService {
   }
   /**
    * Submit or cancel a durable first-recovery review
-   * Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
-   * @returns WorkflowInitialRecoveryReview Initial recovery review
+   * Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Submit or cancel a durable first-recovery review result.
    * @throws ApiError
    */
   public static decideWorkflowInitialRecoveryReview({
@@ -2866,7 +2926,13 @@ export class EventsService {
     reviewId,
     requestBody,
   }: {
+    /**
+     * Application slug used to submit or cancel a durable first-recovery review.
+     */
     slug: string,
+    /**
+     * Durable recovery review identifier used to submit or cancel a durable first-recovery review.
+     */
     reviewId: string,
     requestBody: WorkflowInitialRecoveryReviewDecisionRequest,
   }): CancelablePromise<WorkflowInitialRecoveryReview> {
@@ -2890,8 +2956,8 @@ export class EventsService {
   }
   /**
    * List retained first-recovery reviews
-   * Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
-   * @returns WorkflowInitialRecoveryReviews Initial recovery review
+   * List retained first-recovery reviews. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReviews List retained first-recovery reviews result.
    * @throws ApiError
    */
   public static listWorkflowInitialRecoveryReviews({
@@ -2899,8 +2965,17 @@ export class EventsService {
     after,
     limit = 100,
   }: {
+    /**
+     * Application slug used to list retained first-recovery reviews.
+     */
     slug: string,
+    /**
+     * Opaque cursor from the previous page.
+     */
     after?: string,
+    /**
+     * Maximum number of results to return.
+     */
     limit?: number,
   }): CancelablePromise<WorkflowInitialRecoveryReviews> {
     return __request(OpenAPI, {
@@ -2933,9 +3008,21 @@ export class EventsService {
     after,
     limit = 25,
   }: {
+    /**
+     * Application slug used to list captured initial workflow failures.
+     */
     slug: string,
+    /**
+     * Workflow name to filter captured failures.
+     */
     workflow?: string,
+    /**
+     * Opaque cursor from the previous page used to list captured initial workflow failures.
+     */
     after?: string,
+    /**
+     * Maximum number of results to return used to list captured initial workflow failures.
+     */
     limit?: number,
   }): CancelablePromise<WorkflowInitialFailures> {
     return __request(OpenAPI, {
@@ -2967,7 +3054,13 @@ export class EventsService {
     slug,
     failureId,
   }: {
+    /**
+     * Application slug for review first recovery eligibility for a captured failure.
+     */
     slug: string,
+    /**
+     * Captured initial workflow failure identifier for review first recovery eligibility for a captured failure.
+     */
     failureId: string,
   }): CancelablePromise<WorkflowInitialRecoveryPreview> {
     return __request(OpenAPI, {

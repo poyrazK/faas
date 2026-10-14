@@ -192,7 +192,7 @@ func TestWorkflowRecoverySchedulerIndependentBatches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &isolatedRecoverySchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, manualError: tc.manualError, automaticError: tc.automaticError, manualWork: tc.manualWork, automaticWork: tc.automaticWork}
-			l := &Loop{engine: &Engine{store: s}}
+			l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 			manualPerPass, automaticPerPass := 1, 1
 			if tc.manualWork {
 				manualPerPass = api.WorkflowInitialManualCompletionPollBatch

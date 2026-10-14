@@ -26,6 +26,7 @@ class WorkflowRecoveryInitialPolicyChangeCandidate:
     """
 
     failure: WorkflowInitialFailure
+    """One captured generation-zero workflow failure."""
     eligibility: str
     preparation: str
     execution: str

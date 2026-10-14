@@ -38792,10 +38792,12 @@ paths:
       security: [{bearerAuth: []}]
       parameters:
         - name: slug
+          description: Application slug.
           in: path
           required: true
           schema: { type: string }
         - name: failureID
+          description: Captured initial workflow failure identifier.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -38822,9 +38824,9 @@ paths:
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: reviewID, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: actionID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, description: "Application slug used to diagnose pending retry parent evidence.", in: path, required: true, schema: { type: string } }
+        - { name: reviewID, description: "Durable recovery review identifier.", in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: actionID, description: "Frozen retry action identifier.", in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
           description: Consistent retained evidence diagnosis.
@@ -38844,9 +38846,9 @@ paths:
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: reviewID, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: actionID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, description: "Application slug used to save verified pending retry parent terminal evidence.", in: path, required: true, schema: { type: string } }
+        - { name: reviewID, description: "Durable recovery review identifier used to save verified pending retry parent terminal evidence.", in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: actionID, description: "Frozen retry action identifier used to save verified pending retry parent terminal evidence.", in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
         content:
@@ -38859,7 +38861,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowRetryEvidenceDiagnosis' }
         default:
-          description: Error.
+          description: "Save verified pending retry parent terminal evidence failed."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -38871,17 +38873,17 @@ paths:
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: reviewID, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: actionID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, description: "Application slug used to diagnose retained automatic retry evidence.", in: path, required: true, schema: { type: string } }
+        - { name: reviewID, description: "Durable recovery review identifier used to diagnose retained automatic retry evidence.", in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: actionID, description: "Frozen retry action identifier used to diagnose retained automatic retry evidence.", in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: Consistent retained evidence diagnosis.
+          description: "Diagnose retained automatic retry evidence. Consistent retained evidence diagnosis."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowRetryEvidenceDiagnosis' }
         default:
-          description: Error.
+          description: "Diagnose retained automatic retry evidence failed."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -38893,9 +38895,9 @@ paths:
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: reviewID, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: actionID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, description: "Application slug used to save verified automatic retry terminal evidence.", in: path, required: true, schema: { type: string } }
+        - { name: reviewID, description: "Durable recovery review identifier used to save verified automatic retry terminal evidence.", in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: actionID, description: "Frozen retry action identifier used to save verified automatic retry terminal evidence.", in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
         content:
@@ -38903,12 +38905,12 @@ paths:
             schema: { $ref: '#/components/schemas/WorkflowInitialEvidenceRepairRequest' }
       responses:
         '200':
-          description: Retained repair receipt and evidence diagnosis.
+          description: "Save verified automatic retry terminal evidence. Retained repair receipt and evidence diagnosis."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowRetryEvidenceDiagnosis' }
         default:
-          description: Error.
+          description: "Save verified automatic retry terminal evidence failed."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -38920,16 +38922,16 @@ paths:
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: reviewID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, description: "Application slug used to diagnose retained initial recovery evidence.", in: path, required: true, schema: { type: string } }
+        - { name: reviewID, description: "Durable recovery review identifier used to diagnose retained initial recovery evidence.", in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: Consistent retained evidence diagnosis.
+          description: "Diagnose retained initial recovery evidence. Consistent retained evidence diagnosis."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowInitialEvidenceDiagnosis' }
         default:
-          description: Error.
+          description: "Diagnose retained initial recovery evidence failed."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -38937,12 +38939,12 @@ paths:
     post:
       operationId: repairWorkflowInitialEvidence
       summary: Save verified initial recovery terminal evidence
-      description: Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+      description: "Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll."
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
-        - { name: reviewID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, description: "Application slug used to save verified initial recovery terminal evidence.", in: path, required: true, schema: { type: string } }
+        - { name: reviewID, description: "Durable recovery review identifier used to save verified initial recovery terminal evidence.", in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
         content:
@@ -38950,12 +38952,12 @@ paths:
             schema: { $ref: '#/components/schemas/WorkflowInitialEvidenceRepairRequest' }
       responses:
         '200':
-          description: Retained repair receipt and evidence diagnosis.
+          description: "Save verified initial recovery terminal evidence. Retained repair receipt and evidence diagnosis."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowInitialEvidenceDiagnosis' }
         default:
-          description: Error.
+          description: "Save verified initial recovery terminal evidence failed."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -38963,21 +38965,23 @@ paths:
     get:
       operationId: getWorkflowInitialRecoveryReview
       summary: Inspect a durable first-recovery review
-      description: Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+      description: "Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled."
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
         - name: slug
+          description: "Application slug for inspect a durable first-recovery review."
           in: path
           required: true
           schema: { type: string }
         - name: reviewID
+          description: "Durable recovery review identifier for inspect a durable first-recovery review."
           in: path
           required: true
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Initial recovery review
+          description: "Inspect a durable first-recovery review result."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowInitialRecoveryReview' }
@@ -38989,15 +38993,17 @@ paths:
     post:
       operationId: decideWorkflowInitialRecoveryReview
       summary: Submit or cancel a durable first-recovery review
-      description: Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+      description: "Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled."
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
         - name: slug
+          description: "Application slug used to submit or cancel a durable first-recovery review."
           in: path
           required: true
           schema: { type: string }
         - name: reviewID
+          description: "Durable recovery review identifier used to submit or cancel a durable first-recovery review."
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -39008,7 +39014,7 @@ paths:
             schema: { $ref: '#/components/schemas/WorkflowInitialRecoveryReviewDecisionRequest' }
       responses:
         '200':
-          description: Initial recovery review
+          description: "Submit or cancel a durable first-recovery review result."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowInitialRecoveryReview' }
@@ -39021,23 +39027,26 @@ paths:
     get:
       operationId: listWorkflowInitialRecoveryReviews
       summary: List retained first-recovery reviews
-      description: Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+      description: "List retained first-recovery reviews. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled."
       tags: [events]
       security: [{bearerAuth: []}]
       parameters:
         - name: slug
+          description: "Application slug used to list retained first-recovery reviews."
           in: path
           required: true
           schema: { type: string }
         - name: after
+          description: Opaque cursor from the previous page.
           in: query
           schema: { type: string, format: uuid }
         - name: limit
+          description: Maximum number of results to return.
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
       responses:
         '200':
-          description: Initial recovery review
+          description: "List retained first-recovery reviews result."
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkflowInitialRecoveryReviews' }
@@ -39054,16 +39063,20 @@ paths:
       security: [{bearerAuth: []}]
       parameters:
         - name: slug
+          description: "Application slug used to list captured initial workflow failures."
           in: path
           required: true
           schema: { type: string }
         - name: workflow
+          description: Workflow name to filter captured failures.
           in: query
           schema: { type: string }
         - name: after
+          description: "Opaque cursor from the previous page used to list captured initial workflow failures."
           in: query
           schema: { type: string, maxLength: 2048 }
         - name: limit
+          description: "Maximum number of results to return used to list captured initial workflow failures."
           in: query
           schema: { type: integer, minimum: 0, maximum: 100, default: 25 }
       responses:
@@ -39085,10 +39098,12 @@ paths:
       security: [{bearerAuth: []}]
       parameters:
         - name: slug
+          description: "Application slug for review first recovery eligibility for a captured failure."
           in: path
           required: true
           schema: { type: string }
         - name: failureID
+          description: "Captured initial workflow failure identifier for review first recovery eligibility for a captured failure."
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -70281,6 +70296,7 @@ components:
           items: { $ref: '#/components/schemas/WorkflowRecoveryOverviewIssue' }
         last_alert: { $ref: '#/components/schemas/WorkflowRecoveryOverviewAlert' }
     WorkflowRecoveryOverviewIssue:
+      description: One recovery issue with evidence and the next available operator action.
       type: object
       required: [scope, reason, policy_version, inspection_url]
       properties:
@@ -70760,12 +70776,14 @@ components:
           maxItems: 25
           items: { $ref: '#/components/schemas/WorkflowRunRecoveryTarget' }
     WorkflowInitialRecoveryReviewRequest:
+      description: Parameters for preparing a durable initial recovery review.
       type: object
       additionalProperties: false
       required: [expected_policy_version]
       properties:
         expected_policy_version: { type: integer, format: int64, minimum: 1 }
     WorkflowInitialRecoveryReviewDecisionRequest:
+      description: Decision and policy version for submitting an initial recovery review.
       type: object
       additionalProperties: false
       required: [decision, reason]
@@ -70773,6 +70791,7 @@ components:
         decision: { type: string, enum: [submit, cancel] }
         reason: { type: string, minLength: 1, maxLength: 512 }
     WorkflowInitialRecoveryReviewEvent:
+      description: Notification carrying an initial recovery review and its captured evidence.
       type: object
       additionalProperties: false
       required: [status, reason, occurred_at, actor_kind, actor_id]
@@ -70783,6 +70802,7 @@ components:
         actor_kind: { type: string }
         actor_id: { type: string }
     WorkflowInitialEvidenceRepairRequest:
+      description: Policy-fenced request to repair retained initial recovery evidence.
       type: object
       additionalProperties: false
       required: [request_id, reason]
@@ -70790,6 +70810,7 @@ components:
         request_id: { type: string, format: uuid }
         reason: { type: string, minLength: 1, maxLength: 512 }
     WorkflowInitialEvidenceRepairReceipt:
+      description: Recorded result of an initial recovery evidence repair.
       type: object
       required: [request_id, reason, actor_kind, actor_id, repaired_at, outcome]
       properties:
@@ -70800,6 +70821,7 @@ components:
         repaired_at: { type: string, format: date-time }
         outcome: { type: string, enum: [succeeded, failed, cancelled] }
     WorkflowInitialEvidenceDiagnosis:
+      description: Consistent diagnosis of retained evidence for an initial recovery review.
       type: object
       required: [review_id, run_id, resume_count, observed_at, reason, repairable]
       properties:
@@ -70813,6 +70835,7 @@ components:
         execution: { $ref: '#/components/schemas/EventRecoveryExecution' }
         repair: { $ref: '#/components/schemas/WorkflowInitialEvidenceRepairReceipt' }
     WorkflowRetryEvidenceDiagnosis:
+      description: Consistent diagnosis of retained evidence for a frozen retry action.
       type: object
       required: [action_id, review_id, run_id, resume_count, observed_at, reason, repairable]
       properties:
@@ -70885,6 +70908,7 @@ components:
         notification: { $ref: '#/components/schemas/WorkflowRecoveryReviewNotification' }
         events: { type: array, items: { $ref: '#/components/schemas/WorkflowInitialRecoveryReviewEvent' } }
     WorkflowInitialRecoveryReviews:
+      description: Page of durable initial recovery reviews.
       type: object
       additionalProperties: false
       required: [reviews]
@@ -70892,6 +70916,7 @@ components:
         reviews: { type: array, items: { $ref: '#/components/schemas/WorkflowInitialRecoveryReview' } }
         next_after: { type: string, format: uuid }
     WorkflowInitialFailure:
+      description: One captured generation-zero workflow failure.
       type: object
       additionalProperties: false
       required: [id, app_id, run_id, workflow, failure_status, observed_at]
@@ -70904,6 +70929,7 @@ components:
         observed_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     WorkflowInitialFailures:
+      description: Page of captured initial workflow failures.
       type: object
       additionalProperties: false
       required: [observed_at, coverage, items]
@@ -70916,6 +70942,7 @@ components:
           items: { $ref: '#/components/schemas/WorkflowInitialFailure' }
         next_after: { type: string }
     WorkflowInitialRecoveryPreview:
+      description: Safety preview for creating the first recovery job from a captured failure.
       type: object
       additionalProperties: false
       required: [failure, observed_at, reason, blockers]

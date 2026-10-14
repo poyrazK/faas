@@ -69,15 +69,17 @@ def sync_detailed(
 ) -> Response[Problem | WorkflowInitialEvidenceDiagnosis]:
     """Save verified initial recovery terminal evidence
 
-     Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock.
-    Saves a missing result once and records the operator reason. Never overwrites retained evidence or
-    resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes
-    conflict. The worker observes repaired proof on its next eligible poll.
+     Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the
+    exact generation and admission lineage under lock. Saves a missing result once and records the
+    operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same
+    request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on
+    its next eligible poll.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,15 +111,17 @@ def sync(
 ) -> Problem | WorkflowInitialEvidenceDiagnosis | None:
     """Save verified initial recovery terminal evidence
 
-     Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock.
-    Saves a missing result once and records the operator reason. Never overwrites retained evidence or
-    resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes
-    conflict. The worker observes repaired proof on its next eligible poll.
+     Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the
+    exact generation and admission lineage under lock. Saves a missing result once and records the
+    operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same
+    request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on
+    its next eligible poll.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,15 +148,17 @@ async def asyncio_detailed(
 ) -> Response[Problem | WorkflowInitialEvidenceDiagnosis]:
     """Save verified initial recovery terminal evidence
 
-     Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock.
-    Saves a missing result once and records the operator reason. Never overwrites retained evidence or
-    resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes
-    conflict. The worker observes repaired proof on its next eligible poll.
+     Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the
+    exact generation and admission lineage under lock. Saves a missing result once and records the
+    operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same
+    request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on
+    its next eligible poll.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,15 +188,17 @@ async def asyncio(
 ) -> Problem | WorkflowInitialEvidenceDiagnosis | None:
     """Save verified initial recovery terminal evidence
 
-     Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock.
-    Saves a missing result once and records the operator reason. Never overwrites retained evidence or
-    resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes
-    conflict. The worker observes repaired proof on its next eligible poll.
+     Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the
+    exact generation and admission lineage under lock. Saves a missing result once and records the
+    operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same
+    request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on
+    its next eligible poll.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialEvidenceRepairRequest):
+        body (WorkflowInitialEvidenceRepairRequest): Policy-fenced request to repair retained
+            initial recovery evidence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

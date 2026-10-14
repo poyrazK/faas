@@ -17,6 +17,8 @@ T = TypeVar("T", bound="WorkflowInitialRecoveryReviews")
 
 @_attrs_define
 class WorkflowInitialRecoveryReviews:
+    """Page of durable initial recovery reviews."""
+
     reviews: list[WorkflowInitialRecoveryReview]
     next_after: UUID | Unset = UNSET
 

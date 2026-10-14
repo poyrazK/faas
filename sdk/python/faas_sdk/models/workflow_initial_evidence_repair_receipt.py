@@ -18,6 +18,8 @@ T = TypeVar("T", bound="WorkflowInitialEvidenceRepairReceipt")
 
 @_attrs_define
 class WorkflowInitialEvidenceRepairReceipt:
+    """Recorded result of an initial recovery evidence repair."""
+
     request_id: UUID
     reason: str
     actor_kind: str

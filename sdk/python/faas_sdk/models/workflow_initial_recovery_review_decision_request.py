@@ -15,6 +15,8 @@ T = TypeVar("T", bound="WorkflowInitialRecoveryReviewDecisionRequest")
 
 @_attrs_define
 class WorkflowInitialRecoveryReviewDecisionRequest:
+    """Decision and policy version for submitting an initial recovery review."""
+
     decision: WorkflowInitialRecoveryReviewDecisionRequestDecision
     reason: str
 

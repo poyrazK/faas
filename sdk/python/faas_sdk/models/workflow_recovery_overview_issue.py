@@ -19,6 +19,8 @@ T = TypeVar("T", bound="WorkflowRecoveryOverviewIssue")
 
 @_attrs_define
 class WorkflowRecoveryOverviewIssue:
+    """One recovery issue with evidence and the next available operator action."""
+
     scope: WorkflowRecoveryOverviewIssueScope
     reason: str
     policy_version: int

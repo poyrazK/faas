@@ -24,6 +24,8 @@ T = TypeVar("T", bound="WorkflowRetryEvidenceDiagnosis")
 
 @_attrs_define
 class WorkflowRetryEvidenceDiagnosis:
+    """Consistent diagnosis of retained evidence for a frozen retry action."""
+
     action_id: UUID
     review_id: UUID
     run_id: UUID
@@ -44,6 +46,7 @@ class WorkflowRetryEvidenceDiagnosis:
     the first confirmed terminal result wins across later resumes. Omitted for routing recovery and items not
     admitted."""
     repair: WorkflowInitialEvidenceRepairReceipt | Unset = UNSET
+    """Recorded result of an initial recovery evidence repair."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Recorded result of an initial recovery evidence repair.
+ */
 export type WorkflowInitialEvidenceRepairReceipt = {
   request_id: string;
   reason: string;

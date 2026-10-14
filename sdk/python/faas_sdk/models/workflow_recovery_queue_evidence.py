@@ -22,6 +22,7 @@ class WorkflowRecoveryQueueEvidence:
     """
 
     diagnosis: WorkflowRetryEvidenceDiagnosis
+    """Consistent diagnosis of retained evidence for a frozen retry action."""
     evidence_url: str
     cli_command: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

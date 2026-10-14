@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One recovery issue with evidence and the next available operator action.
+ */
 export type WorkflowRecoveryOverviewIssue = {
   scope: 'automatic_policy' | 'automatic_queue' | 'manual_initial' | 'manual_retry';
   reason: string;

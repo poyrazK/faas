@@ -96,16 +96,18 @@ def sync_detailed(
 ) -> Response[Problem | WorkflowInitialRecoveryReview]:
     """Submit or cancel a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery.
+    Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats
+    evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready
+    notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed
+    policy authority block submission and pending admission. Submission is explicit; no automatic first
+    recovery is enabled.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialRecoveryReviewDecisionRequest):
+        body (WorkflowInitialRecoveryReviewDecisionRequest): Decision and policy version for
+            submitting an initial recovery review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,16 +139,18 @@ def sync(
 ) -> Problem | WorkflowInitialRecoveryReview | None:
     """Submit or cancel a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery.
+    Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats
+    evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready
+    notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed
+    policy authority block submission and pending admission. Submission is explicit; no automatic first
+    recovery is enabled.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialRecoveryReviewDecisionRequest):
+        body (WorkflowInitialRecoveryReviewDecisionRequest): Decision and policy version for
+            submitting an initial recovery review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,16 +177,18 @@ async def asyncio_detailed(
 ) -> Response[Problem | WorkflowInitialRecoveryReview]:
     """Submit or cancel a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery.
+    Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats
+    evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready
+    notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed
+    policy authority block submission and pending admission. Submission is explicit; no automatic first
+    recovery is enabled.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialRecoveryReviewDecisionRequest):
+        body (WorkflowInitialRecoveryReviewDecisionRequest): Decision and policy version for
+            submitting an initial recovery review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,16 +218,18 @@ async def asyncio(
 ) -> Problem | WorkflowInitialRecoveryReview | None:
     """Submit or cancel a durable first-recovery review
 
-     Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a
-    live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically
-    creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never
-    prepare or submit. Expiry and changed policy authority block submission and pending admission.
-    Submission is explicit; no automatic first recovery is enabled.
+     Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery.
+    Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats
+    evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready
+    notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed
+    policy authority block submission and pending admission. Submission is explicit; no automatic first
+    recovery is enabled.
 
     Args:
         slug (str):
         review_id (UUID):
-        body (WorkflowInitialRecoveryReviewDecisionRequest):
+        body (WorkflowInitialRecoveryReviewDecisionRequest): Decision and policy version for
+            submitting an initial recovery review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

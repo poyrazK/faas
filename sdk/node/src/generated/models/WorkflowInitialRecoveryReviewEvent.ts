@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Notification carrying an initial recovery review and its captured evidence.
+ */
 export type WorkflowInitialRecoveryReviewEvent = {
   status: 'prepared' | 'submitted' | 'cancelled' | 'expired' | 'stale';
   reason: string;

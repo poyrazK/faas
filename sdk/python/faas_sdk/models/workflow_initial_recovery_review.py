@@ -47,6 +47,7 @@ class WorkflowInitialRecoveryReview:
     app_id: UUID
     app: str
     failure: WorkflowInitialFailure
+    """One captured generation-zero workflow failure."""
     target: WorkflowRunRecoveryTarget
     """One reviewed workflow run and resume count. Retry children identify the saved parent item. Initial failure
     targets may identify retained generation-zero evidence, which is checked again at creation and admission."""
@@ -68,6 +69,7 @@ class WorkflowInitialRecoveryReview:
     later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
    """
     evidence_repair: WorkflowInitialEvidenceRepairReceipt | Unset = UNSET
+    """Recorded result of an initial recovery evidence repair."""
     automatic_block_reason: str | Unset = UNSET
     automatic_block_sequence: int | Unset = UNSET
     automatic_block_notification: WorkflowRecoveryAutomaticBlockedNotification | Unset = UNSET

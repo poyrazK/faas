@@ -21,6 +21,8 @@ T = TypeVar("T", bound="WorkflowInitialFailures")
 
 @_attrs_define
 class WorkflowInitialFailures:
+    """Page of captured initial workflow failures."""
+
     observed_at: datetime.datetime
     coverage: WorkflowInitialFailuresCoverage
     items: list[WorkflowInitialFailure]

@@ -18,6 +18,8 @@ T = TypeVar("T", bound="WorkflowInitialFailure")
 
 @_attrs_define
 class WorkflowInitialFailure:
+    """One captured generation-zero workflow failure."""
+
     id: UUID
     app_id: UUID
     run_id: UUID

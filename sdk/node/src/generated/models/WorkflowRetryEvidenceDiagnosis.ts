@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { EventRecoveryExecution } from './EventRecoveryExecution.js';
 import type { WorkflowInitialEvidenceRepairReceipt } from './WorkflowInitialEvidenceRepairReceipt.js';
+/**
+ * Consistent diagnosis of retained evidence for a frozen retry action.
+ */
 export type WorkflowRetryEvidenceDiagnosis = {
   evidence_kind?: 'parent' | 'child';
   item_position?: number;

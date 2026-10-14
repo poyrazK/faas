@@ -10,6 +10,8 @@ T = TypeVar("T", bound="WorkflowInitialRecoveryReviewRequest")
 
 @_attrs_define
 class WorkflowInitialRecoveryReviewRequest:
+    """Parameters for preparing a durable initial recovery review."""
+
     expected_policy_version: int
 
     def to_dict(self) -> dict[str, Any]:
