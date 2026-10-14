@@ -61,19 +61,19 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	}
 	instances, err := client.ListInstancesWithHistory(ctx, slug, true)
 	if err != nil {
-		fmt.Fprintln(osStderr, appLogsDegradedMessage(`{"code":"not_found"}`))
+		_, _ = fmt.Fprintln(osStderr, appLogsDegradedMessage(`{"code":"not_found"}`))
 		return 3
 	}
 	instance, selector, ok := parkedLogsSelection(instances, since)
 	if !ok {
-		fmt.Fprintf(osStderr, "%s has no running instance and no instance with activity in the requested window; wake it with `gregale wake %s`.\n", slug, slug)
+		_, _ = fmt.Fprintf(osStderr, "%s has no running instance and no instance with activity in the requested window; wake it with `gregale wake %s`.\n", slug, slug)
 		return 3
 	}
 	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
 	if filter.Level != "" {
 		header += " --level is not applied to retained logs."
 	}
-	fmt.Fprintln(osStderr, header)
+	_, _ = fmt.Fprintln(osStderr, header)
 	return runLogs(ctx, slug, deployment, api.LogFilter{Grep: filter.Grep}, &selector, false, explain)
 }
 
