@@ -121,7 +121,7 @@ var AllowedAppWebhookEvents = []string{
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
 	"automation.recovery_review_ready", "automation.recovery_review_finished",
-	"automation.recovery_policy_paused", "automation.recovery_queue_blocked",
+	"automation.recovery_polling_status", "automation.recovery_policy_paused", "automation.recovery_queue_blocked",
 	"automation.recovery_health_alert", "automation.recovery_health_recovered",
 }
 

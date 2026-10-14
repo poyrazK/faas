@@ -2626,6 +2626,15 @@ type DebugRegressionView struct {
 	LastDetectedAt  string
 	RequestsURL     string
 	CompareURL      string
+	// Kind is latency, errors or latency_and_errors; ErrorRatePct and
+	// ErrorRateBasePct are the route's HTTP 5xx share after and before the
+	// deployment, preformatted ("12.5").
+	Kind             string
+	HasErrors        bool
+	HasLatency       bool
+	ErrorRatePct     string
+	ErrorRateBasePct string
+	ErrorCount       int
 }
 
 // DebugRequestView is one row in the debugger request table.

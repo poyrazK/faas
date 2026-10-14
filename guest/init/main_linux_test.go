@@ -460,6 +460,36 @@ func TestBuildArgv_DependencyCache(t *testing.T) {
 	}
 }
 
+// adr: 740 — with the dependency cache on, the Railpack shell asks the
+// re-executed guest-init after prepare and exports only when it does not
+// answer "keep". The script runs here with stub tools.
+func TestBuildArgv_DependencyCacheExportIsConditional(t *testing.T) {
+	argv := buildArgv(api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true, DependencyCacheImport: true})
+	script := argv[2]
+	if !strings.Contains(script, dependencyInputsHelperEnv+"="+dependencyInputsHelperValue+" /proc/1/exe '/build/railpack-plan.json' '/build/src' '/build/cache' '/build/out'") {
+		t.Fatalf("script does not run the dependency-inputs helper: %s", script)
+	}
+	for answer, wantExport := range map[string]bool{"keep": false, "export": true, "": true} {
+		helper := filepath.Join(t.TempDir(), "helper")
+		if err := os.WriteFile(helper, []byte("#!/bin/sh\necho '"+answer+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stubbed := strings.NewReplacer(
+			"/usr/local/bin/railpack", "true",
+			"/proc/1/exe", helper,
+			"exec /usr/local/bin/buildctl", "exec echo buildctl",
+		).Replace(script)
+		out, err := exec.Command("/bin/sh", "-c", stubbed).Output()
+		if err != nil {
+			t.Fatalf("answer %q: %v", answer, err)
+		}
+		got := string(out)
+		if strings.Contains(got, "--export-cache type=local,dest=/build/out/cache,mode=max") != wantExport || !strings.Contains(got, "--output type=oci,dest=/build/out/image.tar") {
+			t.Fatalf("answer %q ran: %s", answer, got)
+		}
+	}
+}
+
 func TestRemoveOversizedDependencyCache(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cache")
 	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0o700); err != nil {

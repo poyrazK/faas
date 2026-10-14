@@ -2697,6 +2697,9 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if fresh {
 		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			// The client sees only "capacity_unavailable"; without the cause a
+			// failed cold scenario run cannot be traced (hunt #10).
+			s.log.ErrorContext(r.Context(), "invalidate preview snapshots", "app", app.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not invalidate preview snapshots"))
 			return
 		}

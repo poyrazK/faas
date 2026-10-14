@@ -31,13 +31,13 @@ func TestAutomationRecoveryPolicyChangePreview(t *testing.T) {
 		if json.NewDecoder(r.Body).Decode(&got) != nil || got.ExpectedVersion != 4 {
 			t.Fatalf("request %+v", got)
 		}
-		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyChangePreview{Current: api.WorkflowRecoveryPolicyResponse{Version: 4}, Proposed: got.Policy, NextVersion: 5, PendingSuppressed: 2, OutstandingRetained: 1, HourlyExecutions: 1, RemainingExecutionBudget: 1, InspectedJobs: 5, JobsTruncated: true})
+		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyChangePreview{Current: api.WorkflowRecoveryPolicyResponse{Version: 4}, Proposed: got.Policy, NextVersion: 5, PendingSuppressed: 2, OutstandingRetained: 1, HourlyExecutions: 1, RemainingExecutionBudget: 1, InspectedJobs: 5, JobsTruncated: true, InitialFailures: &api.WorkflowRecoveryInitialPolicyChangePreview{Coverage: "partial", InspectedFailures: 1, Eligible: 1, WouldPrepare: 1, WouldSubmit: 0, Truncated: true, Candidates: []api.WorkflowRecoveryInitialPolicyChangeCandidate{{Failure: api.WorkflowInitialFailure{ID: "failure", Workflow: "recover", RunID: "run", FailureStatus: "dead"}, Eligibility: "eligible", Preparation: "would_prepare", Execution: "outstanding_recovery", Blockers: []string{}}}}})
 	})
 	out := captureAutomationStdout(t)
 	if code := cmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--file", path, "--preview"}); code != 0 || calls != 1 {
 		t.Fatalf("code %d calls %d", code, calls)
 	}
-	for _, want := range []string{"version 4 -> 5", "Pending retries suppressed: 2", "execution slots retained: 1", "spent 1/hour", "Inspected jobs: 5", "jobs truncated true", "Advisory only"} {
+	for _, want := range []string{"version 4 -> 5", "Pending recoveries suppressed: 2", "execution slots retained: 1", "spent 1/hour", "Inspected jobs: 5", "jobs truncated true", "Advisory only", "Initial failures: 1 inspected", "would prepare 1", "would submit 0", "execution outstanding_recovery", "Initial sample: partial coverage | truncated true"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %s: %s", want, out.String())
 		}

@@ -138,6 +138,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
+	initialCompletionNext                map[string]time.Time
 	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
 	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
 	eventExecutionCoverage               map[string]executionCoverage
@@ -416,7 +418,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
-	devWatchCommands     map[string]string
+	devWatch             map[string]DevWatchSetting
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string
@@ -521,6 +523,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	appWebhookDeliverySources       map[string]string
 	entityOutboxAcceptances         map[string]string
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int

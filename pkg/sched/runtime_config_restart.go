@@ -245,6 +245,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 				continue
 			}
 
+			// More instances than the app's slots allow (max_concurrency was
+			// lowered after scale-out): no candidate can be admitted, so retire
+			// surplus predecessors first, always keeping one serving. On
+			// production-us a restart after lowering max_concurrency from 3 to
+			// 1 retried forever on "max_concurrency is 2; 3 already live"
+			// (hunt #10, H10-39).
+			if len(fresh) == 0 && len(staleServing) > 1 && e.ledger.Concurrency(appID) >= maxConcurrency+1 {
+				if err := e.retireRuntimeConfigInstance(ctx, appID, deployment.ID, staleServing[0]); err != nil {
+					return CoordOutcome{}, err
+				}
+				continue
+			}
+
 			candidateCtx := withRequestedWakeID(WithScope(ctx, deployment.Scope), wakeID)
 			result, wakeErr := e.admitAndDispatchWithOptions(candidateCtx, appID, deployment.ID,
 				instanceModeForApp(app), TriggerRuntimeConfigRestart, false, true)

@@ -10725,7 +10725,13 @@ const (
 	WorkflowRecoveryPolicyReviewsMax         = 1000
 	WorkflowRecoveryPolicyJobsPerPoll        = 5
 	WorkflowRecoveryPolicyPollBatch          = 10
+	WorkflowInitialManualCompletionPollBatch = WorkflowRecoveryPolicyPollBatch
 	WorkflowRecoveryPolicyPollInterval       = time.Minute
+	WorkflowInitialObservationMaxBackoff     = 30 * time.Minute
+	WorkflowInitialObservationMaxAttempts    = 32
+	WorkflowAutomaticPollingMaxBackoff       = WorkflowInitialObservationMaxBackoff
+	WorkflowAutomaticPollingMaxAttempts      = WorkflowInitialObservationMaxAttempts
+	WorkflowRecoveryPollingAlertAttempts     = 3
 )
 
 // Active condition summaries bound context retention and displayed groups.
@@ -10806,6 +10812,12 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// WorkflowInitialRecoveryReviewLifetime bounds first-recovery approval freshness.
+const WorkflowInitialRecoveryReviewLifetime = EventRecoveryJobLifetime
+
+// WorkflowRecoveryOverviewItemsMax bounds retained issue and manual review samples.
+const WorkflowRecoveryOverviewItemsMax = 100
 
 // Checklist watches are durable within a readiness subscription; polling rotates a bounded sample.
 const OperationWorkflowPlaybookEvidenceWatchesPerSubscriptionMax = 20

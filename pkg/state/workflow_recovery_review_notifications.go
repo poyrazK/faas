@@ -264,6 +264,9 @@ func recoveryReviewNotificationAllowed(ctx context.Context, s WorkflowRecoveryRe
 	if _, err := uuid.Parse(payload.ReviewID); err != nil || payload.EventID != recoveryReviewNotificationID(payload.ReviewID) || !sameMemUUID(payload.AppID, row.AppID) {
 		return false, "invalid_scope", nil //nolint:nilerr // Invalid retained payloads are terminal delivery rejections, not retriable store failures.
 	}
+	if payload.InitialFailureID != "" {
+		return initialReviewNotificationAllowed(ctx, s, row, payload, now)
+	}
 	r, allowed, reason, err := recoveryReviewNeedsNotification(ctx, s, row.AccountID, row.AppID, payload.ReviewID, now)
 	if err != nil || !allowed {
 		return allowed, reason, err

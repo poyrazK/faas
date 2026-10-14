@@ -2188,7 +2188,11 @@
       "app_id",
       "deployment_id",
       "dismissed_until",
+      "error_count",
+      "error_rate_base_pct",
+      "error_rate_pct",
       "first_detected_at",
+      "kind",
       "last_detected_at",
       "p95_base_ms",
       "p95_ms",
@@ -2659,6 +2663,7 @@
     "columns": [
       "app_id",
       "command",
+      "host",
       "updated_at"
     ],
     "kind": "operational"
@@ -10625,6 +10630,22 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_initial_recovery_reviews",
+    "columns": [
+      "app_id",
+      "completion_next_observe_at",
+      "expires_at",
+      "failure_id",
+      "id",
+      "job_id",
+      "policy_version",
+      "prepared_at",
+      "review",
+      "submitted_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_operation_effects",
     "columns": [
       "account_id",
@@ -10711,7 +10732,10 @@
       "automatic_failures",
       "automatic_pause_reason",
       "automatic_paused_at",
+      "automatic_poll_failure",
+      "automatic_poll_notification",
       "enabled",
+      "initial_failure_cursor",
       "job_cursor",
       "last_evaluated_at",
       "next_evaluate_at",
