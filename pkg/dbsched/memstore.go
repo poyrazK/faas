@@ -100,7 +100,7 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 	for _, n := range m.nodes {
 		nodes = append(nodes, n)
 	}
-	node, ok := pickNode(nodes, m.usageLocked(), vm.VolumeBytes, vm.NodeID)
+	node, ok := pickNode(nodes, m.usageLocked(), vm.VolumeBytes, vm.NodeID, vm.Major)
 	if !ok {
 		return VM{}, ErrNoCapacity
 	}

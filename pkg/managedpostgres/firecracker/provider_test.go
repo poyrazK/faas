@@ -8,6 +8,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/sha256"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -302,7 +303,7 @@ func TestParseConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.HostSuffix != "db.gregale.test" || cfg.Port != 5432 || cfg.TLSMode != "verify-full" || cfg.Database != "gregale" ||
-		len(cfg.Majors) != 1 || cfg.Majors[0] != 17 || cfg.MaxStorageBytes != 100<<30 {
+		!slices.Equal(cfg.Majors, []int{14, 15, 16, 17, 18}) || cfg.MaxStorageBytes != 100<<30 {
 		t.Fatalf("defaults = %+v", cfg)
 	}
 	cfg, err = ParseConfig(base(settingPort, "6432", settingTLSMode, "require", settingDatabase, "app_db", settingMajors, "16, 17", settingMaxStorage, "2147483648"))
@@ -403,7 +404,7 @@ func TestProvisionRejectsSpecsItCannotReportBack(t *testing.T) {
 		{"unbounded storage", func(s *managedpostgres.Spec) { s.StorageLimitBytes = 0 }, managedpostgres.ErrUnsupported},
 		{"storage over max", func(s *managedpostgres.Spec) { s.StorageLimitBytes = 200 << 30 }, managedpostgres.ErrUnsupported},
 		{"production class", func(s *managedpostgres.Spec) { s.Class = managedpostgres.ClassProduction }, managedpostgres.ErrUnsupported},
-		{"major not offered", func(s *managedpostgres.Spec) { s.PostgresMajor = 16 }, managedpostgres.ErrUnsupported},
+		{"major not offered", func(s *managedpostgres.Spec) { s.PostgresMajor = 13 }, managedpostgres.ErrUnsupported},
 		{"highly available", func(s *managedpostgres.Spec) { s.Availability = managedpostgres.AvailabilityHighlyAvailable }, managedpostgres.ErrUnsupported},
 		{"invalid class", func(s *managedpostgres.Spec) { s.Class = "huge" }, managedpostgres.ErrInvalid},
 	}

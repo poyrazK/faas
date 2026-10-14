@@ -4,7 +4,10 @@ package dbvm
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestValidateImageRequiresADigest(t *testing.T) {
@@ -51,6 +54,31 @@ func TestPruneBasesKeepsCurrentAndOtherMajors(t *testing.T) {
 	for _, p := range []string{keep, other} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("%s removed", p)
+		}
+	}
+}
+
+// The Ansible role pins the same images the release qualifies.
+func TestPostgresImagesMatchTheAnsibleDefaults(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "database_vmmd", "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defaults struct {
+		Images map[string]string `yaml:"database_vmmd_postgres_images"`
+	}
+	if err := yaml.Unmarshal(raw, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if len(defaults.Images) != len(PostgresImages) {
+		t.Fatalf("ansible pins %d majors, the release %d", len(defaults.Images), len(PostgresImages))
+	}
+	for major, image := range PostgresImages {
+		if err := ValidateImage(image); err != nil {
+			t.Errorf("major %d: %v", major, err)
+		}
+		if got := defaults.Images[strconv.Itoa(major)]; got != image {
+			t.Errorf("major %d: ansible pins %q, the release %q", major, got, image)
 		}
 	}
 }

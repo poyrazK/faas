@@ -33,7 +33,7 @@ type metalNode struct {
 	archiveDir string
 }
 
-func newMetalNode(t *testing.T, workdir, base, name string, capacity int64, leases *topLeaser, bucket dbarchive.Remote) *metalNode {
+func newMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases *topLeaser, bucket dbarchive.Remote) *metalNode {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -64,7 +64,7 @@ func newMetalNode(t *testing.T, workdir, base, name string, capacity int64, leas
 	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
 	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
 		JailBase: filepath.Join(workdir, name+"j"), VolumeRoot: filepath.Join(dir, "volumes"),
-		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
+		KernelPath: "/srv/fc/kernel/1.7.0", Bases: bases, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: leases,
 		ArchiveSocket: filepath.Join(dir, "a.sock"),
 	})
@@ -95,8 +95,8 @@ func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
 	_ = os.RemoveAll(bucket.Dir)
 	t.Cleanup(func() { _ = os.RemoveAll(bucket.Dir) })
 	leases := &topLeaser{}
-	a := newMetalNode(t, workdir, base, "na", 20<<30, leases, bucket)
-	b := newMetalNode(t, workdir, base, "nb", 10<<30, leases, bucket)
+	a := newMetalNode(t, workdir, map[int]string{17: base}, "na", 20<<30, leases, bucket)
+	b := newMetalNode(t, workdir, map[int]string{17: base}, "nb", 10<<30, leases, bucket)
 	store := NewMemStore()
 	seedNodes(t, store, a.node, b.node)
 	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {

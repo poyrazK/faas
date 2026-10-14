@@ -18443,16 +18443,18 @@ UPDATE customer_workflow_playbook_progress SET payload=sqlc.arg(payload),revisio
 -- written only by schedd's database scheduler (pkg/dbsched).
 
 -- name: UpsertDatabaseNode :exec
-INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle)
-VALUES (sqlc.arg(id), sqlc.arg(target_url), sqlc.arg(admission_ceiling_mb), sqlc.arg(volume_capacity_bytes), sqlc.arg(boot_slots), sqlc.arg(lifecycle))
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle)
+VALUES (sqlc.arg(id), sqlc.arg(target_url), sqlc.arg(admission_ceiling_mb), sqlc.arg(volume_capacity_bytes), sqlc.arg(boot_slots),
+    sqlc.arg(postgres_majors)::integer[], sqlc.arg(lifecycle))
 ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
     admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
     volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
     boot_slots = EXCLUDED.boot_slots,
+    postgres_majors = EXCLUDED.postgres_majors,
     lifecycle = EXCLUDED.lifecycle, updated_at = now();
 
 -- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle
 FROM database_nodes ORDER BY id;
 
 -- name: LockDatabaseNode :one

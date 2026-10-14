@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -57,7 +58,15 @@ type Node struct {
 	// BootSlots caps the databases booting on the node at once; zero
 	// stores DefaultBootSlots.
 	BootSlots int
+	// Majors are the PostgreSQL majors the node has base drives for;
+	// empty means any.
+	Majors    []int
 	Lifecycle string
+}
+
+// offers reports whether the node can run a database of major.
+func (n Node) offers(major int) bool {
+	return len(n.Majors) == 0 || slices.Contains(n.Majors, major)
 }
 
 // DefaultBootSlots is a node's boot slots when none are configured.
@@ -251,14 +260,15 @@ type nodeUsage struct {
 	waking      int64
 }
 
-// pickNode chooses the active node with the most free volume capacity that
-// still fits volumeBytes; a non-empty pin allows only that node. Ties break
+// pickNode chooses the active node offering major with the most free
+// volume capacity that still fits volumeBytes; a non-empty pin allows only
+// that node. Ties break
 // on node id for determinism.
-func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64, pin string) (Node, bool) {
+func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64, pin string, major int) (Node, bool) {
 	var best Node
 	var bestFree int64 = -1
 	for _, n := range nodes {
-		if n.Lifecycle != NodeActive || (pin != "" && n.ID != pin) {
+		if n.Lifecycle != NodeActive || (pin != "" && n.ID != pin) || !n.offers(major) {
 			continue
 		}
 		free := n.VolumeCapacityBytes - usage[n.ID].volumeBytes
@@ -306,7 +316,7 @@ func moveTarget(nodes []Node, usage map[string]nodeUsage, vm VM, target string) 
 			others = append(others, n)
 		}
 	}
-	node, ok := pickNode(others, usage, vm.VolumeBytes, target)
+	node, ok := pickNode(others, usage, vm.VolumeBytes, target, vm.Major)
 	if !ok {
 		if target == vm.NodeID {
 			return Node{}, fmt.Errorf("%w: the database is already on %s", ErrInvalid, target)

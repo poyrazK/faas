@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/dbsched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -28,6 +30,7 @@ import (
 //	admission_ceiling_mb = 48000
 //	volume_capacity_bytes = 3000000000000
 //	boot_slots = 8
+//	postgres_majors = [14, 15, 16, 17, 18]
 //
 // Listed nodes are upserted into database_nodes at startup. Without the
 // table the database RPCs return UNIMPLEMENTED.
@@ -59,6 +62,10 @@ type DatabaseNodeConfig struct {
 	// BootSlots caps the databases booting on the node at once (default
 	// dbsched.DefaultBootSlots); roughly its physical cores.
 	BootSlots int `toml:"boot_slots"`
+	// PostgresMajors lists the majors whose base drives the node's vmmd
+	// builds (its [database_vms.images]); empty means any. Databases are
+	// placed, moved and restored only onto nodes offering their major.
+	PostgresMajors []int `toml:"postgres_majors"`
 	// Lifecycle is active (default), draining or unavailable.
 	Lifecycle string `toml:"lifecycle"`
 }
@@ -75,11 +82,13 @@ func (c DatabaseNodeConfig) node() (dbsched.Node, error) {
 		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: admission_ceiling_mb and volume_capacity_bytes must be positive", c.ID)
 	case c.BootSlots < 0 || c.BootSlots > 256:
 		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: boot_slots must be 1-256", c.ID)
+	case slices.ContainsFunc(c.PostgresMajors, func(m int) bool { return m < dbguest.MinMajor || m > dbguest.MaxMajor }):
+		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: postgres_majors must be %d-%d", c.ID, dbguest.MinMajor, dbguest.MaxMajor)
 	case lifecycle != dbsched.NodeActive && lifecycle != dbsched.NodeDraining && lifecycle != dbsched.NodeUnavailable:
 		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: unknown lifecycle %q", c.ID, lifecycle)
 	}
 	return dbsched.Node{ID: c.ID, TargetURL: c.TargetURL, AdmissionCeilingMB: c.AdmissionCeilingMB, VolumeCapacityBytes: c.VolumeCapacityBytes,
-		BootSlots: c.BootSlots, Lifecycle: lifecycle}, nil
+		BootSlots: c.BootSlots, Majors: c.PostgresMajors, Lifecycle: lifecycle}, nil
 }
 
 // databaseNodeVerifier binds database-node vmmd certificates to the

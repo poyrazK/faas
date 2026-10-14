@@ -30532,7 +30532,7 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 }
 
 const listDatabaseNodes = `-- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle
 FROM database_nodes ORDER BY id
 `
 
@@ -30542,6 +30542,7 @@ type ListDatabaseNodesRow struct {
 	AdmissionCeilingMb  int32
 	VolumeCapacityBytes int64
 	BootSlots           int32
+	PostgresMajors      []int32
 	Lifecycle           string
 }
 
@@ -30560,6 +30561,7 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 			&i.AdmissionCeilingMb,
 			&i.VolumeCapacityBytes,
 			&i.BootSlots,
+			&i.PostgresMajors,
 			&i.Lifecycle,
 		); err != nil {
 			return nil, err
@@ -72152,12 +72154,14 @@ func (q *Queries) UpsertCustomerOperationWorkflowState(ctx context.Context, db D
 
 const upsertDatabaseNode = `-- name: UpsertDatabaseNode :exec
 
-INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle)
+VALUES ($1, $2, $3, $4, $5,
+    $6::integer[], $7)
 ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
     admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
     volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
     boot_slots = EXCLUDED.boot_slots,
+    postgres_majors = EXCLUDED.postgres_majors,
     lifecycle = EXCLUDED.lifecycle, updated_at = now()
 `
 
@@ -72167,6 +72171,7 @@ type UpsertDatabaseNodeParams struct {
 	AdmissionCeilingMb  int32
 	VolumeCapacityBytes int64
 	BootSlots           int32
+	PostgresMajors      []int32
 	Lifecycle           string
 }
 
@@ -72179,6 +72184,7 @@ func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDat
 		arg.AdmissionCeilingMb,
 		arg.VolumeCapacityBytes,
 		arg.BootSlots,
+		arg.PostgresMajors,
 		arg.Lifecycle,
 	)
 	return err

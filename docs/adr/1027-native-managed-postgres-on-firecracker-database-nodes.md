@@ -701,6 +701,32 @@ an abort only has to discard the copy.
   `DatabaseArchiveBytes`); a test now derives it from the service
   descriptor.
 
+### PostgreSQL majors 14–18
+
+Every major from 14 to 18 runs the same way; guest-init already takes the
+major as a parameter (`/usr/lib/postgresql/<major>/bin`), and every setting
+and flag it uses exists from 14 on.
+
+- **Pins.** `dbvm.PostgresImages` pins the official Debian bookworm image of
+  each major to its linux/amd64 manifest; the `database_vmmd` role's
+  `database_vmmd_postgres_images` default carries the same pins, and a test
+  keeps them equal. vmmd builds every pinned major's base on the node.
+- **Placement.** A database node lists the majors it has bases for
+  (`database_nodes.postgres_majors`, schedd `[[database_scheduler.nodes]]
+  postgres_majors`; empty means any). Placement, moves and restores pick
+  only nodes offering the database's major, so a fleet can add a major one
+  node at a time. A major no node offers fails placement with no capacity.
+- **Driver.** The native driver advertises 14–18 by default;
+  `postgres_majors` in its settings narrows the list. Major upgrades of an
+  existing database (pg_upgrade) are not supported yet: a database keeps
+  the major it was created with.
+- Metal (`TestMetalPostgresMajors`): each base built from its pinned image
+  with this release's guest-init in 13–20 s; each major provisioned (with
+  its first base backup), took writes and restored to a point in time
+  between two commits, the restore holding only the earlier one.
+  Provision took 9.5–15.5 s for 14–17 and 27.7 s for 18; the restores
+  9.2–13.5 s.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives

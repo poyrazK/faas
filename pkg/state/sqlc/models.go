@@ -1890,6 +1890,7 @@ type DatabaseNode struct {
 	AdmissionCeilingMb  int32
 	VolumeCapacityBytes int64
 	BootSlots           int32
+	PostgresMajors      []int32
 	Lifecycle           string
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz

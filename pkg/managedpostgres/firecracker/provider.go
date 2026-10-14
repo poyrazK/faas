@@ -99,7 +99,9 @@ func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 	s := backend.Settings
 	cfg := Config{
 		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."),
-		Port: 5432, TLSMode: "verify-full", Database: "gregale", Majors: []int{17}, MaxStorageBytes: 100 << 30,
+		// Every major database nodes build bases for by default (the
+		// database_vmmd role's pins); postgres_majors narrows it.
+		Port: 5432, TLSMode: "verify-full", Database: "gregale", Majors: []int{14, 15, 16, 17, 18}, MaxStorageBytes: 100 << 30,
 		Classes: map[managedpostgres.ServiceClass]shape{
 			managedpostgres.ClassDevelopment: {vcpus: 1, memMiB: 512},
 			managedpostgres.ClassBurstable:   {vcpus: 2, memMiB: 1024},

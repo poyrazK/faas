@@ -50,7 +50,7 @@ func statesText(states []State) []string {
 func (s *PgStore) UpsertNode(ctx context.Context, node Node) error {
 	err := s.q.UpsertDatabaseNode(ctx, s.pool, sqlc.UpsertDatabaseNodeParams{
 		ID: node.ID, TargetUrl: node.TargetURL, AdmissionCeilingMb: int32(node.AdmissionCeilingMB),
-		VolumeCapacityBytes: node.VolumeCapacityBytes, BootSlots: int32(bootSlots(node)), Lifecycle: node.Lifecycle,
+		VolumeCapacityBytes: node.VolumeCapacityBytes, BootSlots: int32(bootSlots(node)), PostgresMajors: int32s(node.Majors), Lifecycle: node.Lifecycle,
 	})
 	if err != nil {
 		return fmt.Errorf("dbsched: upsert node %s: %w", node.ID, err)
@@ -66,7 +66,7 @@ func (s *PgStore) Nodes(ctx context.Context) ([]Node, error) {
 	out := make([]Node, len(rows))
 	for i, r := range rows {
 		out[i] = Node{ID: r.ID, TargetURL: r.TargetUrl, AdmissionCeilingMB: int(r.AdmissionCeilingMb), VolumeCapacityBytes: r.VolumeCapacityBytes,
-			BootSlots: int(r.BootSlots), Lifecycle: r.Lifecycle}
+			BootSlots: int(r.BootSlots), Majors: ints(r.PostgresMajors), Lifecycle: r.Lifecycle}
 	}
 	return out, nil
 }
@@ -146,7 +146,7 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if err != nil {
 			return VM{}, err
 		}
-		node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID)
+		node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID, vm.Major)
 		if !ok {
 			return VM{}, ErrNoCapacity
 		}
@@ -614,4 +614,23 @@ func (s *PgStore) AbortMove(ctx context.Context, id string, held time.Time, last
 		return ErrConflict
 	}
 	return nil
+}
+
+func int32s(in []int) []int32 {
+	out := make([]int32, len(in))
+	for i, v := range in {
+		out[i] = int32(v) //nolint:gosec // majors are 14-18
+	}
+	return out
+}
+
+func ints(in []int32) []int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]int, len(in))
+	for i, v := range in {
+		out[i] = int(v)
+	}
+	return out
 }

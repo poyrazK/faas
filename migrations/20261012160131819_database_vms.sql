@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS database_nodes (
     -- wake storm queues instead of starving every boot of CPU.
     boot_slots integer NOT NULL DEFAULT 4
         CHECK (boot_slots BETWEEN 1 AND 256),
+    -- The PostgreSQL majors the node has base drives for; empty is any.
+    postgres_majors integer[] NOT NULL DEFAULT '{}'
+        CHECK (postgres_majors <@ ARRAY[14, 15, 16, 17, 18]),
     lifecycle text NOT NULL DEFAULT 'active'
         CHECK (lifecycle IN ('active', 'draining', 'unavailable')),
     created_at timestamptz NOT NULL DEFAULT now(),

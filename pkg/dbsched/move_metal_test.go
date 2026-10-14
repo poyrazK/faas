@@ -30,8 +30,8 @@ func TestMetalMoveDatabase(t *testing.T) {
 	_ = os.RemoveAll(bucket.Dir)
 	t.Cleanup(func() { _ = os.RemoveAll(bucket.Dir) })
 	leases := &topLeaser{}
-	a := newMetalNode(t, workdir, base, "ma", 20<<30, leases, bucket)
-	b := newMetalNode(t, workdir, base, "mb", 10<<30, leases, bucket)
+	a := newMetalNode(t, workdir, map[int]string{17: base}, "ma", 20<<30, leases, bucket)
+	b := newMetalNode(t, workdir, map[int]string{17: base}, "mb", 10<<30, leases, bucket)
 	store := NewMemStore()
 	seedNodes(t, store, a.node, b.node)
 	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {

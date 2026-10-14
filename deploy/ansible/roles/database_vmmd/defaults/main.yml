@@ -8,11 +8,16 @@ database_vmmd_overlay_ip: ""
 database_vmmd_port: 50051
 # Persistent volumes, one file per database: put this on the local NVMe.
 database_vmmd_volume_root: /srv/db/volumes
-# PostgreSQL major -> image pinned to its linux/amd64 manifest digest.
+# PostgreSQL major -> image pinned to its linux/amd64 manifest digest (the
+# official bookworm images; pkg/dbvm.PostgresImages, kept equal by a test).
 # vmmd builds each base on the node and rebuilds it when a release ships
 # a new guest-init.
 database_vmmd_postgres_images:
+  "14": "docker.io/library/postgres@sha256:dc84be408a074d95deb782940fdf2509c423693614eea5b2f7d86452a3513f02"
+  "15": "docker.io/library/postgres@sha256:bbbf67eadd2381a2738a4a2e36d4c3936c36edd82d80e7ef00411194385d3829"
+  "16": "docker.io/library/postgres@sha256:ec9f656f17c8b4dfebf49e58cf5c46d493d4846d4ea6d8b85d0637f68ee33bfc"
   "17": "docker.io/library/postgres@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df"
+  "18": "docker.io/library/postgres@sha256:9551dd5bf356409a21b31248f49b33bba9bb1877365f3a7e933aecd9af3cf52d"
 # Host memory kept out of faas-db.slice for vmmd, pgproxyd and the OS. The
 # slice's MemoryMax fences every database VM together; schedd's
 # admission_ceiling_mb for this node should stay below it.

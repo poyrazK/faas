@@ -297,3 +297,53 @@ func TestCollectOrphansReleasesAMovedDatabasesOldVolume(t *testing.T) {
 		t.Fatalf("cleanup = %v; want the old volume released, never its archive dropped", got)
 	}
 }
+
+// adr: 1027 — a database lands only on a node with its major's base.
+func TestStorePlacesByPostgresMajor(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s,
+				Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 50 << 30, Majors: []int{17}, Lifecycle: NodeActive},
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-c", TargetURL: "unix:///c", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 20 << 30, Majors: []int{14, 16}, Lifecycle: NodeActive},
+			)
+			nodes, err := s.Nodes(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range nodes {
+				if n.ID == "db-c" && !slices.Equal(n.Majors, []int{14, 16}) || n.ID == "db-b" && len(n.Majors) != 0 {
+					t.Fatalf("node %s majors = %v", n.ID, n.Majors)
+				}
+			}
+			place := func(major int) VM {
+				t.Helper()
+				vm := newVM(1<<30, 384)
+				vm.Major = major
+				got, err := s.Place(ctx, vm)
+				if err != nil {
+					t.Fatalf("place major %d: %v", major, err)
+				}
+				return got
+			}
+			for major, want := range map[int]string{14: "db-c", 15: "db-b", 17: "db-a"} {
+				if got := place(major); got.NodeID != want {
+					t.Errorf("major %d placed on %s, want %s", major, got.NodeID, want)
+				}
+			}
+			// A major-15 database can only move to a node offering 15; db-b
+			// is the only one, and it is already there.
+			vm := place(15)
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.BeginMove(ctx, vm.DatabaseID, "", time.Minute); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("move with no node offering its major = %v, want ErrNoCapacity", err)
+			}
+			if _, err := s.BeginMove(ctx, vm.DatabaseID, "db-a", time.Minute); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("move onto a node without its major = %v, want ErrNoCapacity", err)
+			}
+		})
+	}
+}
