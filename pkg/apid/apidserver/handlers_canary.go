@@ -108,7 +108,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 			ProfileGateDecision: &profileDecision, ProfileGateOverride: req.ProfileGateOverride, ProfileGateRollback: profileIntent == 0,
 			RequireSafeReleaseLease:   requireWorkerLease,
 			RequireCanaryStageElapsed: requireWorkerLease,
-			CanaryStageDuration:       current.Duration,
+			CanaryStageDuration:       release.StageDwell(current, req.Decision),
 			Audit:                     audit,
 			RouteCheckFingerprint:     s.routeGateFingerprint,
 			RouteGateDecision:         &gateDecision,

@@ -6,8 +6,22 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// StageDwell is how long a canary stage must have run before the Safe
+// Deploy worker may advance it: its timer, or its MinDuration when the stage
+// is paced by evidence and the worker's validated record is conclusive, clean
+// evidence (ADR-1321). APID enforces it in the advance transaction, so a
+// worker cannot advance early on a no-evidence rule or a timer-only preset.
+func StageDwell(stage canary.Stage, decision *api.RolloutDecision) time.Duration {
+	if stage.MinDuration > 0 && decision != nil && decision.Kind == api.RolloutDecisionAdvance &&
+		(decision.Rule == api.RolloutRuleAdvanceHealthy || decision.Rule == api.RolloutRuleAdvanceProbeEvidence) {
+		return stage.MinDuration
+	}
+	return stage.Duration
+}
 
 // WorkerDecision validates the evidence meterd attached to a Safe Deploy
 // request and encodes it for storage (ADR-1237). A nil decision is allowed

@@ -152,6 +152,71 @@ func TestSafeDeployRoutesRecordRolloutDecisions(t *testing.T) {
 	}
 }
 
+// TestSafeDeployWorkerAdvancesPacedStageOnEvidence pins ADR-1321 at APID: a
+// worker may advance an adaptive stage after its MinDuration only with a
+// conclusive, clean evidence record; anything else waits for the timer.
+func TestSafeDeployWorkerAdvancesPacedStageOnEvidence(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name     string
+		preset   string
+		decision *api.RolloutDecision
+		wantOK   bool
+	}{
+		{name: "adaptive with probe evidence", preset: "adaptive", wantOK: true,
+			decision: ptrDecision(api.RolloutRuleAdvanceProbeEvidence)},
+		{name: "adaptive with healthy evidence", preset: "adaptive", wantOK: true,
+			decision: ptrDecision(api.RolloutRuleAdvanceHealthy)},
+		{name: "adaptive with the no-news rule", preset: "adaptive",
+			decision: ptrDecision(api.RolloutRuleAdvanceLowTraffic)},
+		{name: "adaptive without a record", preset: "adaptive"},
+		{name: "explicit balanced with probe evidence", preset: "balanced",
+			decision: ptrDecision(api.RolloutRuleAdvanceProbeEvidence)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDecisionFixture(t, "paced-worker")
+			if err := (*f.e.Store()).SetDeploymentCanaryState(ctx, f.canary.ID, tc.preset, 0, 4, time.Now().Add(-70*time.Second), "rolling_out"); err != nil {
+				t.Fatal(err)
+			}
+			canaryToken := "canary-service-secret-0000000000000001"
+			actionToken := "action-service-secret-0000000000000001"
+			mux := http.NewServeMux()
+			if err := (*f.e.S()).MountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(mux)
+			defer server.Close()
+			if err := (*f.e.Store()).StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			client := api.NewInternalSafeDeployClient(server.URL, canaryToken, actionToken)
+			var err error
+			if tc.decision != nil {
+				tc.decision.StableDeploymentID = f.prior.ID
+				_, err = client.AdvanceCanaryWithDecision(ctx, f.canary.ID, 0, *tc.decision)
+			} else {
+				_, err = client.AdvanceCanary(ctx, f.canary.ID, 0)
+			}
+			step := f.get(t).CanaryStep
+			if tc.wantOK {
+				if err != nil || step != 1 {
+					t.Fatalf("advance after 70s = step %d, err %v; want step 1", step, err)
+				}
+				return
+			}
+			var problem *api.APIError
+			if !errors.As(err, &problem) || problem.Problem.Status != http.StatusConflict || step != 0 {
+				t.Fatalf("advance after 70s = step %d, err %v; want 409 at step 0", step, err)
+			}
+		})
+	}
+}
+
+func ptrDecision(rule string) *api.RolloutDecision {
+	d := breakerDecision(rule, 0, "")
+	return &d
+}
+
 func TestCustomerRolloutTransitionsRecordManualDecisions(t *testing.T) {
 	f := newDecisionFixture(t, "decision-manual")
 	path := "/v1/deployments/" + f.canary.ID + "/canary/advance"

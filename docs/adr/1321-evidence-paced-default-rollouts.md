@@ -35,6 +35,8 @@ One minute is the floor because:
 - Each traffic share is observed for at least two progression ticks (30 s each) and several Prometheus scrapes.
 - The candidate is watched for at least three minutes before it takes all traffic, and the 5-minute first-wake 5xx rollback follows completion.
 
+APID enforces the same rule. Its worker advance transaction already rejected a step whose stage had not run for its duration. It now requires `MinDuration` instead only when the stage has one and the worker's validated record is `advance_healthy` or `advance_probe_evidence` (`release.StageDwell`). A worker without a record, with the no-news rule, or on a timer-only preset still waits for the timer.
+
 The decision record (ADR-1237) is unchanged: an early advance carries its usual rule, and its window is shorter than the stage's timer.
 
 ### Default and `--safe`

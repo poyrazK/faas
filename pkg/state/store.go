@@ -371,7 +371,8 @@ type CanaryAdvanceParams struct {
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
 	// RequireCanaryStageElapsed makes the store compare the persisted stage
-	// start against its duration using the store clock before any traffic write.
+	// start against CanaryStageDuration (the stage timer, or its evidence-paced
+	// minimum, ADR-1321) using the store clock before any traffic write.
 	// Customer-requested manual advances leave this disabled.
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
