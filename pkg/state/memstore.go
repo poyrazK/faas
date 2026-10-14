@@ -138,9 +138,14 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
+	initialCompletionNext                map[string]time.Time
 	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
 	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
 	eventExecutionCoverage               map[string]executionCoverage
+	mcpOAuthRetirements                  map[string]mcpRetirementEntry
+	mcpCatalogMonitors                   map[string]api.MCPCatalogMonitorSnapshot
+	mcpCatalogMonitorOwners              map[string]string
 	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
 	workflowFailureEvidence              map[string][]workflowFailureEvidence
 	workflowFailureCaptureStartedAt      time.Time
@@ -169,6 +174,7 @@ type MemStore struct {
 	qualificationExecutions              map[string]EnvironmentQualificationExecutionStatus
 	environmentExternalOwners            map[string]environmentExternalFieldOwner
 	environmentGitOps                    map[string]*environmentGitOpsMemory
+	gitlabOAuthConnections               map[string]GitLabOAuthConnection
 	financialEvidence                    []FinancialUsageRecord
 	financialSamplingWindows             map[time.Time]financialSamplingWindow
 	financialNextSequence                int64
@@ -412,6 +418,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
+	devWatch             map[string]DevWatchSetting
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string
@@ -516,6 +523,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	appWebhookDeliverySources       map[string]string
 	entityOutboxAcceptances         map[string]string
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int
@@ -717,6 +725,7 @@ type MemStore struct {
 
 	invocationEnvironmentQueueAdmissions map[string]InvocationEnvironmentQueueAdmission
 	invocationEnvironmentQueueReceipts   map[string]environmentQueueReceipt
+	invocationQueueLeaseReceipts         map[string]queueLeaseReceipt
 	invocationWorkEnvironmentAdmissions  map[string]InvocationWorkEnvironmentAdmission
 	invocationWorkEnvironmentDomains     map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
@@ -745,6 +754,8 @@ type MemStore struct {
 	// crashCaptures / crashSettings are ADR-733 crash snapshots.
 	crashCaptures map[string]CrashCapture
 	crashSettings map[string]CrashSnapshotSettings
+	// appTaskAttach holds ADR-1037 interactive-session records by task id.
+	appTaskAttach map[string]AppTaskAttach
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -1109,6 +1120,9 @@ type MemStore struct {
 	runtimeUpgradeCutovers          map[string]RuntimeUpgradeCutover
 	runtimeUpgradeOperations        map[string]RuntimeUpgradeOperation
 	appHealthHistory                map[string]appHealthRecord
+	realtimeTickets                 map[string]storedRealtimeTicket
+	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
+	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -1500,6 +1514,7 @@ func NewMemStore() *MemStore {
 
 		invocationEnvironmentQueueAdmissions: map[string]InvocationEnvironmentQueueAdmission{},
 		invocationEnvironmentQueueReceipts:   map[string]environmentQueueReceipt{},
+		invocationQueueLeaseReceipts:         map[string]queueLeaseReceipt{},
 		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
 		invocationWorkEnvironmentDomains:     map[string]string{},
 		runtimeInstanceConfigProofs:          map[string]runtimeInstanceConfigProof{},
@@ -5282,7 +5297,7 @@ func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPe
 	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -5296,6 +5311,11 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
+	}
+	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
+	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
+	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
+		return Deployment{}, err
 	}
 	for _, sibling := range m.deployments {
 		if sibling.AppID == d.AppID && sibling.EnvironmentWorkloadManaged() {
@@ -6564,6 +6584,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.keyedReplayChildren, key)
 			delete(m.plainReplayChildren, key)
 			delete(m.invocationEnvironmentQueueReceipts, key)
+			delete(m.invocationQueueLeaseReceipts, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -6642,13 +6663,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.objectNotifications, key)
 		}
 	}
-	filteredUsage := m.usage[:0]
-	for _, v := range m.usage {
-		if v.AppID != id {
-			filteredUsage = append(filteredUsage, v)
-		}
-	}
-	m.usage = filteredUsage
+	// m.usage (usage_minutes) is retained like PgStore: it is the
+	// account's billing evidence for the month (ADR-1162).
 	filteredLogEvents := m.logEvents[:0]
 	for _, event := range m.logEvents {
 		if event.AppID != id {
@@ -6715,6 +6731,9 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		}
 	}
 	now := time.Now().UTC()
+	if err := m.retireDeletedAppLocked(a, now); err != nil {
+		return App{}, err
+	}
 	deadline := now.Add(AppDeleteGraceDuration())
 	a.Status = AppDeleted
 	if a.DeletedAt == nil {
@@ -8673,6 +8692,17 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
 	}
 
+	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
+	// live rows carrying all traffic must not collapse their split (H10-11).
+	remaining := 0
+	for id, other := range m.deployments {
+		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+			remaining += other.TrafficPercent
+		}
+	}
+	if remaining == 100 {
+		return
+	}
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
@@ -14724,7 +14754,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateDraining):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
 			out = append(out, ins)
 		}
 	}
@@ -14801,7 +14831,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm, StateFrozen:
 		default:
 			continue
 		}
@@ -18638,9 +18668,10 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 }
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
-// from the UTC month start, removes the account plan's included calendar-
-// month allowance, and converts the remainder to integer cents. Integer
-// math only — never float on money (CLAUDE.md).
+// from the UTC month start, removes the month's included allowance (the
+// largest plan grant recorded this month, ADR-1162), and converts the
+// remainder to integer cents. Integer math only — never float on money
+// (CLAUDE.md).
 //
 // Mirrors pgstore.CurrentMonthOverageCents: the scan is O(rows-in-month)
 // which on a one-box is bounded. The `now` argument is the caller's
@@ -18664,7 +18695,13 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 		}
 		mbSeconds += u.MBSeconds
 	}
-	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
+	var snapshots []FinancialPriceSnapshot
+	for _, p := range m.financialPrices {
+		if p.AccountID == accountID && p.PeriodStart.Equal(monthStart) {
+			snapshots = append(snapshots, p)
+		}
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -20151,6 +20188,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, SecretClass: SecretClassPersistent,
@@ -20164,6 +20204,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.SecretVersion++
@@ -20187,6 +20230,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, SecretClass: SecretClassPersistent,
@@ -20200,6 +20246,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -20236,6 +20285,9 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID,
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
@@ -20250,6 +20302,9 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID,
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -20489,6 +20544,9 @@ func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accou
 		return AppSecretRevocation{}, err
 	}
 	revocation.Targets = targets
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, true, revocation.CreatedAt); err != nil {
+		return AppSecretRevocation{}, err
+	}
 	m.deleteRuntimeAppSecretLocked(k)
 	m.secretRevocations[revocation.ID] = cloneAppSecretRevocation(revocation)
 	return revocation, nil
@@ -26153,6 +26211,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 			delete(m.keyedReplayChildren, id)
 			delete(m.plainReplayChildren, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)
+			delete(m.invocationQueueLeaseReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)
 			n++

@@ -185,6 +185,15 @@ type WarmResumeVMM interface {
 	ResumeWarmInstance(ctx context.Context, nodeID, instance string) error
 }
 
+// FrozenVMM is the additive frozen-tier capability (ADR-1151): freeze an idle
+// instance in place and thaw it after admission. Separate from RoutedVMM so
+// older vmmd clients and test doubles keep serving the existing lifecycle
+// surface; a node whose client lacks it answers 501 CodeNotImplemented.
+type FrozenVMM interface {
+	FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error)
+	ThawInstance(ctx context.Context, nodeID, instance string, imageHealthcheckRequired bool) (healthcheckVerified bool, err error)
+}
+
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
 // client. cmd/schedd wires the production sched.DialVMMContext;
 // tests inject a recording stub so they don't need a real socket.
@@ -537,6 +546,10 @@ type appTaskOutputVMMClient interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
+type appTaskInteractiveVMMClient interface {
+	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, AppTaskAttachSpec) (apptaskproto.Result, error)
+}
+
 type appTaskRestoreVMMClient interface {
 	RestoreAppTask(context.Context, AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error)
 }
@@ -648,6 +661,21 @@ func (r *VMMRouter) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instan
 			"App task streaming unavailable", "vmmd client does not support app task output streaming")
 	}
 	return taskClient.ExecuteAppTaskWithOutput(ctx, instance, req, receive)
+}
+
+// ExecuteInteractiveAppTask routes an interactive app task (ADR-1037) to the
+// node owning its VM; vmmd waits there for the attached client.
+func (r *VMMRouter) ExecuteInteractiveAppTask(ctx context.Context, nodeID, instance string, req apptaskproto.Request, attach AppTaskAttachSpec) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskInteractiveVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Interactive app tasks unavailable", "vmmd client does not support interactive app tasks")
+	}
+	return taskClient.ExecuteInteractiveAppTask(ctx, instance, req, attach)
 }
 
 type jobVMMClient interface {
@@ -821,6 +849,42 @@ func (r *VMMRouter) ResumeWarmInstanceWithImageHealthcheck(ctx context.Context, 
 		return errors.New("sched: warm resume cannot enforce image healthcheck")
 	}
 	return resumer.ResumeWarmInstanceWithImageHealthcheck(ctx, instance)
+}
+
+// FreezeInstance implements FrozenVMM (ADR-1151). The scheduler commits the
+// durable RUNNING -> FROZEN transition separately; this only forwards the
+// vmmd-side pause.
+func (r *VMMRouter) FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return FreezeReport{}, err
+	}
+	f, ok := cli.(interface {
+		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
+	})
+	if !ok {
+		return FreezeReport{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Freeze unavailable", "vmmd client does not support in-place freeze")
+	}
+	return f.FreezeInstance(ctx, instance, reclaim)
+}
+
+// ThawInstance implements FrozenVMM (ADR-1151). The scheduler admits the thaw
+// and commits FROZEN -> RUNNING separately; this only forwards the vmmd-side
+// resume.
+func (r *VMMRouter) ThawInstance(ctx context.Context, nodeID, instance string, imageHealthcheckRequired bool) (bool, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return false, err
+	}
+	t, ok := cli.(interface {
+		ThawInstance(context.Context, string, bool) (bool, error)
+	})
+	if !ok {
+		return false, api.NewProblem(501, api.CodeNotImplemented,
+			"Thaw unavailable", "vmmd client does not support in-place thaw")
+	}
+	return t.ThawInstance(ctx, instance, imageHealthcheckRequired)
 }
 
 // Destroy implements RoutedVMM.
@@ -1140,3 +1204,13 @@ func (r *VMMRouter) Logs(ctx context.Context, nodeID, instance string, sinceSeq 
 // fails the build here, before it surfaces as a runtime nil-method
 // panic in the wake loop.
 var _ RoutedVMM = (*VMMRouter)(nil)
+
+// VMMRouter carries the frozen-tier capability (ADR-1151), and so does the
+// per-node client it forwards to.
+var (
+	_ FrozenVMM = (*VMMRouter)(nil)
+	_           = interface {
+		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
+		ThawInstance(context.Context, string, bool) (bool, error)
+	}((*VMMClient)(nil))
+)

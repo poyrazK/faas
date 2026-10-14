@@ -1154,6 +1154,7 @@ export class AppsService {
   public static getRuntimePolicyStatus({
     slug,
     wait,
+    edgeRulesScope = 'app',
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1163,6 +1164,10 @@ export class AppsService {
      * Optional bounded wait for active state, up to 10s.
      */
     wait?: string,
+    /**
+     * Account scope covers all owned app rules, including wildcards and a conservative revision floor for unknown historical owners. Fleet scope includes all mutations.
+     */
+    edgeRulesScope?: 'app' | 'account' | 'fleet',
   }): CancelablePromise<RuntimePolicyStatusResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1172,6 +1177,7 @@ export class AppsService {
       },
       query: {
         'wait': wait,
+        'edge_rules_scope': edgeRulesScope,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

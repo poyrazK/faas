@@ -75,3 +75,26 @@ qualify this implementation increment.
 References: [Go response deadlines](https://pkg.go.dev/net/http#ResponseController),
 [Caddy transport timeouts](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy),
 [Cloudflare upload limits](https://developers.cloudflare.com/network/maximum-upload-size/).
+
+## Amendment (2026-10-14): HTML reads are no-transform on the proxied profile
+
+Hunt #9 (H9-S161) found that the proxied edge rewrites object bodies: a
+116-byte `text/html` object came back as 1,654 bytes (email obfuscation plus
+the bot-detection script), and as 1,054 bytes after the zone's per-host
+configuration rule turned off the rewriting features it can scope. The
+remaining injection, Cloudflare's JavaScript Detections, is a zone-wide bot
+setting that also protects customer apps. Cloudflare leaves responses marked
+`Cache-Control: no-transform` alone, so on the `proxied` profile the gateway
+adds `no-transform` to the `Cache-Control` of object reads (GET, HEAD and
+conditional 304/412) whose `Content-Type` is `text/html` or
+`application/xhtml+xml`. Stored directives are kept and only `no-transform` is
+appended, so clients see it on HTML objects only. Other media types and the
+`direct` profile are unchanged: no other edge feature rewrites them, and the
+S3 contract returns the stored `Cache-Control` byte for byte.
+
+Two proxied-edge limits remain and are documented rather than fixed here:
+Cloudflare resolves literal `/./` and `/../` path segments before the origin
+even with "Normalize URLs to origin" off (H9-S149), and it decompresses
+`Content-Encoding: gzip` objects for clients that do not send
+`Accept-Encoding: gzip`, with or without `no-transform` (H9-S145). Both go away
+with the `direct` profile.

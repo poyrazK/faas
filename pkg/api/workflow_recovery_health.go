@@ -10,6 +10,7 @@ import (
 
 // WorkflowRecoveryPolicyHealth reports recovery automation observations, not execution authority.
 type WorkflowRecoveryPolicyHealth struct {
+	Overview             *WorkflowRecoveryOverview      `json:"overview,omitempty"`
 	Status               string                         `json:"status"`
 	Reason               string                         `json:"reason"`
 	StallAfterSeconds    int                            `json:"stall_after_seconds"`
@@ -27,7 +28,7 @@ func ValidateRecoveryHealthThreshold(seconds int) error {
 // RecoveryPolicyHealth uses a bounded, consistent queue snapshot. Progress is sample-local.
 func RecoveryPolicyHealth(q WorkflowRecoveryAutomaticQueue, seconds int) WorkflowRecoveryPolicyHealth {
 	h := WorkflowRecoveryPolicyHealth{Status: "healthy", Reason: "no_observed_blocker", StallAfterSeconds: seconds, Queue: q}
-	auto := q.Policy.Policy.Enabled && q.Policy.Policy.Mode == "automatic_retry"
+	auto := q.Policy.Policy.Enabled && WorkflowRecoveryPolicyAutomaticMode(q.Policy.Policy.Mode)
 	blocked, stalled := "", ""
 	var latestPendingEvaluation time.Time
 	for _, entry := range q.Entries {
@@ -61,7 +62,7 @@ func RecoveryPolicyHealth(q WorkflowRecoveryAutomaticQueue, seconds int) Workflo
 			continue
 		}
 		switch e.Reason {
-		case "evidence_unknown", "inspection_error", "execution_wait", "admission_wait", "outstanding_retry", "execution_quota":
+		case "job_paused", "outstanding_recovery", "terminal_outcome_not_saved", "evidence_unknown", "inspection_error", "execution_wait", "admission_wait", "outstanding_retry", "execution_quota":
 			if blocked == "" {
 				blocked = e.Reason
 			}

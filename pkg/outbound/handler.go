@@ -68,6 +68,10 @@ type Handler struct {
 	// without their budgets and accounting. NewHandler turns it on; the
 	// daemon sets it from its configuration, where it defaults to off.
 	AIGatewayEnabled bool
+	// AIGatewayRollout limits customer AI integrations to listed accounts
+	// during the staged preview rollout; nil admits every account
+	// (ADR-998).
+	AIGatewayRollout AIGatewayRollout
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -205,6 +209,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if integration.AIProvider != "" && !h.AIGatewayEnabled {
 		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
+		return
+	}
+	if integration.AIProvider != "" && !h.aiGatewayAdmitsAccount(integration) {
+		// ADR-998: the staged rollout and the account's plan.
+		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_not_enabled_for_account")
+		writeProblem(w, http.StatusForbidden, "outbound_ai_gateway_unavailable", "The AI gateway is not enabled for this account", "")
 		return
 	}
 	// ADR-997: the replay worker calls in process for an account's own
@@ -823,3 +833,13 @@ func writeProblem(w http.ResponseWriter, status int, code, title, retryAfter str
 }
 
 var _ http.Handler = (*Handler)(nil)
+
+// aiGatewayAdmitsAccount applies the staged rollout and plan entitlement to a
+// customer AI integration (ADR-998). Operator integrations are not
+// customer-entitled and pass.
+func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
+	if integration.OwnerKind != IntegrationOwnerCustomer {
+		return true
+	}
+	return h.AIGatewayRollout.Allows(integration.AccountID) && AIGatewayEntitled(integration.AccountPlan)
+}

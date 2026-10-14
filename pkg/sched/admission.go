@@ -47,7 +47,7 @@ type NodeLedger struct {
 	// reservation check.
 	measured MeasuredMemory
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
-	// instances (ADR-957, admission_quiet.go).
+	// instances (ADR-1151, admission_quiet.go).
 	quietPaused QuietPaused
 	now         func() time.Time // nil means time.Now; tests set it
 }
@@ -80,6 +80,9 @@ type nodeReservation struct {
 	usedVCPU          int // Σ guest-visible vCPU topology on this node
 	usedCPUMillicores int // Σ sustained host CPU quota on this node
 	ceilingMB         int // latest per-node RAM admission ceiling
+	// frozenRAM is the part of residentRAM booked by frozen reservations
+	// (ADR-1151). It stays outside measured admission's overcommit cap.
+	frozenRAM int
 }
 
 // reservation remembers the node it belongs to so Release can route
@@ -104,6 +107,9 @@ type reservation struct {
 	cpuBoostUntil      time.Time
 	countsConc         bool // still in {WAKING,COLD_BOOTING,RUNNING}
 	admittedAt         time.Time
+	// frozen marks a frozen reservation (ADR-1151): admissionMB is the
+	// instance's measured charge and it books no vCPU, CPU or concurrency.
+	frozen bool
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -176,6 +182,10 @@ const (
 	// node RAM/vCPU/CPU but is not a serving replica and therefore must not
 	// consume the app's request-concurrency budget.
 	KindAppTask
+	// KindFrozen re-books a frozen instance (ADR-1151) when schedd seeds its
+	// ledger after a restart: Request.FrozenChargeMB of RAM, no vCPU, CPU or
+	// concurrency. A live freeze converts a reservation with Freeze instead.
+	KindFrozen
 	// KindFork is a quarantined production fork (ADR-732). It holds real
 	// node RAM/vCPU for its whole TTL but never serves traffic, so it must
 	// not consume the app's request-concurrency budget (invariant 1) while
@@ -188,7 +198,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFork
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindFork
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -252,6 +262,9 @@ type Request struct {
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
 	Kind Kind
+	// FrozenChargeMB is the RAM a KindFrozen reservation books, at least
+	// MeasuredChargeFloorMB.
+	FrozenChargeMB int
 	// Flexible jobs may use only capacity above the per-node app wake
 	// reserve. Placement applies the same reserve before selecting a node.
 	Flexible bool
@@ -376,6 +389,10 @@ func (l *NodeLedger) Admit(r Request) error {
 
 	if _, dup := l.entries[r.Instance]; dup {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
+	}
+	if r.Kind == KindFrozen {
+		l.admitFrozen_locked(r)
+		return nil
 	}
 
 	// ADR-590: apply the deployed environment's configured cap and the shared
@@ -672,6 +689,9 @@ func (l *NodeLedger) Release(instance string) {
 		if node.residentRAM < 0 {
 			node.residentRAM = 0
 		}
+		if e.frozen {
+			node.frozenRAM = max(node.frozenRAM-e.admissionMB, 0)
+		}
 		node.usedVCPU -= e.vcpu
 		if node.usedVCPU < 0 {
 			node.usedVCPU = 0
@@ -845,7 +865,7 @@ func (l *NodeLedger) NodeCount() int {
 // variant when measured admission is enabled.
 func (l *NodeLedger) ramHeadroom_locked(r Request, node *nodeReservation, ramCeiling int) error {
 	want := r.admissionMB()
-	used, basis := l.admissionUsed_locked(r.NodeID, node.residentRAM, ramCeiling)
+	used, basis := l.admissionUsed_locked(r.NodeID, node.residentRAM, node.frozenRAM, ramCeiling)
 	if used+want > ramCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"RAM headroom: node %q %s %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
@@ -860,7 +880,7 @@ func (l *NodeLedger) ramHeadroom_locked(r Request, node *nodeReservation, ramCei
 // it is the node's measured charge plus every reservation admitted after
 // the measurement, unless the reservations' overcommit cap binds first.
 // basis names the figure for capacity errors.
-func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, ceiling int) (used int, basis string) {
+func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceiling int) (used int, basis string) {
 	if l.measured == nil {
 		return reserved, "resident"
 	}
@@ -875,8 +895,10 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, ceiling int) 
 		}
 	}
 	// reserved + request <= cap  <=>  reserved - (cap - ceiling) + request <= ceiling
+	// Frozen reservations already book measured memory, so the cap on
+	// reservations leaves them out (ADR-1151).
 	overcommit := ceiling * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
-	if capped := reserved - overcommit; capped > used {
+	if capped := reserved - frozen - overcommit; capped > used {
 		return capped, "reservations beyond the overcommit allowance"
 	}
 	return used, "measured"
@@ -891,14 +913,14 @@ func (l *NodeLedger) AdmissionUsedMB(nodeID string) int {
 	defer l.mu.Unlock()
 	node := l.resident[nodeID]
 	if node == nil {
-		used, _ := l.admissionUsed_locked(nodeID, 0, l.ceilingForNode_locked(nodeID, api.Limits{}))
+		used, _ := l.admissionUsed_locked(nodeID, 0, 0, l.ceilingForNode_locked(nodeID, api.Limits{}))
 		return used
 	}
 	ceiling := node.ceilingMB
 	if ceiling <= 0 {
 		ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
 	}
-	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, ceiling)
+	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, ceiling)
 	return used
 }
 

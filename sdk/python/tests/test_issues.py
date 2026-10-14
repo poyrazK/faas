@@ -381,31 +381,67 @@ def test_cause_models_round_trip_selected_origin():
 
 
 def test_priority_preview_and_atomic_undo_sdk_contract():
-    import httpx
     from uuid import UUID
+
+    import httpx
+
+    from faas_sdk.api.apps.undo_issue_split_rule import sync
     from faas_sdk.client import AuthenticatedClient
     from faas_sdk.models.issue_split_preview import IssueSplitPreview
     from faas_sdk.models.issue_split_rule_undo_request import IssueSplitRuleUndoRequest
-    from faas_sdk.api.apps.undo_issue_split_rule import sync
+
     source = "11111111-1111-4111-8111-111111111111"
     rule_id = "22222222-2222-4222-8222-222222222222"
     target = "33333333-3333-4333-8333-333333333333"
-    preview = {"original_issue_id":source,"canonical_issue_id":source,"matcher":{"route":"/checkout"},
-               "lifetime_event_count":4,"retained_event_count":3,"matching_event_count":2,"nonmatching_event_count":1,
-               "unavailable_history_event_count":1,"matching_event_ids":[target],
-               "eligible_event_count":1,"shadowed_event_count":1,"eligible_event_ids":[target],"application_status":"new-rule"}
-    parsed=IssueSplitPreview.from_dict(preview)
+    preview = {
+        "original_issue_id": source,
+        "canonical_issue_id": source,
+        "matcher": {"route": "/checkout"},
+        "lifetime_event_count": 4,
+        "retained_event_count": 3,
+        "matching_event_count": 2,
+        "nonmatching_event_count": 1,
+        "unavailable_history_event_count": 1,
+        "matching_event_ids": [target],
+        "eligible_event_count": 1,
+        "shadowed_event_count": 1,
+        "eligible_event_ids": [target],
+        "application_status": "new-rule",
+    }
+    parsed = IssueSplitPreview.from_dict(preview)
     assert parsed.eligible_event_count == 1
     assert parsed.shadowed_event_count == 1
     assert parsed.to_dict()["application_status"] == "new-rule"
+
     def handle(request):
         assert request.method == "POST"
         assert request.url.path == f"/v1/apps/payments/issues/{source}/split-rules/{rule_id}/undo"
-        assert json.loads(request.content) == {"canonical_source_issue_id":source}
-        return httpx.Response(200,json={"id":rule_id,"source_issue_id":source,"target_issue_id":target,"priority":1,
-                                       "matcher":{"route":"/checkout"},"enabled":False,"initial_moved_event_count":1,
-                                       "unavailable_history_event_count":1,"created_at":"2026-10-11T12:00:00Z","updated_at":"2026-10-11T12:01:00Z"})
-    client=AuthenticatedClient(base_url="https://api.gregale.dev",token="test").set_httpx_client(httpx.Client(base_url="https://api.gregale.dev",transport=httpx.MockTransport(handle)))
-    result=sync("payments",UUID(source),UUID(rule_id),client=client,body=IssueSplitRuleUndoRequest(canonical_source_issue_id=UUID(source)))
+        assert json.loads(request.content) == {"canonical_source_issue_id": source}
+        return httpx.Response(
+            200,
+            json={
+                "id": rule_id,
+                "source_issue_id": source,
+                "target_issue_id": target,
+                "priority": 1,
+                "matcher": {"route": "/checkout"},
+                "enabled": False,
+                "initial_moved_event_count": 1,
+                "unavailable_history_event_count": 1,
+                "created_at": "2026-10-11T12:00:00Z",
+                "updated_at": "2026-10-11T12:01:00Z",
+            },
+        )
+
+    client = AuthenticatedClient(base_url="https://api.gregale.dev", token="test").set_httpx_client(
+        httpx.Client(base_url="https://api.gregale.dev", transport=httpx.MockTransport(handle))
+    )
+    result = sync(
+        "payments",
+        UUID(source),
+        UUID(rule_id),
+        client=client,
+        body=IssueSplitRuleUndoRequest(canonical_source_issue_id=UUID(source)),
+    )
     assert result.enabled is False
     assert str(result.target_issue_id) == target

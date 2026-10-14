@@ -19,7 +19,7 @@ class ProgressiveRollout:
     """
 
     stages: list[int]
-    """Strictly increasing rollout percentages in basis points"""
+    """Strictly increasing rollout percentages in basis points, ending at 10000."""
     current_stage: int
     """Zero-based active stage index."""
     minimum_used_requests: int

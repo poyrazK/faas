@@ -73,6 +73,14 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, false, 8080)
 }
 
+// HelloQueueWorkerImage accepts private push-queue deliveries with a 204 and
+// otherwise behaves like HelloImage. It is used to prove real queue delivery
+// after a GitOps graph release, without sending a synthetic smoke through the
+// customer queue.
+func HelloQueueWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack"})
+}
+
 // ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
 // full-rootfs OCI images and never launch a source builder. imaged still stages
 // and validates its builder base before subscribing, so this image carries the

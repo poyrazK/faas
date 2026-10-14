@@ -53,6 +53,8 @@
     {"path": "postgres", "source": "docs/managed-postgres.md"},
     {"path": "preview-environments", "source": "docs/preview-environments.md", "required_text": ["pr-{N}-{slug}"]},
     {"path": "profiling", "source": "docs/profiling.md"},
+    {"path": "queue-pull-leases", "source": "docs/queue-pull-leases.md"},
+    {"path": "realtime", "source": "docs/realtime.md"},
     {"path": "registry-credentials", "source": "docs/registry-credentials.md"},
     {"path": "runtime-node", "source": "docs/functions.md"},
     {"path": "scale-to-zero", "source": "docs/cold-wake.md"},

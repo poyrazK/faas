@@ -217,6 +217,8 @@ func (m *MemStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, 
 	receiptGateways := gateways
 	if len(routes) == 0 {
 		receiptGateways = []string{}
+	} else if !slices.Equal(gateways, m.environmentServingGatewayNamesLocked()) {
+		return EnvironmentWorkloadServingReceipt{}, false, ErrConflict
 	}
 	slices.SortFunc(routes, func(a, b EnvironmentWorkloadServingRoute) int { return strings.Compare(a.AppID, b.AppID) })
 	receipt, exists := m.environmentWorkloadServingReceipts[graph.ID]

@@ -11,9 +11,13 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
+    from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
     from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
     from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+    from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
     from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
+    from ..models.operation_workflow_review_response import OperationWorkflowReviewResponse
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessFollowUp")
@@ -48,6 +52,22 @@ class OperationWorkflowReadinessFollowUp:
     of a follow-up time clears it."""
     overdue: bool
     """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    attention_due_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReadinessFollowUp.attention_due_at. Earlier of human check-in and active decision
+    revalidation deadline, used for queue ordering and overdue filters; coordination remains unchanged."""
+    review_response: OperationWorkflowReviewResponse | Unset = UNSET
+    """OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
+    fence, independent of business workflow success."""
+    business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
+    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only."""
+    playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
+    """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
+    Polling preserves manual coordination and bounded ownership history."""
+    playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
+    """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
+    current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
+    completion remain human coordination."""
     outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
     """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
     human coordination. First observed application success is retained as a flag; it never automatically
@@ -99,6 +119,26 @@ class OperationWorkflowReadinessFollowUp:
 
         overdue = self.overdue
 
+        attention_due_at: str | Unset = UNSET
+        if not isinstance(self.attention_due_at, Unset):
+            attention_due_at = self.attention_due_at.isoformat()
+
+        review_response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_response, Unset):
+            review_response = self.review_response.to_dict()
+
+        business_impact: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_impact, Unset):
+            business_impact = self.business_impact.to_dict()
+
+        playbook_step: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_step, Unset):
+            playbook_step = self.playbook_step.to_dict()
+
+        playbook_escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.playbook_escalation, Unset):
+            playbook_escalation = self.playbook_escalation.to_dict()
+
         outcome_escalation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome_escalation, Unset):
             outcome_escalation = self.outcome_escalation.to_dict()
@@ -144,6 +184,16 @@ class OperationWorkflowReadinessFollowUp:
                 "overdue": overdue,
             }
         )
+        if attention_due_at is not UNSET:
+            field_dict["attention_due_at"] = attention_due_at
+        if review_response is not UNSET:
+            field_dict["review_response"] = review_response
+        if business_impact is not UNSET:
+            field_dict["business_impact"] = business_impact
+        if playbook_step is not UNSET:
+            field_dict["playbook_step"] = playbook_step
+        if playbook_escalation is not UNSET:
+            field_dict["playbook_escalation"] = playbook_escalation
         if outcome_escalation is not UNSET:
             field_dict["outcome_escalation"] = outcome_escalation
         if subscription_tenant_id is not UNSET:
@@ -170,9 +220,13 @@ class OperationWorkflowReadinessFollowUp:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_playbook_outcome_escalation import OperationWorkflowPlaybookOutcomeEscalation
+        from ..models.operation_workflow_playbook_step_assignment import OperationWorkflowPlaybookStepAssignment
         from ..models.operation_workflow_readiness_coordination import OperationWorkflowReadinessCoordination
         from ..models.operation_workflow_readiness_due_reminder import OperationWorkflowReadinessDueReminder
+        from ..models.operation_workflow_readiness_impact_event import OperationWorkflowReadinessImpactEvent
         from ..models.operation_workflow_readiness_outcome_escalation import OperationWorkflowReadinessOutcomeEscalation
+        from ..models.operation_workflow_review_response import OperationWorkflowReviewResponse
 
         d = dict(src_dict)
         subscription_id = UUID(d.pop("subscription_id"))
@@ -192,6 +246,41 @@ class OperationWorkflowReadinessFollowUp:
         coordination = OperationWorkflowReadinessCoordination.from_dict(d.pop("coordination"))
 
         overdue = d.pop("overdue")
+
+        _attention_due_at = d.pop("attention_due_at", UNSET)
+        attention_due_at: datetime.datetime | Unset
+        if isinstance(_attention_due_at, Unset):
+            attention_due_at = UNSET
+        else:
+            attention_due_at = datetime.datetime.fromisoformat(_attention_due_at)
+
+        _review_response = d.pop("review_response", UNSET)
+        review_response: OperationWorkflowReviewResponse | Unset
+        if isinstance(_review_response, Unset):
+            review_response = UNSET
+        else:
+            review_response = OperationWorkflowReviewResponse.from_dict(_review_response)
+
+        _business_impact = d.pop("business_impact", UNSET)
+        business_impact: OperationWorkflowReadinessImpactEvent | Unset
+        if isinstance(_business_impact, Unset):
+            business_impact = UNSET
+        else:
+            business_impact = OperationWorkflowReadinessImpactEvent.from_dict(_business_impact)
+
+        _playbook_step = d.pop("playbook_step", UNSET)
+        playbook_step: OperationWorkflowPlaybookStepAssignment | Unset
+        if isinstance(_playbook_step, Unset):
+            playbook_step = UNSET
+        else:
+            playbook_step = OperationWorkflowPlaybookStepAssignment.from_dict(_playbook_step)
+
+        _playbook_escalation = d.pop("playbook_escalation", UNSET)
+        playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset
+        if isinstance(_playbook_escalation, Unset):
+            playbook_escalation = UNSET
+        else:
+            playbook_escalation = OperationWorkflowPlaybookOutcomeEscalation.from_dict(_playbook_escalation)
 
         _outcome_escalation = d.pop("outcome_escalation", UNSET)
         outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset
@@ -248,6 +337,11 @@ class OperationWorkflowReadinessFollowUp:
             created_at=created_at,
             coordination=coordination,
             overdue=overdue,
+            attention_due_at=attention_due_at,
+            review_response=review_response,
+            business_impact=business_impact,
+            playbook_step=playbook_step,
+            playbook_escalation=playbook_escalation,
             outcome_escalation=outcome_escalation,
             subscription_tenant_id=subscription_tenant_id,
             platform_tenant_id=platform_tenant_id,

@@ -1,0 +1,33 @@
+version: 1
+suites:
+  http-combined:
+    scenarios:
+      - {scenario: combined-resilience, engine: real-vm, profile: warm}
+scenarios:
+  combined-resilience:
+    project: http-native-combined
+    source: ./native-bulkhead-app
+    timeout: 5m
+    secrets:
+      GREGALE_COMBINED_FIXTURE: '1'
+      LEDGER_NAMESPACE: '${run.id}'
+      NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          GREGALE_NATIVE_SSL_REQUEST: '1'
+          NATIVE_AUTH_CERT_PEM: '${env.GREGALE_NATIVE_AUTH_CERT_PEM}'
+          NATIVE_AUTH_KEY_PEM: '${env.GREGALE_NATIVE_AUTH_KEY_PEM}'
+          NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    cleanup:
+      - [node, ../test/native-combined-acceptance.mjs, cleanup]
+    requests:
+      - name: query-baseline
+        method: GET
+        path: /query
+        expect: {status: 200, json: {'/ready': true, '/value': 42, '/attempts': 1}}
+    command: [node, ../test/native-combined-acceptance.mjs, all]

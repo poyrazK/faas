@@ -137,7 +137,7 @@ func (s *PgStore) drainDrainedAppParkTransitions(ctx context.Context, limit int,
 		   and not exists (
 		       select 1 from instances i
 		        where i.app_id = a.id
-		          and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+		          and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 		   )
 		 order by p.requested_at, p.id
 		 for update of a skip locked

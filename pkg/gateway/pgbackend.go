@@ -2025,6 +2025,18 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 // removal is RefreshDeploymentWeights's job — that's where we
 // learn a deployment is no longer 'live'.
 func (b *PGBackend) EvictInstance(appID, instanceID string) {
+	b.removeInstance(appID, instanceID, true)
+}
+
+// WithdrawInstance removes an instance's routes without quarantining its ID.
+// A frozen instance (ADR-1151) comes back under the same ID when schedd
+// thaws it, so the next RUNNING record must be routable at once; the
+// stale-target quarantine would hold it out for staleTargetQuarantine.
+func (b *PGBackend) WithdrawInstance(appID, instanceID string) {
+	b.removeInstance(appID, instanceID, false)
+}
+
+func (b *PGBackend) removeInstance(appID, instanceID string, quarantine bool) {
 	if appID == "" || instanceID == "" {
 		return
 	}
@@ -2040,7 +2052,11 @@ func (b *PGBackend) EvictInstance(appID, instanceID string) {
 		}
 	}
 	b.purgeStaleTargetsLocked(now)
-	b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
+	if quarantine {
+		b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
+	} else {
+		delete(b.staleTargets, staleTargetKey(appID, instanceID))
+	}
 	picker := b.appsPicker[appID]
 	if picker == nil {
 		b.tgtMu.Unlock()

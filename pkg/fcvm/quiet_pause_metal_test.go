@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 957 — a restored guest is quiet-paused between requests and resumed
+// adr: 1151 — a restored guest is quiet-paused between requests and resumed
 // for each one; no request meets a paused guest, an open stream is never
 // paused, and a paused guest snapshots and destroys cleanly.
 package fcvm

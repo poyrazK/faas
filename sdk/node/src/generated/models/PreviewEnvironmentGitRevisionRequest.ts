@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An exact GitHub commit to fetch and review.
+ * An exact Git commit to fetch and review.
  */
 export type PreviewEnvironmentGitRevisionRequest = {
   commit_sha: string;

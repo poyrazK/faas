@@ -17,6 +17,8 @@ class AppErrorRequestItem:
     """One row of the drill-down page (ADR-096 / PR-B)."""
 
     request_id: str
+    """Public x-faas-request-id of the failed request; GET /v1/apps/{slug}/debug/requests/{request_id}/evidence
+    opens its debugger evidence while the request is retained."""
     received_at: datetime.datetime
     route: str
     http_status: int

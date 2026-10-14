@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
-	runtimePolicyGatewayFreshness = 10 * time.Second
+	runtimePolicyGatewayFreshness = api.MCPPolicyGatewayFreshness
 	runtimePolicyWaitMax          = 10 * time.Second
 	runtimePolicyWaitPoll         = 250 * time.Millisecond
 )
@@ -37,36 +38,7 @@ func summarizeRuntimePolicyComponent(
 	revision func(state.ServingGatewayControlPlaneState) int64,
 	observedAt func(state.ServingGatewayControlPlaneState) time.Time,
 ) api.RuntimePolicyComponentStatus {
-	status := api.RuntimePolicyComponentStatus{
-		Scope:           scope,
-		DesiredRevision: desired,
-		State:           "pending",
-		ServingGateways: len(gateways),
-	}
-	if desired == 0 {
-		status.State = "unverified"
-		status.PendingGateways = len(gateways)
-		return status
-	}
-	for _, gateway := range gateways {
-		observed := observedAt(gateway)
-		if observed.IsZero() || observed.Before(now.Add(-runtimePolicyGatewayFreshness)) {
-			status.StaleGateways++
-			status.PendingGateways++
-			continue
-		}
-		if revision(gateway) < desired {
-			status.PendingGateways++
-			continue
-		}
-		status.AppliedGateways++
-	}
-	if len(gateways) == 0 {
-		status.State = "unverified"
-	} else if status.AppliedGateways == len(gateways) {
-		status.State = "active"
-	}
-	return status
+	return trafficguard.SummarizeRuntimePolicyComponent(scope, desired, gateways, now, runtimePolicyGatewayFreshness, revision, observedAt)
 }
 
 func summarizeRuntimePolicyStatus(appID string, appOwnerNodeID string, desired, requestPolicyDesired, edgeRulesDesired, corsPresetsDesired, cachePurgeDesired, egressDesired, cpuDesired int64, gateways []state.ServingGatewayControlPlaneState, egressNodes []state.AppEgressPolicyNodeState, cpuNodes []state.AppCPUPolicyNodeState, scaling state.AppScalingPolicyStatus, now time.Time) api.RuntimePolicyStatusResponse {
@@ -209,6 +181,11 @@ func (s *server) getRuntimePolicyStatus(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
 		return
 	}
+	edgeScope, scopeErr := trafficguard.EdgePolicyScope(r.URL.Query().Get("edge_rules_scope"))
+	if scopeErr != nil {
+		api.WriteProblem(w, api.ErrValidation(scopeErr.Error()))
+		return
+	}
 	wait := time.Duration(0)
 	if raw := r.URL.Query().Get("wait"); raw != "" {
 		var err error
@@ -235,7 +212,7 @@ func (s *server) getRuntimePolicyStatus(w http.ResponseWriter, r *http.Request, 
 			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
 			return
 		}
-		edgeRulesDesired, err := store.LatestAppEdgeRuleChangeID(r.Context(), app.ID)
+		edgePosition, err := trafficguard.EdgePolicyPosition(r.Context(), s.store, edgeScope, app.ID, app.AccountID)
 		if err != nil {
 			s.log.Warn("apid: load edge-rule policy revision failed", "app", app.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
@@ -289,7 +266,10 @@ func (s *server) getRuntimePolicyStatus(w http.ResponseWriter, r *http.Request, 
 			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
 			return
 		}
-		status := summarizeRuntimePolicyStatus(app.ID, app.NodeID, desired, requestPolicyDesired, edgeRulesDesired, corsPresetsDesired, cachePurgeDesired, egressDesired, cpuDesired, gateways, appEgressNodes, appCPUNodes, scaling, time.Now().UTC())
+		status := summarizeRuntimePolicyStatus(app.ID, app.NodeID, desired, requestPolicyDesired, edgePosition.DesiredRevision, corsPresetsDesired, cachePurgeDesired, egressDesired, cpuDesired, gateways, appEgressNodes, appCPUNodes, scaling, time.Now().UTC())
+		status.EdgeRules.Scope = edgeScope
+		status.EdgeRules.LegacyFleetRevision = edgePosition.LegacyFleetRevision
+		trafficguard.EnrichMCPPolicyStatus(r.Context(), s.store, app.AccountID, app.ID, &status)
 		if wait == 0 || (status.State != "pending" && status.RequestPolicy.State != "pending" && status.EdgeRules.State != "pending" && status.CorsPresets.State != "pending" && status.ResponseCache.State != "pending" && status.EgressAllowlist.State != "pending" && status.CPULimit.State != "pending" && status.SchedulerScaling.State != "pending") || !time.Now().Before(deadline) {
 			writeJSON(w, http.StatusOK, status)
 			return

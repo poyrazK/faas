@@ -46,6 +46,10 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 		{api.CodeNotImplemented, codes.Unimplemented, "Not implemented"},
 		{api.CodeDatabaseCutoverFenced, codes.FailedPrecondition, "Database cutover in progress"},
 		{api.CodeAppAdmissionUnavailable, codes.Unavailable, "App admission unavailable"},
+		{api.CodeInstanceNotFreezable, codes.FailedPrecondition, "Instance not freezable"},
+		{api.CodeInstanceBusy, codes.FailedPrecondition, "Instance busy"},
+		{api.CodeFrozenInstanceRefused, codes.FailedPrecondition, "Instance frozen"},
+		{api.CodeInstanceFrozen, codes.Unavailable, "Instance frozen"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {

@@ -218,6 +218,12 @@ type AppTaskOutputVMMAPI interface {
 	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
+// AppTaskInteractiveVMMAPI runs an interactive app-task session (ADR-1037)
+// whose input and output belong to one attached client.
+type AppTaskInteractiveVMMAPI interface {
+	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
 // AppTaskRestoreVMMAPI is deliberately command-free. A successful return is
 // the scheduler's proof that a fresh app-task-only guest exists.
 type AppTaskRestoreVMMAPI interface {
@@ -249,6 +255,10 @@ type flowSnapshotter interface {
 // Server implements vmmdpb.VmmdServer.
 type Server struct {
 	vmmdpb.UnimplementedVmmdServer
+
+	// appTaskAttach pairs interactive app tasks with their attached client
+	// (ADR-1037). The zero value is ready to use.
+	appTaskAttach appTaskAttachRegistry
 
 	vmm   VmmdAPI
 	ops   *wire.OpsMetrics
@@ -1085,14 +1095,8 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		return nil, grpcerr.ToStatus(err)
 	}
 	if req.GetImageHealthcheckRequired() {
-		reader, ok := s.vmm.(interface {
-			ImageHealthcheckRequiredFor(string) bool
-		})
-		if !ok {
-			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract unavailable", "vmmd cannot verify the stored instance contract"))
-		}
-		if !reader.ImageHealthcheckRequiredFor(req.GetInstance()) {
-			return nil, grpcerr.ToStatus(api.NewProblem(409, api.CodeValidation, "Image healthcheck contract missing", "the instance was not created with required image healthcheck readiness"))
+		if p := s.imageHealthcheckContractProblem(req.GetInstance()); p != nil {
+			return nil, grpcerr.ToStatus(p)
 		}
 	}
 	err := resumer.ResumeVM(ctx, req.GetInstance())
@@ -1101,6 +1105,22 @@ func (s *Server) ResumeWarmInstance(ctx context.Context, req *vmmdpb.ResumeWarmI
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &vmmdpb.ResumeWarmInstanceResponse{Instance: req.GetInstance(), ImageHealthcheckVerified: req.GetImageHealthcheckRequired(), SupportsImageHealthcheckMonitoring: true}, nil
+}
+
+// imageHealthcheckContractProblem refuses a resume that asks for a fresh
+// image healthcheck of an instance whose stored boot contract does not
+// require one. A caller cannot upgrade an older instance by setting a flag.
+func (s *Server) imageHealthcheckContractProblem(instance string) *api.Problem {
+	reader, ok := s.vmm.(interface {
+		ImageHealthcheckRequiredFor(string) bool
+	})
+	if !ok {
+		return api.NewProblem(409, api.CodeValidation, "Image healthcheck contract unavailable", "vmmd cannot verify the stored instance contract")
+	}
+	if !reader.ImageHealthcheckRequiredFor(instance) {
+		return api.NewProblem(409, api.CodeValidation, "Image healthcheck contract missing", "the instance was not created with required image healthcheck readiness")
+	}
+	return nil
 }
 
 // WaitBuilderReady exposes the vmmd-owned serial handoff to builderd. The
@@ -1370,6 +1390,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 		total += b
 		row := buildInstanceStatsRow(inst, b, s.cpuCache, s.netCache, s.activity, s.ops)
 		s.addQuietPauseState(row)
+		s.addFrozenState(row)
 		if provider, ok := s.vmm.(interface {
 			DiskUsage(string) (fcvm.DiskUsage, bool)
 		}); ok {
@@ -2254,6 +2275,18 @@ func toProblem(err error) *api.Problem {
 	if errors.Is(err, fcvm.ErrAppAdmissionUnavailable) {
 		return api.NewProblem(503, api.CodeAppAdmissionUnavailable,
 			"App admission unavailable", "vmmd could not verify durable app admission")
+	}
+	if errors.Is(err, fcvm.ErrNotFreezable) {
+		return api.NewProblem(409, api.CodeInstanceNotFreezable,
+			"Instance cannot be frozen", err.Error())
+	}
+	if errors.Is(err, fcvm.ErrInstanceBusy) {
+		return api.NewProblem(409, api.CodeInstanceBusy,
+			"Instance busy", "the instance is serving a request, stream or session; it keeps running")
+	}
+	if errors.Is(err, fcvm.ErrInstanceFrozen) {
+		return api.NewProblem(409, api.CodeFrozenInstanceRefused,
+			"Instance frozen", "the instance is frozen; thaw or destroy it instead")
 	}
 	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
 		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,

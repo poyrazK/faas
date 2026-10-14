@@ -197,6 +197,20 @@ origin TLS and forwards this hostname to s3-gatewayd on
 `127.0.0.1:8084`; preserve the original Host header. Do not share the
 `api.gregale.dev` reverse-proxy route, request-body limits, or auth middleware.
 
+The proxied endpoint needs the CDN to leave S3 requests alone. For
+`s3.gregale.dev`, configure a cache rule that bypasses cache (otherwise the
+first HEAD of a key such as `logo.png` reaches the gateway as a GET and fails
+SigV4 with 403), and a configuration rule that turns off Browser Integrity
+Check, Email Obfuscation, Rocket Loader, Automatic HTTPS Rewrites, Real User
+Monitoring, Zaraz and Fonts. Keep "Normalize URLs to origin" off. On this
+profile the gateway also returns `Cache-Control: ... no-transform` for
+`text/html` and `application/xhtml+xml` objects, so zone-wide bot detection
+cannot inject scripts into them (ADR-553 amendment). Objects stored with
+`Content-Encoding: gzip` are still returned decompressed to clients that do not
+send `Accept-Encoding: gzip`, and keys with `/./` or `/../` segments cannot be
+used (see the S3 compatibility notes below); the direct profile has neither
+limit.
+
 Create a credential with
 `POST /v1/apps/{slug}/buckets/{bucket-id}/s3-credentials` and a body such as
 `{"label":"laptop","permission":"read_write"}`. The response contains the
@@ -2302,3 +2316,40 @@ ETag mismatch returns 412. Failed observations issue no native PUT, and
 uncertain dispatched writes retain their receipt for recovery. Conditional
 GCS multipart completion requires a separate durable staging/publication
 implementation and still returns 501. See [ADR-955](adr/955-gcs-conditional-put-capabilities.md).
+
+
+## Multipart checksums and object attributes (ADR-1038)
+
+Select `ChecksumAlgorithm` when calling the standard S3
+`CreateMultipartUpload` operation. CRC32/CRC32C support `COMPOSITE` and
+`FULL_OBJECT`; CRC64NVME supports `FULL_OBJECT`; SHA1/SHA256 support
+`COMPOSITE`. When type is omitted, CRC64NVME defaults to full-object and the
+other supported algorithms default to composite. Unsupported combinations
+are rejected before native initiation. This enrollment is currently S3-only.
+
+Each part is validated and its checksum is returned by `UploadPart` and
+`ListParts`. Include the returned part checksums with the selected ETags in
+`CompleteMultipartUpload`. Full-object completion can instead supply its whole
+checksum; a supplied checksum or object size must match the verified native
+part inventory. Checksum-enabled completion requires consecutive part numbers
+starting at one. A rejected checksum does not consume the upload.
+
+The policy and completion snapshot survive restart. Completion returns the
+verified checksum and public version; a terminal retry returns that same result.
+Unknown acknowledgments retain quota and mutation fences until existing
+receipt/version proof and checksum readback both establish completion. Checksums
+do not replace write receipts or prove absence.
+
+Request `ChecksumMode=ENABLED` for GET/HEAD checksum metadata. Standard
+`GetObjectAttributes` supports `ETag`, `Checksum`, `ObjectParts`, `StorageClass`
+and `ObjectSize`, with bounded `MaxParts`/`PartNumberMarker` pagination. Retained
+versions use the same public version selectors and bucket read permission as
+GET/HEAD. Delete markers preserve the public version and standard 404/405
+behavior. Conditional and range headers on `GetObjectAttributes` are explicitly
+unsupported. Native identities remain private.
+
+Checksum-enabled parts share the gateway's configured aggregate spool budget,
+free-space floor, transfer slots and deadlines. Choose part sizes within that
+spool budget. Other limits, cleanup proofs and legacy unselected uploads remain
+unchanged. Local compatibility fixtures exercise Go, Node, Boto3 and AWS CLI;
+live provider qualification remains a separate operator acceptance step.

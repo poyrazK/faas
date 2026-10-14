@@ -959,7 +959,7 @@ func egressPortsFromWire(ports []uint32) []uint16 {
 // one is pointless: the reaper parks an idle function long before it.
 const maxQuietPauseAfter = time.Hour
 
-// quietPauseAfterFromWire converts AppSpec.quiet_pause_after_ms (ADR-957).
+// quietPauseAfterFromWire converts AppSpec.quiet_pause_after_ms (ADR-1151).
 // Zero, negative and out-of-range values keep the instance running between
 // requests rather than failing the wake.
 func quietPauseAfterFromWire(ms int64) time.Duration {

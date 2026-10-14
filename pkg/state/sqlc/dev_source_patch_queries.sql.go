@@ -11,6 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteDevWatchSetting = `-- name: DeleteDevWatchSetting :exec
+DELETE FROM dev_watch_settings WHERE app_id = $1::uuid
+`
+
+func (q *Queries) DeleteDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteDevWatchSetting, appID)
+	return err
+}
+
 const getDevSourceManifest = `-- name: GetDevSourceManifest :one
 SELECT deployment_id, app_id, source_root, manifest, created_at
 FROM dev_source_manifests
@@ -61,6 +70,22 @@ func (q *Queries) GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetD
 		&i.ApplyMs,
 		&i.ApplyError,
 	)
+	return i, err
+}
+
+const getDevWatchSetting = `-- name: GetDevWatchSetting :one
+SELECT command, host FROM dev_watch_settings WHERE app_id = $1::uuid
+`
+
+type GetDevWatchSettingRow struct {
+	Command string
+	Host    string
+}
+
+func (q *Queries) GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (GetDevWatchSettingRow, error) {
+	row := db.QueryRow(ctx, getDevWatchSetting, appID)
+	var i GetDevWatchSettingRow
+	err := row.Scan(&i.Command, &i.Host)
 	return i, err
 }
 
@@ -206,13 +231,14 @@ func (q *Queries) PruneDevSourcePatches(ctx context.Context, db DBTX, arg PruneD
 	return result.RowsAffected(), nil
 }
 
-const recordDevSourcePatchApplied = `-- name: RecordDevSourcePatchApplied :execrows
+const recordDevSourcePatchApplied = `-- name: RecordDevSourcePatchApplied :one
 UPDATE dev_source_patches
 SET applied_at = now(), apply_ms = $1::int, apply_error = $2::text
 WHERE app_id = $3::uuid
   AND base_deployment_id = $4::uuid
   AND generation = $5::bigint
   AND applied_at IS NULL
+RETURNING created_at, applied_at
 `
 
 type RecordDevSourcePatchAppliedParams struct {
@@ -223,20 +249,24 @@ type RecordDevSourcePatchAppliedParams struct {
 	Generation       int64
 }
 
+type RecordDevSourcePatchAppliedRow struct {
+	CreatedAt pgtype.Timestamptz
+	AppliedAt pgtype.Timestamptz
+}
+
 // The first acknowledgement wins; later instances applying the same
-// generation do not move the recorded time.
-func (q *Queries) RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (int64, error) {
-	result, err := db.Exec(ctx, recordDevSourcePatchApplied,
+// generation do not move the recorded time and return no row.
+func (q *Queries) RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (RecordDevSourcePatchAppliedRow, error) {
+	row := db.QueryRow(ctx, recordDevSourcePatchApplied,
 		arg.ApplyMs,
 		arg.ApplyError,
 		arg.AppID,
 		arg.BaseDeploymentID,
 		arg.Generation,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i RecordDevSourcePatchAppliedRow
+	err := row.Scan(&i.CreatedAt, &i.AppliedAt)
+	return i, err
 }
 
 const upsertDevSourceManifest = `-- name: UpsertDevSourceManifest :exec
@@ -262,5 +292,23 @@ func (q *Queries) UpsertDevSourceManifest(ctx context.Context, db DBTX, arg Upse
 		arg.SourceRoot,
 		arg.Manifest,
 	)
+	return err
+}
+
+const upsertDevWatchSetting = `-- name: UpsertDevWatchSetting :exec
+INSERT INTO dev_watch_settings (app_id, command, host)
+VALUES ($1::uuid, $2::text, $3::text)
+ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, host = EXCLUDED.host, updated_at = now()
+`
+
+type UpsertDevWatchSettingParams struct {
+	AppID   pgtype.UUID
+	Command string
+	Host    string
+}
+
+// ADR-1170: a developer environment's watch-mode command and public hostname.
+func (q *Queries) UpsertDevWatchSetting(ctx context.Context, db DBTX, arg UpsertDevWatchSettingParams) error {
+	_, err := db.Exec(ctx, upsertDevWatchSetting, arg.AppID, arg.Command, arg.Host)
 	return err
 }

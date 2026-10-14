@@ -6535,6 +6535,11 @@ type Store interface {
 	// Go-side composition in pkg/state/pgstore.go).
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error)
 
+	// RequestTelemetryErrorsByRoute backs the regression detector's
+	// error-rate signal: per-route represented requests and HTTP 5xx counts
+	// for one deployment and window.
+	RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error)
+
 	// RequestTelemetryAnalyticsSummary and RequestTelemetryAnalyticsByRoute
 	// back the customer-facing aggregated request analytics endpoint. Both
 	// queries are retention-windowed and weight collapsed telemetry rows by

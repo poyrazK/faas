@@ -11,9 +11,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type foreignScalingEnvironmentStore struct{ *state.MemStore }
+type foreignScalingEnvironmentStore struct{ MemStore *state.MemStore }
 
 func (s foreignScalingEnvironmentStore) RuntimeScalingStateForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeScalingState, error) {
 	row, err := s.MemStore.RuntimeScalingStateForDeployment(ctx, accountID, appID, deploymentID)
@@ -257,7 +258,7 @@ func TestSeedLedgerDoesNotDowngradeTransientOwnershipFailure(t *testing.T) {
 	if _, err := f.store.CreateInstance(t.Context(), f.app.ID, f.stage.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatal(err)
 	}
-	engine := newEngine(t, invalidScalingStateStore{MemStore: f.store}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(invalidScalingStateStore{MemStore: f.store}), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	if err := engine.SeedLedger(t.Context()); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("transient ownership failure adopted a fallback: %v", err)
 	}
@@ -285,7 +286,7 @@ func TestEnvironmentLedgerRecoveryRecordsOverCapServingRows(t *testing.T) {
 func TestReaperRejectsScalingHistoryFromDifferentEnvironmentLifetime(t *testing.T) {
 	f := seedStageSnapshotPolicy(t, 0, false)
 	store := foreignScalingEnvironmentStore{f.store}
-	loop := NewLoop(nil, newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0"), testLog())
+	loop := NewLoop(nil, newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0"), testLog())
 	now := time.Now()
 	rows := []InstanceInfo{{Instance: "stage", AppID: f.app.ID, DeploymentID: f.stage.ID, State: state.StateRunning, Plan: api.PlanPro, Started: now.Add(-time.Hour), LastRequest: now.Add(-time.Hour)}}
 	loop.enrichReaperEnvironmentPolicies(t.Context(), []state.App{f.app}, rows, nil)
@@ -296,7 +297,7 @@ func TestReaperRejectsScalingHistoryFromDifferentEnvironmentLifetime(t *testing.
 
 func TestStageAdmissionRejectsScalingHistoryFromDifferentLifetime(t *testing.T) {
 	f := seedStageSnapshotPolicy(t, 0, false)
-	engine := newEngine(t, foreignScalingEnvironmentStore{f.store}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(foreignScalingEnvironmentStore{f.store}), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	result, err := engine.AdmitInstance(t.Context(), f.app.ID, f.stage.ID, "stage", "")
 	if !errors.Is(err, state.ErrConflict) || result.InstanceID != "" || engine.ledger.ResidentRAM() != 0 {
 		t.Fatalf("different lifetime's clock authorized admission: %+v %v", result, err)

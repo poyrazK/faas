@@ -82,10 +82,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		DurableQueue: outbox,
 	}
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
+	ticketPreview := os.Getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1"
+	accessPreview := os.Getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1"
+	var ticketReader realtime.SubscriptionTicketReader
+	var accessReader realtime.ManagedRealtimeAccessReader
 	var historyReader realtime.ManagedRealtimeHistoryReader
 	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
 	var fleetClient realtime.ManagedRealtimeFleetClient
-	if resumePreview {
+	if resumePreview || accessPreview || ticketPreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
@@ -104,6 +108,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		defer func() { _ = reader.Close() }()
 		historyReader = reader
+		accessReader = reader
+		ticketReader = reader
 		routeReporter = reader
 		fleetClient = reader
 	}
@@ -119,6 +125,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		CallbackTimeout:      callbackTimeout,
 		JWTAuthorizer:        newRealtimeJWTAuthorizer(log),
 		ResumePreview:        resumePreview,
+		TicketPreview:        ticketPreview,
+		TicketReader:         ticketReader,
+		AccessPreview:        accessPreview,
+		AccessReader:         accessReader,
 		HistoryReader:        historyReader,
 		ChannelRouteReporter: routeReporter,
 		FleetClient:          fleetClient,

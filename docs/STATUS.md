@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Billing integrity: delivery finality, hard spend cap, plan history — 2026-10-13
+
+[ADR-1162](adr/1162-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
+billing gaps. The provider pusher delivers an hour only once every minute up to its end
+is recorded compute-complete or older than the catch-up bound, so late catch-up rows
+can no longer land in a delivered hour. The spend cap bills exactly up to the cap,
+settles capped hours without later back-billing, and schedd parks capped accounts:
+explicit-deployment admissions check the cap, the reaper parks via `appMustPark`, warm
+pools are reclaimed and queued job tasks deferred. App purge keeps `usage_minutes` and
+`usage_daily`. The month's allowance follows recorded plan activations (largest grant
+so far) in the pusher, `CurrentMonthOverageCents` and `OverageMBSecondsForRange`.
+`pkg/meter`, `pkg/billing`, `pkg/billing/reconciler` and `pkg/api` tests pass locally
+(one known timing-flaky loop health test aside), as do the new `pkg/state` plan-history
+tests, the MemStore conformance suite and the full `pkg/sched` suite including the new
+spend-cap tests. PG-backed tests, `make lint` and a live Polar sandbox delivery remain
+unrun.
+No deployment setting or provider configuration changed.
+
 ## Combined PostgreSQL rollout readiness — 2026-10-12
 
 [ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
@@ -610,6 +628,19 @@ The first attempt was cut at 29.5 s: on single-box installs schedd's stats
 poller read only the empty capacity-stream cache, so the idle reaper never
 saw the in-flight request. The poller now reads vmmd `Stats` directly when
 schedd has no owner node.
+Async, queue, cron and replay invocations run for the function's request
+timeout too, at least 30 s (ADR-1180). Their leases cover the run, and long
+ones are delivered off the drain tick and the cron loop. vmmd's stream
+bridge waits for the guest's response headers as long as
+`X-Faas-Deadline-Ms` allows; a fixed 30 s wait cut every response that
+started after 30 s with a 502. Evidence, 2026-10-13 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set, daemons at 74b9225c29 with the bridge, runner and test at
+6d2e493e3a): the Pro function with `request_timeout_s=120` streamed for
+36.0 s, answered a synchronous 40 s request once with HTTP 200 after 40.0 s,
+and completed a 40 s async invocation in 40.7 s on its first attempt. Both
+40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
+attempt of that async invocation got a 502 about 32 s in and was retried.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

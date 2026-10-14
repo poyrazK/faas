@@ -18,7 +18,7 @@ export type DeploymentPromotionHold = {
    */
   recovery_attempts: number;
   /**
-   * Eligibility time; while an attempt runs this is its lease expiry
+   * Eligibility time; while an attempt runs this is its lease expiry, not a promise of execution.
    */
   next_retry_at?: string;
   recovery_in_progress: boolean;

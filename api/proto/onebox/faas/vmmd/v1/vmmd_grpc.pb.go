@@ -40,10 +40,13 @@ const (
 	Vmmd_ExecuteAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
 	Vmmd_ExecForkCommand_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/ExecForkCommand"
 	Vmmd_ExecuteAppTaskStream_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
+	Vmmd_AttachAppTask_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/AttachAppTask"
 	Vmmd_WaitJobExit_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
 	Vmmd_ResumeWarmInstance_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
+	Vmmd_FreezeInstance_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FreezeInstance"
+	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
@@ -151,6 +154,12 @@ type VmmdClient interface {
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error)
+	// AttachAppTask connects one client to an interactive app task (ADR-1037).
+	// The first frame names the instance and presents the single-use attach
+	// token; vmmd matches it against the digest schedd registered through
+	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
+	// output plus one terminal result back.
+	AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -197,6 +206,22 @@ type VmmdClient interface {
 	// owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
 	// only resumes Firecracker and re-attaches its liveness loops.
 	ResumeWarmInstance(ctx context.Context, in *ResumeWarmInstanceRequest, opts ...grpc.CallOption) (*ResumeWarmInstanceResponse, error)
+	// FreezeInstance (ADR-1151) pauses an idle running instance in place for
+	// the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
+	// stops its probes and, only when asked (memory pressure), reclaims its
+	// cgroup memory. The VM keeps its lease, netns and Firecracker process.
+	// Ineligible instances (warm pool, jobs, app tasks, builders, private
+	// network members, pending waitUntil tasks) fail with FailedPrecondition
+	// and code instance_not_freezable; an instance serving a request, stream
+	// or session fails with FailedPrecondition and code instance_busy, and
+	// keeps running. Freezing a frozen instance succeeds without pausing it
+	// again. A forward that reaches a frozen instance fails fast with
+	// Unavailable and code instance_frozen.
+	FreezeInstance(ctx context.Context, in *FreezeInstanceRequest, opts ...grpc.CallOption) (*FreezeInstanceResponse, error)
+	// ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
+	// its probes. schedd admits the thaw first. Thawing a live instance that
+	// is not frozen is a successful no-op.
+	ThawInstance(ctx context.Context, in *ThawInstanceRequest, opts ...grpc.CallOption) (*ThawInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -743,6 +768,19 @@ func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTas
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteAppTaskStreamClient = grpc.ServerStreamingClient[ExecuteAppTaskEvent]
 
+func (c *vmmdClient) AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_AttachAppTask_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AttachAppTaskRequest, AttachAppTaskEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_AttachAppTaskClient = grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent]
+
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobExitResponse)
@@ -777,6 +815,26 @@ func (c *vmmdClient) ResumeWarmInstance(ctx context.Context, in *ResumeWarmInsta
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResumeWarmInstanceResponse)
 	err := c.cc.Invoke(ctx, Vmmd_ResumeWarmInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) FreezeInstance(ctx context.Context, in *FreezeInstanceRequest, opts ...grpc.CallOption) (*FreezeInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FreezeInstanceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_FreezeInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ThawInstance(ctx context.Context, in *ThawInstanceRequest, opts ...grpc.CallOption) (*ThawInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ThawInstanceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ThawInstance_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +1013,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -974,7 +1032,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -987,7 +1045,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1058,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,7 +1071,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1197,6 +1255,12 @@ type VmmdServer interface {
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error
+	// AttachAppTask connects one client to an interactive app task (ADR-1037).
+	// The first frame names the instance and presents the single-use attach
+	// token; vmmd matches it against the digest schedd registered through
+	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
+	// output plus one terminal result back.
+	AttachAppTask(grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]) error
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -1243,6 +1307,22 @@ type VmmdServer interface {
 	// owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
 	// only resumes Firecracker and re-attaches its liveness loops.
 	ResumeWarmInstance(context.Context, *ResumeWarmInstanceRequest) (*ResumeWarmInstanceResponse, error)
+	// FreezeInstance (ADR-1151) pauses an idle running instance in place for
+	// the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
+	// stops its probes and, only when asked (memory pressure), reclaims its
+	// cgroup memory. The VM keeps its lease, netns and Firecracker process.
+	// Ineligible instances (warm pool, jobs, app tasks, builders, private
+	// network members, pending waitUntil tasks) fail with FailedPrecondition
+	// and code instance_not_freezable; an instance serving a request, stream
+	// or session fails with FailedPrecondition and code instance_busy, and
+	// keeps running. Freezing a frozen instance succeeds without pausing it
+	// again. A forward that reaches a frozen instance fails fast with
+	// Unavailable and code instance_frozen.
+	FreezeInstance(context.Context, *FreezeInstanceRequest) (*FreezeInstanceResponse, error)
+	// ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
+	// its probes. schedd admits the thaw first. Thawing a live instance that
+	// is not frozen is a successful no-op.
+	ThawInstance(context.Context, *ThawInstanceRequest) (*ThawInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -1642,6 +1722,9 @@ func (UnimplementedVmmdServer) ExecForkCommand(context.Context, *ExecuteAppTaskR
 func (UnimplementedVmmdServer) ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteAppTaskStream not implemented")
 }
+func (UnimplementedVmmdServer) AttachAppTask(grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]) error {
+	return status.Error(codes.Unimplemented, "method AttachAppTask not implemented")
+}
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
 }
@@ -1653,6 +1736,12 @@ func (UnimplementedVmmdServer) WarmSnapshot(context.Context, *WarmSnapshotReques
 }
 func (UnimplementedVmmdServer) ResumeWarmInstance(context.Context, *ResumeWarmInstanceRequest) (*ResumeWarmInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResumeWarmInstance not implemented")
+}
+func (UnimplementedVmmdServer) FreezeInstance(context.Context, *FreezeInstanceRequest) (*FreezeInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FreezeInstance not implemented")
+}
+func (UnimplementedVmmdServer) ThawInstance(context.Context, *ThawInstanceRequest) (*ThawInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ThawInstance not implemented")
 }
 func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderReadyRequest) (*WaitBuilderReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitBuilderReady not implemented")
@@ -2070,6 +2159,13 @@ func _Vmmd_ExecuteAppTaskStream_Handler(srv interface{}, stream grpc.ServerStrea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteAppTaskStreamServer = grpc.ServerStreamingServer[ExecuteAppTaskEvent]
 
+func _Vmmd_AttachAppTask_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).AttachAppTask(&grpc.GenericServerStream[AttachAppTaskRequest, AttachAppTaskEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_AttachAppTaskServer = grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]
+
 func _Vmmd_WaitJobExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WaitJobExitRequest)
 	if err := dec(in); err != nil {
@@ -2138,6 +2234,42 @@ func _Vmmd_ResumeWarmInstance_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).ResumeWarmInstance(ctx, req.(*ResumeWarmInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_FreezeInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FreezeInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).FreezeInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_FreezeInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).FreezeInstance(ctx, req.(*FreezeInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ThawInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ThawInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ThawInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ThawInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ThawInstance(ctx, req.(*ThawInstanceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2751,6 +2883,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_ResumeWarmInstance_Handler,
 		},
 		{
+			MethodName: "FreezeInstance",
+			Handler:    _Vmmd_FreezeInstance_Handler,
+		},
+		{
+			MethodName: "ThawInstance",
+			Handler:    _Vmmd_ThawInstance_Handler,
+		},
+		{
 			MethodName: "WaitBuilderReady",
 			Handler:    _Vmmd_WaitBuilderReady_Handler,
 		},
@@ -2875,6 +3015,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "ExecuteAppTaskStream",
 			Handler:       _Vmmd_ExecuteAppTaskStream_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "AttachAppTask",
+			Handler:       _Vmmd_AttachAppTask_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "Logs",

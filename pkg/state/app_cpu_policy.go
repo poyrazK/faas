@@ -69,7 +69,7 @@ func (s *PgStore) ListPendingAppCPUPolicyTargets(ctx context.Context, appID stri
 	LEFT JOIN app_cpu_policy_node_status p ON p.app_id = a.id AND p.node_id = i.node_id
 	WHERE a.status <> 'deleted'
 	  AND i.node_id IS NOT NULL
-	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining')
+	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining')
 	  AND ($1 = '' OR a.id = $1::uuid)
 	  AND (COALESCE(p.applied_revision, 0) < a.app_cpu_policy_revision
 	       OR COALESCE(p.observed_at, 'epoch'::timestamptz) < now() - ($2 * interval '1 second'))
@@ -140,7 +140,7 @@ func (s *PgStore) ListServingAppCPUPolicyNodeStates(ctx context.Context, appID s
 		JOIN compute_nodes n ON n.id = i.node_id
 		LEFT JOIN app_cpu_policy_node_status p ON p.app_id = a.id AND p.node_id = i.node_id
 		WHERE a.id = $1 AND a.status <> 'deleted' AND i.node_id IS NOT NULL
-		  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining')
+		  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining')
 		GROUP BY n.name, a.app_cpu_policy_revision, p.applied_revision, p.observed_at, p.last_error
 		ORDER BY n.name
 	`, appID)

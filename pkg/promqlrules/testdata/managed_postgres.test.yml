@@ -51,7 +51,7 @@ tests:
         alertname: FaasManagedPostgresUsageCollectionStale
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: apid
               family: managed_postgres
             exp_annotations:

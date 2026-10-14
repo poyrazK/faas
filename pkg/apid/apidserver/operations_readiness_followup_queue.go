@@ -53,7 +53,7 @@ func workflowReadinessFollowUpOptions(r *http.Request, app string, operator bool
 		if len(v) != 1 || v[0] == "" {
 			return out, state.ErrInvalidArgument
 		}
-		if k != "reminder_only" && k != "scope" && k != "owner" && k != "workflow" && k != "due" && k != "offset" && k != "limit" && (!operator || k != "tenant_id") && (operator || k != "app_id") {
+		if k != "view" && k != "action_kind" && k != "action_trigger" && k != "impact_priority" && k != "impact_kind" && k != "impact_code" && k != "sort" && k != "reminder_only" && k != "scope" && k != "owner" && k != "workflow" && k != "due" && k != "offset" && k != "limit" && (!operator || k != "tenant_id") && (operator || k != "app_id") {
 			return out, state.ErrInvalidArgument
 		}
 	}
@@ -68,10 +68,17 @@ func workflowReadinessFollowUpOptions(r *http.Request, app string, operator bool
 		}
 		out.ReminderOnly = q.Get("reminder_only") == "true"
 	}
+	out.View = q.Get("view")
+	out.ActionKind = q.Get("action_kind")
+	out.ActionTrigger = q.Get("action_trigger")
 	out.Scope = q.Get("scope")
 	out.Owner = q.Get("owner")
 	out.Workflow = q.Get("workflow")
 	out.Due = q.Get("due")
+	out.ImpactPriority = q.Get("impact_priority")
+	out.ImpactKind = q.Get("impact_kind")
+	out.ImpactCode = q.Get("impact_code")
+	out.Sort = q.Get("sort")
 	if q.Has("offset") {
 		out.Offset, err = strconv.Atoi(q.Get("offset"))
 		if err != nil {

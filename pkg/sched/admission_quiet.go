@@ -1,6 +1,6 @@
 package sched
 
-// Quiet pause admission (ADR-957). vmmd pauses an eligible instance's vCPUs
+// Quiet pause admission (ADR-1151). vmmd pauses an eligible instance's vCPUs
 // between requests; the instance stays RUNNING and booked. A paused guest
 // uses no host CPU, so when quiet pause admission is on, the vCPU and
 // physical CPU gates count only active instances: bookings less the ones
@@ -22,7 +22,7 @@ import (
 type QuietPaused func(nodeID string) (instances map[string]struct{}, asOf time.Time, ok bool)
 
 // EnableQuietPauseAdmission makes the vCPU and CPU gates count only active
-// instances (ADR-957).
+// instances (ADR-1151).
 func (l *NodeLedger) EnableQuietPauseAdmission(src QuietPaused) {
 	l.mu.Lock()
 	l.quietPaused = src

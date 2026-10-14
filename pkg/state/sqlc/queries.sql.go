@@ -1070,7 +1070,7 @@ WITH resident AS (
  SELECT i.deployment_id, i.state, i.started_at FROM instances i
  JOIN apps a ON a.id = i.app_id AND a.account_id = $2
  WHERE i.app_id = $1 AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('running','waking','cold_booting','warm','snapshotting','draining','migrating')
+   AND i.state IN ('running','waking','cold_booting','warm','frozen','snapshotting','draining','migrating')
 ), selected AS (
  SELECT d.id, d.status, COALESCE(NULLIF(d.scope, ''), 'default') AS scope FROM deployments d
  WHERE d.app_id = $1
@@ -1770,7 +1770,8 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count
 `
 
 type ApplyRegressionActionParams struct {
@@ -1809,6 +1810,10 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 		&i.DismissedUntil,
 		&i.ResolvedAt,
 		&i.SuspectedDependency,
+		&i.Kind,
+		&i.ErrorRatePct,
+		&i.ErrorRateBasePct,
+		&i.ErrorCount,
 	)
 	return i, err
 }
@@ -9657,17 +9662,21 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation, provider)
 SELECT p.account_id, p.id, e.id, $1::bigint,
        $2::bigint, $3::text,
        $4::text, $5::text,
        $6::text, $7::text, $8::boolean,
-       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0),
+       $9::text
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
-WHERE p.account_id = $9::uuid AND p.id = $10::uuid
-  AND e.slug = $11::text
-  AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE p.account_id = $10::uuid AND p.id = $11::uuid
+  AND e.slug = $12::text
+  AND (($9::text = 'github' AND p.repo_full_name = $3::text
+       AND p.install_id = $2::bigint)
+    OR ($9::text = 'gitlab' AND EXISTS (
+       SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -9679,6 +9688,7 @@ type CreateEnvironmentGitSourceParams struct {
 	Mode            string
 	ApprovalPolicy  string
 	Prune           bool
+	Provider        string
 	AccountID       pgtype.UUID
 	ProjectID       pgtype.UUID
 	EnvironmentSlug string
@@ -9694,6 +9704,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		arg.Mode,
 		arg.ApprovalPolicy,
 		arg.Prune,
+		arg.Provider,
 		arg.AccountID,
 		arg.ProjectID,
 		arg.EnvironmentSlug,
@@ -9725,6 +9736,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -10758,7 +10770,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -10800,6 +10812,8 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.SchedulePolicy,
 		&i.FailureRules,
 		&i.ScheduleRevision,
+		&i.ImageEntrypoint,
+		&i.ImageCmd,
 	)
 	return i, err
 }
@@ -12071,6 +12085,18 @@ where d.record_id=$1::uuid and r.id=d.record_id and t.id=r.trigger_id
 func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteExternalTriggerDeadLetterAudit, recordID)
 	return err
+}
+
+const deleteGitLabOAuthConnection = `-- name: DeleteGitLabOAuthConnection :execrows
+DELETE FROM gitlab_oauth_connections WHERE account_id=$1::uuid
+`
+
+func (q *Queries) DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteGitLabOAuthConnection, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
@@ -14066,7 +14092,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -14100,6 +14126,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -20988,7 +21015,7 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text AND NOT s.detached
@@ -21029,12 +21056,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -21066,6 +21094,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -21118,6 +21147,26 @@ func (q *Queries) GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFea
 		&i.Actor,
 		&i.RestoredFrom,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getGitLabOAuthConnection = `-- name: GetGitLabOAuthConnection :one
+SELECT account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at FROM gitlab_oauth_connections WHERE account_id = $1::uuid
+`
+
+func (q *Queries) GetGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, getGitLabOAuthConnection, accountID)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -21814,7 +21863,8 @@ const getRegressionObservation = `-- name: GetRegressionObservation :one
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -21847,6 +21897,10 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 		&i.DismissedUntil,
 		&i.ResolvedAt,
 		&i.SuspectedDependency,
+		&i.Kind,
+		&i.ErrorRatePct,
+		&i.ErrorRateBasePct,
+		&i.ErrorCount,
 	)
 	return i, err
 }
@@ -24702,11 +24756,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
 VALUES($1,$2,$3,$4,$5,$6,
- $7,$8,$9,$10,$11,$12,
- $13,$14,$15,$16)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id
+ $7,$8,$9,$10,$11,$12,$13,
+ $14,$15,$16,$17)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -24720,6 +24774,7 @@ type InsertCustomerAlertRuleParams struct {
 	WindowSpec                      string
 	FailureSource                   pgtype.Text
 	EventSubscriptionID             pgtype.UUID
+	EdgeRuleID                      pgtype.UUID
 	Action                          string
 	WebhookUrl                      string
 	WebhookSecretSealed             []byte
@@ -24740,6 +24795,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.WindowSpec,
 		arg.FailureSource,
 		arg.EventSubscriptionID,
+		arg.EdgeRuleID,
 		arg.Action,
 		arg.WebhookUrl,
 		arg.WebhookSecretSealed,
@@ -24771,6 +24827,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
 	)
 	return i, err
 }
@@ -29705,7 +29762,7 @@ const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :m
 SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
-  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
+  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm', 'frozen')
 ORDER BY started_at
 `
 
@@ -29749,6 +29806,50 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 		return nil, err
 	}
 	return items, nil
+}
+
+const instanceLogsOwnedByApp = `-- name: InstanceLogsOwnedByApp :one
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = $1::uuid
+          AND i.app_id = $2::uuid
+          AND a.account_id = $3::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = $3::uuid
+          AND u.app_id = $2::uuid
+          AND u.instance_id = $1::uuid
+          AND u.minute >= $4::timestamptz
+          AND u.minute < $5::timestamptz
+    )
+)::boolean AS owned
+`
+
+type InstanceLogsOwnedByAppParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	FromMinute pgtype.Timestamptz
+	ToMinute   pgtype.Timestamptz
+}
+
+// Archived runtime logs are keyed by instance only. The instance row proves
+// ownership while it exists; afterwards the app's billing rows for that
+// instance in [from_minute, to_minute) do.
+func (q *Queries) InstanceLogsOwnedByApp(ctx context.Context, db DBTX, arg InstanceLogsOwnedByAppParams) (bool, error) {
+	row := db.QueryRow(ctx, instanceLogsOwnedByApp,
+		arg.InstanceID,
+		arg.AppID,
+		arg.AccountID,
+		arg.FromMinute,
+		arg.ToMinute,
+	)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
 }
 
 const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
@@ -32130,6 +32231,55 @@ func (q *Queries) IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const jobTaskLogTarget = `-- name: JobTaskLogTarget :one
+SELECT t.status,
+       t.attempt,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = $1::uuid
+  AND j.name = $2::text
+  AND j.status <> 'deleted'
+  AND r.id = $3::uuid
+  AND t.task_index = $4::int
+`
+
+type JobTaskLogTargetParams struct {
+	AccountID pgtype.UUID
+	JobName   string
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+type JobTaskLogTargetRow struct {
+	Status     string
+	Attempt    int32
+	InstanceID string
+	NodeID     string
+}
+
+// ADR-1163: the job task a live log stream follows, scoped to the account
+// and job name, with the node of its current instance (if any).
+func (q *Queries) JobTaskLogTarget(ctx context.Context, db DBTX, arg JobTaskLogTargetParams) (JobTaskLogTargetRow, error) {
+	row := db.QueryRow(ctx, jobTaskLogTarget,
+		arg.AccountID,
+		arg.JobName,
+		arg.RunID,
+		arg.TaskIndex,
+	)
+	var i JobTaskLogTargetRow
+	err := row.Scan(
+		&i.Status,
+		&i.Attempt,
+		&i.InstanceID,
+		&i.NodeID,
+	)
+	return i, err
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
@@ -32403,7 +32553,7 @@ SELECT EXISTS (
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
-           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
@@ -33156,13 +33306,14 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
   AND state <> 'resolved'
   AND (state <> 'dismissed' OR dismissed_until IS NULL OR dismissed_until <= now())
-ORDER BY regression_factor DESC, last_detected_at DESC
+ORDER BY (kind <> 'latency') DESC, regression_factor DESC, last_detected_at DESC
 `
 
 type ListActiveRegressionsByAppParams struct {
@@ -33184,13 +33335,19 @@ type ListActiveRegressionsByAppRow struct {
 	DismissedUntil      pgtype.Timestamptz
 	ResolvedAt          pgtype.Timestamptz
 	SuspectedDependency []byte
+	Kind                string
+	ErrorRatePct        pgtype.Numeric
+	ErrorRateBasePct    pgtype.Numeric
+	ErrorCount          int32
 }
 
 // Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 // `since` is an interval (e.g. '1 hour') clamped handler-side to the
-// plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
-// DESC, last_detected_at DESC matches the dashboard render order
-// (worst regression at the top, then most-recently-reconfirmed).
+// plan's DebugTelemetryRetentionDays cap. Observations that include the
+// error signal come first (an errors-only row stores regression_factor
+// 1.00, which would otherwise always sort it last), then regression_factor
+// DESC, last_detected_at DESC: the dashboard render order (worst regression
+// at the top, then most-recently-reconfirmed).
 // Uses debug_regression_observations_app_idx (00436).
 func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg ListActiveRegressionsByAppParams) ([]ListActiveRegressionsByAppRow, error) {
 	rows, err := db.Query(ctx, listActiveRegressionsByApp, arg.AppID, arg.Column2)
@@ -33215,6 +33372,10 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.DismissedUntil,
 			&i.ResolvedAt,
 			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
 		); err != nil {
 			return nil, err
 		}
@@ -34007,7 +34168,7 @@ select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.se
 	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
 	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
 	  where s.account_id = $1::uuid and o.app_id = $2::uuid and ($3::text = '' or o.scope = $3::text)
-	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc
 `
 
@@ -34100,7 +34261,7 @@ SELECT s.scope,
    AND ($3::text = '' OR s.scope = $3::text)
    AND ($4::text = '' OR s.key = $4::text)
    AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
         OR d.override_env_secrets ? s.key)
@@ -34138,7 +34299,7 @@ SELECT s.scope,
    AND ($3::text = '' OR s.scope = $3::text)
    AND ($4::text = '' OR s.key = $4::text)
    AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND sidecar.value->>'type' = 'sidecar'
    AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
 ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC
@@ -35295,7 +35456,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -35338,6 +35499,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
 		); err != nil {
 			return nil, err
 		}
@@ -35350,7 +35512,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -35385,6 +35547,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
 		); err != nil {
 			return nil, err
 		}
@@ -37386,7 +37549,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -37421,6 +37584,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
 		); err != nil {
 			return nil, err
 		}
@@ -40836,11 +41000,11 @@ const listReadinessFollowUps = `-- name: ListReadinessFollowUps :many
 SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_id',s.id,'subscription_name',s.payload #>> '{subscription,name}',
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
- 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{escalation_response,source,platform_tenant_id}',''),s.tenant_id::text),
+ 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{escalation_response,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{playbook_evidence,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
- 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation',
- 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}',n.payload #>> '{escalation_response,source,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}',n.payload #>> '{escalation_response,source,instance_id}'),
- 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}',n.payload #> '{escalation_response,source,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}',n.payload #>> '{escalation_response,source,operation}'),
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation','playbook_escalation',n.payload->'playbook_escalation','playbook_step',n.payload->'playbook_step','business_impact',n.payload->'business_impact','review_response',n.payload->'review_response',
+ 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}',n.payload #>> '{escalation_response,source,workflow}',n.payload #>> '{playbook_evidence,workflow}',n.payload #>> '{business_impact,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}',n.payload #>> '{escalation_response,source,instance_id}',n.payload #>> '{playbook_evidence,instance_id}'),
+ 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}',n.payload #> '{escalation_response,source,subject}',n.payload #> '{playbook_evidence,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}',n.payload #>> '{escalation_response,source,operation}'),
  'from_state',COALESCE(n.payload #>> '{change,baseline,from_state}',n.payload #>> '{verification,source,from_state}',n.payload #>> '{business_outcome,source,from_state}',n.payload #>> '{escalation_response,source,from_state}'),'to_state',COALESCE(n.payload #>> '{change,baseline,to_state}',n.payload #>> '{verification,source,to_state}',n.payload #>> '{business_outcome,source,to_state}',n.payload #>> '{escalation_response,source,to_state}')
 ))::jsonb AS item
 FROM customer_workflow_readiness_subscriptions s
@@ -40848,7 +41012,7 @@ JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
 WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid
  AND s.scope=$3::text AND s.operator=$4::boolean
  AND (s.operator OR s.tenant_id::text=$5::text)
- AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ AND (n.payload #>> '{coordination,follow_up_at}' IS NOT NULL OR n.payload #> '{coordination,fulfillment_reviews}' @> '[{"review_required":true}]'::jsonb)
 ORDER BY s.id,n.sequence LIMIT $6::integer
 `
 
@@ -44153,7 +44317,7 @@ func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DB
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -44192,6 +44356,7 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -46711,7 +46876,7 @@ const lockRuntimeSecretDeliveryAttempt = `-- name: LockRuntimeSecretDeliveryAtte
 SELECT id FROM instances
 WHERE id=$1::uuid AND app_id=$2::uuid
     AND deployment_id=$3::uuid AND wake_id=$4::uuid
-    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
         OR (NOT $5::boolean AND state='failed'))
 FOR SHARE
 `
@@ -46771,7 +46936,7 @@ SELECT d.id AS deployment_id,COALESCE(NULLIF(d.scope,''),'default')::text AS sco
 FROM apps a JOIN deployments d ON d.app_id=a.id JOIN instances i ON i.deployment_id=d.id AND i.app_id=a.id
 WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND i.id=$3::uuid AND a.status<>'deleted'
     AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
-    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen'))
 FOR SHARE OF a,d FOR KEY SHARE OF i
 `
 
@@ -48985,7 +49150,7 @@ WHERE lifecycle = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM instances
       WHERE instances.node_id = compute_nodes.id
-        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm', 'frozen')
   )
 ORDER BY name
 `
@@ -51893,7 +52058,7 @@ func (q *Queries) ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, ar
 }
 
 const objectLifecycleMultipartList = `-- name: ObjectLifecycleMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
 ORDER BY id LIMIT $6::int
 `
@@ -51965,6 +52130,8 @@ func (q *Queries) ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -52225,7 +52392,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
@@ -52287,12 +52454,14 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
 
 const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
@@ -52347,6 +52516,8 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -52354,36 +52525,38 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 const objectMultipartClaim = `-- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=$1, lease_token=$2,
+checksum_snapshot=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional') THEN $3::jsonb ELSE checksum_snapshot END,
 encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE $2::text END,
 protection_lease_token=CASE WHEN protection_snapshot='{}' THEN '' ELSE $2::text END,
-lease_until=now()+($3::int * interval '1 second'),
-completion_if_match=CASE WHEN state='active' THEN $4::text ELSE completion_if_match END,
-completion_if_none_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_none_match END,
+lease_until=now()+($4::int * interval '1 second'),
+completion_if_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_match END,
+completion_if_none_match=CASE WHEN state='active' THEN $6::text ELSE completion_if_none_match END,
 completion_parts=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional')
-  THEN $6::jsonb ELSE completion_parts END,
+  THEN $7::jsonb ELSE completion_parts END,
 attempt_count=CASE WHEN state<>$1::text THEN 1 ELSE least(attempt_count+1,30) END,
 last_error_code=CASE WHEN state<>$1::text THEN '' ELSE last_error_code END,
 retry_at=now(), updated_at=now()
-WHERE account_id=$7 AND app_id=$8
-AND bucket_id=$9 AND id=$10
+WHERE account_id=$8 AND app_id=$9
+AND bucket_id=$10 AND id=$11
 AND (lease_until IS NULL OR lease_until<now())
 AND (encryption_snapshot='{}' OR octet_length($2::text)<=128)
 AND (retry_at<=now() OR state<>$1::text)
-AND (NOT $11::boolean OR state=$1::text
+AND (NOT $12::boolean OR state=$1::text
   OR (state='active' AND $1::text='aborting'))
 AND (
   ($1::text='initiating' AND state='initiating' AND provider_upload_id='') OR
   ($1::text IN ('completing','completing_conditional') AND (state='active' OR state=$1::text)
-    AND (state<>'active' OR (($1::text='completing') = ($4::text='' AND $5::text='')))
+    AND (state<>'active' OR (($1::text='completing') = ($5::text='' AND $6::text='')))
     AND (state<>'active' OR expires_at>now())
-    AND (state<>'active' OR jsonb_array_length($6::jsonb)>0)) OR
+    AND (state<>'active' OR jsonb_array_length($7::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartClaimParams struct {
 	Operation             string
 	Token                 pgtype.Text
+	ChecksumSnapshot      []byte
 	LeaseSeconds          int32
 	CompletionIfMatch     string
 	CompletionIfNoneMatch string
@@ -52399,6 +52572,7 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 	row := db.QueryRow(ctx, objectMultipartClaim,
 		arg.Operation,
 		arg.Token,
+		arg.ChecksumSnapshot,
 		arg.LeaseSeconds,
 		arg.CompletionIfMatch,
 		arg.CompletionIfNoneMatch,
@@ -52452,6 +52626,8 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -52531,7 +52707,7 @@ func (q *Queries) ObjectMultipartDispatch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -52589,6 +52765,8 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -52622,13 +52800,14 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 }
 
 const objectMultipartFinishResult = `-- name: ObjectMultipartFinishResult :one
-UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=$1::boolean,protection_verified=$2::boolean,completion_etag=$3,completion_version_id=$4,
- completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $5::boolean,
+UPDATE object_storage_multipart_uploads SET state='completed',checksum_verified=$1::boolean,encryption_verified=$2::boolean,protection_verified=$3::boolean,completion_etag=$4,completion_version_id=$5,
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $6::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$6 AND lease_token=$7 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+WHERE id=$7 AND lease_token=$8 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartFinishResultParams struct {
+	ChecksumVerified   bool
 	EncryptionVerified bool
 	ProtectionVerified bool
 	Etag               string
@@ -52640,6 +52819,7 @@ type ObjectMultipartFinishResultParams struct {
 
 func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error) {
 	row := db.QueryRow(ctx, objectMultipartFinishResult,
+		arg.ChecksumVerified,
 		arg.EncryptionVerified,
 		arg.ProtectionVerified,
 		arg.Etag,
@@ -52691,6 +52871,8 @@ func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg 
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -52716,7 +52898,7 @@ func (q *Queries) ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBT
 }
 
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -52777,6 +52959,8 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -52836,8 +53020,8 @@ func (q *Queries) ObjectMultipartInitiationRead(ctx context.Context, db DBTX, mu
 
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision,checksum_snapshot)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint,$16::jsonb) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartInsertParams struct {
@@ -52856,6 +53040,7 @@ type ObjectMultipartInsertParams struct {
 	ProtectionSnapshot        []byte
 	FixedAdmission            bool
 	EncryptionDefaultRevision int64
+	ChecksumSnapshot          []byte
 }
 
 func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error) {
@@ -52875,6 +53060,7 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		arg.ProtectionSnapshot,
 		arg.FixedAdmission,
 		arg.EncryptionDefaultRevision,
+		arg.ChecksumSnapshot,
 	)
 	var i ObjectStorageMultipartUpload
 	err := row.Scan(
@@ -52919,12 +53105,14 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -52994,6 +53182,8 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -53481,7 +53671,7 @@ func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBT
 }
 
 const objectMultipartResultLock = `-- name: ObjectMultipartResultLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
 `
 
 type ObjectMultipartResultLockParams struct {
@@ -53541,6 +53731,8 @@ func (q *Queries) ObjectMultipartResultLock(ctx context.Context, db DBTX, arg Ob
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -54685,7 +54877,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
 AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
 AND starts_with(object_key,$4::text)
@@ -54763,6 +54955,8 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -59021,7 +59215,7 @@ UPDATE instances SET netns=$1::text, host_ip=$2::inet,
 WHERE id=$5::uuid AND app_id=$6::uuid
     AND deployment_id=$7::uuid AND node_id=$8::uuid
     AND wake_id=$9::uuid AND state=$10::text
-    AND ($10::text<>'warm' OR EXISTS (
+    AND ($10::text NOT IN ('warm','frozen') OR EXISTS (
         SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
             AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
             AND proof.deployment_id=instances.deployment_id
@@ -59510,6 +59704,46 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		&i.Schedule,
 		&i.Variables,
 		&i.JobID,
+	)
+	return i, err
+}
+
+const putGitLabOAuthConnection = `-- name: PutGitLabOAuthConnection :one
+INSERT INTO gitlab_oauth_connections (account_id, gitlab_user_id, username, credentials_sealed, expires_at)
+VALUES ($1::uuid, $2::bigint,
+        $3::text, $4::bytea, $5::timestamptz)
+ON CONFLICT (account_id) DO UPDATE SET gitlab_user_id=EXCLUDED.gitlab_user_id,
+    username=EXCLUDED.username, credentials_sealed=EXCLUDED.credentials_sealed,
+    expires_at=EXCLUDED.expires_at, version=gitlab_oauth_connections.version+1, updated_at=now()
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type PutGitLabOAuthConnectionParams struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, putGitLabOAuthConnection,
+		arg.AccountID,
+		arg.GitlabUserID,
+		arg.Username,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -61036,7 +61270,7 @@ SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
         OR d.override_env_secrets ? s.key)
@@ -61075,7 +61309,7 @@ SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND sidecar.value->>'type' = 'sidecar'
    AND sidecar.value->'env_secrets'->>s.key = 'secret:' || s.key
 )
@@ -62637,7 +62871,7 @@ func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, d
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -62666,6 +62900,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
 	)
 	return i, err
 }
@@ -71380,6 +71615,28 @@ func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db 
 	return i, err
 }
 
+const renewInvocationLease = `-- name: RenewInvocationLease :execrows
+UPDATE invocations
+SET lease_expires_at = now() + $1::integer * interval '1 second'
+WHERE id = $2::uuid AND operation_id IS NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now()
+`
+
+type RenewInvocationLeaseParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewInvocationLease(ctx context.Context, db DBTX, arg RenewInvocationLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, renewInvocationLease, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const renewNotificationClaim = `-- name: RenewNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -73271,6 +73528,74 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const requestTelemetryErrorsByRoute = `-- name: RequestTelemetryErrorsByRoute :many
+
+SELECT route,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests,
+       COALESCE(SUM(GREATEST(count, 1)::bigint) FILTER (WHERE status >= 500), 0)::bigint AS error_requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+GROUP BY route
+`
+
+type RequestTelemetryErrorsByRouteParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryErrorsByRouteRow struct {
+	Route         string
+	Requests      int64
+	ErrorRequests int64
+}
+
+// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
+// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
+// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
+// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
+// exceeds p95_base_ms * 1.20). The detections persist here.
+//
+// A native sqlc RequestTelemetryRegression query was tried during the PR-A
+// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
+// reference" parser on (deployment_id) even after explicit ON clauses;
+// the workaround is a LATERAL join that requires a more invasive query
+// refactor. Go-side composition of the two PR-A queries above is the
+// chosen workaround (cheap, no parser gymnastics).
+// Per-route represented request and server-error (HTTP 5xx) counts for one
+// deployment and window, weighted by the publisher's collapsed-row count.
+// The regression detector compares the error share of the current and the
+// previous deployment (ADR-127 amendment: error-rate regressions). Same
+// index as RequestTelemetryBaselineP95ByRoute.
+func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryErrorsByRoute,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryErrorsByRouteRow{}
+	for rows.Next() {
+		var i RequestTelemetryErrorsByRouteRow
+		if err := rows.Scan(&i.Route, &i.Requests, &i.ErrorRequests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryRouteCustomers = `-- name: RequestTelemetryRouteCustomers :many
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.count::bigint AS requests, rt.received_at,
@@ -73878,7 +74203,8 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count
 `
 
 // A detector pass that no longer sees a regression resolves the previous
@@ -73908,6 +74234,10 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 			&i.DismissedUntil,
 			&i.ResolvedAt,
 			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
 		); err != nil {
 			return nil, err
 		}
@@ -74053,7 +74383,7 @@ WITH retained_deployments AS (
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
-           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
@@ -75161,6 +75491,41 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateGitLabOAuthConnection = `-- name: RotateGitLabOAuthConnection :one
+UPDATE gitlab_oauth_connections SET credentials_sealed=$1::bytea,
+    expires_at=$2::timestamptz, version=version+1, updated_at=now()
+WHERE account_id=$3::uuid AND version=$4::bigint
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type RotateGitLabOAuthConnectionParams struct {
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	AccountID         pgtype.UUID
+	ExpectedVersion   int64
+}
+
+func (q *Queries) RotateGitLabOAuthConnection(ctx context.Context, db DBTX, arg RotateGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, rotateGitLabOAuthConnection,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const routeCustomerHealthObservation = `-- name: RouteCustomerHealthObservation :one
@@ -76552,6 +76917,24 @@ func (q *Queries) SaveManagedPostgresCutoverVerification(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const saveReadinessSubscriptionWatches = `-- name: SaveReadinessSubscriptionWatches :execrows
+UPDATE customer_workflow_readiness_subscriptions SET payload=$2, lease_token=NULL, lease_until=NULL, next_evaluation_at=$3 WHERE id=$1
+`
+
+type SaveReadinessSubscriptionWatchesParams struct {
+	ID               pgtype.UUID
+	Payload          []byte
+	NextEvaluationAt pgtype.Timestamptz
+}
+
+func (q *Queries) SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX, arg SaveReadinessSubscriptionWatchesParams) (int64, error) {
+	result, err := db.Exec(ctx, saveReadinessSubscriptionWatches, arg.ID, arg.Payload, arg.NextEvaluationAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveRuntimeInstanceConfigProof = `-- name: SaveRuntimeInstanceConfigProof :exec
 INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
 SELECT id,wake_id,node_id,deployment_id,$1::uuid,$2::text,
@@ -77212,7 +77595,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -77250,6 +77633,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -79528,7 +79912,7 @@ UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean
  webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($10::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id
+WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -79585,6 +79969,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
 	)
 	return i, err
 }
@@ -79714,7 +80099,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -79760,6 +80145,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -80749,21 +81135,27 @@ func (q *Queries) UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg Upsert
 }
 
 const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
-
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency,
+    kind, error_rate_pct, error_rate_base_pct, error_count
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now(), $8::jsonb
+    $7, 'active', now(), now(), $8::jsonb,
+    $9, $10, $11, $12
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- kind and error rates describe the latest pass that saw the regression.
+    kind                = EXCLUDED.kind,
+    error_rate_pct      = EXCLUDED.error_rate_pct,
+    error_rate_base_pct = EXCLUDED.error_rate_base_pct,
+    error_count         = EXCLUDED.error_count,
     -- Keep the last known suspect when a pass could not compute one.
     suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
@@ -80771,11 +81163,15 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
           OR (debug_regression_observations.state = 'dismissed'
               AND (debug_regression_observations.dismissed_until IS NULL
                    OR debug_regression_observations.dismissed_until <= now()))
+          OR (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors'))
         THEN EXCLUDED.last_detected_at
         ELSE debug_regression_observations.first_detected_at
     END,
     last_detected_at  = EXCLUDED.last_detected_at,
     state             = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN 'active'
         WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
         WHEN debug_regression_observations.state = 'dismissed'
              AND debug_regression_observations.dismissed_until IS NOT NULL
@@ -80783,10 +81179,14 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
         ELSE 'active'
     END,
     acknowledged_at   = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN NULL
         WHEN debug_regression_observations.state = 'acknowledged' THEN debug_regression_observations.acknowledged_at
         ELSE NULL
     END,
     dismissed_until   = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN NULL
         WHEN debug_regression_observations.state = 'dismissed'
              AND debug_regression_observations.dismissed_until IS NOT NULL
              AND debug_regression_observations.dismissed_until > now()
@@ -80805,20 +81205,12 @@ type UpsertRegressionObservationParams struct {
 	AffectedCount    int32
 	RegressionFactor pgtype.Numeric
 	Column8          []byte
+	Kind             string
+	ErrorRatePct     pgtype.Numeric
+	ErrorRateBasePct pgtype.Numeric
+	ErrorCount       int32
 }
 
-// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
-// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
-// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
-// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
-// exceeds p95_base_ms * 1.20). The detections persist here.
-//
-// A native sqlc RequestTelemetryRegression query was tried during the PR-A
-// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
-// reference" parser on (deployment_id) even after explicit ON clauses;
-// the workaround is a LATERAL join that requires a more invasive query
-// refactor. Go-side composition of the two PR-A queries above is the
-// chosen workaround (cheap, no parser gymnastics).
 // Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 // route) — the cron upserts on this triple so the table grows at most
 // one row per (deployment, route) across all cron passes, not one row
@@ -80827,6 +81219,12 @@ type UpsertRegressionObservationParams struct {
 // (or a dismissal expires). The webhook trigger uses that timestamp as
 // the detection transition's idempotency key. last_detected_at is
 // refreshed on every pass and backs the dashboard's since filter.
+//
+// A latency-only observation that gains the error signal reopens: a route
+// that starts failing is a new incident even when its slowness was already
+// acknowledged or dismissed, so state returns to active with a new
+// first_detected_at (and therefore a new webhook transition). In ON CONFLICT
+// DO UPDATE, debug_regression_observations.* is the row before this update.
 func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error {
 	_, err := db.Exec(ctx, upsertRegressionObservation,
 		arg.AppID,
@@ -80837,6 +81235,10 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.AffectedCount,
 		arg.RegressionFactor,
 		arg.Column8,
+		arg.Kind,
+		arg.ErrorRatePct,
+		arg.ErrorRateBasePct,
+		arg.ErrorCount,
 	)
 	return err
 }
@@ -81277,7 +81679,7 @@ func (q *Queries) WithdrawCloneCheckpointPgPublication(ctx context.Context, db D
 const workerAdmissionCount = `-- name: WorkerAdmissionCount :one
 select count(*)::bigint from instances i join apps a on a.id=i.app_id
 where a.account_id=$1 and i.mode='worker'
-and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 `
 
 func (q *Queries) WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {

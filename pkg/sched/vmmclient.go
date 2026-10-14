@@ -390,8 +390,10 @@ type VMInstanceStat struct {
 	// writes 0 to net_rx_bytes — safe under additive-merge).
 	NetRxBytes       *int64
 	InflightRequests int64
-	// QuietPaused (ADR-957): vmmd holds the instance paused between requests.
-	QuietPaused   bool
+	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
+	QuietPaused bool
+	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
+	Frozen        bool
 	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
@@ -517,7 +519,7 @@ type AppSpec struct {
 	// override (ADR-078). Empty keeps the plan defaults.
 	LivenessProbeJSON string
 	// QuietPauseAfterMS asks vmmd to pause the instance's vCPUs between
-	// requests (ADR-957); 0 keeps it running. See quietPauseAfterMS.
+	// requests (ADR-1151); 0 keeps it running. See quietPauseAfterMS.
 	QuietPauseAfterMS int64
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
@@ -1175,6 +1177,45 @@ func (c *VMMClient) ResumeWarmInstance(ctx context.Context, instance string) err
 	return nil
 }
 
+// FreezeReport is vmmd's account of one freeze (ADR-1151): how long the
+// pause and the optional memory reclaim took, and the VM cgroup's resident
+// bytes before and after reclaim (equal without reclaim, zero when vmmd could
+// not read the cgroup or the instance was already frozen).
+type FreezeReport struct {
+	Pause               time.Duration
+	Reclaim             time.Duration
+	ResidentBytesBefore int64
+	ResidentBytesAfter  int64
+}
+
+// FreezeInstance wraps vmmd's FreezeInstance RPC (ADR-1151). reclaim asks
+// vmmd to also reclaim the VM's memory; ADR-1151 sets it only under memory
+// pressure. vmmd refuses an ineligible instance (instance_not_freezable) or
+// one serving a request (instance_busy) with FailedPrecondition.
+func (c *VMMClient) FreezeInstance(ctx context.Context, instance string, reclaim bool) (FreezeReport, error) {
+	resp, err := c.cli.FreezeInstance(ctx, &vmmdpb.FreezeInstanceRequest{Instance: instance, Reclaim: reclaim})
+	if err != nil {
+		return FreezeReport{}, liftErr(err)
+	}
+	return FreezeReport{
+		Pause:               time.Duration(resp.GetPauseMicros()) * time.Microsecond,
+		Reclaim:             time.Duration(resp.GetReclaimMicros()) * time.Microsecond,
+		ResidentBytesBefore: resp.GetResidentBytesBefore(),
+		ResidentBytesAfter:  resp.GetResidentBytesAfter(),
+	}, nil
+}
+
+// ThawInstance wraps vmmd's ThawInstance RPC (ADR-1151). healthcheckVerified
+// reports that vmmd confirmed the image healthcheck the caller required; a
+// caller that required one must not route to a thaw vmmd did not verify.
+func (c *VMMClient) ThawInstance(ctx context.Context, instance string, imageHealthcheckRequired bool) (healthcheckVerified bool, err error) {
+	resp, err := c.cli.ThawInstance(ctx, &vmmdpb.ThawInstanceRequest{Instance: instance, ImageHealthcheckRequired: imageHealthcheckRequired})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	return resp.GetImageHealthcheckVerified(), nil
+}
+
 // FrameworkReady implements VMM. The wire RPC's NotFound return
 // (instance not live on this vmmd) is lifted to a structured gRPC
 // status error so the cmd/vmmd DGRAM listener can classify it as
@@ -1650,6 +1691,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
+		Frozen:           in.GetFrozen(),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()

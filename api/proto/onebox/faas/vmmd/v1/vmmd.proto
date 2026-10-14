@@ -94,6 +94,13 @@ service Vmmd {
   // metadata-only because stdout/stderr have already arrived as chunks.
   rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);
 
+  // AttachAppTask connects one client to an interactive app task (ADR-1037).
+  // The first frame names the instance and presents the single-use attach
+  // token; vmmd matches it against the digest schedd registered through
+  // ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
+  // output plus one terminal result back.
+  rpc AttachAppTask(stream AttachAppTaskRequest) returns (stream AttachAppTaskEvent);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -143,6 +150,24 @@ service Vmmd {
   // owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
   // only resumes Firecracker and re-attaches its liveness loops.
   rpc ResumeWarmInstance(ResumeWarmInstanceRequest) returns (ResumeWarmInstanceResponse);
+
+  // FreezeInstance (ADR-1151) pauses an idle running instance in place for
+  // the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
+  // stops its probes and, only when asked (memory pressure), reclaims its
+  // cgroup memory. The VM keeps its lease, netns and Firecracker process.
+  // Ineligible instances (warm pool, jobs, app tasks, builders, private
+  // network members, pending waitUntil tasks) fail with FailedPrecondition
+  // and code instance_not_freezable; an instance serving a request, stream
+  // or session fails with FailedPrecondition and code instance_busy, and
+  // keeps running. Freezing a frozen instance succeeds without pausing it
+  // again. A forward that reaches a frozen instance fails fast with
+  // Unavailable and code instance_frozen.
+  rpc FreezeInstance(FreezeInstanceRequest) returns (FreezeInstanceResponse);
+
+  // ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
+  // its probes. schedd admits the thaw first. Thawing a live instance that
+  // is not frozen is a successful no-op.
+  rpc ThawInstance(ThawInstanceRequest) returns (ThawInstanceResponse);
 
   // WaitBuilderReady blocks until a KeepWarm builder writes its durable
   // build-done marker and emits the guest-stage build-ready line. A builder
@@ -719,7 +744,7 @@ message AppSpec {
   // Empty keeps the plan defaults. production-us hunt #8: without this field
   // apid stored the override and every VM still ran the plan defaults.
   string liveness_probe_json = 31;
-  // ADR-957 quiet pause: pause this instance's vCPUs after this many
+  // ADR-1151 quiet pause: pause this instance's vCPUs after this many
   // milliseconds with no forwarded request, stream or tail task in flight,
   // and resume it on the next one. schedd sets it only for eligible
   // function apps; 0 keeps the instance running between requests. vmmd
@@ -1496,12 +1521,17 @@ message InstanceStats {
   // the per-destination rate, and the plan's flood ceiling (0 = none).
   google.protobuf.Int64Value egress_flood_drops_per_min = 19;
   int64 egress_flood_drops_limit_per_min = 20;
-  // ADR-957: true while vmmd holds the instance quiet-paused between
+  // ADR-1151: true while vmmd holds the instance quiet-paused between
   // requests. The row stays RUNNING and billed; schedd stops counting a
   // quiet-paused instance's vCPUs toward the node's active vCPU.
   bool quiet_paused = 21;
   // When the current quiet pause began; absent while running.
   google.protobuf.Timestamp quiet_paused_since = 22;
+  // ADR-1151: true while the instance is frozen (paused in place by
+  // FreezeInstance until schedd thaws or destroys it).
+  bool frozen = 23;
+  // ADR-1151: when the current freeze took effect; absent unless frozen.
+  google.protobuf.Timestamp frozen_since = 24;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -2487,6 +2517,41 @@ message ResumeWarmInstanceResponse {
   bool supports_image_healthcheck_monitoring = 3;
 }
 
+// FreezeInstanceRequest (ADR-1151) names the instance to freeze. reclaim asks
+// vmmd to also reclaim the VM cgroup's memory after the pause; schedd sets it
+// only under memory pressure.
+message FreezeInstanceRequest {
+  string instance = 1;
+  bool reclaim = 2;
+}
+
+// FreezeInstanceResponse (ADR-1151) reports one freeze. Resident bytes are the
+// VM cgroup's memory.current before and after reclaim (equal when no reclaim
+// ran; zero when vmmd could not read the cgroup). All zero when the instance
+// was already frozen.
+message FreezeInstanceResponse {
+  string instance = 1;
+  int64 pause_micros = 2;
+  int64 reclaim_micros = 3;
+  int64 resident_bytes_before = 4;
+  int64 resident_bytes_after = 5;
+}
+
+// ThawInstanceRequest (ADR-1151) names the frozen instance to resume.
+// image_healthcheck_required asks vmmd to confirm the instance's stored boot
+// contract, as ResumeWarmInstance does; the thaw then runs the resume hook and
+// the image healthcheck before it returns.
+message ThawInstanceRequest {
+  string instance = 1;
+  bool image_healthcheck_required = 2;
+}
+
+// ThawInstanceResponse (ADR-1151) acknowledges the in-place resume.
+message ThawInstanceResponse {
+  string instance = 1;
+  bool image_healthcheck_verified = 2;
+}
+
 // RestoreAppTaskRequest is the command-free preparation envelope for a
 // deployment-attached one-shot command. App carries the same immutable
 // runtime, environment, secret, and network projection as an ordinary wake.
@@ -2516,6 +2581,12 @@ message ExecuteAppTaskRequest {
   bool command_shell = 5;
   int32 timeout_seconds = 6;
   int32 max_output_bytes = 7;
+  // interactive sessions (ADR-1037) wait for an AttachAppTask client whose
+  // token hashes to attach_token_sha256; output streams to that client only.
+  bool interactive = 8;
+  bool tty = 9;
+  bytes attach_token_sha256 = 10;
+  int32 attach_timeout_seconds = 11;
 }
 
 message ExecuteAppTaskResponse {
@@ -2542,6 +2613,41 @@ message ExecuteAppTaskOutputChunk {
   string stream = 1;
   bytes chunk = 2;
 }
+
+message AttachAppTaskRequest {
+  oneof frame {
+    AttachAppTaskStart start = 1;
+    bytes stdin = 2;
+    AttachAppTaskResize resize = 3;
+    AttachAppTaskStdinClose stdin_close = 4;
+  }
+}
+
+message AttachAppTaskStart {
+  string instance = 1;
+  string attach_token = 2;
+  // rows/cols are the client's terminal size; zero for pipe sessions.
+  uint32 rows = 3;
+  uint32 cols = 4;
+}
+
+message AttachAppTaskResize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message AttachAppTaskStdinClose {}
+
+message AttachAppTaskEvent {
+  oneof frame {
+    // attached confirms the token and that the guest session has started.
+    AttachAppTaskAttached attached = 1;
+    ExecuteAppTaskOutputChunk output = 2;
+    ExecuteAppTaskResponse terminal = 3;
+  }
+}
+
+message AttachAppTaskAttached {}
 
 message AllowResolvedEgressRequest {
   string source_ip = 1;
