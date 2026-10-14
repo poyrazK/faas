@@ -52,6 +52,27 @@ the learner.
   in the existing `gateway_service_wake_ahead_total` and
   `gateway_service_wake_ahead_edge_total` series.
 
+## Validation
+
+`TestPrivateTCPWakeAheadMetal` deploys an internal TCP echo service and a
+caller from images. Each cycle parks both, then wakes the caller with a
+request that opens a TCP session to the service. Twenty-odd cycles teach the
+edge. The opt-in is then switched on and off in alternating blocks of four
+cycles, on one gateway in one run. Restores on the shared n2 host varied
+about 3x with host load between runs an hour apart, so comparing separate
+runs or phases measured the host, not wake-ahead.
+
+On n2 (2026-10-14), the cold caller → TCP service round trip was:
+
+- wake-ahead off: p50 3.32 s, p95 3.73 s (n=8);
+- wake-ahead on: p50 2.34 s, p95 3.64 s (n=8);
+- 8 wake-aheads started and all 8 were used.
+
+With wake-ahead on, the service's restore finished within 0.06–0.36 s of the
+caller's. Without it, the service's restore finished 0.7–2.1 s after the
+caller's. On this nested-KVM host two concurrent restores each run slower
+than one alone, which is why p95 barely moves.
+
 ## Rejected alternatives
 
 - **Observe when the guest dial is confirmed.** It would be exact for the
