@@ -9,6 +9,7 @@ type IssueTrackerLinksView struct {
 	AppSlug, IssueID, CSRF, NextURL string
 	Items                           []api.IssueTrackerLink
 	CanManage                       bool
+	LinearOAuthAvailable            bool
 	CallbackHealth                  map[string]issuetracker.CallbackHealth
 	Policies                        map[string]api.IssueTrackerAutoSync
 	Reasons                         map[string]string

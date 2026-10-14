@@ -58395,8 +58395,19 @@ CREATE TABLE public.issue_tracker_linear_connections (
     sealed_credential bytea,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     webhook_enabled boolean DEFAULT false NOT NULL,
+    auth_method text DEFAULT 'api_key'::text NOT NULL,
+    oauth_status text DEFAULT ''::text NOT NULL,
+    access_token_expires_at timestamp with time zone,
+    credential_generation bigint DEFAULT 1 NOT NULL,
+    refresh_claim_id uuid,
+    refresh_claim_until timestamp with time zone,
+    refresh_started_at timestamp with time zone,
+    CONSTRAINT issue_tracker_linear_connections_auth_method_check CHECK ((auth_method = ANY (ARRAY['api_key'::text, 'oauth'::text]))),
     CONSTRAINT issue_tracker_linear_connections_check CHECK (((connected AND (workspace_id IS NOT NULL) AND (team_id IS NOT NULL) AND (viewer_id IS NOT NULL) AND (octet_length(sealed_credential) > 0) AND (sealed_credential IS NOT NULL)) OR ((NOT connected) AND (workspace_id IS NULL) AND (team_id IS NULL) AND (viewer_id IS NULL) AND (sealed_credential IS NULL)))),
+    CONSTRAINT issue_tracker_linear_connections_credential_generation_check CHECK ((credential_generation > 0)),
+    CONSTRAINT issue_tracker_linear_connections_oauth_status_check CHECK ((oauth_status = ANY (ARRAY[''::text, 'ready'::text, 'refreshing'::text, 'reconnect_required'::text, 'revoking'::text]))),
     CONSTRAINT issue_tracker_linear_connections_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_linear_oauth_shape CHECK ((((auth_method = 'api_key'::text) AND (oauth_status = ''::text) AND (access_token_expires_at IS NULL)) OR ((auth_method = 'oauth'::text) AND connected AND (oauth_status <> ''::text) AND (access_token_expires_at IS NOT NULL)))),
     CONSTRAINT issue_tracker_linear_webhook_connected CHECK (((NOT webhook_enabled) OR connected))
 );
 
@@ -58528,3 +58539,61 @@ ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
 
 ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
     ADD CONSTRAINT issue_tracker_callback_diagnostics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.issue_tracker_linear_connections(app_id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_linear_oauth_flows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_linear_oauth_flows (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    state_hash text NOT NULL,
+    expected_revision bigint NOT NULL,
+    phase text NOT NULL,
+    sealed_state bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_tracker_linear_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
+    CONSTRAINT issue_tracker_linear_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text, 'consuming'::text]))),
+    CONSTRAINT issue_tracker_linear_oauth_flows_sealed_state_check CHECK ((octet_length(sealed_state) > 0)),
+    CONSTRAINT issue_tracker_linear_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_state_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_state_hash_key UNIQUE (state_hash);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_linear_oauth_flows_expiry_idx ON public.issue_tracker_linear_oauth_flows USING btree (expires_at);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

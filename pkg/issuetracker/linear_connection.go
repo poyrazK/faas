@@ -15,8 +15,8 @@ type LinearIdentity struct {
 	ViewerID    string `json:"viewer_id"`
 }
 
-// VerifyLinearConnection verifies a personal API key and explicit team selection.
-// OAuth tokens require a separate authentication/refresh contract.
+// VerifyLinearConnection verifies the credential and explicit team selection.
+// OAuth callers supply OAuthAuthorization after scoped refresh resolution.
 func (c *Client) VerifyLinearConnection(ctx context.Context, token, teamID string) (LinearIdentity, error) {
 	id, err := uuid.Parse(teamID)
 	if err != nil || id == uuid.Nil {

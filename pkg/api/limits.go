@@ -10496,3 +10496,16 @@ const (
 	IssueTrackerCallbackRetention          = 7 * 24 * time.Hour
 	IssueTrackerCallbackRequestTimeout     = 4 * time.Second
 )
+
+// Linear OAuth grants and browser handshakes are bounded independently of polling.
+const (
+	IssueTrackerLinearOAuthCommitTimeout = 4 * time.Second
+	IssueTrackerLinearOAuthFlowTTL       = 10 * time.Minute
+	IssueTrackerLinearOAuthRefreshSkew   = time.Minute
+	IssueTrackerLinearOAuthTokenMaxTTL   = 24 * time.Hour
+	IssueTrackerLinearOAuthRefreshGrace  = 30 * time.Minute
+	IssueTrackerLinearOAuthLease         = 30 * time.Second
+	IssueTrackerLinearOAuthTeamsMax      = 200
+	IssueTrackerLinearOAuthTeamsPage     = 50
+	IssueTrackerLinearOAuthCleanupBatch  = 100
+)

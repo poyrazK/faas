@@ -159,3 +159,23 @@ func TestLinearCallbackDiagnosticsExplainScopeAndDoNotClaimRegistration(t *testi
 		t.Fatal("Linear diagnostics use wrong provider guidance")
 	}
 }
+
+func TestLinearOAuthPickerEscapesTeamsAndKeepsCredentialsOutOfForms(t *testing.T) {
+	tmpl, err := template.ParseFS(tmplFS, "templates/issue_linear_oauth.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	view := LinearOAuthPicker{AppSlug: "payments", IssueID: "issue", State: "nonce", CSRF: "csrf", WorkspaceID: "workspace", Teams: []issuetracker.LinearOAuthTeam{{ID: "team", Name: "Team <script>unsafe</script>"}}}
+	if err = tmpl.ExecuteTemplate(&out, "issue_linear_oauth.html", Page{Data: view}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`<!doctype html>`, `name="csrf_token" value="csrf"`, `name="state" value="nonce"`, `name="action" value="oauth_finish"`, `&lt;script&gt;`, `value="team"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatal("picker contract missing", want)
+		}
+	}
+	if strings.Contains(out.String(), "<script>") || strings.Contains(out.String(), `name="access_token"`) || strings.Contains(out.String(), `name="refresh_token"`) {
+		t.Fatal("unsafe OAuth picker")
+	}
+}

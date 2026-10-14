@@ -62,6 +62,8 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	linearOAuthConfig                      issuetracker.LinearOAuthConfig
+	linearOAuthProvider                    issuetracker.LinearOAuthProvider
 	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
 	nativeTrackerProvider                  issuetracker.StatusProvider
 	nativeTicketProvider                   issuetracker.Provider
@@ -3983,6 +3985,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/saved-views", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSavedViewHandler))))
+	mux.Handle("GET /oauth/linear/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.linearOAuthCallback))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerSyncHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerSyncHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerLinkHandler))))

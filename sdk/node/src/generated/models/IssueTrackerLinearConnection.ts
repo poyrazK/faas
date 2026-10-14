@@ -7,6 +7,18 @@
  */
 export type IssueTrackerLinearConnection = {
   /**
+   * Stored credential kind (api_key or oauth).
+   */
+  auth_method?: string;
+  /**
+   * OAuth health (ready, refreshing, reconnect_required or revoking); absent for API keys.
+   */
+  oauth_status?: string;
+  /**
+   * OAuth access token expiry; never includes credentials.
+   */
+  access_token_expires_at?: string;
+  /**
    * True when a scoped signing secret is stored for Linear issue callbacks.
    */
   webhook_enabled?: boolean;
@@ -15,7 +27,7 @@ export type IssueTrackerLinearConnection = {
    */
   callback_path?: string;
   /**
-   * Whether a verified personal API key is stored.
+   * Whether a verified API key or OAuth grant is stored.
    */
   connected: boolean;
   /**
@@ -31,7 +43,7 @@ export type IssueTrackerLinearConnection = {
    */
   team_id?: string;
   /**
-   * Verified Linear user identity owning the API key.
+   * Verified Linear user identity owning the credential.
    */
   viewer_id?: string;
 };

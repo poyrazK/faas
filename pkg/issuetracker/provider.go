@@ -127,8 +127,14 @@ func validateToken(token string) error {
 	}
 	return nil
 }
+func validateProviderToken(provider, token string) error {
+	if provider == "linear" {
+		token = strings.TrimPrefix(token, "Bearer ")
+	}
+	return validateToken(token)
+}
 func (c *Client) request(ctx context.Context, provider, method, path, token string, body any, out any, write bool) error {
-	if err := validateToken(token); err != nil {
+	if err := validateProviderToken(provider, token); err != nil {
 		return err
 	}
 	var data []byte
@@ -163,6 +169,9 @@ func (c *Client) request(ctx context.Context, provider, method, path, token stri
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if !write && response.StatusCode == 401 {
+			return &ProviderUnauthorized{Provider: provider}
+		}
 		if write && (response.StatusCode == 400 || response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404 || response.StatusCode == 422) {
 			return &RejectedError{Status: response.StatusCode}
 		}
@@ -171,6 +180,22 @@ func (c *Client) request(ctx context.Context, provider, method, path, token stri
 	payload, err := io.ReadAll(io.LimitReader(response.Body, api.IssueTrackerResponseMaxBytes+1))
 	if err != nil || len(payload) > api.IssueTrackerResponseMaxBytes {
 		return errors.New("tracker response is unreadable or oversized")
+	}
+	if provider == "linear" && !write {
+		var envelope struct {
+			Errors []struct {
+				Extensions struct {
+					Code string `json:"code"`
+				} `json:"extensions"`
+			} `json:"errors"`
+		}
+		if json.Unmarshal(payload, &envelope) == nil {
+			for _, e := range envelope.Errors {
+				if e.Extensions.Code == "UNAUTHENTICATED" || e.Extensions.Code == "AUTHENTICATION_ERROR" {
+					return &ProviderUnauthorized{Provider: provider}
+				}
+			}
+		}
 	}
 	if json.Unmarshal(payload, out) != nil {
 		return errors.New("tracker response is invalid")
@@ -230,7 +255,7 @@ func (c *Client) Create(ctx context.Context, r Request, token string) (Ticket, e
 	if err != nil {
 		return Ticket{}, err
 	}
-	if err = validateToken(token); err != nil {
+	if err = validateProviderToken(r.Provider, token); err != nil {
 		return Ticket{}, err
 	}
 	if r.Provider == "github" {

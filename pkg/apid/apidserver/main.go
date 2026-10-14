@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -1416,6 +1417,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// resolved config rides on *server via WithOAuthConfig so the
 	// handlers, /v1/auth/capabilities, and renderLoginForm share one
 	// source of truth (no os.Getenv at request time).
+	linearOAuthCfg, err := issuetracker.LoadLinearOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Linear OAuth configuration: %w", err)
+	}
 	oauthCfg, err := auth.LoadSignInConfigFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid OAuth configuration: %w", err)
@@ -1437,6 +1442,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.linearOAuthConfig = linearOAuthCfg
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

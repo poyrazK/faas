@@ -20,6 +20,7 @@ import (
 
 func (s *server) populateDashboardTrackerSync(w http.ResponseWriter, r *http.Request, app state.App, account string, view *dashboard.IssueTrackerLinksView) bool {
 	view.CanManage = app.AccountID == account
+	view.LinearOAuthAvailable = s.linearOAuthConfig.Enabled()
 	if store, ok := s.store.(state.IssueTrackerCallbackHealthStore); ok && view.CanManage {
 		view.CallbackHealth = map[string]issuetracker.CallbackHealth{}
 		for _, link := range view.Items {
@@ -74,6 +75,10 @@ func (s *server) dashboardIssueTrackerSyncForAccount(w http.ResponseWriter, r *h
 		return
 	}
 	action := r.PostForm.Get("action")
+	if action == "oauth_start" || action == "oauth_finish" || action == "oauth_revoke" {
+		s.dashboardLinearOAuthForm(w, r, acct)
+		return
+	}
 	if action == "connect" || action == "disconnect" {
 		s.dashboardLinearConnectionForm(w, r, acct)
 		return

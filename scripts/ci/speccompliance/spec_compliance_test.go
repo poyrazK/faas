@@ -109,6 +109,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1219: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1219: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1221: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /oauth/linear/callback":                                      true, // ADR-1223: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                                        true, // HMAC-signed webhook (PR #3 / ADR-025)
 	"POST /v1/webhooks/polar":                                         true, // Standard Webhooks-signed webhook

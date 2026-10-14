@@ -110,7 +110,7 @@ func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(faas.IssueTrackerLinearConnection{Connected: true, Revision: 8, TeamID: "team"})
+		_ = json.NewEncoder(w).Encode(faas.IssueTrackerLinearConnection{Connected: true, Revision: 8, TeamID: "team", AuthMethod: "oauth", OAuthStatus: "reconnect_required"})
 	}))
 	defer server.Close()
 	client, err := faas.NewClient(server.URL, "fp_live_test")
@@ -121,7 +121,7 @@ func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T
 		t.Fatal(err)
 	}
 	out, err := client.UpdateIssueTrackerLinearConnection(t.Context(), "payments", input)
-	if err != nil || out.Revision != 8 || !out.Connected {
+	if err != nil || out.Revision != 8 || !out.Connected || out.AuthMethod != "oauth" || out.OAuthStatus != "reconnect_required" {
 		t.Fatal("connection response lost", err)
 	}
 }

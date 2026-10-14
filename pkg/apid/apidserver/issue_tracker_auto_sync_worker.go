@@ -29,6 +29,11 @@ func (s *server) startIssueTrackerAutoSync(ctx context.Context) {
 	}()
 }
 func (s *server) runIssueTrackerAutoSyncBatch(ctx context.Context) {
+	if store, ok := s.store.(state.LinearOAuthStore); ok {
+		if err := store.CleanupLinearOAuthFlows(ctx); err != nil {
+			s.log.Warn("Linear OAuth flow cleanup failed")
+		}
+	}
 	st, ok := s.store.(state.IssueTrackerAutoSyncStore)
 	if !ok {
 		return

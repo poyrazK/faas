@@ -84,6 +84,13 @@ func SealLinearCredential(ctx context.Context, verifier LinearConnectionVerifier
 // or provider identity, including when both records use the same sealing key.
 func OpenLinearCredential(identities []*age.X25519Identity, expected LinearCredentialScope, sealed []byte) (string, error) {
 	namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
+	if err == nil && namespace == linearOAuthNamespace {
+		c, e := OpenLinearOAuthCredential(identities, expected, sealed)
+		if e != nil || !oauthTokenCurrent(c) {
+			return "", errors.New("Linear OAuth access requires refresh or reconnect")
+		}
+		return issuetracker.OAuthAuthorization(c.Tokens.AccessToken), nil
+	}
 	var envelope linearCredentialEnvelope
 	if err != nil || namespace != linearCredentialNamespace || !validLinearScope(expected) || json.Unmarshal(plaintext, &envelope) != nil || envelope.Scope != expected || !validLinearToken(envelope.Token) {
 		return "", errors.New("Linear credential does not match the connection")
@@ -98,6 +105,13 @@ func validLinearToken(token string) bool {
 // OpenLinearWebhookSecret keeps the signing secret bound to the verified key's scope.
 func OpenLinearWebhookSecret(identities []*age.X25519Identity, expected LinearCredentialScope, sealed []byte) (string, error) {
 	namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
+	if err == nil && namespace == linearOAuthNamespace {
+		c, e := OpenLinearOAuthCredential(identities, expected, sealed)
+		if e != nil || !issuetracker.ValidLinearWebhookSecret(c.WebhookSecret) {
+			return "", errors.New("Linear callback credential does not match the connection")
+		}
+		return c.WebhookSecret, nil
+	}
 	var envelope linearCredentialEnvelope
 	if err != nil || namespace != linearCredentialNamespace || !validLinearScope(expected) || json.Unmarshal(plaintext, &envelope) != nil || envelope.Scope != expected || !validLinearToken(envelope.Token) || !issuetracker.ValidLinearWebhookSecret(envelope.WebhookSecret) {
 		return "", errors.New("Linear callback credential does not match the connection")

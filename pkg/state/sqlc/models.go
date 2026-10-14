@@ -4053,16 +4053,34 @@ type IssueTrackerCallbackDiagnostic struct {
 }
 
 type IssueTrackerLinearConnection struct {
+	AppID                pgtype.UUID
+	AccountID            pgtype.UUID
+	Revision             int64
+	Connected            bool
+	WorkspaceID          pgtype.UUID
+	TeamID               pgtype.UUID
+	ViewerID             pgtype.UUID
+	SealedCredential     []byte
+	UpdatedAt            pgtype.Timestamptz
+	WebhookEnabled       bool
+	AuthMethod           string
+	OauthStatus          string
+	AccessTokenExpiresAt pgtype.Timestamptz
+	CredentialGeneration int64
+	RefreshClaimID       pgtype.UUID
+	RefreshClaimUntil    pgtype.Timestamptz
+	RefreshStartedAt     pgtype.Timestamptz
+}
+
+type IssueTrackerLinearOauthFlow struct {
 	AppID            pgtype.UUID
 	AccountID        pgtype.UUID
-	Revision         int64
-	Connected        bool
-	WorkspaceID      pgtype.UUID
-	TeamID           pgtype.UUID
-	ViewerID         pgtype.UUID
-	SealedCredential []byte
-	UpdatedAt        pgtype.Timestamptz
-	WebhookEnabled   bool
+	IssueID          pgtype.UUID
+	StateHash        string
+	ExpectedRevision int64
+	Phase            string
+	SealedState      []byte
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type IssueTrackerLink struct {

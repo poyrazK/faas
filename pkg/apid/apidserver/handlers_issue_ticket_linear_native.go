@@ -47,7 +47,7 @@ func (h nativeLinearCreationHost) Prepare(ctx context.Context) (issuetrackers.Pr
 	if err != nil {
 		return issuetrackers.Prepared{}, err
 	}
-	if !record.Connection.Connected || record.Connection.Revision <= 0 {
+	if !record.Connection.Connected || record.Connection.Revision <= 0 || (record.Connection.AuthMethod == "oauth" && (record.Connection.OAuthStatus == "reconnect_required" || record.Connection.OAuthStatus == "revoking")) {
 		return issuetrackers.Prepared{}, issuetrackers.LinearConnectionRequired()
 	}
 	p := issuetrackers.Prepared{Issue: detail.Issue, GroupFingerprint: issuetrackers.GroupScopeFingerprint(detail), Connection: issuetrackers.Connection{AccountID: account.ID, Linear: linearBoundConnection(record)}}
@@ -72,19 +72,12 @@ func (h nativeLinearCreationHost) Token(ctx context.Context, c issuetrackers.Con
 	if err != nil || !r.Connection.Connected || *linearBoundConnection(r) != *c.Linear {
 		return "", issuetrackers.Changed()
 	}
-	token, err := issuetrackers.OpenLinearCredential(mfaIdentities(), c.Linear.Scope, r.SealedCredential)
-	if err != nil {
+	service, available := h.server.linearOAuthService()
+	if !available && r.Connection.AuthMethod == "oauth" {
 		return "", api.ErrCapacity("Linear credentials unavailable")
 	}
-	verifier := h.server.nativeLinearVerifier
-	if verifier == nil {
-		verifier = issuetracker.NewClient(nil)
-	}
-	identity, err := verifier.VerifyLinearConnection(ctx, token, c.Linear.Scope.Identity.TeamID)
-	if err != nil || identity != c.Linear.Scope.Identity {
-		return "", issuetrackers.LinearConnectionRequired()
-	}
-	return token, nil
+	return service.VerifiedToken(ctx, r)
+
 }
 func (h nativeLinearCreationHost) Attach(ctx context.Context, r issuetracker.Request, t issuetracker.Ticket) (api.IssueTrackerLink, error) {
 	st, ok := h.server.store.(state.IssueTrackerLinkStore)

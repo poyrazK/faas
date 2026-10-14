@@ -1316,3 +1316,8 @@ func IssueNativeTicketExpire(e pgHandlerEnv, ctx context.Context, account, reque
 	_, err := e.pool.Exec(ctx, "UPDATE native_issue_ticket_receipts SET recover_after=now()-interval '1 second' WHERE account_id=$1 AND request_id=$2", account, request)
 	return err
 }
+
+func IssueNativeSetLinearOAuth(e pgHandlerEnv, cfg issuetracker.LinearOAuthConfig, provider issuetracker.LinearOAuthProvider) {
+	e.s.linearOAuthConfig = cfg
+	e.s.linearOAuthProvider = provider
+}

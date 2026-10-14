@@ -82534,13 +82534,16 @@ components:
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
       required: [connected, revision]
       properties:
+        auth_method: { type: string, description: Stored credential kind (api_key or oauth). }
+        oauth_status: { type: string, description: "OAuth health (ready, refreshing, reconnect_required or revoking); absent for API keys." }
+        access_token_expires_at: { type: string, format: date-time, description: OAuth access token expiry; never includes credentials. }
         webhook_enabled: { type: boolean, description: True when a scoped signing secret is stored for Linear issue callbacks. }
         callback_path: { type: string, description: Provider callback path to append to the Gregale API origin when callbacks are enabled. }
-        connected: { type: boolean, description: Whether a verified personal API key is stored. }
+        connected: { type: boolean, description: Whether a verified API key or OAuth grant is stored. }
         revision: { type: integer, format: int64, minimum: 0, description: Configuration revision used to fence concurrent changes. }
         workspace_id: { type: string, format: uuid, description: Verified Linear organization identity. }
         team_id: { type: string, format: uuid, description: Verified active Linear team identity. }
-        viewer_id: { type: string, format: uuid, description: Verified Linear user identity owning the API key. }
+        viewer_id: { type: string, format: uuid, description: Verified Linear user identity owning the credential. }
     UpdateIssueTrackerLinearConnectionRequest:
       type: object
       description: Explicit connection or disconnection against a known revision.

@@ -1728,6 +1728,15 @@ type Querier interface {
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
+	LinearOAuthFlowClaim(ctx context.Context, db DBTX, arg LinearOAuthFlowClaimParams) (IssueTrackerLinearOauthFlow, error)
+	LinearOAuthFlowCleanup(ctx context.Context, db DBTX, limit int32) error
+	LinearOAuthFlowDelete(ctx context.Context, db DBTX, arg LinearOAuthFlowDeleteParams) error
+	LinearOAuthFlowGet(ctx context.Context, db DBTX, arg LinearOAuthFlowGetParams) (IssueTrackerLinearOauthFlow, error)
+	LinearOAuthFlowSave(ctx context.Context, db DBTX, arg LinearOAuthFlowSaveParams) (int64, error)
+	LinearOAuthFlowStart(ctx context.Context, db DBTX, arg LinearOAuthFlowStartParams) error
+	LinearOAuthRefreshClaim(ctx context.Context, db DBTX, arg LinearOAuthRefreshClaimParams) (IssueTrackerLinearConnection, error)
+	LinearOAuthRefreshFinish(ctx context.Context, db DBTX, arg LinearOAuthRefreshFinishParams) (IssueTrackerLinearConnection, error)
+	LinearOAuthSetStatus(ctx context.Context, db DBTX, arg LinearOAuthSetStatusParams) (IssueTrackerLinearConnection, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
 	ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAPIKeysRow, error)

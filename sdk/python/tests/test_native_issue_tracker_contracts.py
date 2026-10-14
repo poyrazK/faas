@@ -235,3 +235,22 @@ def test_linear_callback_secret_is_write_only_and_metadata_is_public():
     assert response.webhook_enabled is True
     assert response.callback_path == "/hooks/issue-trackers/linear/app"
     assert secret not in str(response.to_dict())
+
+
+def test_linear_oauth_metadata_is_typed_and_contains_no_provider_credentials():
+    from faas_sdk.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
+
+    metadata = IssueTrackerLinearConnection.from_dict(
+        {
+            "connected": True,
+            "revision": 4,
+            "auth_method": "oauth",
+            "oauth_status": "reconnect_required",
+            "access_token_expires_at": "2026-10-14T12:00:00Z",
+        }
+    )
+    assert metadata.auth_method == "oauth"
+    assert metadata.oauth_status == "reconnect_required"
+    assert metadata.access_token_expires_at.isoformat() == "2026-10-14T12:00:00+00:00"
+    assert "access_token" not in metadata.to_dict()
+    assert "refresh_token" not in metadata.to_dict()

@@ -47,7 +47,7 @@ test('automatic sync uses a known policy revision and aligned native snapshot',a
 });
 
 test('Linear connections preserve revision and send credentials only on connect', async(t)=>{
- let revision=7,connected=false;
+ let revision=7,connected=true;
  const team='22222222-2222-4222-8222-222222222222';
  const server=createServer(async(req,res)=>{
   assert.equal(req.url,'/v1/apps/payments/issue-tracker-linear-connection');
@@ -59,11 +59,11 @@ test('Linear connections preserve revision and send credentials only on connect'
    else assert.deepEqual(body,{connected:false,expected_revision:8});
    connected=body.connected;revision++;
   }else assert.equal(req.method,'GET');
-  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({connected,revision}));
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify(req.method==='GET'?{connected,revision,auth_method:'oauth',oauth_status:'reconnect_required',access_token_expires_at:'2026-10-14T12:00:00Z'}:{connected,revision}));
  });
  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
  const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
- const initial=await AppsService.getIssueTrackerLinearConnection({slug:'payments'});assert.equal(initial.revision,7);
+ const initial=await AppsService.getIssueTrackerLinearConnection({slug:'payments'});assert.equal(initial.revision,7);assert.equal(initial.auth_method,'oauth');assert.equal(initial.oauth_status,'reconnect_required');assert.equal(initial.access_token_expires_at,'2026-10-14T12:00:00Z');
  const result=await AppsService.updateIssueTrackerLinearConnection({slug:'payments',requestBody:{connected:true,expected_revision:initial.revision,team_id:team,api_key:'secret'}});assert.equal(result.connected,true);
  const final=await AppsService.updateIssueTrackerLinearConnection({slug:'payments',requestBody:{connected:false,expected_revision:result.revision}});assert.deepEqual(final,{connected:false,revision:9});
 });

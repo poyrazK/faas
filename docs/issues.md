@@ -1322,3 +1322,40 @@ For GitHub, setup evidence uses verified receipts for the linked ticket and curr
 owned installation/repository. Invalid signatures at the shared endpoint cannot
 safely be attributed to this app; inspect GitHub App delivery logs for rejections.
 Both providers still require their provider-side event subscriptions to be configured.
+
+### Connect Linear with OAuth
+
+When the operator enables Linear OAuth, app owners can choose **Connect Linear
+with OAuth**, select a workspace on Linear's consent screen, and confirm an
+accessible team in Gregale. OAuth requires a dashboard session, MFA where enabled,
+Issues entitlement and deploy permission. The final team confirmation replaces the
+connection against its original revision; another connection change requires new
+consent. Existing automatic policies require review and re-enabling afterward.
+Personal API key setup remains available.
+
+OAuth access tokens last up to 24 hours. Gregale refreshes within a minute of expiry
+and stores rotating refresh tokens sealed at rest. Ordinary refreshes retain the
+connection revision and automatic policy bindings. The connection metadata shows
+`auth_method`, `oauth_status` and `access_token_expires_at`, never tokens. Temporary
+uncertain refreshes remain retryable for at most 30 minutes. Revoked grants or
+expired recovery show `reconnect_required`; use Connect Linear to grant access again.
+
+**Revoke Linear access and disconnect** blocks native use first, requests provider
+revocation and then clears credentials on confirmed success. An unconfirmed result
+stays `revoking`; retry or remove authorization in Linear and disconnect locally.
+Ordinary **Disconnect Linear** clears local credentials without claiming provider
+revocation. These cleanup actions remain available after entitlement expiry.
+
+To enable OAuth, register a Linear OAuth application and configure all three apid
+environment variables: `FAAS_LINEAR_OAUTH_CLIENT_ID`,
+`FAAS_LINEAR_OAUTH_CLIENT_SECRET` and `FAAS_LINEAR_OAUTH_REDIRECT_URI`. Register the
+exact HTTPS callback URL ending in `/oauth/linear/callback`; do not derive it from
+request headers. All three unset hides OAuth; partial configuration refuses boot.
+Request `read,write` user-actor consent; no admin permission is needed. Webhook
+registration remains separate. Supply its signing secret on team confirmation if
+callbacks should be enabled; omission disables callbacks on replacement.
+
+Authorization state expires after ten minutes and cannot repeat a code exchange.
+If the callback is interrupted, declined or expired, start consent again. Pending
+credentials are sealed and removed by maintenance after expiry. Team selection
+requires a complete catalog of at most 200 teams, read in pages of 50.
