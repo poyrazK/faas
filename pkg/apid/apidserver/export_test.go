@@ -1297,3 +1297,9 @@ func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
 }
+
+var ComposeDockerBuildContext = composeDockerBuildContext
+
+func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
+	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
+}
