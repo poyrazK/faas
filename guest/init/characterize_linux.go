@@ -261,10 +261,21 @@ func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exi
 // host's wait in pkg/fcvm/manager.go.
 func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
 	deadline := args.Now().Add(api.CharacterizationDeadline)
+	want := args.Manifest.EffectivePort()
+	var firstSeen time.Time
 	for {
-		if port, addr, ok := probeListening(args.AppPID()); ok {
-			res.Port = port
-			return true, addr, 0, false
+		if port, addr, ok := probeListening(args.AppPID(), want); ok {
+			// Another listener (a private TCP or admin port) may come up
+			// before the serving port: give the expected port a short
+			// grace before settling on the first one.
+			now := args.Now()
+			if firstSeen.IsZero() {
+				firstSeen = now
+			}
+			if port == want || now.Sub(firstSeen) >= api.CharacterizationPreferredPortGrace || now.After(deadline) {
+				res.Port = port
+				return true, addr, 0, false
+			}
 		}
 		if args.ExitStatus != nil {
 			if code, exited := args.ExitStatus(); exited {
@@ -287,18 +298,19 @@ func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult)
 // no-child early-out passes. Cross-platform callers always go
 // through probeListening; the unit test pins the early-out
 // contract there.
-func probeListeningLinux(pid int) (int, string, bool) {
+func probeListeningLinux(pid, want int) (int, string, bool) {
 	ownedInodes := ownedSocketInodes(pid)
 	if len(ownedInodes) == 0 {
 		return 0, "", false
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp", ownedInodes); ok {
-		return port, addr, true
+	// IPv4 listeners before IPv6 ones, as before; the expected port wins in
+	// either family.
+	sockets := append(scanListenSockets("/proc/net/tcp", ownedInodes), scanListenSockets("/proc/net/tcp6", ownedInodes)...)
+	s, ok, _ := pickListenSocket(sockets, want)
+	if !ok {
+		return 0, "", false
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp6", ownedInodes); ok {
-		return port, addr, true
-	}
-	return 0, "", false
+	return s.Port, listenSocketAddr(s), true
 }
 
 // countOutboundLinux returns the number of ESTABLISHED TCP

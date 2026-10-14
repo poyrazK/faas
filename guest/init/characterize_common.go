@@ -55,10 +55,31 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 	if len(sockets) == 0 {
 		return 0, "", false
 	}
-	first := sockets[0]
-	// JoinHostPort brackets IPv6 ("[::1]:5173"), which the host's
-	// loopback check (pkg/fcvm loopbackBindProblem) can parse.
-	return first.Port, net.JoinHostPort(first.IP.String(), strconv.Itoa(first.Port)), true
+	return sockets[0].Port, listenSocketAddr(sockets[0]), true
+}
+
+// listenSocketAddr formats a listener for the characterization report.
+// JoinHostPort brackets IPv6 ("[::1]:5173"), which the host's loopback
+// check (pkg/fcvm loopbackBindProblem) can parse.
+func listenSocketAddr(s listenSocket) string {
+	return net.JoinHostPort(s.IP.String(), strconv.Itoa(s.Port))
+}
+
+// pickListenSocket chooses the app's serving port among its listeners: the
+// listener on port want when there is one, else the first. An app may also
+// listen on a private TCP port (ADR-576), a metrics or an admin port, and
+// which of them /proc lists first is kernel hash order, not the app's intent
+// (H10-56). exact reports a listener on want.
+func pickListenSocket(sockets []listenSocket, want int) (s listenSocket, ok, exact bool) {
+	for _, candidate := range sockets {
+		if want > 0 && candidate.Port == want {
+			return candidate, true, true
+		}
+	}
+	if len(sockets) == 0 {
+		return listenSocket{}, false, false
+	}
+	return sockets[0], true, false
 }
 
 // listenSocket is one LISTEN socket of the app's process tree.
@@ -196,15 +217,16 @@ func truncateLog(s string, n int) string {
 // choosePortNormMode lives in portnorm_common.go (it depends on the
 // PortNormMode type + ladder constants, which are platform-agnostic).
 
-// probeListening is the cross-platform entry point. The no-child
+// probeListening is the cross-platform entry point: the app's listener
+// on port want when it has one, else its first listener. The no-child
 // early-out is here (testable on every platform); the /proc walk
 // is delegated to probeListeningLinux (gated `//go:build linux`)
 // on linux. On non-linux builds, pid > 0 always returns
 // (0, "", false) — there is no /proc to walk, and the caller
 // polls until deadline.
-func probeListening(pid int) (int, string, bool) {
+func probeListening(pid, want int) (int, string, bool) {
 	if pid <= 0 {
 		return 0, "", false
 	}
-	return probeListeningLinux(pid)
+	return probeListeningLinux(pid, want)
 }

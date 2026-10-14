@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -298,12 +299,37 @@ func TestScanEstablishedFile_MissingFileIsZero(t *testing.T) {
 	}
 }
 
+func TestPickListenSocket(t *testing.T) {
+	echo := listenSocket{IP: net.IPv4zero, Port: 5432}
+	app := listenSocket{IP: net.IPv4zero, Port: 8080}
+	normalized := listenSocket{IP: net.IPv4zero, Port: 3000}
+	for _, tc := range []struct {
+		name      string
+		sockets   []listenSocket
+		want      int
+		got       listenSocket
+		ok, exact bool
+	}{
+		{name: "expected port listed after another", sockets: []listenSocket{echo, app}, want: 8080, got: app, ok: true, exact: true},
+		{name: "expected port listed first", sockets: []listenSocket{app, echo}, want: 8080, got: app, ok: true, exact: true},
+		{name: "only another port", sockets: []listenSocket{echo}, want: 8080, got: echo, ok: true},
+		{name: "normalized app on its own port", sockets: []listenSocket{normalized}, want: 8080, got: normalized, ok: true},
+		{name: "no expected port", sockets: []listenSocket{echo, app}, want: 0, got: echo, ok: true},
+		{name: "no listener", want: 8080},
+	} {
+		got, ok, exact := pickListenSocket(tc.sockets, tc.want)
+		if got.Port != tc.got.Port || ok != tc.ok || exact != tc.exact {
+			t.Errorf("%s: pickListenSocket = %+v ok=%v exact=%v, want port %d ok=%v exact=%v", tc.name, got, ok, exact, tc.got.Port, tc.ok, tc.exact)
+		}
+	}
+}
+
 func TestProbeListening_NoChildEarlyOut(t *testing.T) {
 	// pid <= 0 short-circuits — caller polls again. Pin the contract
 	// so a regression to "scan all inodes anyway" doesn't silently
 	// observe an init-script-spawned daemon and misclassify.
 	for _, pid := range []int{-1, 0} {
-		if port, _, ok := probeListening(pid); ok || port != 0 {
+		if port, _, ok := probeListening(pid, api.DefaultAppPort); ok || port != 0 {
 			t.Errorf("probeListening(%d) = (%d, _, %v), want (0, _, false)", pid, port, ok)
 		}
 	}
