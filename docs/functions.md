@@ -221,6 +221,8 @@ The value can be up to your plan's per-instance concurrency (`gregale app
   without stopping the worker. Python cancels its task; Node drops its
   output, but the promise runs until it settles. A worker that cannot
   respond to a cancel within 5 seconds is restarted.
-- Go functions are unchanged.
+- Go SDK functions keep one request per process. A `binary` function's
+  handler can serve several by advertising them in its ready line, as the
+  shared worker protocol in ADR-1190 describes.
 
 See [ADR-1190](adr/1190-function-settings-and-concurrent-workers.md).

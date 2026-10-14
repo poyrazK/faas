@@ -71,7 +71,9 @@ loop and Python's asyncio can wait on many requests in one process.
    abandoned request with `{"__faas_cancel": id}`, which the adapter always
    acknowledges with `{"__faas_cancelled": id}`. Go SDK handlers, custom
    adapters and app layers built before this change never advertise
-   concurrency and keep one request per process.
+   concurrency and keep one request per process. A `binary` function's own
+   executable (ADR-987) may implement the shared protocol; the metal
+   acceptance does exactly that.
 
 5. **Shared workers.** The runner's worker pool sends a request to the
    least busy current worker with a free slot and starts another worker
@@ -89,6 +91,8 @@ loop and Python's asyncio can wait on many requests in one process.
 6. **Runtimes.** Node multiplexes any handler. Python multiplexes only an
    `async def` handler, one asyncio task per request with real
    cancellation; a sync handler would block the loop, so it advertises one.
+   The setting is accepted on every function runtime: a handler that does
+   not advertise slots keeps one request per process.
 
 ## Consequences
 

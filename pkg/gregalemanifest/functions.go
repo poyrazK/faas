@@ -255,9 +255,6 @@ func validateFunctionSettings(field string, fn FunctionSpec, limits api.Limits) 
 	if fn.Concurrency < 0 || fn.Concurrency > limits.ConcurrencyPerVMBound {
 		return fmt.Errorf("%s.concurrency %d must be between 1 and %d on the %s plan", field, fn.Concurrency, limits.ConcurrencyPerVMBound, limits.Plan)
 	}
-	if fn.Concurrency > 1 && (strings.HasPrefix(fn.Runtime, "go") || fn.Runtime == "binary") {
-		return fmt.Errorf("%s.concurrency applies to Node and Python functions; a %s handler serves one request per process", field, fn.Runtime)
-	}
 	for _, key := range slices.Sorted(maps.Keys(fn.Env)) {
 		if problem := api.ValidateEnvKey(key); problem != nil {
 			return fmt.Errorf("%s.env %q: %s", field, key, problem.Detail)
