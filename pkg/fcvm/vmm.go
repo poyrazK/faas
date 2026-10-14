@@ -546,6 +546,12 @@ func firecrackerControlLine(line []byte) bool {
 		"kick entropy ",
 		"kick block ",
 		"kick vsock",
+		"kick pmem ",
+		// Restore's per-device kicks: "[Vsock:vsock] notifying tx queue",
+		// "[Balloon:balloon] notifying queues", "[Vsock:vsock] signaling
+		// event queue" (hunt #10, every wake of an rc.257 app).
+		"] notifying ",
+		"] signaling ",
 		"development preview",
 		"vmm action took",
 		"api server",
