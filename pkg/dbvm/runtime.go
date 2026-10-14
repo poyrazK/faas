@@ -2,6 +2,7 @@ package dbvm
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,11 @@ type RuntimeConfig struct {
 	// that many times its volume size (default 10; negative is no cap).
 	// The relay stamps the cap on every stream (dbarchive.Header).
 	ArchiveQuotaFactor int
+	// ImportRoots verify import sources' certificates (nil: the system
+	// roots); ImportAllowPrivate lets an import reach non-public
+	// addresses. Both exist for tests (import_relay.go).
+	ImportRoots        *x509.CertPool
+	ImportAllowPrivate bool
 }
 
 // defaultArchiveQuotaFactor allows a restore window's worth of churn: a
@@ -168,7 +174,10 @@ type databaseVM struct {
 	archive net.Listener
 	// replication relays a standby's streams to its primary.
 	replication net.Listener
-	header      atomic.Pointer[dbarchive.Header]
+	// importLn relays an import's source connections to importSrc.
+	importLn  net.Listener
+	importSrc atomic.Pointer[ImportSource]
+	header    atomic.Pointer[dbarchive.Header]
 	// spare is the shape of a spare VM, waiting while no database has
 	// adopted it; spareDir is the host directory bound into its jail.
 	spare    SpareShape
@@ -212,7 +221,7 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 	// limited to archiving nodes.
 	probe := &databaseVM{root: filepath.Join(cfg.JailBase, filepath.Base(fc), jailIDPrefix+strings.Repeat("0", 36), "root")}
 	probeRuntime := &Runtime{}
-	for _, path := range []string{probeRuntime.archiveUDSPath(probe), probeRuntime.replicationUDSPath(probe)} {
+	for _, path := range []string{probeRuntime.archiveUDSPath(probe), probeRuntime.replicationUDSPath(probe), probeRuntime.importUDSPath(probe)} {
 		if len(path) > maxUnixPath {
 			return nil, fmt.Errorf("dbvm: jail base %s is too long for the relay sockets (%d > %d bytes)", cfg.JailBase, len(path), maxUnixPath)
 		}
@@ -577,6 +586,12 @@ func (r *Runtime) teardown(id string, vm *databaseVM) {
 	}
 	if vm.replication != nil {
 		_ = vm.replication.Close()
+	}
+	r.mu.Lock()
+	importLn := vm.importLn
+	r.mu.Unlock()
+	if importLn != nil {
+		_ = importLn.Close()
 	}
 	if vm.cmd != nil && vm.cmd.Process != nil {
 		select {

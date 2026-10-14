@@ -119,6 +119,15 @@ func (f *fakeDatabaseRuntime) Dial(context.Context, string) (net.Conn, error) {
 	return client, nil
 }
 
+// SetImportSource records the import's endpoint.
+func (f *fakeDatabaseRuntime) SetImportSource(id string, src dbvm.ImportSource) error {
+	if err := src.Validate(); err != nil {
+		return err
+	}
+	f.calls = append(f.calls, fmt.Sprintf("import_source %s %s:%d", id, src.Host, src.Port))
+	return nil
+}
+
 // DialReplication echoes like Dial and records the call.
 func (f *fakeDatabaseRuntime) DialReplication(ctx context.Context, id string) (net.Conn, error) {
 	f.calls = append(f.calls, "replication "+id)

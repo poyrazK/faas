@@ -82,6 +82,12 @@ type databaseGuest struct {
 	bridgeUID int
 	bridgeGID int
 
+	// imp is the guest's import (database_import_linux.go); importOnce
+	// serves its bridge socket.
+	imp        *importJob
+	importOnce sync.Once
+	importErr  error
+
 	mu         sync.Mutex
 	state      dbguest.State
 	errCode    string
@@ -347,6 +353,10 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 		resp = g.promote()
 	case req.Op == dbguest.OpReplication:
 		resp = g.replication(req.Replication)
+	case req.Op == dbguest.OpImport:
+		resp = g.startImport(req.Import)
+	case req.Op == dbguest.OpImportStatus:
+		resp = g.importResponse()
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }

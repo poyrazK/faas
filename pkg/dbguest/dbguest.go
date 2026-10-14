@@ -7,6 +7,7 @@ package dbguest
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +62,11 @@ const (
 	// replays: a standby that took over while parked (a failover). It
 	// boots without a primary.
 	PromoteArg = "gregale.promote=1"
+	// ImportPort is the host vsock port an import's source connections
+	// reach (OpImport). The host relays each to the one source endpoint
+	// the control plane named, over TLS it verifies itself; the guest
+	// speaks plaintext to it.
+	ImportPort uint32 = 5436
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -116,6 +122,59 @@ const (
 	// OpPromote ends a standby's recovery: it becomes a primary on a new
 	// timeline and reports ready. Accepted in StateStandby.
 	OpPromote Op = "promote"
+	// OpImport copies another PostgreSQL database (Request.Import) into an
+	// empty database here, in the background: a consistent pg_dump of the
+	// source through the host's import relay, restored in one transaction
+	// as the target's owner role. A running or finished import is
+	// reported, not restarted. Accepted in StateReady.
+	OpImport Op = "import"
+	// OpImportStatus reports the import, if any.
+	OpImportStatus Op = "import_status"
+)
+
+// ImportSource names the database to copy and how to log in to it. The
+// host relay reaches the source's network endpoint; the guest never learns
+// it. Password is sensitive: never logged or echoed.
+type ImportSource struct {
+	Database string `json:"database"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+	// TargetDatabase receives the copy and must hold no user objects;
+	// Owner is the role that owns everything restored (the target's
+	// schema owner). SkipExtensions are source extensions not to copy
+	// (the source provider's own).
+	TargetDatabase string   `json:"target_database"`
+	Owner          string   `json:"owner"`
+	SkipExtensions []string `json:"skip_extensions,omitempty"`
+}
+
+// ImportState is an import's progress.
+type ImportState string
+
+const (
+	ImportNone    ImportState = "none"
+	ImportRunning ImportState = "running"
+	ImportDone    ImportState = "done"
+	ImportFailed  ImportState = "failed"
+)
+
+// ImportStatus reports an import. Error is a stable code.
+type ImportStatus struct {
+	State      ImportState `json:"state"`
+	Error      string      `json:"error,omitempty"`
+	StartedAt  time.Time   `json:"started_at,omitzero"`
+	FinishedAt time.Time   `json:"finished_at,omitzero"`
+	// SourceMajor is the source server's PostgreSQL major.
+	SourceMajor int `json:"source_major,omitempty"`
+}
+
+// Import error codes.
+const (
+	ErrCodeImportFailed   = "import_failed"
+	ErrCodeSourceNewer    = "source_newer"
+	ErrCodeSourceDown     = "source_unreachable"
+	ErrCodeExtension      = "extension_unavailable"
+	ErrCodeTargetNotEmpty = "target_not_empty"
 )
 
 // ReplicationMode is how a primary treats its standby.
@@ -194,6 +253,8 @@ type Request struct {
 	After time.Time `json:"after,omitzero"`
 	// Replication is the mode OpReplication sets; empty only reports.
 	Replication ReplicationMode `json:"replication,omitempty"`
+	// Import is OpImport's source.
+	Import *ImportSource `json:"import,omitempty"`
 }
 
 // Response answers one control request.
@@ -211,6 +272,8 @@ type Response struct {
 	RecoveredTo time.Time `json:"recovered_to,omitzero"`
 	// Replication answers OpReplication.
 	Replication *ReplicationStatus `json:"replication,omitempty"`
+	// Import answers OpImport and OpImportStatus.
+	Import *ImportStatus `json:"import,omitempty"`
 }
 
 // Validate rejects malformed requests before the guest acts on them.
@@ -218,7 +281,15 @@ func (r Request) Validate() error {
 	if r.Replication != "" && r.Op != OpReplication {
 		return fmt.Errorf("%s: unexpected replication mode", r.Op)
 	}
+	if (r.Import != nil) != (r.Op == OpImport) {
+		return fmt.Errorf("%s: an import source goes with import only", r.Op)
+	}
 	switch r.Op {
+	case OpImport:
+		if r.SQL != "" || !r.After.IsZero() {
+			return errors.New("import: unexpected arguments")
+		}
+		return r.Import.Validate()
 	case OpReplication:
 		switch r.Replication {
 		case "", ReplicationOff, ReplicationAsync, ReplicationSync:
@@ -229,7 +300,7 @@ func (r Request) Validate() error {
 			return errors.New("replication: unexpected arguments")
 		}
 		return nil
-	case OpStatus, OpStop, OpBootstrap, OpBaseBackup, OpAdopt, OpPromote:
+	case OpStatus, OpStop, OpBootstrap, OpBaseBackup, OpAdopt, OpPromote, OpImportStatus:
 		if r.SQL != "" || !r.After.IsZero() {
 			return fmt.Errorf("%s: unexpected arguments", r.Op)
 		}
@@ -332,4 +403,32 @@ func ParseCmdline(cmdline string) (database bool, major int, err error) {
 		return true, 0, fmt.Errorf("database mode needs %s in [%d,%d], got %q", MajorArgKey, MinMajor, MaxMajor, majorValue)
 	}
 	return true, major, nil
+}
+
+// identifierPattern is a plain lowercase PostgreSQL identifier: the only
+// names an import passes to its tools.
+var identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// Validate rejects a source that names anything but plain identifiers, so
+// nothing but the password reaches a command line or connection string
+// unquoted, and the password only through the environment.
+func (s *ImportSource) Validate() error {
+	switch {
+	case s == nil:
+		return errors.New("import: no source")
+	case !identifierPattern.MatchString(s.Database) || !identifierPattern.MatchString(s.TargetDatabase) || s.TargetDatabase == "postgres":
+		return errors.New("import: invalid database name")
+	case !identifierPattern.MatchString(s.User) || !identifierPattern.MatchString(s.Owner):
+		return errors.New("import: invalid role name")
+	case s.Password == "" || len(s.Password) > 1024 || strings.ContainsAny(s.Password, "\x00\n"):
+		return errors.New("import: invalid password")
+	case len(s.SkipExtensions) > 32:
+		return errors.New("import: too many skipped extensions")
+	}
+	for _, ext := range s.SkipExtensions {
+		if !identifierPattern.MatchString(ext) {
+			return errors.New("import: invalid extension name")
+		}
+	}
+	return nil
 }

@@ -309,3 +309,37 @@ func TestPromotionBootReachesTheRuntime(t *testing.T) {
 		t.Fatalf("boot request %+v; want a promotion without a primary", rt.started)
 	}
 }
+
+// An import's endpoint stays with the host; the guest gets the login and
+// target only.
+func TestImportControlSplitsEndpointAndLogin(t *testing.T) {
+	started := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady,
+		Import: &dbguest.ImportStatus{State: dbguest.ImportRunning, StartedAt: started}}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	ctx := unixCaller()
+	in := &vmmdpb.DatabaseImport{Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, Database: "gregale", User: "gregale_mig_ab",
+		Password: "never-logged", TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: []string{"neon"}}
+	resp, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "import", Import: in})
+	if err != nil || resp.GetImport().GetState() != "running" || !resp.GetImport().GetStartedAt().AsTime().Equal(started) {
+		t.Fatalf("import = %+v, %v", resp, err)
+	}
+	if len(rt.calls) != 1 || rt.calls[0] != "import_source "+replicaDB+" ep-quiet-1.us-east-2.aws.neon.tech:5432" {
+		t.Fatalf("runtime calls %v", rt.calls)
+	}
+	got := rt.controls[len(rt.controls)-1]
+	if got.Op != dbguest.OpImport || got.Import == nil || got.Import.User != "gregale_mig_ab" || got.Import.Password != "never-logged" ||
+		got.Import.Owner != "gregale_schema_owner" || len(got.Import.SkipExtensions) != 1 {
+		t.Fatalf("guest request %+v", got)
+	}
+	for name, req := range map[string]*vmmdpb.DatabaseControlRequest{
+		"no source":        {DatabaseId: replicaDB, Op: "import"},
+		"source on status": {DatabaseId: replicaDB, Op: "status", Import: in},
+		"bad host": {DatabaseId: replicaDB, Op: "import", Import: &vmmdpb.DatabaseImport{Host: "a b", Port: 5432, Database: "gregale", User: "u",
+			Password: "p", TargetDatabase: "gregale", Owner: "o"}},
+	} {
+		if _, err := s.DatabaseControl(ctx, req); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s = %v, want InvalidArgument", name, err)
+		}
+	}
+}

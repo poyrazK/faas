@@ -53,6 +53,8 @@ type DatabaseRuntime interface {
 	// DialReplication opens a standby's replication stream to a running
 	// primary's guest (ADR-1027 production class).
 	DialReplication(ctx context.Context, id string) (net.Conn, error)
+	// SetImportSource lets a running database's import reach src.
+	SetImportSource(id string, src dbvm.ImportSource) error
 }
 
 // Platform client identities allowed on the database RPCs.
@@ -309,6 +311,10 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 		return nil, err
 	}
 	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication())}
+	if in := req.GetImport(); in != nil {
+		control.Import = &dbguest.ImportSource{Database: in.GetDatabase(), User: in.GetUser(), Password: in.GetPassword(),
+			TargetDatabase: in.GetTargetDatabase(), Owner: in.GetOwner(), SkipExtensions: in.GetSkipExtensions()}
+	}
 	if req.GetAfter() != nil {
 		control.After = req.GetAfter().AsTime()
 	}
@@ -320,6 +326,12 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if err := s.databasePeers.noteStandby(req.GetDatabaseId(), control, req.GetStandbyNode()); err != nil {
 		return nil, err
+	}
+	if in := req.GetImport(); in != nil {
+		// The host side of the import: where the guest's connections go.
+		if err := rt.SetImportSource(req.GetDatabaseId(), dbvm.ImportSource{Host: in.GetHost(), Port: int(in.GetPort())}); err != nil {
+			return nil, s.databaseStatus("import source", err)
+		}
 	}
 	resp, err := rt.Control(ctx, req.GetDatabaseId(), control)
 	if err != nil {
@@ -333,6 +345,15 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if r := resp.Replication; r != nil {
 		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}
+	}
+	if i := resp.Import; i != nil {
+		out.Import = &vmmdpb.DatabaseImportStatus{State: string(i.State), ErrorCode: i.Error, SourceMajor: int32(i.SourceMajor)} //nolint:gosec // a PostgreSQL major
+		if !i.StartedAt.IsZero() {
+			out.Import.StartedAt = timestamppb.New(i.StartedAt)
+		}
+		if !i.FinishedAt.IsZero() {
+			out.Import.FinishedAt = timestamppb.New(i.FinishedAt)
+		}
 	}
 	return out, nil
 }
@@ -352,7 +373,7 @@ func (s *Server) databaseStatus(op string, err error) error {
 
 func databaseCode(err error) codes.Code {
 	switch {
-	case errors.Is(err, dbvm.ErrInvalidID), errors.Is(err, dbvm.ErrUnknownMajor), errors.Is(err, dbvm.ErrVolumeShrink):
+	case errors.Is(err, dbvm.ErrInvalidID), errors.Is(err, dbvm.ErrUnknownMajor), errors.Is(err, dbvm.ErrVolumeShrink), errors.Is(err, dbvm.ErrInvalidImportSource):
 		return codes.InvalidArgument
 	case errors.Is(err, dbvm.ErrVolumeExists):
 		return codes.AlreadyExists

@@ -2753,6 +2753,37 @@ message DatabaseControlRequest {
   // replication only: the database node allowed to stream from this
   // primary. Required with async and sync; off forgets it.
   string standby_node = 6;
+  // import only: the database to copy into this one (ADR-1027 migration
+  // off Neon).
+  DatabaseImport import = 7;
+}
+
+// DatabaseImport names an import's source. vmmd relays the guest's
+// connections to host:port over TLS it verifies for host, and only to a
+// public address; the rest goes to the guest. Sensitive (password): never
+// logged.
+message DatabaseImport {
+  string host = 1;
+  int32 port = 2;
+  string database = 3;
+  string user = 4;
+  string password = 5;
+  // The empty database here that receives the copy, and the role that
+  // owns everything restored.
+  string target_database = 6;
+  string owner = 7;
+  // Source extensions not to copy (the source provider's own).
+  repeated string skip_extensions = 8;
+}
+
+message DatabaseImportStatus {
+  // none, running, done or failed.
+  string state = 1;
+  // Stable code of a failed import.
+  string error_code = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int32 source_major = 5;
 }
 
 message DatabaseControlResponse {
@@ -2768,6 +2799,8 @@ message DatabaseControlResponse {
   google.protobuf.Timestamp recovered_to = 6;
   // replication only: the primary's view of its standby.
   DatabaseReplicationStatus replication = 7;
+  // import and import_status only.
+  DatabaseImportStatus import = 8;
 }
 
 message DatabaseReplicationStatus {

@@ -74,6 +74,16 @@ func TestRequestValidate(t *testing.T) {
 		{name: "replication unknown mode", req: Request{Op: OpReplication, Replication: "quorum"}, wantErr: true},
 		{name: "replication with sql", req: Request{Op: OpReplication, SQL: "select 1"}, wantErr: true},
 		{name: "mode on another op", req: Request{Op: OpStatus, Replication: ReplicationSync}, wantErr: true},
+		{name: "import", req: Request{Op: OpImport, Import: validImport()}},
+		{name: "import status", req: Request{Op: OpImportStatus}},
+		{name: "import without source", req: Request{Op: OpImport}, wantErr: true},
+		{name: "source on another op", req: Request{Op: OpStatus, Import: validImport()}, wantErr: true},
+		{name: "import quoted database", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Database = "app; drop" })}, wantErr: true},
+		{name: "import into postgres", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.TargetDatabase = "postgres" })}, wantErr: true},
+		{name: "import uppercase user", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.User = "Admin" })}, wantErr: true},
+		{name: "import empty password", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Password = "" })}, wantErr: true},
+		{name: "import newline password", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Password = "a\nb" })}, wantErr: true},
+		{name: "import bad extension", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.SkipExtensions = []string{"neon; x"} })}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,4 +92,15 @@ func TestRequestValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validImport() *ImportSource {
+	return &ImportSource{Database: "gregale", User: "gregale_mig_abc", Password: "p@ss w0rd'\"", TargetDatabase: "gregale", Owner: "gregale_schema_owner",
+		SkipExtensions: []string{"neon"}}
+}
+
+func withImport(mutate func(*ImportSource)) *ImportSource {
+	s := validImport()
+	mutate(s)
+	return s
 }
