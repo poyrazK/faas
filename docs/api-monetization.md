@@ -21,7 +21,12 @@ gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,
 The key secret is shown once. Your customer sends it as
 `Authorization: Bearer ck_...`. Scopes limit methods: `read` allows `GET`,
 while `write` and `admin` allow every method. To require a key on every
-request, run `gregale app my-api --consumer-auth-mode required`. Revoking a
+request, run `gregale app my-api --consumer-auth-mode required`.
+Gregale reserves only `Bearer ck_...`: in the default optional mode, any
+other `Authorization` value (`Basic ...`, `Token ...`, or a Bearer token
+without the `ck_` prefix) reaches your app unchanged. Required mode rejects
+anything but a valid consumer key, and an app with `require_authn` on still
+needs a Gregale API token. Revoking a
 consumer makes all of its keys stop authenticating.
 
 ## 2. Meter requests
