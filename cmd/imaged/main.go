@@ -370,6 +370,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// imaged_layer_entry_skipped_total surface on /metrics. The
 	// setter is idempotent — call once at boot.
 	rootfs.SetOpsMetrics(ops)
+	// ADR-1239: publish root-owned image files as root. The production unit
+	// runs as faas-imaged with CAP_CHOWN; without it (an unprivileged dev
+	// daemon) extraction keeps the previous ownership instead of failing.
+	canChown := canChownToRoot()
+	rootfs.SetPreserveRootOwnership(canChown)
+	if !canChown {
+		log.Warn("imaged: no CAP_CHOWN; root-owned image files keep the daemon's uid")
+	}
 	// ADR-054 acceptance: wire the LocalCacheBackend observer onto the
 	// daemon's *wire.OpsMetrics so stale-fallback serves emit
 	// `imaged_storage_cache_stale_fallback_total`. Uses
