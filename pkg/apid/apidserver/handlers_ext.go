@@ -3898,8 +3898,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if !validCron(req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
+	if problem := cronScheduleProblem(req.Schedule); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	timezone, err := normalizeCronTimezone(req.Timezone)
@@ -4084,9 +4084,11 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if req.Schedule != nil && !validCron(*req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
-		return
+	if req.Schedule != nil {
+		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var timezone string
 	if req.Timezone != nil {
@@ -7119,10 +7121,20 @@ func keyPrefixFromHash(hash []byte) string {
 	return api.APIKeyPrefix + hex.EncodeToString(hash)[:12]
 }
 
-// validCron uses the exact parser schedd uses, keeping direct and project
-// cron admission on the same five-field grammar.
-func validCron(s string) bool {
-	return cronexpr.Validate(s) == nil
+// cronScheduleProblem uses the exact parser schedd uses, keeping direct and
+// project cron admission on the same five-field grammar, and says why a
+// schedule is invalid with the parser's reason ("end of range (61) above
+// maximum (59): 61", "never fires"). The handlers used to answer "expected
+// 5-field cron expression" for every bad schedule, which read wrong for
+// five-field input (H10-68).
+func cronScheduleProblem(s string) *api.Problem {
+	err := cronexpr.Validate(s)
+	if err == nil {
+		return nil
+	}
+	reason := strings.TrimPrefix(err.Error(), cronexpr.ErrInvalidSchedule.Error())
+	reason = strings.ReplaceAll(strings.TrimLeft(reason, ":\n "), "\n", "; ")
+	return api.ErrCronInvalid("expected a 5-field cron expression (m h dom mon dow): " + reason)
 }
 
 // streamDeploymentLogs serves the build log for a deployment as a

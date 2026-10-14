@@ -5410,7 +5410,7 @@ func formatCronCommand(c api.CronResponse) string {
 // can pass `--path ""` to clear the path without being re-defaulted
 // to `/`. The `--enable|--disable` pair is mutually exclusive;
 // --schedule is locally shape-checked (5 whitespace tokens) to match
-// the server's validCron so a bad expression fails fast.
+// the server's cron check so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose and edit an HTTP task")
@@ -5478,7 +5478,7 @@ func cmdCronsUpdate(args []string) int {
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
-	// server's validCron so a bad expression fails fast. We do NOT
+	// server's cron check so a bad expression fails fast. We do NOT
 	// validate field ranges — that's the scheduler's job.
 	if explicit["schedule"] && len(strings.Fields(*schedule)) != 5 {
 		PrintFail(os.Stderr, "Invalid --schedule %q (expected 5 fields, e.g. \"*/15 * * * *\")", *schedule)
