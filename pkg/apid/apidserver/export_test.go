@@ -1297,3 +1297,19 @@ func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
 }
+
+// AddAuthBindingForTest gives appID an `auth` managed PostgreSQL binding,
+// which marks it as an application Auth app (ADR-1190). The test provider has
+// no auth credential mode, so the binding is reserved directly.
+func AddAuthBindingForTest(t *testing.T, e TestEnv, appID string) {
+	t.Helper()
+	store, _, databaseID := configureSourceRefManagedPostgres(t, sourceRefTestEnv{srv: e.s, store: e.store, acctID: e.acct.ID, appID: appID})
+	now := time.Now().UTC()
+	if _, _, err := store.ReserveBinding(context.Background(), managedpostgres.Binding{
+		ID: "auth-binding-" + appID, AccountID: e.acct.ID, DatabaseID: databaseID, AppID: appID, Scope: api.DefaultEnvScope,
+		EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialAuth, CredentialGeneration: 1,
+		State: managedpostgres.BindingStateProvisioning, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("reserve auth binding: %v", err)
+	}
+}

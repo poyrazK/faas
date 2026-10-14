@@ -213,7 +213,52 @@ and `data.input`. Subscribe your workflow to that event type from the Auth
 app's source (`app.<auth app id>`). Repeating a start with the same
 `idempotency_key` returns the original receipt.
 
+## Manage users and import them
+
+Create an admin key, then open **Manage application Auth users** on the app's
+dashboard page and paste it:
+
+```sh
+gregale auth admin-key create shop-auth
+```
+
+The key is shown once; the Auth app stores only its SHA-256. The dashboard page
+sends the key only to your Auth app and keeps it in the browser tab until you
+close it or choose **Forget key**. User records go from your Auth app to your
+browser and never through Gregale. From the page you can search users, see their
+organizations and active sessions, sign a user out everywhere, ban or unban
+them (a ban also ends their sessions), and delete them, and browse
+organizations with their members and pending invitations. Deleting the last
+owner of an organization that has other members is refused; organizations
+whose only member was the deleted user are removed with them.
+
+`gregale auth admin-key list shop-auth` shows key IDs and
+`gregale auth admin-key revoke shop-auth ID` removes one. Both restart the Auth
+app so running instances load the change.
+
+To move users from another system, write one JSON object per line (or a JSON
+array):
+
+```json
+{"id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "email": "ada@example.com", "password_hash": "$2b$10$…", "email_confirmed": true, "user_metadata": {"name": "Ada"}}
+```
+
+```sh
+gregale auth import shop-auth --file users.jsonl --dry-run
+printf '%s' "$ADMIN_KEY" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin
+```
+
+`password_hash` accepts bcrypt (`$2a$`, `$2b$`, `$2y$`), argon2 (`$argon2i`,
+`$argon2id`) and Firebase scrypt (`$fbscrypt$`) hashes, so users keep their
+passwords; users without one sign in with a magic link, OAuth or a password
+reset. Keeping `id` keeps foreign keys in your tables valid. Plain-text
+passwords are refused. Re-running a file is safe: users that already exist are
+reported as `email_exists`.
+
 ## Current limits
 
 - The Auth app counts as an ordinary deployed app for plan quotas and RAM
   billing.
+- The dashboard page reaches the Auth app at its canonical address. If you
+  serve the dashboard from another origin than the Gregale API URL that
+  `gregale auth create` used, the Auth app refuses the page's requests.

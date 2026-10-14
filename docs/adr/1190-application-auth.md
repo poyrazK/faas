@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–5 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -261,6 +261,35 @@ are always in GoTrue's redirect allow list so recovery links return to them.
 single-flight because refresh tokens rotate, and `getAccessToken` plugs into
 `@gregale/data`.
 
+### Administration and import
+
+Owners administer users through `/admin/v1` on the Auth app with a key they
+hold. `gregale auth admin-key create` prints a 256-bit key once and seals only
+its SHA-256 as `AUTH_ADMIN_KEY_<id>`; without such a secret the API does not
+exist. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+its script calls the Auth app directly from the owner's browser: apid adds the
+Auth app's exact origin to that page's `connect-src`, and the Auth app answers
+CORS only for the Gregale API origin sealed at creation. apid never receives
+the key, and user records never pass through or stay in the control plane.
+App tasks (ADR-968's owner workspace) were not used, because their output is
+kept in apid's catalog and would store application users there.
+
+User changes go through GoTrue's own admin API on loopback with a one-minute
+`service_role` token the front signs with the app's ES256 key; GoTrue refuses
+HS256 once only asymmetric keys are configured. The public `/auth/v1/admin`
+and `/auth/v1/invite` paths are closed, since nothing outside the instance can
+mint that token. GoTrue has no admin sign-out, so signing a user out deletes
+their sessions, which ends their refresh tokens; a ban does the same. Deleting
+the last owner of an organization with other members is refused, and
+organizations whose only member was the deleted user go with them.
+
+`gregale auth import` sends at most 100 users per request to
+`/admin/v1/users/import`, which creates each through GoTrue with its user ID and
+bcrypt, argon2 or Firebase scrypt hash. Plain-text passwords are refused, and
+repeated addresses within a batch are skipped because concurrent creates of
+one address race inside GoTrue. Responses report rows by position and never
+echo addresses.
+
 ### Scale to zero
 
 The gateway, Data API and realtime service verify tokens against cached JWKS.
@@ -338,8 +367,17 @@ container logs held no user email addresses. Provider delivery is covered by
 request-shape tests; live Resend and Postmark sends are still owed. Phase 5
 is covered by PostgreSQL tests of `authorize_subject()` (member, non-member,
 ban, no live session, owner-only), a SigV4 test against AWS's published
-presigned-URL example, and Node and CLI tests; its run against the built image
-is still owed. Native acceptance must show sign-up, Data
+presigned-URL example, and a run against the built image: a signed object URL
+for a member, a refused write without a write policy, realtime grants for a
+member and refusals for a non-member and a forged callback token, a workflow
+start event with the events key, and a realtime refusal after global sign-out.
+With phase 6 the built image imported a bcrypt-hashed user who then signed in
+through GoTrue with the original user ID; listing, detail, ban (authorization
+and sign-in refused), unban and delete (removing an organization only that user
+belonged to) worked through `/admin/v1`; and the public GoTrue admin path
+returned 404. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
-latency, resident memory and snapshot size within plan limits. This ADR alone
-changes no production gate.
+latency, resident memory and snapshot size within plan limits.
+`make auth-staging-canary` (tests/auth/staging) implements that run against an
+isolated staging account; it has not yet run. This ADR alone changes no
+production gate.
