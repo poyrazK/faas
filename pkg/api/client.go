@@ -964,12 +964,40 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 // InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
 func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
 	var out InjectScenarioTestChaosResponse
-	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+	return out, retryScenarioControl(ctx, func() error {
+		out = InjectScenarioTestChaosResponse{}
+		return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+	})
 }
 
 // ClearScenarioTestChaos removes the active fault plan from a live scenario run.
 func (c *Client) ClearScenarioTestChaos(ctx context.Context, runID string) error {
-	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+	return retryScenarioControl(ctx, func() error {
+		return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+	})
+}
+
+// scenarioControlRetryDelay is the first wait before retrying a scenario
+// chaos call; tests shorten it.
+var scenarioControlRetryDelay = time.Second
+
+// retryScenarioControl retries the scenario chaos calls after a transport
+// failure, up to three attempts. Both replace or remove the run's whole plan,
+// so a repeat is safe. On production-us a cold `gregale test` run failed
+// because one PUT met a connection reset at the edge (hunt #10).
+func retryScenarioControl(ctx context.Context, call func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := call()
+		var apiErr *APIError
+		if err == nil || attempt == 3 || errors.As(err, &apiErr) || !strings.Contains(err.Error(), "could not reach the API") {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(time.Duration(attempt) * scenarioControlRetryDelay):
+		}
+	}
 }
 
 // ScenarioTestChaosMatches returns bounded per-rule match counts for the
@@ -1051,7 +1079,8 @@ func (c *Client) RetryDeploymentFromStage(ctx context.Context, id, fromStage str
 // GetDeployment returns a deployment by ID.
 func (c *Client) GetDeployment(ctx context.Context, id string) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
+	err := c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
+	return out, err
 }
 
 // GetLatestAppDeployment returns the newest deployment for one app. A 404
@@ -1474,7 +1503,8 @@ func (c *Client) Diff(ctx context.Context, slug string, req DiffRequest) (DiffRe
 // GetApp returns the app metadata for a slug.
 func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	var out AppResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
+	err := c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
+	return out, err
 }
 
 // GetAppsSlugPolicyStatus reports gateway application of app-cache changes,
@@ -1492,6 +1522,22 @@ func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait 
 		path += "?wait=" + url.QueryEscape(wait.String())
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppsSlugFleetEdgePolicyStatus includes cross-app wildcard mutations in
+// the edge-rule revision. Other response components retain their usual scope.
+func (c *Client) GetAppsSlugFleetEdgePolicyStatus(ctx context.Context, slug string) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/policy/status?edge_rules_scope=fleet", nil, &out)
+	return out, err
+}
+
+// GetAppsSlugAccountEdgePolicyStatus covers all app-owned rules of the
+// authenticated app's account, with a conservative unknown-history floor.
+func (c *Client) GetAppsSlugAccountEdgePolicyStatus(ctx context.Context, slug string) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/policy/status?edge_rules_scope=account", nil, &out)
+	return out, err
 }
 
 // UpdateApp applies a partial update to an app.
@@ -2290,9 +2336,10 @@ func (c *Client) RollbackToWithRuleAndIdempotencyKey(ctx context.Context, slug, 
 // (migrations/00477_deployment_audit.sql).
 func (c *Client) ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) (ListDeploymentAuditResponse, error) {
 	var out ListDeploymentAuditResponse
-	return out, c.do(ctx, "GET",
+	err := c.do(ctx, "GET",
 		fmt.Sprintf("/v1/deployments/%s/audit?limit=%d", deploymentID, limit),
 		nil, &out)
+	return out, err
 }
 
 // UpdateDeploymentTraffic stamps the per-deployment traffic-split
@@ -2318,9 +2365,14 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 // sibling still owns all production traffic at the transaction boundary.
 // An empty servingID requires no live sibling with positive traffic.
 func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
+	return c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, id, percent, servingID, nil)
+}
+
+// PatchDeploymentTrafficIfServingWithMCPAccess atomically fences serving and stored access policy.
+func (c *Client) PatchDeploymentTrafficIfServingWithMCPAccess(ctx context.Context, id string, percent int, servingID string, policy *MCPAccessPolicyExpectation) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
-		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID}, &out)
+	err := c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out)
+	return out, err
 }
 
 // AdvanceCanary advances exactly one persisted canary step. APID resolves
@@ -3205,7 +3257,8 @@ func (c *Client) ListCronRuns(ctx context.Context, id, before string, limit int)
 // per-account / per-app cap trips return 403 plan_alert_rule_quota.
 func (c *Client) ListAlertRules(ctx context.Context, slug string) ([]AlertRuleResponse, error) {
 	var out []AlertRuleResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/alerts", nil, &out)
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/alerts", nil, &out)
+	return out, err
 }
 
 // CreateAlertRule pins a metric to a threshold + comparison + window

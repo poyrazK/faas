@@ -51,6 +51,7 @@ type mcpCatalogFleetHealthReport struct {
 }
 
 type mcpCatalogDeploymentReport struct {
+	Admission      *mcpAdmissionHistory          `json:"admission,omitempty"`
 	DeploymentID   string                        `json:"deployment_id"`
 	TrafficPercent int                           `json:"traffic_percent"`
 	Health         mcpCatalogFleetHealthReport   `json:"health"`
@@ -59,6 +60,7 @@ type mcpCatalogDeploymentReport struct {
 }
 
 type mcpCatalogStatusReport struct {
+	Convergence              *mcpConvergenceReport        `json:"convergence,omitempty"`
 	Supported                bool                         `json:"supported"`
 	Healthy                  bool                         `json:"healthy"`
 	ProtocolQualified        bool                         `json:"protocol_qualified"`
@@ -671,6 +673,14 @@ func mcpCollectCatalogStatus(ctx context.Context, client *Client, slug, endpoint
 	if err != nil {
 		return app.Slug, mcpCatalogStatusReport{}, fmt.Errorf("MCP deployments: %w", err)
 	}
+	report := mcpCollectCatalogStatusForDeployments(ctx, client, app, deployments, endpoint, roles, timeout)
+	attachMCPAdmissionHistory(ctx, client, &report)
+	convergence := collectMCPConvergence(ctx, client, app.Slug, app.ID)
+	report.Convergence = &convergence
+	return app.Slug, report, nil
+}
+
+func mcpCollectCatalogStatusForDeployments(ctx context.Context, client *Client, app api.AppResponse, deployments []api.DeploymentResponse, endpoint string, roles []mcpReleaseRole, timeout time.Duration) mcpCatalogStatusReport {
 	report := mcpCatalogStatusReport{Deployments: []mcpCatalogDeploymentReport{}}
 	for _, deployment := range deployments {
 		if deployment.Status != statusLive || deployment.TrafficPercent <= 0 {
@@ -732,7 +742,7 @@ func mcpCollectCatalogStatus(ctx context.Context, client *Client, slug, endpoint
 		}
 		report.Healthy = report.Supported && report.ExpectedReplicas > 0 && report.CheckedReplicas == report.ExpectedReplicas && report.ProtocolQualified && report.Error == ""
 	}
-	return app.Slug, report, nil
+	return report
 }
 
 func writeMCPStatusReport(app string, report mcpCatalogStatusReport, update string) int {
@@ -752,6 +762,7 @@ func writeMCPStatusReport(app string, report mcpCatalogStatusReport, update stri
 		if update != "" {
 			_, _ = fmt.Fprintf(osStdout, "MCP status %s for %s\n", update, app)
 		}
+		writeMCPConvergence(report.Convergence)
 		_, _ = fmt.Fprintf(osStdout, "MCP catalog for %s: %s (%d/%d health probes; %d/%d exact protocol checks across %d serving deployments)\n", app, state, report.CheckedReplicas, report.ExpectedReplicas, report.ProtocolCheckedReplicas, report.ProtocolExpectedReplicas, len(report.Deployments))
 		for _, deployment := range report.Deployments {
 			_, _ = fmt.Fprintf(osStdout, "  Deployment %s (%d%% traffic): %d/%d replicas", deployment.DeploymentID, deployment.TrafficPercent, deployment.Health.CheckedReplicas, deployment.Health.ExpectedReplicas)
@@ -759,6 +770,9 @@ func writeMCPStatusReport(app string, report mcpCatalogStatusReport, update stri
 				_, _ = fmt.Fprintf(osStdout, " · SHA-256 %s", deployment.Health.CatalogSHA256)
 			}
 			_, _ = fmt.Fprintln(osStdout)
+			if deployment.Admission != nil {
+				_ = writeMCPAdmissionHistory(*deployment.Admission)
+			}
 			_, _ = fmt.Fprintf(osStdout, "    MCP protocol: %d/%d replicas qualified", deployment.Protocol.CheckedReplicas, deployment.Protocol.ExpectedReplicas)
 			if deployment.Protocol.Error != "" {
 				_, _ = fmt.Fprintf(osStdout, " · %s", deployment.Protocol.Error)

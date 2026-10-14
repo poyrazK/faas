@@ -433,11 +433,38 @@ func TestDurableEntityPreviewDisabledAndConfigValidation(t *testing.T) {
 	if _, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "disabled", Type: state.AppTypeApp}); err != nil {
 		t.Fatal(err)
 	}
-	res := e.do(t, http.MethodPost, "/v1/apps/disabled/entities/invoke", entityRequest("one"), nil)
-	if res.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled = %d", res.Code)
+	// The preview is hidden: its routes answer like unregistered ones, even
+	// for a method the route does not accept and without credentials.
+	for _, res := range []*httptest.ResponseRecorder{
+		e.do(t, http.MethodPost, "/v1/apps/disabled/entities/invoke", entityRequest("one"), nil),
+		e.do(t, http.MethodDelete, "/v1/apps/disabled/entities/invoke", nil, nil),
+		anonymousEntityRequest(e, "/v1/apps/disabled/entities/inspect"),
+	} {
+		assertUnregisteredRoute(t, res)
 	}
 	if err := e.s.ConfigureDurableEntities(t.Context(), func(string) string { return "" }); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDurableEntityPreviewHiddenFromAppsOutsideAllowlist(t *testing.T) {
+	e, _, _, _ := entityAPIFixture(t, false)
+	if _, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "not-allowlisted", Type: state.AppTypeApp}); err != nil {
+		t.Fatal(err)
+	}
+	assertUnregisteredRoute(t, e.do(t, http.MethodPost, "/v1/apps/not-allowlisted/entities/invoke", entityRequest("one"), nil))
+	assertUnregisteredRoute(t, e.do(t, http.MethodGet, "/v1/apps/not-allowlisted/entities/readiness", nil, nil))
+}
+
+func anonymousEntityRequest(e entityHTTPEnv, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
+func assertUnregisteredRoute(t *testing.T, res *httptest.ResponseRecorder) {
+	t.Helper()
+	if res.Code != http.StatusNotFound || !strings.Contains(res.Body.String(), "no such API route") || res.Header().Get("Allow") != "" {
+		t.Fatalf("hidden route = %d %q allow=%q, want the unregistered-route 404", res.Code, res.Body.String(), res.Header().Get("Allow"))
 	}
 }

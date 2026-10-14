@@ -43,7 +43,10 @@ and the top ineligibility reasons (`apid_dev_patch_plans_total{outcome,reason}`)
 the input for widening live-patch coverage; `delivery_disabled` counts
 eligible syncs while `FAAS_DEV_PATCH_DELIVERY` is off. Per-phase p95
 (`apid_dev_sync_phase_seconds`) and acknowledgement results
-(`vmmd_dev_patch_acks_total{result}`) complete it. UID `faas-dev-loop-adr-740`.
+(`vmmd_dev_patch_acks_total{result}`) complete it. Every apid series carries
+`watch="true|false"`, and the edit-to-live, decision and phase panels split on
+it, so watch-mode environments (ADR-1170) can be compared with the rebuild
+path. UID `faas-dev-loop-adr-740`.
 Enable delivery with `faas_dev_patch_delivery_enabled: true` on both the
 control plane and vmmd hosts.
 

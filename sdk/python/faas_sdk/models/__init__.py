@@ -755,6 +755,7 @@ from .debug_dependency_impact_exemplar_window import DebugDependencyImpactExempl
 from .debug_dependency_latency_item import DebugDependencyLatencyItem
 from .debug_dependency_latency_item_type import DebugDependencyLatencyItemType
 from .debug_dependency_latency_response import DebugDependencyLatencyResponse
+from .debug_dependency_query_item import DebugDependencyQueryItem
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_confidence import DebugEvidenceExplanationConfidence
 from .debug_evidence_explanation_diagnosis import DebugEvidenceExplanationDiagnosis
@@ -772,6 +773,7 @@ from .debug_regression_action_request import DebugRegressionActionRequest
 from .debug_regression_action_request_action import DebugRegressionActionRequestAction
 from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
+from .debug_regression_item_kind import DebugRegressionItemKind
 from .debug_regression_item_state import DebugRegressionItemState
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_comparison import DebugReplayComparison
@@ -1564,6 +1566,7 @@ from .get_route_health_investigation_method import GetRouteHealthInvestigationMe
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
+from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
 )
@@ -1799,6 +1802,7 @@ from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
 from .list_managed_realtime_schedules_status import ListManagedRealtimeSchedulesStatus
+from .list_mcp_admission_history_outcome import ListMCPAdmissionHistoryOutcome
 from .list_object_write_receipts_status import ListObjectWriteReceiptsStatus
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
@@ -2045,10 +2049,69 @@ from .managed_realtime_schedules_response import ManagedRealtimeSchedulesRespons
 from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
+from .mcp_admission_evidence import MCPAdmissionEvidence
+from .mcp_admission_evidence_outcome import MCPAdmissionEvidenceOutcome
+from .mcp_admission_evidence_version import MCPAdmissionEvidenceVersion
+from .mcp_admission_gateway import MCPAdmissionGateway
+from .mcp_admission_history_response import MCPAdmissionHistoryResponse
+from .mcp_catalog_monitor_config import MCPCatalogMonitorConfig
+from .mcp_catalog_monitor_config_baseline import MCPCatalogMonitorConfigBaseline
+from .mcp_catalog_monitor_config_request import MCPCatalogMonitorConfigRequest
+from .mcp_catalog_monitor_config_request_baseline import MCPCatalogMonitorConfigRequestBaseline
+from .mcp_catalog_monitor_signal import MCPCatalogMonitorSignal
+from .mcp_catalog_monitor_signal_roles import MCPCatalogMonitorSignalRoles
+from .mcp_catalog_monitor_signal_state import MCPCatalogMonitorSignalState
+from .mcp_catalog_monitor_snapshot import MCPCatalogMonitorSnapshot
+from .mcp_catalog_monitor_snapshot_roles import MCPCatalogMonitorSnapshotRoles
+from .mcp_catalog_monitor_snapshot_state import MCPCatalogMonitorSnapshotState
+from .mcp_catalog_monitor_summary import MCPCatalogMonitorSummary
+from .mcp_catalog_monitor_summary_roles import MCPCatalogMonitorSummaryRoles
+from .mcp_catalog_monitor_summary_state import MCPCatalogMonitorSummaryState
+from .mcp_catalog_o_auth_check import MCPCatalogOAuthCheck
+from .mcp_catalog_o_auth_check_reason import MCPCatalogOAuthCheckReason
+from .mcp_catalog_o_auth_check_state import MCPCatalogOAuthCheckState
+from .mcp_catalog_o_auth_event import MCPCatalogOAuthEvent
+from .mcp_catalog_o_auth_event_kind import MCPCatalogOAuthEventKind
+from .mcp_catalog_o_auth_flow import MCPCatalogOAuthFlow
+from .mcp_catalog_o_auth_lifecycle import MCPCatalogOAuthLifecycle
+from .mcp_catalog_o_auth_lifecycle_credential_state import MCPCatalogOAuthLifecycleCredentialState
+from .mcp_catalog_o_auth_lifecycle_local_state import MCPCatalogOAuthLifecycleLocalState
+from .mcp_catalog_o_auth_renewal import MCPCatalogOAuthRenewal
+from .mcp_catalog_o_auth_renewal_outcome import MCPCatalogOAuthRenewalOutcome
+from .mcp_catalog_o_auth_renewal_state import MCPCatalogOAuthRenewalState
+from .mcp_catalog_o_auth_request import MCPCatalogOAuthRequest
+from .mcp_catalog_o_auth_request_action import MCPCatalogOAuthRequestAction
+from .mcp_catalog_o_auth_response import MCPCatalogOAuthResponse
+from .mcp_catalog_o_auth_response_provider_revocation import MCPCatalogOAuthResponseProviderRevocation
+from .mcp_catalog_o_auth_response_state import MCPCatalogOAuthResponseState
+from .mcp_catalog_o_auth_revocation import MCPCatalogOAuthRevocation
+from .mcp_catalog_o_auth_revocation_failure_reason import MCPCatalogOAuthRevocationFailureReason
+from .mcp_catalog_o_auth_revocation_state import MCPCatalogOAuthRevocationState
+from .mcp_catalog_observation_request import MCPCatalogObservationRequest
+from .mcp_catalog_observation_request_observed import MCPCatalogObservationRequestObserved
+from .mcp_catalog_observer_config import MCPCatalogObserverConfig
+from .mcp_catalog_observer_o_auth_config import MCPCatalogObserverOAuthConfig
+from .mcp_catalog_observer_o_auth_config_profile import MCPCatalogObserverOAuthConfigProfile
+from .mcp_catalog_observer_o_auth_config_revocation_auth_method import MCPCatalogObserverOAuthConfigRevocationAuthMethod
+from .mcp_catalog_observer_o_auth_config_token_auth_method import MCPCatalogObserverOAuthConfigTokenAuthMethod
+from .mcp_catalog_observer_o_auth_status import MCPCatalogObserverOAuthStatus
+from .mcp_catalog_observer_o_auth_status_state import MCPCatalogObserverOAuthStatusState
+from .mcp_catalog_observer_status import MCPCatalogObserverStatus
+from .mcp_catalog_observer_status_failure_reason import MCPCatalogObserverStatusFailureReason
+from .mcp_catalog_observer_status_state import MCPCatalogObserverStatusState
+from .mcp_catalog_receipt import MCPCatalogReceipt
+from .mcp_catalog_receipt_diff import MCPCatalogReceiptDiff
+from .mcp_catalog_receipt_state import MCPCatalogReceiptState
+from .mcp_connection_health_issue import MCPConnectionHealthIssue
+from .mcp_connection_health_issue_kind import MCPConnectionHealthIssueKind
+from .mcp_connection_health_snapshot import MCPConnectionHealthSnapshot
+from .mcp_connection_health_snapshot_counts import MCPConnectionHealthSnapshotCounts
 from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
 from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
 from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
 from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
+from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
 from .mcp_probe_rpc_request import MCPProbeRPCRequest
 from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
 from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
@@ -2060,6 +2123,12 @@ from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportReq
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcpo_auth_retirement import MCPOAuthRetirement
+from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
+from .mcpo_auth_retirement_action_action import MCPOAuthRetirementActionAction
+from .mcpo_auth_retirement_event import MCPOAuthRetirementEvent
+from .mcpo_auth_retirement_state import MCPOAuthRetirementState
+from .mcpo_auth_retirements_response import MCPOAuthRetirementsResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -3447,6 +3516,15 @@ from .queue_binding_status_response_mode import QueueBindingStatusResponseMode
 from .queue_binding_status_response_workload_class import QueueBindingStatusResponseWorkloadClass
 from .queue_dead_letter_message import QueueDeadLetterMessage
 from .queue_dead_letter_response import QueueDeadLetterResponse
+from .queue_lease_message import QueueLeaseMessage
+from .queue_lease_message_headers import QueueLeaseMessageHeaders
+from .queue_lease_message_payload import QueueLeaseMessagePayload
+from .queue_lease_receipt_failure import QueueLeaseReceiptFailure
+from .queue_lease_receipt_failure_reason import QueueLeaseReceiptFailureReason
+from .queue_lease_receipts_request import QueueLeaseReceiptsRequest
+from .queue_lease_receipts_response import QueueLeaseReceiptsResponse
+from .queue_lease_request import QueueLeaseRequest
+from .queue_lease_response import QueueLeaseResponse
 from .queue_peek_message import QueuePeekMessage
 from .queue_peek_response import QueuePeekResponse
 from .queue_receive_response import QueueReceiveResponse
@@ -4225,6 +4303,9 @@ from .update_deployment_open_api_doc_response_200_doc import UpdateDeploymentOpe
 from .update_deployment_open_api_doc_response_200_source import UpdateDeploymentOpenAPIDocResponse200Source
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
+from .update_deployment_traffic_request_expected_mcp_access_policy import (
+    UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
+)
 from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
@@ -4345,6 +4426,28 @@ from .workflow_for_each_spec import WorkflowForEachSpec
 from .workflow_for_each_spec_on_item_failure import WorkflowForEachSpecOnItemFailure
 from .workflow_guard_spec import WorkflowGuardSpec
 from .workflow_guard_spec_op import WorkflowGuardSpecOp
+from .workflow_initial_evidence_diagnosis import WorkflowInitialEvidenceDiagnosis
+from .workflow_initial_evidence_repair_receipt import WorkflowInitialEvidenceRepairReceipt
+from .workflow_initial_evidence_repair_receipt_outcome import WorkflowInitialEvidenceRepairReceiptOutcome
+from .workflow_initial_evidence_repair_request import WorkflowInitialEvidenceRepairRequest
+from .workflow_initial_failure import WorkflowInitialFailure
+from .workflow_initial_failure_failure_status import WorkflowInitialFailureFailureStatus
+from .workflow_initial_failures import WorkflowInitialFailures
+from .workflow_initial_failures_coverage import WorkflowInitialFailuresCoverage
+from .workflow_initial_observation_failure import WorkflowInitialObservationFailure
+from .workflow_initial_observation_failure_code import WorkflowInitialObservationFailureCode
+from .workflow_initial_recovery_attention import WorkflowInitialRecoveryAttention
+from .workflow_initial_recovery_preview import WorkflowInitialRecoveryPreview
+from .workflow_initial_recovery_review import WorkflowInitialRecoveryReview
+from .workflow_initial_recovery_review_decision_request import WorkflowInitialRecoveryReviewDecisionRequest
+from .workflow_initial_recovery_review_decision_request_decision import (
+    WorkflowInitialRecoveryReviewDecisionRequestDecision,
+)
+from .workflow_initial_recovery_review_event import WorkflowInitialRecoveryReviewEvent
+from .workflow_initial_recovery_review_event_status import WorkflowInitialRecoveryReviewEventStatus
+from .workflow_initial_recovery_review_request import WorkflowInitialRecoveryReviewRequest
+from .workflow_initial_recovery_review_status import WorkflowInitialRecoveryReviewStatus
+from .workflow_initial_recovery_reviews import WorkflowInitialRecoveryReviews
 from .workflow_join_spec import WorkflowJoinSpec
 from .workflow_outbound_spec import WorkflowOutboundSpec
 from .workflow_outbound_spec_method import WorkflowOutboundSpecMethod
@@ -4358,12 +4461,22 @@ from .workflow_recovery_action_receipt import WorkflowRecoveryActionReceipt
 from .workflow_recovery_automatic_action import WorkflowRecoveryAutomaticAction
 from .workflow_recovery_automatic_action_status import WorkflowRecoveryAutomaticActionStatus
 from .workflow_recovery_automatic_blocked_notification import WorkflowRecoveryAutomaticBlockedNotification
+from .workflow_recovery_automatic_blocked_notification_evidence_kind import (
+    WorkflowRecoveryAutomaticBlockedNotificationEvidenceKind,
+)
 from .workflow_recovery_automatic_blocked_notification_reason import WorkflowRecoveryAutomaticBlockedNotificationReason
+from .workflow_recovery_automatic_blocked_notification_state import WorkflowRecoveryAutomaticBlockedNotificationState
 from .workflow_recovery_automatic_blocked_notification_status import WorkflowRecoveryAutomaticBlockedNotificationStatus
 from .workflow_recovery_automatic_evaluation import WorkflowRecoveryAutomaticEvaluation
 from .workflow_recovery_automatic_evaluation_reason import WorkflowRecoveryAutomaticEvaluationReason
+from .workflow_recovery_automatic_polling_failure import WorkflowRecoveryAutomaticPollingFailure
+from .workflow_recovery_automatic_polling_failure_code import WorkflowRecoveryAutomaticPollingFailureCode
 from .workflow_recovery_automatic_queue import WorkflowRecoveryAutomaticQueue
 from .workflow_recovery_automatic_queue_entry import WorkflowRecoveryAutomaticQueueEntry
+from .workflow_recovery_automatic_queue_entry_evidence_unavailable_reason import (
+    WorkflowRecoveryAutomaticQueueEntryEvidenceUnavailableReason,
+)
+from .workflow_recovery_automatic_queue_entry_wait_category import WorkflowRecoveryAutomaticQueueEntryWaitCategory
 from .workflow_recovery_automatic_suppression import WorkflowRecoveryAutomaticSuppression
 from .workflow_recovery_cancellation_request import WorkflowRecoveryCancellationRequest
 from .workflow_recovery_cancellation_response import WorkflowRecoveryCancellationResponse
@@ -4389,6 +4502,19 @@ from .workflow_recovery_health_webhook_payload import WorkflowRecoveryHealthWebh
 from .workflow_recovery_health_webhook_payload_status import WorkflowRecoveryHealthWebhookPayloadStatus
 from .workflow_recovery_history import WorkflowRecoveryHistory
 from .workflow_recovery_history_entry import WorkflowRecoveryHistoryEntry
+from .workflow_recovery_history_entry_evidence_kind import WorkflowRecoveryHistoryEntryEvidenceKind
+from .workflow_recovery_initial_policy_change_candidate import WorkflowRecoveryInitialPolicyChangeCandidate
+from .workflow_recovery_initial_policy_change_preview import WorkflowRecoveryInitialPolicyChangePreview
+from .workflow_recovery_initial_policy_change_preview_coverage import WorkflowRecoveryInitialPolicyChangePreviewCoverage
+from .workflow_recovery_initial_queue_evidence import WorkflowRecoveryInitialQueueEvidence
+from .workflow_recovery_initial_queue_evidence_stage import WorkflowRecoveryInitialQueueEvidenceStage
+from .workflow_recovery_overview import WorkflowRecoveryOverview
+from .workflow_recovery_overview_alert import WorkflowRecoveryOverviewAlert
+from .workflow_recovery_overview_alert_delivery_status import WorkflowRecoveryOverviewAlertDeliveryStatus
+from .workflow_recovery_overview_issue import WorkflowRecoveryOverviewIssue
+from .workflow_recovery_overview_issue_scope import WorkflowRecoveryOverviewIssueScope
+from .workflow_recovery_overview_monitoring_status import WorkflowRecoveryOverviewMonitoringStatus
+from .workflow_recovery_overview_status import WorkflowRecoveryOverviewStatus
 from .workflow_recovery_policy import WorkflowRecoveryPolicy
 from .workflow_recovery_policy_assessment import WorkflowRecoveryPolicyAssessment
 from .workflow_recovery_policy_assessment_eligibility import WorkflowRecoveryPolicyAssessmentEligibility
@@ -4415,11 +4541,24 @@ from .workflow_recovery_policy_paused_webhook_payload import WorkflowRecoveryPol
 from .workflow_recovery_policy_response import WorkflowRecoveryPolicyResponse
 from .workflow_recovery_policy_response_status import WorkflowRecoveryPolicyResponseStatus
 from .workflow_recovery_policy_review import WorkflowRecoveryPolicyReview
+from .workflow_recovery_policy_review_evidence_repairs import WorkflowRecoveryPolicyReviewEvidenceRepairs
+from .workflow_recovery_policy_review_parent_evidence_repairs import WorkflowRecoveryPolicyReviewParentEvidenceRepairs
 from .workflow_recovery_policy_reviews import WorkflowRecoveryPolicyReviews
 from .workflow_recovery_policy_triggers_item import WorkflowRecoveryPolicyTriggersItem
+from .workflow_recovery_polling_notification import WorkflowRecoveryPollingNotification
+from .workflow_recovery_polling_notification_status import WorkflowRecoveryPollingNotificationStatus
+from .workflow_recovery_polling_webhook_payload import WorkflowRecoveryPollingWebhookPayload
+from .workflow_recovery_polling_webhook_payload_code import WorkflowRecoveryPollingWebhookPayloadCode
+from .workflow_recovery_polling_webhook_payload_scope import WorkflowRecoveryPollingWebhookPayloadScope
+from .workflow_recovery_polling_webhook_payload_state import WorkflowRecoveryPollingWebhookPayloadState
 from .workflow_recovery_queue_blocked_webhook_payload import WorkflowRecoveryQueueBlockedWebhookPayload
+from .workflow_recovery_queue_blocked_webhook_payload_evidence_kind import (
+    WorkflowRecoveryQueueBlockedWebhookPayloadEvidenceKind,
+)
 from .workflow_recovery_queue_blocked_webhook_payload_reason import WorkflowRecoveryQueueBlockedWebhookPayloadReason
+from .workflow_recovery_queue_blocked_webhook_payload_state import WorkflowRecoveryQueueBlockedWebhookPayloadState
 from .workflow_recovery_queue_blocked_webhook_payload_status import WorkflowRecoveryQueueBlockedWebhookPayloadStatus
+from .workflow_recovery_queue_evidence import WorkflowRecoveryQueueEvidence
 from .workflow_recovery_report import WorkflowRecoveryReport
 from .workflow_recovery_report_blocker import WorkflowRecoveryReportBlocker
 from .workflow_recovery_report_group import WorkflowRecoveryReportGroup
@@ -4445,6 +4584,8 @@ from .workflow_recovery_review_status_outcome import WorkflowRecoveryReviewStatu
 from .workflow_resume_preview import WorkflowResumePreview
 from .workflow_resume_response import WorkflowResumeResponse
 from .workflow_resume_response_previous_status import WorkflowResumeResponsePreviousStatus
+from .workflow_retry_evidence_diagnosis import WorkflowRetryEvidenceDiagnosis
+from .workflow_retry_evidence_diagnosis_evidence_kind import WorkflowRetryEvidenceDiagnosisEvidenceKind
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_diagnostics_response import WorkflowRunDiagnosticsResponse
@@ -5228,6 +5369,7 @@ __all__ = (
     "DebugDependencyLatencyItem",
     "DebugDependencyLatencyItemType",
     "DebugDependencyLatencyResponse",
+    "DebugDependencyQueryItem",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationConfidence",
     "DebugEvidenceExplanationDiagnosis",
@@ -5245,6 +5387,7 @@ __all__ = (
     "DebugRegressionActionRequestAction",
     "DebugRegressionActionResponse",
     "DebugRegressionItem",
+    "DebugRegressionItemKind",
     "DebugRegressionItemState",
     "DebugRegressionsResponse",
     "DebugReplayComparison",
@@ -6011,6 +6154,7 @@ __all__ = (
     "GetRouteHealthInvestigationSignal",
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
+    "GetRuntimePolicyStatusEdgeRulesScope",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
@@ -6234,6 +6378,7 @@ __all__ = (
     "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
     "ListManagedRealtimeSchedulesStatus",
+    "ListMCPAdmissionHistoryOutcome",
     "ListObjectWriteReceiptsStatus",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
@@ -6434,10 +6579,75 @@ __all__ = (
     "ManagedRealtimeSignalRequest",
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
+    "MCPAdmissionEvidence",
+    "MCPAdmissionEvidenceOutcome",
+    "MCPAdmissionEvidenceVersion",
+    "MCPAdmissionGateway",
+    "MCPAdmissionHistoryResponse",
+    "MCPCatalogMonitorConfig",
+    "MCPCatalogMonitorConfigBaseline",
+    "MCPCatalogMonitorConfigRequest",
+    "MCPCatalogMonitorConfigRequestBaseline",
+    "MCPCatalogMonitorSignal",
+    "MCPCatalogMonitorSignalRoles",
+    "MCPCatalogMonitorSignalState",
+    "MCPCatalogMonitorSnapshot",
+    "MCPCatalogMonitorSnapshotRoles",
+    "MCPCatalogMonitorSnapshotState",
+    "MCPCatalogMonitorSummary",
+    "MCPCatalogMonitorSummaryRoles",
+    "MCPCatalogMonitorSummaryState",
+    "MCPCatalogOAuthCheck",
+    "MCPCatalogOAuthCheckReason",
+    "MCPCatalogOAuthCheckState",
+    "MCPCatalogOAuthEvent",
+    "MCPCatalogOAuthEventKind",
+    "MCPCatalogOAuthFlow",
+    "MCPCatalogOAuthLifecycle",
+    "MCPCatalogOAuthLifecycleCredentialState",
+    "MCPCatalogOAuthLifecycleLocalState",
+    "MCPCatalogOAuthRenewal",
+    "MCPCatalogOAuthRenewalOutcome",
+    "MCPCatalogOAuthRenewalState",
+    "MCPCatalogOAuthRequest",
+    "MCPCatalogOAuthRequestAction",
+    "MCPCatalogOAuthResponse",
+    "MCPCatalogOAuthResponseProviderRevocation",
+    "MCPCatalogOAuthResponseState",
+    "MCPCatalogOAuthRevocation",
+    "MCPCatalogOAuthRevocationFailureReason",
+    "MCPCatalogOAuthRevocationState",
+    "MCPCatalogObservationRequest",
+    "MCPCatalogObservationRequestObserved",
+    "MCPCatalogObserverConfig",
+    "MCPCatalogObserverOAuthConfig",
+    "MCPCatalogObserverOAuthConfigProfile",
+    "MCPCatalogObserverOAuthConfigRevocationAuthMethod",
+    "MCPCatalogObserverOAuthConfigTokenAuthMethod",
+    "MCPCatalogObserverOAuthStatus",
+    "MCPCatalogObserverOAuthStatusState",
+    "MCPCatalogObserverStatus",
+    "MCPCatalogObserverStatusFailureReason",
+    "MCPCatalogObserverStatusState",
+    "MCPCatalogReceipt",
+    "MCPCatalogReceiptDiff",
+    "MCPCatalogReceiptState",
+    "MCPConnectionHealthIssue",
+    "MCPConnectionHealthIssueKind",
+    "MCPConnectionHealthSnapshot",
+    "MCPConnectionHealthSnapshotCounts",
     "MCPInstanceHealthProbeResponse",
     "MCPInstanceProtocolProbeRequest",
     "MCPInstanceProtocolProbeRequestProtocolVersion",
     "MCPInstanceProtocolProbeResponse",
+    "MCPOAuthRetirement",
+    "MCPOAuthRetirementAction",
+    "MCPOAuthRetirementActionAction",
+    "MCPOAuthRetirementEvent",
+    "MCPOAuthRetirementsResponse",
+    "MCPOAuthRetirementState",
+    "MCPPolicyConvergenceSnapshot",
+    "MCPPolicyConvergenceSnapshotState",
     "MCPProbeRPCRequest",
     "MCPProbeRPCRequestMethod",
     "MCPProbeRPCRequestParams",
@@ -7680,6 +7890,15 @@ __all__ = (
     "QueueBindingStatusResponseWorkloadClass",
     "QueueDeadLetterMessage",
     "QueueDeadLetterResponse",
+    "QueueLeaseMessage",
+    "QueueLeaseMessageHeaders",
+    "QueueLeaseMessagePayload",
+    "QueueLeaseReceiptFailure",
+    "QueueLeaseReceiptFailureReason",
+    "QueueLeaseReceiptsRequest",
+    "QueueLeaseReceiptsResponse",
+    "QueueLeaseRequest",
+    "QueueLeaseResponse",
     "QueuePeekMessage",
     "QueuePeekResponse",
     "QueueReceiveResponse",
@@ -8426,6 +8645,7 @@ __all__ = (
     "UpdateDeploymentOpenAPIDocResponse200Source",
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
+    "UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy",
     "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
@@ -8532,6 +8752,26 @@ __all__ = (
     "WorkflowForEachSpecOnItemFailure",
     "WorkflowGuardSpec",
     "WorkflowGuardSpecOp",
+    "WorkflowInitialEvidenceDiagnosis",
+    "WorkflowInitialEvidenceRepairReceipt",
+    "WorkflowInitialEvidenceRepairReceiptOutcome",
+    "WorkflowInitialEvidenceRepairRequest",
+    "WorkflowInitialFailure",
+    "WorkflowInitialFailureFailureStatus",
+    "WorkflowInitialFailures",
+    "WorkflowInitialFailuresCoverage",
+    "WorkflowInitialObservationFailure",
+    "WorkflowInitialObservationFailureCode",
+    "WorkflowInitialRecoveryAttention",
+    "WorkflowInitialRecoveryPreview",
+    "WorkflowInitialRecoveryReview",
+    "WorkflowInitialRecoveryReviewDecisionRequest",
+    "WorkflowInitialRecoveryReviewDecisionRequestDecision",
+    "WorkflowInitialRecoveryReviewEvent",
+    "WorkflowInitialRecoveryReviewEventStatus",
+    "WorkflowInitialRecoveryReviewRequest",
+    "WorkflowInitialRecoveryReviews",
+    "WorkflowInitialRecoveryReviewStatus",
     "WorkflowJoinSpec",
     "WorkflowOutboundSpec",
     "WorkflowOutboundSpecMethod",
@@ -8545,12 +8785,18 @@ __all__ = (
     "WorkflowRecoveryAutomaticAction",
     "WorkflowRecoveryAutomaticActionStatus",
     "WorkflowRecoveryAutomaticBlockedNotification",
+    "WorkflowRecoveryAutomaticBlockedNotificationEvidenceKind",
     "WorkflowRecoveryAutomaticBlockedNotificationReason",
+    "WorkflowRecoveryAutomaticBlockedNotificationState",
     "WorkflowRecoveryAutomaticBlockedNotificationStatus",
     "WorkflowRecoveryAutomaticEvaluation",
     "WorkflowRecoveryAutomaticEvaluationReason",
+    "WorkflowRecoveryAutomaticPollingFailure",
+    "WorkflowRecoveryAutomaticPollingFailureCode",
     "WorkflowRecoveryAutomaticQueue",
     "WorkflowRecoveryAutomaticQueueEntry",
+    "WorkflowRecoveryAutomaticQueueEntryEvidenceUnavailableReason",
+    "WorkflowRecoveryAutomaticQueueEntryWaitCategory",
     "WorkflowRecoveryAutomaticSuppression",
     "WorkflowRecoveryCancellationRequest",
     "WorkflowRecoveryCancellationResponse",
@@ -8574,6 +8820,19 @@ __all__ = (
     "WorkflowRecoveryHealthWebhookPayloadStatus",
     "WorkflowRecoveryHistory",
     "WorkflowRecoveryHistoryEntry",
+    "WorkflowRecoveryHistoryEntryEvidenceKind",
+    "WorkflowRecoveryInitialPolicyChangeCandidate",
+    "WorkflowRecoveryInitialPolicyChangePreview",
+    "WorkflowRecoveryInitialPolicyChangePreviewCoverage",
+    "WorkflowRecoveryInitialQueueEvidence",
+    "WorkflowRecoveryInitialQueueEvidenceStage",
+    "WorkflowRecoveryOverview",
+    "WorkflowRecoveryOverviewAlert",
+    "WorkflowRecoveryOverviewAlertDeliveryStatus",
+    "WorkflowRecoveryOverviewIssue",
+    "WorkflowRecoveryOverviewIssueScope",
+    "WorkflowRecoveryOverviewMonitoringStatus",
+    "WorkflowRecoveryOverviewStatus",
     "WorkflowRecoveryPolicy",
     "WorkflowRecoveryPolicyAssessment",
     "WorkflowRecoveryPolicyAssessmentEligibility",
@@ -8598,11 +8857,22 @@ __all__ = (
     "WorkflowRecoveryPolicyResponse",
     "WorkflowRecoveryPolicyResponseStatus",
     "WorkflowRecoveryPolicyReview",
+    "WorkflowRecoveryPolicyReviewEvidenceRepairs",
+    "WorkflowRecoveryPolicyReviewParentEvidenceRepairs",
     "WorkflowRecoveryPolicyReviews",
     "WorkflowRecoveryPolicyTriggersItem",
+    "WorkflowRecoveryPollingNotification",
+    "WorkflowRecoveryPollingNotificationStatus",
+    "WorkflowRecoveryPollingWebhookPayload",
+    "WorkflowRecoveryPollingWebhookPayloadCode",
+    "WorkflowRecoveryPollingWebhookPayloadScope",
+    "WorkflowRecoveryPollingWebhookPayloadState",
     "WorkflowRecoveryQueueBlockedWebhookPayload",
+    "WorkflowRecoveryQueueBlockedWebhookPayloadEvidenceKind",
     "WorkflowRecoveryQueueBlockedWebhookPayloadReason",
+    "WorkflowRecoveryQueueBlockedWebhookPayloadState",
     "WorkflowRecoveryQueueBlockedWebhookPayloadStatus",
+    "WorkflowRecoveryQueueEvidence",
     "WorkflowRecoveryReport",
     "WorkflowRecoveryReportBlocker",
     "WorkflowRecoveryReportGroup",
@@ -8628,6 +8898,8 @@ __all__ = (
     "WorkflowResumePreview",
     "WorkflowResumeResponse",
     "WorkflowResumeResponsePreviousStatus",
+    "WorkflowRetryEvidenceDiagnosis",
+    "WorkflowRetryEvidenceDiagnosisEvidenceKind",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
     "WorkflowRunDiagnosticsResponse",

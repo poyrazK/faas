@@ -272,10 +272,11 @@ func run(args []string) (status int) {
 		// 8 source-side failure modes. Routes to commands_doctor.go.
 		return cmdDoctor(args[1:])
 	case dispatchApps:
-		// `gregale apps ls` is an alias for the default list action.
-		if len(args) > 1 && args[1] == "ls" {
+		// `gregale apps ls` (or `list`, as `projects list` spells it) is an
+		// alias for the default list action.
+		if len(args) > 1 && (args[1] == "ls" || args[1] == "list") {
 			if len(args) != 2 {
-				PrintUsage(os.Stderr, "usage: gregale apps [ls]", "apps")
+				PrintUsage(os.Stderr, "usage: gregale apps [ls|list]", "apps")
 				return 1
 			}
 			return cmdApps()
@@ -327,6 +328,11 @@ func run(args []string) (status int) {
 			}
 			return cmdAppsStreamingCap(args[2], args[3:])
 		}
+		// `gregale apps rm <slug>` / `apps delete <slug>` name the delete
+		// path as a subcommand; flags after the slug keep their meaning.
+		if len(args) > 1 && (args[1] == "rm" || args[1] == "delete") {
+			return cmdAppsRm(args[2:])
+		}
 		// `gregale apps -q <slug>` is the delete path.
 		if len(args) > 1 && (strings.SplitN(args[1], "=", 2)[0] == "-q" || strings.SplitN(args[1], "=", 2)[0] == "--quiet" || strings.SplitN(args[1], "=", 2)[0] == "--yes" || strings.SplitN(args[1], "=", 2)[0] == "--dry-run") {
 			// Preserve the quiet flag for cmdAppsRm. Dropping it here
@@ -335,7 +341,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()

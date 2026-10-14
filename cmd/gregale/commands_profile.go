@@ -102,8 +102,7 @@ func validateSelectedProfile() error {
 }
 func cmdProfile(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale profile <add|list|use|remove|check> ...", "config")
-		return 1
+		args = []string{"list"}
 	}
 	cfg, err := loadCLIConfig()
 	if err != nil {

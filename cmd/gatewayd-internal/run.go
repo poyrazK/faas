@@ -3502,6 +3502,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
 			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
+		// ADR-1163: live job task output follows the task VM on its node.
+		logsMux := http.NewServeMux()
+		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
+			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
 	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy

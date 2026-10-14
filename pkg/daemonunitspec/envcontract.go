@@ -103,6 +103,7 @@ const (
 var EnvContract = []EnvVar{
 	{Name: "FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ADMIN_EMAILS", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
+	{Name: "FAAS_AI_GATEWAY_ACCOUNTS", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Note: "optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account"},
 	{Name: "FAAS_AI_GATEWAY_ENABLED", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Validate: EnvValidationInt, Note: "optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off)"},
 	{Name: "FAAS_ALERT_EVAL_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ADVISORY_SOCK", Owners: []string{"apid", "vmmd", "shared"}, Source: EnvSourceUnit},
@@ -291,6 +292,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_FLEET_AGE_RECIPIENT_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_FREE_PAGE_REPORTING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+"},
+	{Name: "FAAS_FROZEN_TIER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for the ADR-1151 frozen tier; production default is off"},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_NODE22", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},

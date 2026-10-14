@@ -13,6 +13,7 @@ type WorkflowRunRecoveryPlan struct {
 	Runs                     []WorkflowRunRecoveryTarget `json:"runs"`
 }
 type WorkflowRunRecoveryTarget struct {
+	FailureEvidenceID   string `json:"failure_evidence_id,omitempty"`
 	ParentPosition      int64  `json:"parent_position,omitempty"`
 	RunID               string `json:"run_id"`
 	ExpectedResumeCount int    `json:"expected_resume_count"`
@@ -37,6 +38,12 @@ func (r EventRecoveryRequest) validateWorkflowRuns() error {
 		id, err := uuid.Parse(t.RunID)
 		if err != nil || id.String() != t.RunID || seen[t.RunID] || t.ExpectedResumeCount < 0 || t.ExpectedResumeCount > WorkflowRunMaxResumes {
 			return fmt.Errorf("invalid or duplicate workflow run recovery target")
+		}
+		if t.FailureEvidenceID != "" {
+			evidence, err := uuid.Parse(t.FailureEvidenceID)
+			if err != nil || evidence.String() != t.FailureEvidenceID || t.ExpectedResumeCount != 0 || r.ParentJobID != "" {
+				return fmt.Errorf("failure evidence requires an initial run target without a recovery parent")
+			}
 		}
 		if t.ParentPosition < 0 || (r.ParentJobID == "") != (t.ParentPosition == 0) || t.ParentPosition > AutomationRecoveryBatchMaxRuns || positions[t.ParentPosition] && t.ParentPosition != 0 || r.ParentJobID != "" && t.ExpectedResumeCount < 1 {
 			return fmt.Errorf("workflow retry targets require unique parent positions and an admitted resume count")

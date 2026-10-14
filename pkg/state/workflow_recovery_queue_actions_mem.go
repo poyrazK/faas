@@ -29,6 +29,16 @@ func (m *MemStore) SuppressWorkflowRecoveryAutomaticAction(ctx context.Context, 
 	if p.Response.Version != r.ExpectedPolicyVersion {
 		return out, ErrWorkflowRecoveryPolicyConflict
 	}
+	if initial, exists := m.initialRecoveryReviews[canonicalMemUUID(review)]; exists && sameMemUUID(review, action) && sameMemUUID(initial.AppID, app) {
+		if initial.PolicyVersion != r.ExpectedPolicyVersion {
+			return out, ErrWorkflowRecoveryPolicyConflict
+		}
+		decided, err := m.decideInitialReviewLocked(ctx, account, app, review, p.Response, api.WorkflowInitialRecoveryReviewDecisionRequest{Decision: "cancel", Reason: r.Reason}, time.Now().UTC())
+		if err != nil {
+			return out, err
+		}
+		return initialAutomaticSuppressionAction(decided), nil
+	}
 	e := p.Executions[canonicalMemUUID(action)]
 	if e == nil {
 		return out, ErrNotFound
@@ -102,16 +112,32 @@ func (m *MemStore) ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx c
 		c.p.BlockedNext = map[string]time.Time{}
 	}
 	c.p.BlockedNext[c.e.ActionID] = now.Add(api.WorkflowRecoveryPolicyPollInterval)
+	defer m.mu.Unlock()
 	action := recoveryPolicyClone(*c.e)
 	policy := recoveryPolicyClone(c.p.Response)
-	m.mu.Unlock()
-	blocked, err := automaticBlockedEvidence(ctx, m, c.app.AccountID, policy.AppID, c.review.ID, action, now)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := ctx.Err(); err != nil {
+	_, retained, current, frame, err := m.retryEvidenceScopeLocked(c.app.AccountID, policy.AppID, c.review.ID, action.ActionID, now)
+	if err != nil {
 		return false, err
 	}
-	if err != nil || !blocked || c.p.Executions[action.ActionID] != c.e || !c.p.Response.UpdatedAt.Equal(policy.UpdatedAt) || c.p.Response.Version != policy.Version || !automaticBlockedEligible(c.p.Response, *c.e, c.review.PolicyVersion) || c.e.Status != action.Status {
+	if retained.ReviewDecision != nil && retained.ReviewDecision.Decision == "dismissed" {
+		return true, nil
+	}
+	var diagnosis api.WorkflowRetryEvidenceDiagnosis
+	if action.Status == "pending" {
+		diagnosis = m.retryParentEvidenceLocked(retained, *current, frame, now)
+		live, exists := m.workflowRuns[frame.Target.RunID]
+		if !exists {
+			diagnosis.Reason, diagnosis.Repairable = "run_not_retained", false
+		} else if live.ResumeCount != frame.Target.ExpectedResumeCount {
+			diagnosis.Reason, diagnosis.Repairable = "generation_superseded", false
+		}
+	} else {
+		diagnosis = retryEvidenceDiagnosis(m.retryEvidenceLocked(retained, *current, frame, now), action.ActionID)
+		diagnosis.EvidenceKind = "child"
+		diagnosis.ItemPosition = 1
+	}
+	transition := automaticEvidenceTransition(policy.AppID, c.app.Slug, retained.ID, retained.PolicyVersion, action, diagnosis, now)
+	if transition == nil {
 		return true, nil
 	}
 	// Recheck scope after inspection before freezing recipients.
@@ -125,13 +151,14 @@ func (m *MemStore) ProcessNextWorkflowRecoveryAutomaticBlockedNotification(ctx c
 		}
 	}
 	sort.Strings(ids)
-	payload := automaticBlockedPayload(policy.AppID, c.app.Slug, c.review.ID, c.review.PolicyVersion, action, now)
+	payload := *transition
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return false, fmt.Errorf("encode blocked retry notification: %w", err)
 	}
-	receipt := automaticBlockedReceipt(payload, ids)
+	receipt := automaticEvidenceReceipt(payload, action.BlockedNotification, ids)
 	c.e.BlockedNotification = &receipt
+	c.p.appendHistoryEvent(retryAlertHistory(retained, payload), now)
 	if len(ids) > 0 {
 		if m.appWebhookEventOutbox == nil {
 			m.appWebhookEventOutbox = map[string]appWebhookOutboxEvent{}

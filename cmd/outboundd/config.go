@@ -40,6 +40,20 @@ type Config struct {
 	// off, AI integrations and routes are refused. FAAS_AI_GATEWAY_ENABLED
 	// overrides it: "1" turns it on, any other value turns it off.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+	// AIGatewayAccounts limits customer AI integrations to these account IDs
+	// during a staged preview rollout (ADR-998); empty or "*" admits every
+	// entitled account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
+	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
+}
+
+// AIGatewayRollout resolves the staged rollout from the TOML setting and the
+// environment override (ADR-998).
+func (c *Config) AIGatewayRollout(getenv func(string) string) (outbound.AIGatewayRollout, error) {
+	override := ""
+	if getenv != nil {
+		override = getenv("FAAS_AI_GATEWAY_ACCOUNTS")
+	}
+	return outbound.ParseAIGatewayRollout(c.AIGatewayAccounts, override)
 }
 
 // AIGateway resolves the release gate from the TOML setting and the

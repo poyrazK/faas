@@ -34,3 +34,31 @@ func TestClientGetAppsSlugPolicyStatus(t *testing.T) {
 		t.Fatal("wait above server maximum was accepted")
 	}
 }
+
+func TestClientFleetEdgePolicyStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/demo/policy/status" || r.URL.Query().Get("edge_rules_scope") != "fleet" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+		_, _ = fmt.Fprint(w, `{"app_id":"app-1","edge_rules":{"scope":"fleet","desired_revision":42,"state":"active","serving_gateways":2,"applied_gateways":2}}`)
+	}))
+	defer server.Close()
+	status, err := NewClient(server.URL, "operator").GetAppsSlugFleetEdgePolicyStatus(t.Context(), "demo")
+	if err != nil || status.AppID != "app-1" || status.EdgeRules.Scope != "fleet" || status.EdgeRules.DesiredRevision != 42 {
+		t.Fatalf("%+v %v", status, err)
+	}
+}
+
+func TestClientAccountEdgePolicyStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/demo/policy/status" || r.URL.Query().Get("edge_rules_scope") != "account" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+		_, _ = fmt.Fprint(w, `{"app_id":"app-1","edge_rules":{"scope":"account","legacy_fleet_revision":9,"desired_revision":42,"state":"active","serving_gateways":2,"applied_gateways":2}}`)
+	}))
+	defer server.Close()
+	status, err := NewClient(server.URL, "operator").GetAppsSlugAccountEdgePolicyStatus(t.Context(), "demo")
+	if err != nil || status.AppID != "app-1" || status.EdgeRules.Scope != "account" || status.EdgeRules.DesiredRevision != 42 || status.EdgeRules.LegacyFleetRevision != 9 {
+		t.Fatalf("%+v %v", status, err)
+	}
+}

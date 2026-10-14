@@ -52,6 +52,15 @@ type devAllOptions struct {
 	postgres       bool
 	postgresRegion string
 	ttl            string
+	// watch starts watch mode (ADR-1170) in every app that has a development
+	// command to run (devWatchSuggestion) or sets dev.watch itself; the
+	// others keep production-shaped developer builds.
+	watch bool
+}
+
+// devAllWatches reports whether a child for app gets --watch.
+func (o devAllOptions) devAllWatches(app devAllApp) bool {
+	return o.watch && !o.stop && devWatchSuggestion(app.SourceDir) != ""
 }
 
 func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
@@ -69,6 +78,9 @@ func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
 	}
 	if o.ttl != "" {
 		args = append(args, "--ttl", o.ttl)
+	}
+	if o.devAllWatches(app) {
+		args = append(args, "--watch")
 	}
 	args = appendDevBucketArgs(args, o.buckets)
 	// Pass the output mode explicitly: a child would otherwise fall back to a
@@ -314,6 +326,11 @@ func runDevAll(ctx context.Context, apps []devAllApp, opts devAllOptions, launch
 		var out io.WriteCloser = &devPrefixWriter{mu: &mu, out: stdout, prefix: prefix}
 		if jsonOutput {
 			out = newDevJSONTagger(app, &mu, stdout, stderr)
+		}
+		if opts.watch && !opts.stop && !opts.devAllWatches(app) && !jsonOutput {
+			mu.Lock()
+			_, _ = fmt.Fprintf(stdout, "%swatch mode: no development command detected; this app keeps production-shaped builds\n", prefix)
+			mu.Unlock()
 		}
 		process, err := launch(opts.childArgs(app, jsonOutput), out, errOut)
 		if err != nil {

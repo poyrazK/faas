@@ -977,6 +977,42 @@ type AppEdgeRulesData struct {
 	Protection api.EdgeProtectionResponse
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
+	// Recipes is the protection-recipes section (ADR-986).
+	Recipes []EdgeRuleRecipeView
+	// Hosts lists the hostnames the app serves and how many enabled rules
+	// apply to each (ADR-1191), so an uncovered custom domain stands out.
+	Hosts []EdgeRuleHostCoverage
+}
+
+// EdgeRuleHostCoverage is one hostname of the app and the number of
+// enabled edge rules that apply to it.
+type EdgeRuleHostCoverage struct {
+	Host   string
+	Custom bool
+	Rules  int
+}
+
+// EdgeRuleRecipeView is one protection recipe on the edge-rules page.
+// Added is set when a rule created from the recipe already exists; Blocked
+// explains why the account's plan cannot use the recipe's rule kind.
+type EdgeRuleRecipeView struct {
+	ID      string
+	Title   string
+	Summary string
+	LogNote string
+	Params  []EdgeRuleRecipeParamView
+	Added   bool
+	Blocked string
+}
+
+// EdgeRuleRecipeParamView is one input of a protection recipe form.
+type EdgeRuleRecipeParamView struct {
+	Name        string
+	Label       string
+	Help        string
+	Default     string
+	Placeholder string
+	Required    bool
 }
 
 // EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
@@ -1037,6 +1073,8 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
+	// AppWide is set for a match_host "@app" rule (ADR-1191).
+	AppWide bool
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
@@ -2587,6 +2625,15 @@ type DebugRegressionView struct {
 	LastDetectedAt  string
 	RequestsURL     string
 	CompareURL      string
+	// Kind is latency, errors or latency_and_errors; ErrorRatePct and
+	// ErrorRateBasePct are the route's HTTP 5xx share after and before the
+	// deployment, preformatted ("12.5").
+	Kind             string
+	HasErrors        bool
+	HasLatency       bool
+	ErrorRatePct     string
+	ErrorRateBasePct string
+	ErrorCount       int
 }
 
 // DebugRequestView is one row in the debugger request table.
