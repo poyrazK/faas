@@ -979,6 +979,8 @@ type AppEdgeRulesData struct {
 	Events EdgeRuleEventsPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
+	// Suggestions recommends recipes from the app's own traffic (ADR-1193).
+	Suggestions []EdgeRuleSuggestionView
 	// Hosts lists the hostnames the app serves and how many enabled rules
 	// apply to each (ADR-1191), so an uncovered custom domain stands out.
 	Hosts []EdgeRuleHostCoverage
@@ -3778,4 +3780,22 @@ type OrgActivityItem struct {
 	OccurredAt string
 	Kind       string
 	Summary    string
+}
+
+// EdgeRuleSuggestionView is one suggested recipe (ADR-1193): the observation
+// behind it, the parameters it is added with (Hidden), the required inputs
+// the user still has to give (Inputs), and the plan gate if any (Blocked).
+type EdgeRuleSuggestionView struct {
+	Recipe  string
+	Title   string
+	Reason  string
+	Hidden  []EdgeRuleSuggestionField
+	Inputs  []EdgeRuleRecipeParamView
+	Blocked string
+}
+
+// EdgeRuleSuggestionField is one pre-filled recipe parameter.
+type EdgeRuleSuggestionField struct {
+	Name  string
+	Value string
 }

@@ -31722,6 +31722,34 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/edge-rules/suggestions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleSuggestions
+      summary: Protection recipes suggested from an app's own traffic.
+      description: |
+        ADR-1193. Reads the app's request telemetry over the last 7 days (or
+        the plan's telemetry retention when shorter) and recommends
+        protection recipes (ADR-986) with the parameters to add them with:
+        blocking unverified bots when bots are a noticeable share of
+        requests, rate-limiting busy or failing sign-in paths, and limiting
+        /admin to known IPs. Recipes already added and paths an enabled rule
+        of the same kind covers are skipped. Read-only; apply a suggestion
+        with the recipe (dashboard or `gregale edge-rules recipe`). Plans
+        without request analytics get 402.
+      responses:
+        '200':
+          description: Ranked suggestions, possibly empty.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules/rollback:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -78838,6 +78866,31 @@ components:
         rule_id: { type: string }
         matched: { type: integer, format: int64, minimum: 0, description: Requests an enforced rule matched. }
         logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
+
+    EdgeRuleRecipeSuggestionsResponse:
+      description: Protection recipes suggested from the app's traffic (ADR-1193).
+      type: object
+      required: [window, since, suggestions]
+      properties:
+        window: { type: string, example: 7d, description: 'Telemetry window the suggestions read, in days: 7d, or the plan''s telemetry retention when shorter.' }
+        since: { type: string, format: date-time, description: Start of the telemetry window. }
+        suggestions:
+          type: array
+          description: Ranked suggestions, at most five.
+          items: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestion' }
+
+    EdgeRuleRecipeSuggestion:
+      description: One suggested protection recipe and why (ADR-1193).
+      type: object
+      required: [recipe, title, reason]
+      properties:
+        recipe: { type: string, description: Recipe id to add (ADR-986). }
+        title: { type: string, description: The recipe's title. }
+        reason: { type: string, description: What in the app's traffic led to the suggestion. }
+        params:
+          type: object
+          description: Recipe parameters to add it with; required parameters not listed must be supplied.
+          additionalProperties: { type: string }
 
     EdgeRuleSetVersionResponse:
       description: One recorded state of an app's whole edge-rule set (ADR-961).

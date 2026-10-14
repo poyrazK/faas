@@ -89,6 +89,31 @@
     </section>
     {{end}}
 
+    {{if .Data.Suggestions}}
+    <section class="card" id="suggested-protections" aria-labelledby="suggested-protections-heading">
+      <h2 id="suggested-protections-heading">Suggested for this app</h2>
+      <p class="muted">Based on this app's recent requests. Each adds a protection recipe in log mode, so you can see what it would do before enforcing it.</p>
+      {{range .Data.Suggestions}}
+        <div class="suggestion">
+          <p><strong>{{.Title}}</strong> — {{.Reason}}</p>
+          {{if .Blocked}}
+            <p class="muted">{{.Blocked}}</p>
+          {{else}}
+            <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes">
+              <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+              <input type="hidden" name="recipe" value="{{.Recipe}}">
+              {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+              {{range .Inputs}}
+                <label>{{.Label}} (required) <input type="text" name="{{.Name}}" placeholder="{{.Placeholder}}" required></label>
+              {{end}}
+              <button type="submit">Add in log mode</button>
+            </form>
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+    {{end}}
+
     <section class="card" id="protection-recipes" aria-labelledby="protection-recipes-heading">
       <h2 id="protection-recipes-heading">Protection recipes</h2>
       <p class="muted">Each recipe adds one ordinary edge rule covering every host this app serves, custom domains included. It starts in log mode: it is matched and counted but never acts. Watch its matches and sample requests below, then choose <strong>Start enforcing</strong>.</p>

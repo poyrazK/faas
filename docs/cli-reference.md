@@ -8978,6 +8978,22 @@ gregale edge-rules recipe block-unverified-bots --app my-api
 gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24
 ```
 
+### edge-rules suggest
+
+Protection recipes suggested from the app&#39;s recent traffic, with the command to add each
+
+`gregale edge-rules suggest [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+
+Examples:
+
+```sh
+gregale edge-rules suggest --app my-api
+```
+
 ### edge-rules stats
 
 Per-rule match counts (matched for enforced rules, logged for log-mode rules)

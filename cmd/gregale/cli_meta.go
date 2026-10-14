@@ -3103,6 +3103,11 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "recipe parameter name=value (repeat)", Value: "NAME=VALUE"},
 				{Name: "enforce", Short: "enforce immediately instead of starting in log mode", Bool: true},
 			}},
+			{Name: "suggest", Short: "Protection recipes suggested from the app's recent traffic, with the command to add each", Examples: []string{
+				"gregale edge-rules suggest --app my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+			}},
 			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},

@@ -80,6 +80,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	} else {
 		data.Rules = projectDashboardEdgeRules(rules)
 		data.Recipes = dashboardEdgeRuleRecipes(rules, acct.Plan)
+		data.Suggestions = s.dashboardEdgeRuleSuggestions(ctx, log, app, acct.Plan, data.Recipes)
 		data.Hosts = s.dashboardEdgeRuleHostCoverage(ctx, log, app, rules)
 		s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules)
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
@@ -657,4 +658,39 @@ func (s *server) dashboardEdgeRuleHostCoverage(ctx context.Context, log *slog.Lo
 		}
 	}
 	return hosts
+}
+
+// dashboardEdgeRuleSuggestions turns the app's recipe suggestions (ADR-1193)
+// into forms for the recipes route: suggested parameters ride as hidden
+// fields and any required parameter the suggestion cannot fill becomes an
+// input. A plan without request telemetry, or a telemetry error, hides the
+// section rather than failing the page.
+func (s *server) dashboardEdgeRuleSuggestions(ctx context.Context, log *slog.Logger, app state.App, plan api.Plan, recipes []dashboard.EdgeRuleRecipeView) []dashboard.EdgeRuleSuggestionView {
+	days := api.EdgeRuleRecipeSuggestionDays(plan)
+	if days == 0 {
+		return nil
+	}
+	suggestions, err := s.edgeRules.RecipeSuggestions(ctx, app, days)
+	if err != nil {
+		log.Warn("dashboard edge rules: recipe suggestions", "app_id", app.ID, "err", err)
+		return nil
+	}
+	byID := map[string]dashboard.EdgeRuleRecipeView{}
+	for _, r := range recipes {
+		byID[r.ID] = r
+	}
+	out := make([]dashboard.EdgeRuleSuggestionView, 0, len(suggestions.Suggestions))
+	for _, sg := range suggestions.Suggestions {
+		recipe := byID[sg.Recipe]
+		view := dashboard.EdgeRuleSuggestionView{Recipe: sg.Recipe, Title: sg.Title, Reason: sg.Reason, Blocked: recipe.Blocked}
+		for _, p := range recipe.Params {
+			if v, ok := sg.Params[p.Name]; ok {
+				view.Hidden = append(view.Hidden, dashboard.EdgeRuleSuggestionField{Name: p.Name, Value: v})
+			} else if p.Required {
+				view.Inputs = append(view.Inputs, p)
+			}
+		}
+		out = append(out, view)
+	}
+	return out
 }

@@ -3445,6 +3445,13 @@ func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (Edg
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetEdgeRuleRecipeSuggestions returns the protection recipes suggested from
+// the app's last 7 days of traffic (ADR-1193).
+func (c *Client) GetEdgeRuleRecipeSuggestions(ctx context.Context, slug string) (EdgeRuleRecipeSuggestionsResponse, error) {
+	var out EdgeRuleRecipeSuggestionsResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/suggestions", nil, &out)
+}
+
 // ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
 // first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
