@@ -55,9 +55,11 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	request.SetPathValue("slug", scope.Slug)
 	request.SetPathValue("name", operation.Name)
 	request.SetPathValue("id", operation.RunID)
+	request.SetPathValue("step", operation.Step)
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
-	if operation.Kind == "save" || operation.Kind == "publish" || operation.Kind == "check" || operation.Kind == "enabled" || operation.Kind == "run" {
+	switch operation.Kind {
+	case "save", "publish", "check", "enabled", "run", "resume", "cancel":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -98,12 +100,30 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodGet, named + "/health", h.server.getAutomationHealth
 	case "runs":
 		return http.MethodGet, "/v1/apps/" + url.PathEscape(slug) + "/workflows/runs", h.server.listWorkflowRuns
-	case "get-run":
-		return http.MethodGet, "/v1/workflows/runs/" + url.PathEscape(op.RunID), h.server.getWorkflowRun
-	case "steps":
-		return http.MethodGet, "/v1/workflows/runs/" + url.PathEscape(op.RunID) + "/steps", h.server.listWorkflowSteps
 	case "run":
 		return http.MethodPost, "/v1/apps/" + url.PathEscape(slug) + "/workflows/" + url.PathEscape(op.Name) + "/runs", h.server.createWorkflowRun
+	default:
+		return h.runEndpoint(op)
+	}
+}
+
+func (h automationConsoleHost) runEndpoint(op automationconsole.Operation) (string, string, dashboardJSONHandler) {
+	root := "/v1/workflows/runs/" + url.PathEscape(op.RunID)
+	switch op.Kind {
+	case "get-run":
+		return http.MethodGet, root, h.server.getWorkflowRun
+	case "steps":
+		return http.MethodGet, root + "/steps", h.server.listWorkflowSteps
+	case "attempts":
+		return http.MethodGet, root + "/steps/" + url.PathEscape(op.Step) + "/attempts", h.server.listWorkflowStepAttempts
+	case "diagnostics":
+		return http.MethodGet, root + "/diagnostics", h.server.getWorkflowRunDiagnostics
+	case "resumes":
+		return http.MethodGet, root + "/resumes", h.server.listWorkflowResumes
+	case "resume":
+		return http.MethodPost, root + "/resume", dashboardJSONHandler(h.server.idempotent(h.server.resumeWorkflowRun))
+	case "cancel":
+		return http.MethodPost, root + "/cancel", dashboardJSONHandler(h.server.idempotent(h.server.cancelWorkflowRun))
 	default:
 		return "", "", nil
 	}

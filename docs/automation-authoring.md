@@ -46,6 +46,38 @@ cannot enable a disabled workflow runtime, satisfy tenant admission requirements
 configure outbound worker flags, or establish native KVM qualification. The
 existing permissions, publication policies and execution gates still apply.
 
+### Diagnose and recover a dashboard run
+
+Open a run from **Recent runs** to see its observed queue/wait reason, next wake,
+expired worker lease, deployment pin, and step kinds. Select a step to inspect
+its attempt states, HTTP statuses and timing. Attempt errors and managed-operation
+effect records are excluded from this page. Failed diagnostics or history reads
+are reported as unavailable, rather than as an eligible or empty result.
+
+The **Recovery preview** lists steps to reopen, steps to preserve and current
+blockers. When eligible, review that list, confirm that reopened steps may perform
+real actions again, and choose **Resume failed run**. The existing API rechecks
+eligibility, admission requirements and the preview's continuation count.
+Concurrent or stale requests cannot admit a second continuation. Repeating the
+same submitted form replays its original result through API idempotency.
+An unsuccessful action requires refreshing the run and confirming again.
+
+**Recovery history** shows continuation numbers, previous states, reopened step
+names and timestamps. It omits historical errors and account identifiers.
+Successful results and prior attempts remain retained by the workflow runtime;
+resuming keeps the captured definition, inputs and deployment routing rules.
+
+For an active run, expand **Cancel this run**, confirm, and choose **Cancel run**.
+Cancellation applies to that run's current state, including a continuation that
+may have been admitted since the page was loaded. Completed actions are not
+undone, and active work may need time to stop. A completed run is left unchanged
+by the existing cancellation API. Cancellation does not require the execution
+runtime to be enabled. Resume and cancellation require write permission,
+verified email, the app-bound CSRF envelope and a separate action confirmation.
+The run's app and automation identity are checked before requesting diagnostics,
+history, attempts or a mutation. These dashboard controls do not open native
+Customer Workflow Operations admission or establish KVM qualification.
+
 ## Start from a template
 
 Create a local starter without logging in:

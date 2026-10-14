@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/automationtemplates"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -110,35 +109,29 @@ func (s *Service) inspectAutomation(r *http.Request, scope Scope, data *dashboar
 }
 
 func (s *Service) inspectRun(r *http.Request, scope Scope, data *dashboard.AutomationConsoleData, id string) *Response {
-	if _, err := uuid.Parse(id); err != nil || data.Name == "" {
-		response := Response{Status: http.StatusNotFound}
-		return &response
-	}
-	var run api.WorkflowRunResponse
-	response := s.Host.Request(r, scope, Operation{Kind: "get-run", RunID: id})
-	if !read(response, &run) {
-		return &response
-	}
-	if run.AppID != scope.AppID || run.WorkflowName != data.Name {
-		response = Response{Status: http.StatusNotFound}
-		return &response
+	run, failure := s.scopedRun(r, scope, data.Name, id)
+	if failure != nil {
+		return failure
 	}
 	view := runView(scope, run)
 	data.Run = &view
 	var steps api.ListWorkflowStepsResponse
-	response = s.Host.Request(r, scope, Operation{Kind: "steps", RunID: id})
+	response := s.Host.Request(r, scope, Operation{Kind: "steps", RunID: id})
 	if !read(response, &steps) {
 		return &response
 	}
 	for _, step := range steps.Steps {
 		data.Steps = append(data.Steps, dashboard.AutomationConsoleStep{Name: step.StepName, Status: step.Status, Attempt: step.Attempt})
 	}
-	return nil
+	s.inspectRecovery(r, scope, data, id)
+	return s.inspectAttempts(r, scope, data, id)
 }
 
 func runView(scope Scope, run api.WorkflowRunResponse) dashboard.AutomationConsoleRun {
 	view := dashboard.AutomationConsoleRun{ID: run.ID, Name: run.WorkflowName, Status: run.Status,
-		CreatedAt: run.CreatedAt, DeploymentID: run.DeploymentID, URL: consoleURL(scope.Slug, run.WorkflowName, run.ID)}
+		CreatedAt: run.CreatedAt, DeploymentID: run.DeploymentID, ResumeCount: run.ResumeCount,
+		CanCancel: run.CancelledAt == nil && (run.Status == "pending" || run.Status == "running" || run.Status == "awaiting_event"),
+		URL:       consoleURL(scope.Slug, run.WorkflowName, run.ID)}
 	if run.CurrentStep != nil {
 		view.CurrentStep = *run.CurrentStep
 	}

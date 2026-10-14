@@ -11,6 +11,39 @@ const { chromium } = require('playwright');
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    async function submit(label, marker) {
+      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: label, exact: true }).click()]);
+      assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label);
+      assert.equal(await page.locator('[role=alert]').count(), 0, 'action returned an error for ' + label);
+    }
+    if (fixture.mode === 'recovery') {
+      const initial = await page.goto(fixture.url);
+      assert.equal(initial.status(), 200, 'recovery page must load');
+      assert.ok(await page.getByRole('heading', { name: 'Run diagnosis', exact: true }).count());
+      assert.ok(await page.getByRole('heading', { name: 'Recovery preview', exact: true }).count());
+      assert.equal(await page.locator('input[name=expected_resume_count]').inputValue(), '0');
+      assert.equal(await page.locator('form[aria-label="Resume selected run"] input[name=confirm_resume]').isChecked(), false);
+      await page.getByRole('link', { name: 'Inspect attempts for deliver', exact: true }).click();
+      assert.ok(await page.getByRole('heading', { name: 'Step attempts: deliver', exact: true }).count());
+      assert.ok(await page.locator('#selected-step').getByText('503', { exact: true }).count());
+      if (process.env.GREGALE_AUTOMATION_RECOVERY_SCREENSHOT) {
+        await page.locator('#selected-run').screenshot({ path: process.env.GREGALE_AUTOMATION_RECOVERY_SCREENSHOT });
+      }
+      await page.locator('input[name=confirm_resume]').check();
+      await submit('Resume failed run', 'Continuation 1');
+      assert.ok(await page.getByText('continuations: 1', { exact: false }).count());
+      assert.equal(await page.getByRole('button', { name: 'Resume failed run', exact: true }).count(), 0);
+      await page.locator('#selected-run summary').click();
+      await page.locator('input[name=confirm_cancel]').check();
+      await submit('Cancel run', 'Cancellation was requested.');
+      assert.equal(await page.getByRole('button', { name: 'Cancel run', exact: true }).count(), 0);
+      const text = await page.locator('body').innerText();
+      for (const secret of ['PRIVATE-RECOVERY-INPUT', 'PRIVATE-RECOVERY-OUTPUT', 'PRIVATE-RECOVERY-ERROR']) {
+        assert.equal(text.includes(secret), false, 'inspector exposed a private value');
+      }
+      assert.equal(errors.length, 0, 'browser reported a script error');
+      return;
+    }
     const initial = await page.goto(fixture.url + '?template=scheduled-report');
     assert.equal(initial.status(), 200, 'starter page must load');
     await page.locator('#automation-name').fill('browser-report');
@@ -19,11 +52,6 @@ const { chromium } = require('playwright');
     await page.locator('#automation-definition').fill(JSON.stringify(definition, null, 2));
     const sample = await page.locator('#automation-sample').inputValue();
     const scenarios = await page.locator('#automation-scenarios').inputValue();
-    async function submit(label, marker) {
-      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: label, exact: true }).click()]);
-      assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label);
-      assert.equal(await page.locator('[role=alert]').count(), 0, 'action returned an error for ' + label);
-    }
     await submit('Validate definition', 'Definition is valid.');
     await submit('Simulate steps', 'Simulation completed.');
     await submit('Save draft', 'Draft saved.');

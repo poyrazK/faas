@@ -34,7 +34,7 @@
 </form>
 {{if .Data.HealthError}}<p role="status">{{.Data.HealthError}}</p>{{end}}
 {{with .Data.Health}}<section><h2>Recent health</h2><p class="muted">Recorded runs from {{.WindowStart}} to {{.WindowEnd}}.</p><dl class="metrics"><div><dt>Runs</dt><dd>{{.RunCount}}</dd></div><div><dt>Active</dt><dd>{{.ActiveRunCount}}</dd></div><div><dt>Queued</dt><dd>{{.QueuedRunCount}}</dd></div></dl>{{with .Queue}}<p>Queue observed at {{.ObservedAt}}. Waiting: {{.WaitingRunCount}}; due: {{.DueRunCount}}; stale: {{.StaleRunCount}}.</p>{{end}}</section>{{end}}
-{{if .Data.Run}}<section><h2>Selected run</h2>{{with .Data.Run}}<p><code>{{.ID}}</code> — <strong>{{.Status}}</strong>{{if .CurrentStep}}; current step: {{.CurrentStep}}{{end}}</p><p>Created {{.CreatedAt}}{{if .DeploymentID}} · deployment <code>{{.DeploymentID}}</code>{{end}}</p><a href="{{.URL}}">Refresh run status</a>{{end}}<table><tr><th>Step</th><th>State</th><th>Attempts</th></tr>{{range .Data.Steps}}<tr><td>{{.Name}}</td><td>{{.Status}}</td><td>{{.Attempt}}</td></tr>{{end}}</table><p class="muted">Run inputs and outputs remain in the explicit workflow API inspection surface.</p></section>{{end}}
+{{if .Data.Run}}{{template "automation-run-panel" .}}{{end}}
 <section><h2>Recent runs</h2><p class="muted">The latest 20 runs for this automation.</p>{{if .Data.RunsError}}<p role="status">{{.Data.RunsError}}</p>{{else if .Data.Runs}}<table><tr><th>Run</th><th>State</th><th>Created</th></tr>{{range .Data.Runs}}<tr><td><a href="{{.URL}}">{{.ID}}</a></td><td>{{.Status}}</td><td>{{.CreatedAt}}</td></tr>{{end}}</table>{{else}}<p>No recent runs are shown. Publish and start a run to see its progress here.</p>{{end}}</section>
 {{end}}
 </main></body></html>

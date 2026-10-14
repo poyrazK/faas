@@ -24,8 +24,8 @@ type Scope struct {
 	Account                *dashboard.AccountView
 }
 type Operation struct {
-	Kind, Name, RunID, Key string
-	Body                   any
+	Kind, Name, RunID, Key, Step string
+	Body                         any
 }
 type Response struct {
 	Status int
@@ -94,6 +94,10 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 	}
 	data := dashboard.AutomationConsoleData{Slug: scope.Slug, Name: r.PostFormValue("name"),
 		Definition: r.PostFormValue("definition"), Sample: r.PostFormValue("sample"), Scenarios: r.PostFormValue("scenarios")}
+	if action := r.PathValue("action"); action == "resume" || action == "cancel" {
+		s.control(w, r, scope, data)
+		return
+	}
 	version, err := strconv.ParseInt(r.PostFormValue("expected_version"), 10, 64)
 	if err != nil || version < 0 {
 		s.invalid(w, r, scope, data, "Reload the automation to read its current draft version.")
@@ -119,6 +123,9 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 	data.BaseURL = "/dashboard/apps/" + url.PathEscape(scope.Slug) + "/automations"
 	data.CSRFToken = s.Host.IssueCSRF(w, scope)
 	data.ActionKey = uuid.NewString()
+	if data.Run != nil {
+		data.Run.ResumeKey, data.Run.CancelKey = uuid.NewString(), uuid.NewString()
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
