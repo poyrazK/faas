@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -136,7 +137,7 @@ class CodexRPC:
         self.process = subprocess.Popen(
             [binary, "app-server", "--stdio", "-c", config, "-c", 'mcp_oauth_credentials_store="file"', "-c", "sqlite_home=" + json.dumps(str(Path(workdir) / "state")), "-c", "log_dir=" + json.dumps(str(Path(workdir) / "logs"))],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.diagnostics,
-            cwd=workdir, env=client_environment,
+            cwd=workdir, env=client_environment, start_new_session=(os.name == "posix"),
         )
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.process.stdout, selectors.EVENT_READ)
@@ -202,6 +203,18 @@ class CodexRPC:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
+        if os.name == "posix":
+            # Codex can leave background plugin sync children after stdio closes.
+            # Stop only this disposable client's session before removing its home.
+            try:
+                os.killpg(self.process.pid, signal.SIGTERM)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    os.killpg(self.process.pid, 0)
+                    time.sleep(0.02)
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         self.selector.close()
         self.diagnostics.close()
 
