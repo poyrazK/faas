@@ -9676,7 +9676,7 @@ WHERE p.account_id = $10::uuid AND p.id = $11::uuid
        AND p.install_id = $2::bigint)
     OR ($9::text = 'gitlab' AND EXISTS (
        SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -9737,6 +9737,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -12648,6 +12649,35 @@ func (q *Queries) EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const enqueueEnvironmentGitNotification = `-- name: EnqueueEnvironmentGitNotification :exec
+INSERT INTO app_webhook_deliveries
+    (source_event_id, webhook_id, account_id, event, payload, created_at, updated_at, next_attempt_at)
+SELECT $1::uuid, h.id, h.account_id, 'environment.gitops.changed',
+       $2::jsonb, $3::timestamptz, $3::timestamptz, $3::timestamptz
+FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
+WHERE h.account_id = $4::uuid AND h.scope = 'account' AND h.enabled
+  AND 'environment.gitops.changed' = ANY(h.event_filter)
+  AND a.status = 'active' AND a.abuse_hold_at IS NULL
+ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING
+`
+
+type EnqueueEnvironmentGitNotificationParams struct {
+	EventID   pgtype.UUID
+	Payload   []byte
+	NowAt     pgtype.Timestamptz
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error {
+	_, err := db.Exec(ctx, enqueueEnvironmentGitNotification,
+		arg.EventID,
+		arg.Payload,
+		arg.NowAt,
+		arg.AccountID,
+	)
+	return err
+}
+
 const enqueueEnvironmentGitOps = `-- name: EnqueueEnvironmentGitOps :exec
 INSERT INTO environment_gitops_jobs (source_id, desired_generation, next_attempt_at)
 VALUES ($1::uuid, $2::bigint, $3::timestamptz)
@@ -14092,7 +14122,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider, s.notification_state FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -14127,6 +14157,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -21015,7 +21046,7 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider, s.notification_state FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text AND NOT s.detached
@@ -21057,12 +21088,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -21095,6 +21127,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -28717,7 +28750,8 @@ INSERT INTO request_telemetry (
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
-    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
+    content_outcome
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -28736,7 +28770,8 @@ INSERT INTO request_telemetry (
     $29::int,
     $30::int,
     $31::bool,
-    COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb)
+    COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb),
+    $33::text
 )
 `
 
@@ -28773,6 +28808,7 @@ type InsertRequestTelemetryParams struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidenceJson            string
+	ContentOutcome              string
 }
 
 // ---------------------------------------------------------------------------
@@ -28843,6 +28879,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.GuestPeakRssMb,
 		arg.GuestResourceUsageAvailable,
 		arg.FlagEvidenceJson,
+		arg.ContentOutcome,
 	)
 	return err
 }
@@ -44317,7 +44354,7 @@ func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DB
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider, s.notification_state FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -44357,6 +44394,7 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -56266,6 +56304,17 @@ func (q *Queries) ObjectUploadRoutesList(ctx context.Context, db DBTX, arg Objec
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectUsageAccountPlan = `-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1
+`
+
+func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlan, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
 }
 
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
@@ -77595,7 +77644,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -77634,6 +77683,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -80099,7 +80149,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -80146,6 +80196,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -82346,6 +82397,21 @@ func (q *Queries) WriteDeploymentHostingVerification(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const writeEnvironmentGitNotificationState = `-- name: WriteEnvironmentGitNotificationState :exec
+UPDATE environment_git_sources SET notification_state = $1::jsonb
+WHERE id = $2::uuid AND NOT detached
+`
+
+type WriteEnvironmentGitNotificationStateParams struct {
+	NotificationState []byte
+	SourceID          pgtype.UUID
+}
+
+func (q *Queries) WriteEnvironmentGitNotificationState(ctx context.Context, db DBTX, arg WriteEnvironmentGitNotificationStateParams) error {
+	_, err := db.Exec(ctx, writeEnvironmentGitNotificationState, arg.NotificationState, arg.SourceID)
+	return err
 }
 
 const writeProfileAlertState = `-- name: WriteProfileAlertState :exec

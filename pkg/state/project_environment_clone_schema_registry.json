@@ -2911,6 +2911,7 @@
       "intent_version",
       "manifest_path",
       "mode",
+      "notification_state",
       "project_id",
       "provider",
       "prune",
@@ -6528,6 +6529,9 @@
       "egress_millicents_per_gib",
       "finalized_at",
       "id",
+      "included_egress_bytes",
+      "included_requests",
+      "included_stored_byte_hours",
       "period_end",
       "period_start",
       "provider_cost_millicents",
@@ -7234,6 +7238,15 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_settlements",
+    "columns": [
+      "integration_id",
+      "lease_id",
+      "settled_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_usage_daily",
@@ -9268,6 +9281,7 @@
       "cold_boot",
       "commit_sha",
       "consumer_id",
+      "content_outcome",
       "count",
       "country",
       "deployment_created_at",

@@ -420,6 +420,10 @@ const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
 const EnvironmentGitOpsReportRunsMaxPerSource = 1000
 
+// Bounded, value-free customer notification payloads and durable deduplication.
+const EnvironmentGitOpsNotificationDetailsMax = 100
+const EnvironmentGitOpsNotificationStateBytes = 2048
+
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
@@ -844,6 +848,12 @@ const (
 	OutboundAIReplayOutputTextMaxBytes      = 4 << 10
 	OutboundAIReplayCallTimeoutSeconds      = 120
 	OutboundAIReplayInterruptedAfterMinutes = 15
+	// Settlement (ADR-1120): the attempts at one call's settlement and the
+	// deadline of each, and how long a settled call's key is kept so a
+	// retried settlement cannot count the call twice.
+	OutboundAISettlementAttempts              = 3
+	OutboundAISettlementAttemptTimeoutSeconds = 5
+	OutboundAISettlementKeyRetentionMinutes   = 60
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -1432,9 +1442,67 @@ type EventStorageLimits struct {
 	RetainedBytes  int64 `json:"retained_bytes"`
 }
 
+// ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1320).
+// Ceilings tighten the operator safety policy (ObjectStoragePolicy) and are
+// the plan's hard stop; allowances are usage included in the plan and removed
+// before month-close pricing. A zero field changes nothing: the operator
+// policy applies unchanged and no usage is included.
+type ObjectStoragePlanLimits struct {
+	MaxAccountBytes       int64
+	MaxMonthlyRequests    int64
+	MaxMonthlyEgressBytes int64
+	// IncludedBytes is average stored bytes over a billing month of
+	// ObjectStorageBillingHoursPerMonth hours.
+	IncludedBytes       int64
+	IncludedRequests    int64
+	IncludedEgressBytes int64
+}
+
+// ObjectStorageBillingHoursPerMonth is the conventional month used to price
+// stored byte-hours as GiB-months and to convert IncludedBytes.
+const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// Policy returns the operator safety policy tightened by the plan's ceilings.
+// The tighter positive value wins; a zero plan ceiling keeps the operator's.
+// No bucket may exceed the account, so the bucket cap follows a tighter
+// account ceiling and a valid operator policy stays valid.
+func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePolicy {
+	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
+	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
+	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
+	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	return p
+}
+
+// Allowance returns the plan's included usage in month-close billing units.
+func (l ObjectStoragePlanLimits) Allowance() ObjectStorageAllowance {
+	storedByteHours := MaxObjectStoragePolicyValue
+	if l.IncludedBytes <= MaxObjectStoragePolicyValue/ObjectStorageBillingHoursPerMonth {
+		storedByteHours = max(l.IncludedBytes, 0) * ObjectStorageBillingHoursPerMonth
+	}
+	return ObjectStorageAllowance{
+		StoredByteHours: storedByteHours,
+		Requests:        min(max(l.IncludedRequests, 0), MaxObjectStoragePolicyValue),
+		EgressBytes:     min(max(l.IncludedEgressBytes, 0), MaxObjectStoragePolicyValue),
+	}
+}
+
+func tighterObjectStorageLimit(operator, plan int64) int64 {
+	if plan <= 0 {
+		return operator
+	}
+	if operator <= 0 {
+		return plan
+	}
+	return min(operator, plan)
+}
+
 type Limits struct {
-	Profiling       ProfilingLimits
-	EventStorage    EventStorageLimits
+	Profiling    ProfilingLimits
+	EventStorage EventStorageLimits
+	// ObjectStorage is the plan's object-storage ceilings and allowances
+	// (ADR-1320). Every plan currently leaves it zero.
+	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
 	Plan            Plan
@@ -9874,6 +9942,49 @@ const (
 	RouteAdviceMaxCriticalRoutes = 3
 )
 
+// RouteAwake bounds the awake-time report (ADR-1187): which routes keep a
+// scale-to-zero app awake. It reads the busiest RouteAwakeMaxRoutes routes
+// (the rest are one "other routes" bucket) over at most the plan's request
+// telemetry retention.
+const (
+	RouteAwakeDefaultSince = 7 * 24 * time.Hour
+	RouteAwakeMaxRoutes    = 10
+	// A route is called periodically when it was called in at least
+	// RouteAwakePeriodicMinMinutes distinct minutes and at least
+	// RouteAwakePeriodicMinShare of the gaps between those minutes are within
+	// one minute of the median gap.
+	RouteAwakePeriodicMinMinutes = 60
+	RouteAwakePeriodicMinShare   = 0.8
+	// A suggestion is made only for a route whose removal would park the app
+	// for at least this share of its attributed awake time.
+	RouteAwakeSuggestMinSavedShare = 0.1
+	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
+	// requests on the route.
+	RouteAwakeCacheMinAnonymousShare = 0.9
+)
+
+// RouteContent bounds learned cacheability (ADR-1188). Each gateway
+// remembers the last anonymous GET body hash for at most
+// RouteContentObserverMaxURLs URLs. Outcomes are bucketed by
+// RouteContentWindows, which are also the max-ages the advisor can propose.
+// A max-age is safe when at least RouteContentMinRepeats responses fell inside
+// it, at least RouteContentMinBandRepeats of them were seen at that spacing
+// (longer than the next shorter window), and at most
+// RouteContentMaxStaleShare of them had changed; the advisor
+// withholds a cache suggestion when more than RouteContentUnsafeStaleShare of
+// the repeats within the shortest window had changed, or when more than
+// RouteContentMaxUncacheableShare of observed responses could not be stored.
+var RouteContentWindows = []time.Duration{time.Minute, 5 * time.Minute, time.Hour}
+
+const (
+	RouteContentObserverMaxURLs     = 50_000
+	RouteContentMinRepeats          = 50
+	RouteContentMinBandRepeats      = 10
+	RouteContentMaxStaleShare       = 0.01
+	RouteContentUnsafeStaleShare    = 0.05
+	RouteContentMaxUncacheableShare = 0.5
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.
@@ -10305,6 +10416,57 @@ const (
 	// not a plan quota or a change to runtime log retention.
 	DataAPIDiagnosticsMaxBytes   = 16 << 20
 	DataAPIDiagnosticsMaxRecords = 100000
+)
+
+// Application Auth bounds (ADR-1190). AuthStatementTimeoutMS is the auth
+// login's default statement timeout; release-task migrations may raise it
+// for their own session. It is a runaway-query guard, not a plan quota.
+// The auth template's config.mjs mirrors the runtime values;
+// TestAuthTemplateRuntimeBounds keeps them aligned.
+const (
+	AuthStatementTimeoutMS = 30000
+	// AuthAccessTokenTTLSeconds bounds how long a signed-out or banned
+	// session's access token still passes edge-only JWT checks.
+	AuthAccessTokenTTLSeconds = 600
+	// AuthMaxPoolConnections caps GoTrue's direct (unpooled) connections
+	// per instance.
+	AuthMaxPoolConnections = 4
+	// AuthMaxRequestBytes bounds request bodies the front proxies to GoTrue.
+	AuthMaxRequestBytes = 1 << 20
+	// AuthMaxRedirectURLs bounds GOTRUE_URI_ALLOW_LIST entries.
+	AuthMaxRedirectURLs = 50
+	// AuthMigrationStatementTimeoutMS replaces the login default for the
+	// release task's GoTrue migrations, which may rewrite large user tables.
+	AuthMigrationStatementTimeoutMS = 600000
+	// AuthFrontPoolConnections caps the front's /authz/v1 connections.
+	AuthFrontPoolConnections = 2
+	// AuthAuthzBodyBytes bounds /authz/v1 request bodies; AuthAuthzConfigBytes
+	// bounds the declarative AUTH_AUTHZ roles and policies document.
+	AuthAuthzBodyBytes   = 64 << 10
+	AuthAuthzConfigBytes = 64 << 10
+	// AuthInvitationTTLSeconds is the default invitation lifetime;
+	// gregale_auth.invite accepts 300 s to AuthMaxInvitationTTLSeconds.
+	AuthInvitationTTLSeconds    = 7 * 24 * 3600
+	AuthMaxInvitationTTLSeconds = 14 * 24 * 3600
+	// AuthMaxOrganizationsPerUser and AuthMaxPendingInvitationsPerOrg bound
+	// what one end user can create in the customer's database.
+	AuthMaxOrganizationsPerUser     = 100
+	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
+	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
+	// bounds the sealed provider key.
+	AuthEmailTimeoutMs      = 10000
+	AuthHookBodyBytes       = 256 << 10
+	AuthEmailAPIKeyMaxBytes = 512
+	// AuthStorageURLSeconds is the lifetime of an object URL the Auth app
+	// signs after authorize() allows the read or write.
+	AuthStorageURLSeconds = 60
+	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
+	// the most users one import request creates.
+	AuthAdminBodyBytes = 1 << 20
+	AuthImportBatch    = 100
+	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
+	AuthImportFileMaxBytes = 256 << 20
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

@@ -1,0 +1,33 @@
+# @gregale/auth
+
+Client for a Gregale application Auth app ([ADR-1190](../../docs/adr/1190-application-auth.md)):
+sign-up and sign-in, sessions with automatic refresh, the hosted pages, and
+organizations, invitations and authorization checks. It has no dependencies.
+
+```ts
+import { createAuthClient, resource } from '@gregale/auth'
+import { createDataClient } from '@gregale/data'
+
+const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
+
+// After a redirect from the hosted pages, a magic link or OAuth:
+await auth.sessionFromUrl()
+
+// Or send users to the hosted sign-in page:
+location.href = auth.hostedSignInUrl({ redirectTo: 'https://shop.example.com/app' })
+
+const data = createDataClient({ url: 'https://shop-data.gregale.app', accessToken: () => auth.getAccessToken() })
+
+const [org] = await auth.organizations.list()
+const canWrite = await auth.authorize('write', resource(org.id, 'doc', 42))
+```
+
+Sessions are stored in `localStorage` in browsers and in memory elsewhere; pass
+`store` to use your own, or `store: null` for memory only. Refresh tokens
+rotate, so the client refreshes one request at a time and signs out when the
+server rejects the refresh token. Failed requests throw `AuthError` with the
+HTTP `status` and a stable `code`.
+
+`signOut({ scope: 'global' })` ends every session of the user. Authorization
+checks and row-level security honour sign-out on the next request; edge-only
+JWT rules honour it when the access token expires.

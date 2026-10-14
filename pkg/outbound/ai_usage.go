@@ -61,6 +61,10 @@ type AIUsageRecord struct {
 	Log *AIRequestLog
 	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-994).
 	EndUser string
+	// LeaseID is the call's admission lease. It keys the settlement, so a
+	// retried settlement counts the call once, and the settlement deletes
+	// the lease (ADR-1120). Empty settles without a key.
+	LeaseID string
 }
 
 // AIRequestLog is the non-usage metadata of one logged AI call. It holds
@@ -199,6 +203,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	}
 	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
 		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)
+	}
+	if record.LeaseID != "" && !validUUID(record.LeaseID) {
+		return fmt.Errorf("%w: AI usage lease id must be a UUID", ErrInvalidIntegration)
 	}
 	return validateAIRequestLog(record.Log)
 }

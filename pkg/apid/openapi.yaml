@@ -20220,6 +20220,58 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/routes/awake:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteAwake
+      summary: Show which routes keep a scale-to-zero app awake.
+      description: |
+        Read-only awake-time report (ADR-1187). Awake time is the app's billed
+        running time (plan RAM + 8 MB per running second) from the usage
+        ledger. It is attributed, minute by minute, to the routes whose
+        requests restarted the idle timer: a 2xx response from an instance, or
+        a request that cold-booted it. Requests the gateway answered itself
+        (edge cache hits, edge answers, rejected credentials) never wake the
+        app and are not counted.
+
+        For each of the busiest ten routes the report estimates the awake time
+        and the change in cold wakes had that route's requests never reached
+        the app, flags routes called at a steady interval (uptime monitors,
+        pollers), and suggests serving anonymous GET traffic from the edge
+        cache or calling less often than the idle timeout. Awake time no
+        request explains (synthetic probes, scheduled prewarm, minimum
+        instances, queue, cron and waitUntil work) is reported as
+        unattributed. Minute resolution makes every figure an estimate. Uses
+        the normal read scopes, completed MFA and the DebugTelemetryEnabled
+        plan gate.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 168h }
+          description: "Start of the awake report window: a positive lookback duration (for example 7d) or an RFC3339 timestamp, clamped to current plan retention."
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: "Exclusive end of the window, default now; must be within retained telemetry and not in the future."
+      x-since: 2026-10
+      responses:
+        '200':
+          description: Awake time and the routes that caused it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteAwakeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/service-wake-ahead:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29518,6 +29570,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitPlan
+      summary: Preview field changes for an immutable commit without approval or writes.
+      description: Requires environment read scope and a bound Git source. Verifies the immutable commit, repository identity and definition scope, then observes current intent and ownership. Values are redacted. The candidate plan cannot approve, adopt, deploy or certify runtime readiness. Request a fresh plan after source or environment changes.
+      requestBody:
+        required: true
+        description: Immutable commit to assess using the bound Git source.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRevisionRequest'
+      responses:
+        '200':
+          description: Read-only field plan with redacted values and current observation metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitPlanResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -55751,6 +55841,50 @@ components:
       required:
       - commit_sha
       additionalProperties: false
+    EnvironmentGitOpsChangedWebhookPayload:
+      type: object
+      description: Value-free account webhook emitted atomically with a current GitOps report or completed source poll. Unchanged status is silent; first failures and later recoveries are delivered to explicit environment.gitops.changed subscribers. The drift and source axes remain independent.
+      required: [version, transition_id, source_id, project, environment, axis, previous_status, status, generation, observed_version, observed_at, dashboard_path, changes, blocking_reasons, details_truncated]
+      properties:
+        version: { type: integer, enum: [1] }
+        transition_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        project: { type: string }
+        environment: { type: string }
+        axis: { type: string, enum: [drift, source] }
+        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified] }
+        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified] }
+        generation: { type: integer, format: int64, minimum: 0 }
+        observed_version: { type: integer, format: int64, minimum: 0 }
+        approved_revision_id: { type: string, format: uuid }
+        commit_sha: { type: string, pattern: '^[a-f0-9]{40}$' }
+        run_id: { type: string, format: uuid }
+        error_code: { type: string }
+        observed_at: { type: string, format: date-time }
+        dashboard_path: { type: string }
+        changes:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EnvironmentGitOpsChange' }
+        blocking_reasons:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        details_truncated: { type: boolean }
+    PreviewEnvironmentGitPlanResponse:
+      type: object
+      description: Read-only candidate plan pinned to a source generation and observed intent version. Values are omitted. The plan cannot authorize approval, adoption, deployment or runtime readiness. Re-run after source or environment changes.
+      required: [source_id, provider, project, environment, observed_at, read_only, values_redacted, plan]
+      properties:
+        source_id: { type: string, format: uuid }
+        provider: { type: string, enum: [github, gitlab] }
+        project: { type: string }
+        environment: { type: string }
+        observed_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        values_redacted: { type: boolean, enum: [true] }
+        plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
     PreviewEnvironmentGitRevisionResponse:
       type: object
       description: Verified Git bytes with the digest and source generation needed for approval.
@@ -57158,6 +57292,59 @@ components:
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
         evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
+    RouteAwakeResponse:
+      type: object
+      description: "How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time."
+      required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, other_routes_seconds, routes_limit, routes]
+      properties:
+        slug: {"type": "string"}
+        from: {"type": "string", "format": "date-time"}
+        until: {"type": "string", "format": "date-time"}
+        window_clamped: {"type": "boolean"}
+        idle_timeout_seconds: {"type": "integer", "description": "The app's effective idle timeout: how long it stays awake after its last successful request."}
+        window_seconds: {"type": "integer", "format": "int64"}
+        awake_seconds: {"type": "integer", "format": "int64"}
+        awake_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of the window's minutes with at least one instance running."}
+        mb_seconds: {"type": "integer", "format": "int64", "description": "Billed MB-seconds in the window."}
+        gb_hours: {"type": "number"}
+        wakes: {"type": "integer", "format": "int64", "description": "Cold boots in the window."}
+        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request explains: synthetic probes, scheduled prewarm, minimum instances, queue, cron and waitUntil work, or telemetry the plan's rate cap dropped."}
+        other_routes_seconds: {"type": "integer", "format": "int64", "description": "Awake time attributed to routes outside the busiest routes_limit."}
+        routes_limit: {"type": "integer"}
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RouteAwakeRoute' }
+    RouteAwakeRoute:
+      type: object
+      description: "One route's share of the app's awake time and what removing its requests would change."
+      required: [method, route, requests, wakes, awake_seconds, awake_share, gb_hours, pattern, if_removed]
+      properties:
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Route template, for example /orders/{id}."}
+        requests: {"type": "integer", "format": "int64", "description": "Requests that restarted the idle timer."}
+        wakes: {"type": "integer", "format": "int64", "description": "Cold boots this route's requests triggered."}
+        awake_seconds: {"type": "integer", "format": "int64"}
+        awake_share: {"type": "number", "minimum": 0, "maximum": 1}
+        gb_hours: {"type": "number"}
+        pattern: {"type": "string", "enum": ["periodic", "irregular"]}
+        interval_seconds: {"type": "integer", "description": "Approximate interval when pattern is periodic."}
+        if_removed: { $ref: '#/components/schemas/RouteAwakeWhatIf' }
+        suggestion: { $ref: '#/components/schemas/RouteAwakeSuggestion' }
+    RouteAwakeWhatIf:
+      type: object
+      description: "Estimated change had this route's requests never reached the app, with every other request unchanged."
+      required: [awake_seconds_saved, gb_hours_saved, wakes_change]
+      properties:
+        awake_seconds_saved: {"type": "integer", "format": "int64"}
+        gb_hours_saved: {"type": "number"}
+        wakes_change: {"type": "integer", "format": "int64", "description": "Change in cold wakes; positive when other routes would find the app parked more often."}
+    RouteAwakeSuggestion:
+      type: object
+      description: "A change that would let the app park."
+      required: [kind, message]
+      properties:
+        kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
+        message: {"type": "string"}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -57217,6 +57404,11 @@ components:
         top_consumer_requests: {"type": "integer", "format": "int64"}
         top_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
         next_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
+        content_observed: {"type": "integer", "format": "int64", "description": "Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache suggestions only."}
+        content_repeats: {"type": "integer", "format": "int64", "description": "Observed responses identical to the previous one for their URL within the longest content window (1 h)."}
+        content_changes: {"type": "integer", "format": "int64", "description": "Observed responses that differed from the previous one for their URL within the longest content window."}
+        content_uncacheable: {"type": "integer", "format": "int64", "description": "Observed responses the edge cache could not store (Set-Cookie, Cache-Control no-store or private, Vary, or size)."}
+        safe_max_age_seconds: {"type": "integer", "enum": [60, 300, 3600], "description": "Longest cache lifetime at which the observed repeats would have served at most 1% stale bodies; absent until enough repeats are measured."}
     RouteAdviceImpact:
       type: object
       description: "What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."
@@ -60522,7 +60714,7 @@ components:
         postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
         service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
         availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
-        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api, auth] } }
         scale_to_zero: { type: boolean }
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
@@ -60829,7 +61021,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
         rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
         state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
@@ -60851,7 +61043,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     PrepareManagedPostgresCutoverRequest:
       description: Stage source bindings for one app and scope on a ready database restored from that source.
@@ -60888,7 +61080,7 @@ components:
       properties:
         source_binding_id: { type: string, format: uuid }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
         state: { type: string, enum: [pending, sealed, revoked] }
         verified_at: { type: string, format: date-time }
 
@@ -89071,7 +89263,7 @@ components:
 
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe a target to release events emitted by every app owned by the active account.
+      description: Subscribe to account release outcomes and environment GitOps status transitions.
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -89079,9 +89271,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 4
+          maxItems: 5
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -89244,9 +89436,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 4
+          maxItems: 5
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }

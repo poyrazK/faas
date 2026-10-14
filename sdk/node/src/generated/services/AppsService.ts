@@ -98,6 +98,7 @@ import type { RequestAuditListResponse } from '../models/RequestAuditListRespons
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { RouteAdviceResponse } from '../models/RouteAdviceResponse.js';
+import type { RouteAwakeResponse } from '../models/RouteAwakeResponse.js';
 import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
 import type { RouteCheckHistoryPage } from '../models/RouteCheckHistoryPage.js';
 import type { RouteCustomerUsageResponse } from '../models/RouteCustomerUsageResponse.js';
@@ -5516,6 +5517,76 @@ export class AppsService {
         'since': since,
         'until': until,
         'cache_max_age': cacheMaxAge,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Show which routes keep a scale-to-zero app awake.
+   * Read-only awake-time report (ADR-1187). Awake time is the app's billed
+   * running time (plan RAM + 8 MB per running second) from the usage
+   * ledger. It is attributed, minute by minute, to the routes whose
+   * requests restarted the idle timer: a 2xx response from an instance, or
+   * a request that cold-booted it. Requests the gateway answered itself
+   * (edge cache hits, edge answers, rejected credentials) never wake the
+   * app and are not counted.
+   *
+   * For each of the busiest ten routes the report estimates the awake time
+   * and the change in cold wakes had that route's requests never reached
+   * the app, flags routes called at a steady interval (uptime monitors,
+   * pollers), and suggests serving anonymous GET traffic from the edge
+   * cache or calling less often than the idle timeout. Awake time no
+   * request explains (synthetic probes, scheduled prewarm, minimum
+   * instances, queue, cron and waitUntil work) is reported as
+   * unattributed. Minute resolution makes every figure an estimate. Uses
+   * the normal read scopes, completed MFA and the DebugTelemetryEnabled
+   * plan gate.
+   *
+   * @returns RouteAwakeResponse Awake time and the routes that caused it.
+   * @throws ApiError
+   */
+  public static getRouteAwake({
+    slug,
+    since = '168h',
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Start of the awake report window: a positive lookback duration (for example 7d) or an RFC3339 timestamp, clamped to current plan retention.
+     */
+    since?: string,
+    /**
+     * Exclusive end of the window, default now; must be within retained telemetry and not in the future.
+     */
+    until?: string,
+  }): CancelablePromise<RouteAwakeResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/routes/awake',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

@@ -427,6 +427,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/environment-field-ownership":                                   "ReleaseEnvironmentFieldOwnership",
 
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              "PreviewEnvironmentGitPlan",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
 	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",
@@ -611,6 +612,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/route-removal/approvals":                                     "ApproveRouteRemoval",
 	"GET /v1/apps/{slug}/route-removal/check":                                          "CheckRouteRemoval",
 	"GET /v1/apps/{slug}/routes/advice":                                                "GetRouteAdvice",
+	"GET /v1/apps/{slug}/routes/awake":                                                 "GetRouteAwake",
 	"GET /v1/apps/{slug}/service-wake-ahead":                                           "GetServiceWakeAhead",
 	"PUT /v1/apps/{slug}/service-wake-ahead":                                           "SetServiceWakeAhead",
 	"GET /v1/apps/{slug}/route-priorities":                                             "GetRoutePriorities",

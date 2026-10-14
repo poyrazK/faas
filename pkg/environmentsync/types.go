@@ -50,6 +50,9 @@ type Override struct {
 
 // PlanOptions are internal authorization inputs, not user-supplied claims.
 type PlanOptions struct {
+	// Preview permits the initial binding's generation zero. Candidate revision
+	// identities never authorize an approved execution or adoption transaction.
+	Preview    bool
 	Manager    string
 	Revision   string
 	CommitSHA  string

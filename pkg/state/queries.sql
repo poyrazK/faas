@@ -2699,7 +2699,8 @@ INSERT INTO request_telemetry (
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
-    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
+    content_outcome
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -2718,7 +2719,8 @@ INSERT INTO request_telemetry (
     sqlc.arg('guest_cpu_time_ms')::int,
     sqlc.arg('guest_peak_rss_mb')::int,
     sqlc.arg('guest_resource_usage_available')::bool,
-    COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb)
+    COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb),
+    sqlc.arg('content_outcome')::text
 );
 
 -- name: ListRequestTelemetryByPlatformTenant :many
@@ -4667,6 +4669,9 @@ ORDER BY node_id, is_origin DESC;
 
 -- name: ObjectUsageLockAccount :one
 SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
+
+-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -20571,6 +20576,21 @@ WHERE c.id = sqlc.arg(crash_capture_id)::uuid
   AND c.status = 'ready'
   AND c.expires_at > sqlc.arg(created_at)::timestamptz
 RETURNING *;
+-- name: WriteEnvironmentGitNotificationState :exec
+UPDATE environment_git_sources SET notification_state = sqlc.arg(notification_state)::jsonb
+WHERE id = sqlc.arg(source_id)::uuid AND NOT detached;
+
+-- name: EnqueueEnvironmentGitNotification :exec
+INSERT INTO app_webhook_deliveries
+    (source_event_id, webhook_id, account_id, event, payload, created_at, updated_at, next_attempt_at)
+SELECT sqlc.arg(event_id)::uuid, h.id, h.account_id, 'environment.gitops.changed',
+       sqlc.arg(payload)::jsonb, sqlc.arg(now_at)::timestamptz, sqlc.arg(now_at)::timestamptz, sqlc.arg(now_at)::timestamptz
+FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
+WHERE h.account_id = sqlc.arg(account_id)::uuid AND h.scope = 'account' AND h.enabled
+  AND 'environment.gitops.changed' = ANY(h.event_filter)
+  AND a.status = 'active' AND a.abuse_hold_at IS NULL
+ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING;
+
 -- name: InstanceLogsOwnedByApp :one
 -- Archived runtime logs are keyed by instance only. The instance row proves
 -- ownership while it exists; afterwards the app's billing rows for that

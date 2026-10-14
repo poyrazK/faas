@@ -2613,6 +2613,7 @@ type EnvironmentGitSource struct {
 	SourceVerifiedAt       pgtype.Timestamptz
 	Detached               bool
 	Provider               string
+	NotificationState      []byte
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -5715,6 +5716,9 @@ type ObjectStorageBillingPeriod struct {
 	EgressMillicents             int64
 	TotalMillicents              int64
 	FinalizedAt                  pgtype.Timestamptz
+	IncludedStoredByteHours      int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
 }
 
 type ObjectStorageBucketUsage struct {
@@ -6297,6 +6301,12 @@ type OutboundAiRouteTarget struct {
 	Position      int16
 	IntegrationID pgtype.UUID
 	Model         pgtype.Text
+}
+
+type OutboundAiSettlement struct {
+	LeaseID       pgtype.UUID
+	IntegrationID pgtype.UUID
+	SettledAt     pgtype.Timestamptz
 }
 
 type OutboundAiUsageDaily struct {
@@ -8046,6 +8056,7 @@ type RequestTelemetry struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetry202610 struct {
@@ -8083,6 +8094,7 @@ type RequestTelemetry202610 struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetry202611 struct {
@@ -8120,6 +8132,7 @@ type RequestTelemetry202611 struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetry202612 struct {
@@ -8157,6 +8170,7 @@ type RequestTelemetry202612 struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type RequestTelemetryAppGap struct {
@@ -8219,6 +8233,7 @@ type RequestTelemetryDefault struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
+	ContentOutcome              string
 }
 
 type ReservedIpInventory struct {

@@ -425,6 +425,7 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 		"environments gitops status", "environments gitops bind",
 		"environments gitops rebind", "environments gitops unbind",
 		"environments gitops review", "environments gitops approve",
+		"environments gitops plan",
 		"environments gitops adoption-preview", "environments gitops adopt",
 		"environments gitops controls", "environments gitops override",
 		"environments gitops remove-override",
@@ -487,6 +488,7 @@ var templateNames13 = []string{
 	"customer-operation-workflow-export",
 	"data-api",
 	"data-api-starter",
+	"auth",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -545,7 +547,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
@@ -2911,6 +2913,7 @@ var cliCommands = []cliCommand{
 				{Name: "geo-deny", Short: "kind=geo: deny ISO country code (repeat)", Value: "CC"},
 				{Name: "jwt-issuer", Short: "kind=jwt: token issuer", Value: "ISSUER"},
 				{Name: "jwt-jwks-url", Short: "kind=jwt: JWKS URL (https)", Value: "URL"},
+				{Name: "jwt-auth", Short: "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)", Value: "AUTH_APP"},
 				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -3170,6 +3173,9 @@ var cliCommands = []cliCommand{
 			{Name: "cache-max-age", Value: "SECONDS", Short: "what-if cache lifetime for cache suggestions (default 60)"},
 			{Name: "apply", Value: "ID", Short: "create the edge rules of this suggestion (disabled for review)"},
 			{Name: "enable", Short: "with --apply, create the rules enabled"},
+		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park", Examples: []string{"gregale routes awake my-api", "gregale routes awake my-api --since 24h --json"}, Flags: []cliFlag{
+			{Name: "since", Value: "DURATION", Short: "window to analyze (default 7d; clamped to telemetry retention)"},
+			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
 		}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
 			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
 			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
@@ -4047,6 +4053,36 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
+		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Deploy a managed GoTrue Auth server bound to your database", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
+				{Name: "site-url", Value: "URL", Req: true, Short: "application URL users return to after sign-in"},
+				{Name: "redirect-urls", Value: "URLS", Short: "comma-separated additional allowed redirect URLs"},
+				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				{Name: "autoconfirm", Short: "sign users in without email confirmation (development only)"},
+				{Name: "disable-signup", Short: "allow only invited or administrator-created users"},
+				{Name: "authz", Value: "FILE", Short: "JSON file declaring custom roles and policies (applied on deploy)"},
+				{Name: "email-provider", Value: "PROVIDER", Short: "HTTPS email provider", ClosedSet: []string{"resend", "postmark"}},
+				{Name: "email-from", Value: "SENDER", Short: "sender address, or a display name with the address in angle brackets"},
+				{Name: "email-api-key-stdin", Short: "read the email provider API key from stdin (prompted on a terminal)"},
+				{Name: "workflows", Short: "let authorized users start workflows (mints an events:publish key sealed in the app)"},
+				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
+			}, Examples: []string{"gregale auth create shop-auth --database shop-db --site-url https://shop.example.com", "gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --authz authz.json"}},
+			{Name: "status", Short: "Show the issuer, JWKS URL and readiness of an Auth app", Positionals: []string{"<name>"}},
+			{Name: "admin-key", Short: "Manage owner keys for the dashboard's users and organizations screens and imports", Subcommands: []cliSub{
+				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "revoke", Short: "Revoke an admin key", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+			}},
+			{Name: "import", Short: "Import users with their password hashes from a JSON or JSON Lines file", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "file", Value: "FILE", Req: true, Short: "JSON array or JSON Lines file of users"},
+				{Name: "dry-run", Short: "validate the file without importing"},
+				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+			}, Examples: []string{"gregale auth import shop-auth --file users.jsonl --dry-run", "printf '%s' \"$ADMIN_KEY\" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin"}},
+		},
+	},
+	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
 			{Name: "install", Short: "Install or restore a verified Data API SDK bundle", Flags: []cliFlag{
@@ -4077,9 +4113,10 @@ var cliCommands = []cliCommand{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
 				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
-				{Name: "issuer", Value: "HTTPS_URL", Req: true, Short: "application JWT issuer"},
-				{Name: "jwks-url", Value: "HTTPS_URL", Req: true, Short: "application JWKS URL"},
-				{Name: "audience", Value: "AUDIENCE", Req: true, Short: "application JWT audience"},
+				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)"},
+				{Name: "issuer", Value: "HTTPS_URL", Short: "application JWT issuer"},
+				{Name: "jwks-url", Value: "HTTPS_URL", Short: "application JWKS URL"},
+				{Name: "audience", Value: "AUDIENCE", Short: "application JWT audience"},
 				{Name: "origins", Value: "ORIGINS", Short: "comma-separated browser origins"},
 				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
 			}},
@@ -4198,7 +4235,7 @@ var cliCommands = []cliCommand{
 					{Name: "app", Short: "app ID", Req: true, Value: "APP_ID"},
 					{Name: "scope", Short: "environment scope", Req: true, Value: "SCOPE"},
 					{Name: "environment-key", Short: "environment variable name", Req: true, Value: "KEY"},
-					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
+					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 				}},
 				{Name: "get", Short: "Show one binding", Positionals: []string{"<id>"}},
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
@@ -4211,7 +4248,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Positionals: []string{"<database>", "<app>"}, Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 			}, Examples: []string{"gregale postgres attach orders my-api --env DATABASE_URL --access read_write"}},
 		},
 	},
@@ -4352,6 +4389,7 @@ var cliCommands = []cliCommand{
 				{Name: "auth-token", Short: "client static bearer token (prefer --auth-token-stdin)", Value: "TOKEN"},
 				{Name: "auth-issuer", Short: "OIDC issuer URL", Value: "URL"},
 				{Name: "auth-jwks-url", Short: "OIDC JWKS URL", Value: "URL"},
+				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP"},
 				{Name: "auth-audience", Short: "OIDC audience (repeatable)", Value: "AUDIENCE", Repeatable: true},
 				{Name: "auth-algorithm", Short: "OIDC signing algorithm (repeatable)", Value: "ALG", Repeatable: true},
 				{Name: "auth-claim", Short: "required OIDC claim as KEY=VALUE (repeatable)", Value: "KEY=VALUE", Repeatable: true},
@@ -4515,6 +4553,9 @@ var cliCommands = []cliCommand{
 					{Name: "status", Positionals: []string{"<project>", "<environment>"}, Short: "Inspect the source and recent reconciliation attempts"},
 					{Name: "bind", Positionals: []string{"<project>", "<environment>"}, Short: "Bind the verified project repository to a definition", Flags: []cliFlag{
 						{Name: "manifest-path", Value: "PATH", Short: "Environment definition path in Git"},
+						{Name: "provider", Value: "PROVIDER", Short: "github (default) or gitlab"},
+						{Name: "repository", Value: "GROUP/PROJECT", Short: "GitLab.com repository path"},
+						{Name: "approval-policy", Value: "POLICY", Short: "manual or protected_branch (GitHub only)"},
 						{Name: "ref", Value: "REF", Short: "Git ref selecting revision candidates"},
 						{Name: "mode", Value: "MODE", Short: "report (default; enforcement unavailable in preview)"},
 						{Name: "prune", Short: "Allow removal of previously owned fields"},
@@ -4522,6 +4563,7 @@ var cliCommands = []cliCommand{
 					{Name: "rebind", Positionals: []string{"<project>", "<environment>"}, Short: "Release ownership and replace the source binding", Flags: []cliFlag{{Name: "expected-generation", Value: "N", Short: "Reviewed current source generation", Req: true}, {Name: "manifest-path", Value: "PATH", Short: "Replacement definition path", Req: true}, {Name: "ref", Value: "REF", Short: "Replacement Git ref"}, {Name: "approval-policy", Value: "POLICY", Short: "manual or protected_branch"}, {Name: "yes", Short: "Confirm ownership release while preserving values"}}},
 					{Name: "unbind", Positionals: []string{"<project>", "<environment>"}, Short: "Disconnect the source and release its ownership", Flags: []cliFlag{{Name: "expected-generation", Value: "N", Short: "Reviewed current source generation", Req: true}, {Name: "yes", Short: "Confirm ownership release while preserving values"}}},
 					{Name: "review", Positionals: []string{"<project>", "<environment>"}, Short: "Fetch an immutable commit and output a review receipt", Flags: []cliFlag{{Name: "commit", Value: "SHA", Short: "Exact lowercase GitHub commit SHA"}}},
+					{Name: "plan", Positionals: []string{"<project>", "<environment>"}, Short: "Preview candidate field changes without approval or writes", Flags: []cliFlag{{Name: "commit", Value: "SHA", Short: "Exact immutable commit SHA", Req: true}, {Name: "format", Value: "FORMAT", Short: "json (default) or markdown"}, {Name: "fail-on-blocked", Short: "Exit 2 after printing ownership or unsupported-operation blockers"}}, Examples: []string{"gregale projects environments gitops plan shop staging --commit COMMIT_SHA --format markdown --fail-on-blocked"}},
 					{Name: "approve", Positionals: []string{"<project>", "<environment>"}, Short: "Approve the digest and generation in a reviewed receipt", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved revision review JSON"}, {Name: "yes", Short: "Confirm approval of the reviewed bytes"}}},
 					{Name: "adoption-preview", Positionals: []string{"<project>", "<environment>"}, Short: "Inspect ownership transfer without changing values"},
 					{Name: "adopt", Positionals: []string{"<project>", "<environment>"}, Short: "Transfer ownership from a reviewed adoption plan", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved adoption plan JSON"}, {Name: "yes", Short: "Confirm the reviewed ownership transfer"}}},
