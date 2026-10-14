@@ -221,7 +221,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// lock contention for marginal signal value.
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
-	if err := s.resumeQuiet(stream.Context(), reqInit.GetInstance()); err != nil {
+	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
 		return err
 	}
 	// Per-invocation extension hooks are deliberately asynchronous. A slow or
@@ -760,7 +760,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// Per-instance concurrency accounting (mirrors ForwardHTTPStream).
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
-	if err := s.resumeQuiet(stream.Context(), reqInit.GetInstance()); err != nil {
+	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
 		return err
 	}
 	// An upgraded session outlives any request; instance teardown ends it

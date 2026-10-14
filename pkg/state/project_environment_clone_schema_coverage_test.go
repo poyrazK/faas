@@ -161,6 +161,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"dev_bridge_sessions":             CloneSchemaOperational,
 		"execution_artifact_grants":       CloneSchemaOperational,
 		"execution_outbound_integrations": CloneSchemaOperational,
+		"mcp_catalog_monitors":            CloneSchemaOperational,
+		"mcp_oauth_retirements":           CloneSchemaOperational,
 		"service_recovery":                CloneSchemaOperational,
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,

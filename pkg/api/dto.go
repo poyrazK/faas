@@ -3535,7 +3535,8 @@ type DeploymentAliasListResponse struct {
 type UpdateDeploymentTrafficRequest struct {
 	TrafficPercent int `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
-	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
+	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
+	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for

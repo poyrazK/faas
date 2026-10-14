@@ -141,6 +141,9 @@ type MemStore struct {
 	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
 	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
 	eventExecutionCoverage               map[string]executionCoverage
+	mcpOAuthRetirements                  map[string]mcpRetirementEntry
+	mcpCatalogMonitors                   map[string]api.MCPCatalogMonitorSnapshot
+	mcpCatalogMonitorOwners              map[string]string
 	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
 	workflowFailureEvidence              map[string][]workflowFailureEvidence
 	workflowFailureCaptureStartedAt      time.Time
@@ -5284,7 +5287,7 @@ func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPe
 	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -5298,6 +5301,11 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
+	}
+	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
+	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
+	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
+		return Deployment{}, err
 	}
 	for _, sibling := range m.deployments {
 		if sibling.AppID == d.AppID && sibling.EnvironmentWorkloadManaged() {
@@ -6708,6 +6716,9 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		}
 	}
 	now := time.Now().UTC()
+	if err := m.retireDeletedAppLocked(a, now); err != nil {
+		return App{}, err
+	}
 	deadline := now.Add(AppDeleteGraceDuration())
 	a.Status = AppDeleted
 	if a.DeletedAt == nil {
@@ -20162,6 +20173,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, SecretClass: SecretClassPersistent,
@@ -20175,6 +20189,9 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.SecretVersion++
@@ -20198,6 +20215,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, SecretClass: SecretClassPersistent,
@@ -20211,6 +20231,9 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -20247,6 +20270,9 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID,
 	existing, ok := m.secrets[k]
 	now := time.Now()
 	if !ok {
+		if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+			return err
+		}
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
@@ -20261,6 +20287,9 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID,
 	}
 	if existing.ManagedPostgresBindingID != "" || existing.ManagedObjectStorageCredentialID != "" {
 		return ErrConflict
+	}
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, false, now.UTC()); err != nil {
+		return err
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
@@ -20500,6 +20529,9 @@ func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accou
 		return AppSecretRevocation{}, err
 	}
 	revocation.Targets = targets
+	if err := m.credentialChangeLocked(accountID, appID, scope, key, true, revocation.CreatedAt); err != nil {
+		return AppSecretRevocation{}, err
+	}
 	m.deleteRuntimeAppSecretLocked(k)
 	m.secretRevocations[revocation.ID] = cloneAppSecretRevocation(revocation)
 	return revocation, nil

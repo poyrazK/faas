@@ -161,6 +161,9 @@ func (s *PgStore) acquireSessionAdvisoryLockConn(ctx context.Context, l sessionA
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			_ = conn.Hijack().Close(closeCtx)
 			cancel()
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
 			return nil, nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
 		}
 		if locked {
@@ -7762,7 +7765,7 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return s.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7771,7 +7774,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin update traffic tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
+	defer s.finishMCPAdmission(ctx, tx, admission, &resultErr)
 
 	if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
 		return Deployment{}, err
@@ -7853,6 +7857,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, ErrConflict
 	}
 
+	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
+		return Deployment{}, err
+	}
+
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return Deployment{}, err
 	}
@@ -7862,6 +7870,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			return Deployment{}, err
 		}
 		if current.TrafficPercent == 100 {
+			if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
+				return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return Deployment{}, fmt.Errorf("state: commit checked promotion: %w", err)
 			}
@@ -7982,6 +7993,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	d, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: read deployment after stamp: %w", err)
+	}
+	if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
+		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: commit update traffic: %w", err)

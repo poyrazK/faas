@@ -2,7 +2,9 @@
 
 - Status: Proposed. Rollout starts with function apps only (owner
   decision, 2026-10-13); services follow once functions have run well in
-  production.
+  production. Steps 1 and 2 are built, each behind switches that are off by
+  default: vmmd `quiet_pause`, schedd `quiet_pause_admission` and schedd
+  `frozen_tier` (2026-10-13). Both canaries are pending.
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -189,7 +191,7 @@ write the services' lifecycle setting when services are added.
 
 `vmmd_quiet_pause_total{outcome}`, `vmmd_quiet_resume_seconds`,
 `vmmd_quiet_paused_instances`, `vmmd_freeze_seconds`, `vmmd_thaw_seconds`,
-`vmmd_frozen_instances`, `node_frozen_resident_bytes`,
+`node_frozen_instances`, `node_frozen_resident_bytes`,
 `schedd_frozen_instances`, `schedd_frozen_total{outcome}`,
 `schedd_frozen_parks_total{reason}` and `schedd_frozen_thaw_total{outcome}`.
 (Amended 2026-10-13: schedd metrics are prefixed `schedd_`, as every schedd
@@ -237,6 +239,13 @@ through apid, the CLI and docs, then the same canary.
 
 ## Consequences
 
+- Rolling back. Turning `frozen_tier` off stops new freezes; frozen
+  instances still thaw for requests and park after `FrozenTTL`. Roll schedd
+  back to a release without the `frozen` state only after
+  `schedd_frozen_instances` reads 0: an older schedd neither thaws nor parks
+  a frozen row. The migration's down step parks any frozen rows left.
+- Turning the tier on needs vmmd with `FreezeInstance` first. An older vmmd
+  answers Unimplemented and the instance parks as before.
 - In the simulation, a request that finds no running VM waits 3.4 ms on
   average instead of 340 ms, vCPU-bound nodes hold 2.85× the apps, and
   billing and revenue do not change.
