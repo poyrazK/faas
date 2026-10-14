@@ -286,3 +286,14 @@ func (c *Client) CreateNativeLinearIssueTicket(ctx context.Context, slug, issue 
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/issues/"+url.PathEscape(issue)+"/native-linear-tickets", in, &out)
 	return out, err
 }
+
+func (c *Client) GetNativeLinearIssueTrackerStatus(ctx context.Context, slug, issue, link string) (NativeLinearIssueTrackerStatus, error) {
+	var out NativeLinearIssueTrackerStatus
+	err := c.do(ctx, "GET", issueTrackerLinksPath(slug, issue)+"/"+url.PathEscape(link)+"/native-linear-status", nil, &out)
+	return out, err
+}
+func (c *Client) UpdateNativeLinearIssueTrackerStatus(ctx context.Context, slug, issue, link string, in UpdateNativeLinearIssueTrackerStatusRequest) (NativeLinearIssueTrackerStatus, error) {
+	var out NativeLinearIssueTrackerStatus
+	err := c.do(ctx, "POST", issueTrackerLinksPath(slug, issue)+"/"+url.PathEscape(link)+"/native-linear-status", in, &out)
+	return out, err
+}

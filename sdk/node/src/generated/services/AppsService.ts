@@ -85,6 +85,7 @@ import type { ListProfileInvestigationsResponse } from '../models/ListProfileInv
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
 import type { NativeIssueTicketResult } from '../models/NativeIssueTicketResult.js';
 import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
+import type { NativeLinearIssueTrackerStatus } from '../models/NativeLinearIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
@@ -157,6 +158,7 @@ import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueI
 import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTrackerAutoSyncRequest.js';
 import type { UpdateIssueTrackerLinearConnectionRequest } from '../models/UpdateIssueTrackerLinearConnectionRequest.js';
 import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
+import type { UpdateNativeLinearIssueTrackerStatusRequest } from '../models/UpdateNativeLinearIssueTrackerStatusRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -2875,6 +2877,107 @@ export class AppsService {
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
         409: `Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket.`,
         502: `GitHub rejected creation or connected credentials are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview a linked Linear lifecycle using the stored owner connection.
+   * Requires app read access and the app owner with Issues entitlement and deploy eligibility. Verifies the stored workspace/viewer/team and linked ticket identity. Returns status plus connection revision and group fingerprint for an explicit push. Archived and canceled or unfamiliar provider states require manual triage. No credentials are returned.
+   * @returns NativeLinearIssueTrackerStatus Verified linked Linear status and current preview scope.
+   * @throws ApiError
+   */
+  public static getNativeLinearIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the Linear reference.
+     */
+    issueId: string,
+    /**
+     * Stored Linear reference selected for explicit lifecycle synchronization.
+     */
+    linkId: string,
+  }): CancelablePromise<NativeLinearIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Connection or group changed or provider state requires manual triage.`,
+        502: `Provider identity or credential availability could not be confirmed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Explicitly push the Gregale lifecycle to its linked Linear ticket.
+   * Requires the app owner with Issues entitlement and deploy-write and session MFA. desired_state must match the current open/resolved Gregale lifecycle. Sends a known provider snapshot and preview connection revision/group fingerprint. A changing lifecycle additionally requires an explicit active same-team workflow state UUID of the matching type. Rechecks scope before dispatch and after the provider response. Aligned lifecycles remain unchanged. A provider write already dispatched cannot be recalled and the two systems do not share an atomic transaction.
+   * @returns NativeLinearIssueTrackerStatus Confirmed provider lifecycle and unchanged preview scope.
+   * @throws ApiError
+   */
+  public static updateNativeLinearIssueTrackerStatus({
+    slug,
+    issueId,
+    linkId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the Linear reference.
+     */
+    issueId: string,
+    /**
+     * Stored Linear reference selected for explicit lifecycle synchronization.
+     */
+    linkId: string,
+    /**
+     * Explicit lifecycle push with observed provider and connection/group scope.
+     */
+    requestBody: UpdateNativeLinearIssueTrackerStatusRequest,
+  }): CancelablePromise<NativeLinearIssueTrackerStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Provider snapshot or connection or group changed or the lifecycle is unsupported.`,
+        502: `Provider operation or workflow selection could not be confirmed.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

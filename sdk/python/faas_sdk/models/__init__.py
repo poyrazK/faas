@@ -2017,6 +2017,7 @@ from .mirror_summary_response import MirrorSummaryResponse
 from .native_issue_ticket_result import NativeIssueTicketResult
 from .native_issue_ticket_result_state import NativeIssueTicketResultState
 from .native_issue_tracker_status import NativeIssueTrackerStatus
+from .native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
 from .o_auth_provider_capability import OAuthProviderCapability
 from .o_auth_token_exchange_error import OAuthTokenExchangeError
 from .o_auth_token_exchange_error_error import OAuthTokenExchangeErrorError
@@ -3868,6 +3869,10 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_native_issue_tracker_status_request import UpdateNativeIssueTrackerStatusRequest
 from .update_native_issue_tracker_status_request_desired_state import UpdateNativeIssueTrackerStatusRequestDesiredState
+from .update_native_linear_issue_tracker_status_request import UpdateNativeLinearIssueTrackerStatusRequest
+from .update_native_linear_issue_tracker_status_request_desired_state import (
+    UpdateNativeLinearIssueTrackerStatusRequestDesiredState,
+)
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
@@ -6056,6 +6061,7 @@ __all__ = (
     "NativeIssueTicketResult",
     "NativeIssueTicketResultState",
     "NativeIssueTrackerStatus",
+    "NativeLinearIssueTrackerStatus",
     "OAuthProviderCapability",
     "OAuthTokenExchangeError",
     "OAuthTokenExchangeErrorError",
@@ -7777,6 +7783,8 @@ __all__ = (
     "UpdateMirrorRuleRequest",
     "UpdateNativeIssueTrackerStatusRequest",
     "UpdateNativeIssueTrackerStatusRequestDesiredState",
+    "UpdateNativeLinearIssueTrackerStatusRequest",
+    "UpdateNativeLinearIssueTrackerStatusRequestDesiredState",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateOutboundBindingPolicyRequest",
     "UpdatePlatformTenantWebhookRequest",

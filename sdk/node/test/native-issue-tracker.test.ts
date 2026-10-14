@@ -80,3 +80,18 @@ test('native Linear creation preserves UUID recovery without a ticket URL',async
  const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
  const result=await AppsService.createNativeLinearIssueTicket({slug:'payments',issueId:issue,requestBody:body});assert.equal(result.state,'linked');assert.equal(result.request_id,body.request_id);
 });
+
+test('native Linear status keeps connection and group preview fences',async(t)=>{
+ const issue='33333333-3333-4333-8333-333333333333',link='55555555-5555-4555-8555-555555555555';
+ const preview={issue_id:issue,link_id:link,connection_revision:7,group_fingerprint:'a'.repeat(64),workspace_id:issue,team_id:link,viewer_id:issue,status:{provider:'linear' as const,url:'https://linear.app/acme/issue/PAY-42',id:issue,state:'resolved' as const,team_id:link,state_id:issue}};
+ const body={desired_state:'open' as const,expected:preview.status,expected_connection_revision:7,expected_group_fingerprint:preview.group_fingerprint,linear_state_id:link};
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.url,`/v1/apps/payments/issues/${issue}/tracker-links/${link}/native-linear-status`);
+  if(req.method==='POST'){const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),body);}else assert.equal(req.method,'GET');
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify(preview));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ const result=await AppsService.getNativeLinearIssueTrackerStatus({slug:'payments',issueId:issue,linkId:link});assert.deepEqual(result,preview);
+ assert.deepEqual(await AppsService.updateNativeLinearIssueTrackerStatus({slug:'payments',issueId:issue,linkId:link,requestBody:body}),preview);
+});

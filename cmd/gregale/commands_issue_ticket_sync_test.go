@@ -201,3 +201,89 @@ func TestIssueTicketSyncNativeKeepsCredentialsOnServer(t *testing.T) {
 		t.Fatal("native mode accepted mixed credentials")
 	}
 }
+
+func TestIssueTicketSyncNativeLinearPushPullAndPreviewFences(t *testing.T) {
+	const appID = "22222222-2222-4222-8222-222222222222"
+	const issueID = "33333333-3333-4333-8333-333333333333"
+	const linkID = "55555555-5555-4555-8555-555555555555"
+	const workflow = "66666666-6666-4666-8666-666666666666"
+	const deployment = "77777777-7777-4777-8777-777777777777"
+	remote := api.NativeLinearIssueTrackerStatus{IssueID: issueID, LinkID: linkID, ConnectionRevision: 4, GroupFingerprint: strings.Repeat("a", 64), WorkspaceID: appID, ViewerID: issueID, TeamID: linkID, Status: api.IssueTrackerProviderStatus{Provider: "linear", URL: "https://linear.app/acme/issue/PAY-42", ID: appID, State: "resolved", TeamID: linkID, StateID: workflow}}
+	pushes, actions, reads := 0, 0, 0
+	race := false
+	state := "open"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/native-linear-status"):
+			if r.Method == "POST" {
+				pushes++
+				var in api.UpdateNativeLinearIssueTrackerStatusRequest
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				if in.ExpectedConnectionRevision != 4 || in.ExpectedGroupFingerprint != strings.Repeat("a", 64) || in.LinearStateID != workflow || in.Expected != remote.Status {
+					t.Error("Linear preview or state selection lost")
+				}
+				remote.Status.State = "open"
+			} else {
+				reads++
+				if race && reads > 1 {
+					remote.GroupFingerprint = strings.Repeat("b", 64)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(remote)
+		case r.URL.Path == "/v1/apps/payments":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: appID, Slug: "payments"})
+		case strings.HasSuffix(r.URL.Path, "/tracker-links"):
+			_ = json.NewEncoder(w).Encode(api.ListIssueTrackerLinksResponse{Items: []api.IssueTrackerLink{{ID: linkID, Provider: "linear", URL: remote.Status.URL}}})
+		case strings.HasSuffix(r.URL.Path, "/actions"):
+			actions++
+			var in api.IssueActionRequest
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in.FixedDeploymentID != deployment || in.Action != "resolve" {
+				t.Error("pull lost fixing deployment")
+			}
+			state = "resolved"
+			_ = json.NewEncoder(w).Encode(api.Issue{ID: issueID, State: state})
+		default:
+			_ = json.NewEncoder(w).Encode(api.IssueDetail{Issue: api.Issue{ID: issueID, AppID: appID, State: state}})
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_LINEAR_TOKEN", "")
+	previousOut, previousJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	base := []string{"--app", "payments", "--issue", issueID, "--link", linkID, "--native"}
+	push := append(append([]string{}, base...), "--direction", "push")
+	if code := runIssueTicketSync(push, nil); code != 0 || pushes != 0 {
+		t.Fatal("preview mutated")
+	}
+	if code := runIssueTicketSync(append(push, "--apply"), nil); code == 0 || pushes != 0 {
+		t.Fatal("implicit Linear state allowed")
+	}
+	if code := runIssueTicketSync(append(push, "--apply", "--linear-state", workflow), nil); code != 0 || pushes != 1 {
+		t.Fatal("native Linear push failed", code)
+	}
+	remote.Status.State = "resolved"
+	pull := append(append([]string{}, base...), "--direction", "pull", "--apply")
+	if code := runIssueTicketSync(pull, nil); code == 0 || actions != 0 {
+		t.Fatal("resolution omitted fixing deployment")
+	}
+	reads = 0
+	race = true
+	if code := runIssueTicketSync(append(pull, "--deployment", deployment), nil); code == 0 || actions != 0 {
+		t.Fatal("changed group resolved")
+	}
+	reads = 0
+	race = false
+	remote.GroupFingerprint = strings.Repeat("a", 64)
+	if code := runIssueTicketSync(append(pull, "--deployment", deployment), nil); code != 0 || actions != 1 {
+		t.Fatal("native Linear pull failed", code)
+	}
+	if code := runIssueTicketSync(append(push, "--token-env", "LOCAL"), nil); code == 0 || pushes != 1 {
+		t.Fatal("native Linear accepted local credential")
+	}
+}

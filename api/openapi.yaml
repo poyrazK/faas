@@ -13656,6 +13656,66 @@ paths:
         '502': { description: GitHub rejected creation or connected credentials are unavailable. }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Gregale issue identity whose current group contains the Linear reference.
+        schema: { type: string, format: uuid }
+      - name: link_id
+        in: path
+        required: true
+        description: Stored Linear reference selected for explicit lifecycle synchronization.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getNativeLinearIssueTrackerStatus
+      summary: Preview a linked Linear lifecycle using the stored owner connection.
+      description: Requires app read access and the app owner with Issues entitlement and deploy eligibility. Verifies the stored workspace/viewer/team and linked ticket identity. Returns status plus connection revision and group fingerprint for an explicit push. Archived and canceled or unfamiliar provider states require manual triage. No credentials are returned.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Verified linked Linear status and current preview scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeLinearIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Connection or group changed or provider state requires manual triage. }
+        '502': { description: Provider identity or credential availability could not be confirmed. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: updateNativeLinearIssueTrackerStatus
+      summary: Explicitly push the Gregale lifecycle to its linked Linear ticket.
+      description: Requires the app owner with Issues entitlement and deploy-write and session MFA. desired_state must match the current open/resolved Gregale lifecycle. Sends a known provider snapshot and preview connection revision/group fingerprint. A changing lifecycle additionally requires an explicit active same-team workflow state UUID of the matching type. Rechecks scope before dispatch and after the provider response. Aligned lifecycles remain unchanged. A provider write already dispatched cannot be recalled and the two systems do not share an atomic transaction.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit lifecycle push with observed provider and connection/group scope.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNativeLinearIssueTrackerStatusRequest' }
+      responses:
+        '200':
+          description: Confirmed provider lifecycle and unchanged preview scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeLinearIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Provider snapshot or connection or group changed or the lifecycle is unsupported. }
+        '502': { description: Provider operation or workflow selection could not be confirmed. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82435,6 +82495,29 @@ components:
         ticket_url: { type: string, format: uri }
         link_id: { type: string, format: uuid }
 
+    NativeLinearIssueTrackerStatus:
+      type: object
+      description: Credential-free Linear lifecycle preview pinned to the current issue group and owner connection.
+      required: [issue_id, link_id, connection_revision, group_fingerprint, workspace_id, team_id, viewer_id, status]
+      properties:
+        issue_id: { type: string, format: uuid, description: Current canonical Gregale issue identity. }
+        link_id: { type: string, format: uuid, description: Stored Linear reference identity. }
+        connection_revision: { type: integer, format: int64, minimum: 1, description: Verified connection revision used to fence later pushes. }
+        group_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: Opaque scope fingerprint tracking canonical membership and grouping rules. }
+        workspace_id: { type: string, format: uuid, description: Verified Linear workspace identity. }
+        team_id: { type: string, format: uuid, description: Verified connected team matching the linked ticket. }
+        viewer_id: { type: string, format: uuid, description: Verified identity owning the stored API key. }
+        status: { $ref: '#/components/schemas/IssueTrackerProviderStatus', description: Supported linked Linear status including ticket and team and workflow UUIDs. }
+    UpdateNativeLinearIssueTrackerStatusRequest:
+      type: object
+      description: Explicit push against an observed provider snapshot and connection/group scope.
+      required: [desired_state, expected, expected_connection_revision, expected_group_fingerprint]
+      properties:
+        desired_state: { type: string, enum: [open, resolved], description: Lifecycle matching the current Gregale issue state. }
+        expected: { $ref: '#/components/schemas/IssueTrackerProviderStatus', description: Exact Linear status from the native preview. }
+        expected_connection_revision: { type: integer, format: int64, minimum: 1, description: Connection revision from the native preview. }
+        expected_group_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: Group fingerprint from the native preview. }
+        linear_state_id: { type: string, format: uuid, description: Explicit active same-team workflow state UUID required when the lifecycle changes. }
     CreateNativeLinearIssueTicketRequest:
       type: object
       description: Explicit creation or UUID recovery through the app owner's connected Linear team.

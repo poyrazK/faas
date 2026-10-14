@@ -149,3 +149,32 @@ func TestIssueNativeLinearCreationSDKPreservesUUIDRecovery(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestIssueNativeLinearStatusSDKPreservesPreviewFences(t *testing.T) {
+	snapshot := faas.NativeLinearIssueTrackerStatus{IssueID: "issue", LinkID: "link", ConnectionRevision: 7, GroupFingerprint: "group", WorkspaceID: "workspace", TeamID: "team", ViewerID: "viewer", Status: faas.IssueTrackerProviderStatus{Provider: "linear", URL: "https://linear.app/acme/issue/PAY-42", ID: "ticket", TeamID: "team", StateID: "state", State: "resolved"}}
+	input := faas.UpdateNativeLinearIssueTrackerStatusRequest{DesiredState: "open", Expected: snapshot.Status, ExpectedConnectionRevision: 7, ExpectedGroupFingerprint: "group", LinearStateID: "workflow"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/payments/issues/issue/tracker-links/link/native-linear-status" {
+			t.Error("wrong Linear status path")
+		}
+		if r.Method == "POST" {
+			var in faas.UpdateNativeLinearIssueTrackerStatusRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
+				t.Error("preview fences lost", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(snapshot)
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetNativeLinearIssueTrackerStatus(t.Context(), "payments", "issue", "link"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateNativeLinearIssueTrackerStatus(t.Context(), "payments", "issue", "link", input); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1819,14 +1819,16 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}": "UpdatePlatformTenantSelfWorkflowReadinessNotification",
 	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}":   "CheckPlatformTenantSelfWorkflowReadinessNotification",
 
-	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":  "GetNativeIssueTrackerStatus",
-	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status": "UpdateNativeIssueTrackerStatus",
-	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                 "CreateNativeLinearIssueTicket",
-	"GET /v1/apps/{slug}/issue-tracker-linear-connection":                          "GetIssueTrackerLinearConnection",
-	"PUT /v1/apps/{slug}/issue-tracker-linear-connection":                          "UpdateIssueTrackerLinearConnection",
-	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":      "GetIssueTrackerAutoSync",
-	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":      "UpdateIssueTrackerAutoSync",
-	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                        "CreateNativeIssueTicket",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":         "GetNativeIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":        "UpdateNativeIssueTrackerStatus",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status":  "GetNativeLinearIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status": "UpdateNativeLinearIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                        "CreateNativeLinearIssueTicket",
+	"GET /v1/apps/{slug}/issue-tracker-linear-connection":                                 "GetIssueTrackerLinearConnection",
+	"PUT /v1/apps/{slug}/issue-tracker-linear-connection":                                 "UpdateIssueTrackerLinearConnection",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "GetIssueTrackerAutoSync",
+	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "UpdateIssueTrackerAutoSync",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                               "CreateNativeIssueTicket",
 }
 
 func main() {

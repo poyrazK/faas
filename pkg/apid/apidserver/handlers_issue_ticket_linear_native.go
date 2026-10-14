@@ -12,10 +12,10 @@ import (
 )
 
 type nativeLinearCreationHost struct {
-	server  *server
-	app     state.App
-	account state.Account
-	issueID string
+	server          *server
+	app             state.App
+	account         state.Account
+	issueID, linkID string
 }
 
 func (h nativeLinearCreationHost) Prepare(ctx context.Context) (issuetrackers.Prepared, error) {
@@ -50,7 +50,15 @@ func (h nativeLinearCreationHost) Prepare(ctx context.Context) (issuetrackers.Pr
 	if !record.Connection.Connected || record.Connection.Revision <= 0 {
 		return issuetrackers.Prepared{}, issuetrackers.LinearConnectionRequired()
 	}
-	return issuetrackers.Prepared{Issue: detail.Issue, GroupFingerprint: issuetrackers.GroupScopeFingerprint(detail), Connection: issuetrackers.Connection{AccountID: account.ID, Linear: linearBoundConnection(record)}}, nil
+	p := issuetrackers.Prepared{Issue: detail.Issue, GroupFingerprint: issuetrackers.GroupScopeFingerprint(detail), Connection: issuetrackers.Connection{AccountID: account.ID, Linear: linearBoundConnection(record)}}
+	if h.linkID != "" {
+		link, err := h.linearLink(ctx, app, p.Issue.ID)
+		if err != nil {
+			return p, err
+		}
+		p.Link = link
+	}
+	return p, nil
 }
 func linearBoundConnection(r state.IssueTrackerLinearRecord) *issuetrackers.LinearBoundConnection {
 	return &issuetrackers.LinearBoundConnection{Revision: r.Connection.Revision, Scope: issuetrackers.LinearCredentialScope{AccountID: r.AccountID, AppID: r.AppID, Identity: issuetracker.LinearIdentity{WorkspaceID: r.Connection.WorkspaceID, TeamID: r.Connection.TeamID, ViewerID: r.Connection.ViewerID}}}
@@ -116,4 +124,30 @@ func (s *server) createNativeLinearIssueTicket(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (h nativeLinearCreationHost) linearLink(ctx context.Context, app state.App, issue string) (api.IssueTrackerLink, error) {
+	store, ok := h.server.store.(state.IssueTrackerLinkStore)
+	if !ok {
+		return api.IssueTrackerLink{}, api.ErrCapacity("tracker references unavailable")
+	}
+	cursor := state.IssueCursor{}
+	for {
+		page, err := store.ListIssueTrackerLinks(ctx, app.ID, app.AccountID, issue, cursor)
+		if err != nil {
+			return api.IssueTrackerLink{}, err
+		}
+		for _, link := range page.Items {
+			if link.ID == h.linkID {
+				return link, nil
+			}
+		}
+		if page.NextCursor == "" {
+			return api.IssueTrackerLink{}, state.ErrNotFound
+		}
+		cursor, err = state.DecodeIssueCursor(page.NextCursor)
+		if err != nil {
+			return api.IssueTrackerLink{}, err
+		}
+	}
 }

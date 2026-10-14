@@ -978,7 +978,7 @@ Connect GitHub and bind the app repository through the existing app connection s
 
 `GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status` returns the canonical issue/reference IDs, installation/repository identity and observed status. POST to the same route accepts `desired_state` and `expected` provider status, and pushes only the current Gregale open/resolved state. Reads require app read permission and Issues entitlement; pushes require deploy-write and normal session MFA. Typed Go, Node and Python clients expose both operations. Tokens stay server-side through the existing githubd credential lifecycle, and errors omit provider credentials and bodies.
 
-Native mode cannot be combined with `--token-env` or `--linear-state`; there is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. Native GitHub ticket creation is described below. Linear native OAuth and provider callbacks remain separate work; automatic GitHub push is described below.
+Native mode cannot be combined with `--token-env`; `--linear-state` applies only to Linear pushes. There is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. Native GitHub ticket creation is described below. Linear native OAuth and provider callbacks remain separate work; automatic GitHub push is described below.
 
 ## Native GitHub ticket creation
 
@@ -1020,7 +1020,7 @@ Unexpected provider edits, a changed source group or connection, ignored/unsuppo
 
 Disabling remains available when repository access is revoked and invalidates the worker claim. A GitHub write already dispatched during disable cannot be recalled. The provider and Gregale do not share an atomic transaction; see [ADR-1213](adr/1213-automatic-native-github-lifecycle.md) for the recovery and concurrency limits.
 
-The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear lifecycle sync, provider callbacks and automatic inbound resolution remain separate work.
+The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear lifecycle sync is described below; provider callbacks and automatic inbound resolution remain separate work.
 
 ## Connect a Linear team
 
@@ -1046,7 +1046,7 @@ configuration. PUT supplies `connected` and `expected_revision`; connecting also
 requires `team_id` and `api_key`, while disconnect must omit both. Go exposes
 `GetIssueTrackerLinearConnection`/`UpdateIssueTrackerLinearConnection`, Node uses
 matching `AppsService` operations, and Python exposes matching `faas_sdk.api.apps`
-operations. Native Linear creation is described below; lifecycle sync and OAuth remain separate work. Existing explicit CLI Linear operations still use a local key.
+operations. Native Linear creation and lifecycle sync are described below; OAuth remains separate work. Existing explicit CLI Linear operations still use a local key.
 See [ADR-1215](adr/1215-durable-linear-issue-connections.md).
 
 ## Native Linear ticket creation
@@ -1085,5 +1085,46 @@ POST `/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets` accepts `request_
 `team_id`, `title`, optional `description`, `recover` and `recovery_url`. Go exposes
 `CreateNativeLinearIssueTicket`, Node uses `AppsService.createNativeLinearIssueTicket`,
 and Python exposes `faas_sdk.api.apps.create_native_linear_issue_ticket`. This uses
-the stored personal API key; OAuth and native Linear lifecycle sync remain separate
-work. See [ADR-1216](adr/1216-native-linear-ticket-creation.md).
+the stored personal API key; Native Linear lifecycle sync is described below; OAuth remains separate work. See [ADR-1216](adr/1216-native-linear-ticket-creation.md).
+
+## Native Linear lifecycle sync
+
+Use the connected owner's Linear team for a stored Linear reference:
+
+```sh
+# Preview without a local Linear key:
+gregale issues tickets sync --app payments --issue <ISSUE_UUID> \
+  --link <LINEAR_REFERENCE_UUID> --direction push --native
+# Apply using an explicitly selected same-team workflow state:
+gregale issues tickets sync --app payments --issue <ISSUE_UUID> \
+  --link <LINEAR_REFERENCE_UUID> --direction push --native --apply \
+  --linear-state <WORKFLOW_STATE_UUID>
+# Pull a Linear resolution into a fixing Gregale deployment:
+gregale issues tickets sync --app payments --issue <ISSUE_UUID> \
+  --link <LINEAR_REFERENCE_UUID> --direction pull --native --apply \
+  --deployment <FIXING_DEPLOYMENT_UUID>
+```
+
+Native Linear operations require the app owner with Issues entitlement and deploy
+eligibility. Reads use app read access; pushes require deploy-write and session MFA.
+Gregale verifies workspace/viewer/team and linked ticket identity with the stored
+key. Native mode rejects `--token-env` and does not read a local provider key.
+
+Preview returns the provider snapshot plus connection revision and group
+fingerprint. Apply sends these guards back to the server; changes of connection,
+canonical membership or grouping rules require another preview. Push must match
+the current open/resolved Gregale lifecycle. A changing Linear lifecycle requires
+an explicit active same-team workflow UUID of the matching type. Aligned lifecycles
+remain unchanged. Archived, canceled or unfamiliar states require manual triage.
+Pulling resolution still requires a fixing deployment; the CLI rechecks both
+provider status and connection/group scope before the Gregale action.
+
+GET/POST `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status`
+returns `NativeLinearIssueTrackerStatus`. POST supplies `desired_state`, `expected`,
+`expected_connection_revision`, `expected_group_fingerprint` and, when changing
+lifecycle, `linear_state_id`. Go exposes `GetNativeLinearIssueTrackerStatus` and
+`UpdateNativeLinearIssueTrackerStatus`; Node exposes matching `AppsService` methods,
+and Python exposes matching `faas_sdk.api.apps` operations. A provider write already
+dispatched cannot be recalled by disconnect or another edit; preview again after
+an unconfirmed outcome. OAuth and automatic Linear reconciliation remain separate
+work. See [ADR-1217](adr/1217-native-linear-lifecycle-sync.md).

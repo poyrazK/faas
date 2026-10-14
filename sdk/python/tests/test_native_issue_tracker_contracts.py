@@ -123,3 +123,47 @@ def test_native_linear_creation_preserves_uuid_recovery_without_url():
     assert request["method"] == "post"
     assert request["url"] == f"/v1/apps/payments/issues/{issue}/native-linear-tickets"
     assert request["json"] == payload
+
+
+def test_native_linear_status_preserves_preview_scope_and_workflow_selection():
+    from faas_sdk.api.apps import get_native_linear_issue_tracker_status, update_native_linear_issue_tracker_status
+    from faas_sdk.models.native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
+    from faas_sdk.models.update_native_linear_issue_tracker_status_request import (
+        UpdateNativeLinearIssueTrackerStatusRequest,
+    )
+
+    issue, link, ticket, workspace, viewer, workflow = [uuid4() for _ in range(6)]
+    status = {
+        "provider": "linear",
+        "url": "https://linear.app/acme/issue/PAY-42",
+        "id": str(ticket),
+        "state": "resolved",
+        "team_id": str(link),
+        "state_id": str(workflow),
+    }
+    payload = {
+        "issue_id": str(issue),
+        "link_id": str(link),
+        "connection_revision": 7,
+        "group_fingerprint": "a" * 64,
+        "workspace_id": str(workspace),
+        "team_id": str(link),
+        "viewer_id": str(viewer),
+        "status": status,
+    }
+    preview = NativeLinearIssueTrackerStatus.from_dict(payload)
+    assert preview.to_dict() == payload
+    route = f"/v1/apps/payments/issues/{issue}/tracker-links/{link}/native-linear-status"
+    assert get_native_linear_issue_tracker_status._get_kwargs("payments", issue, link)["url"] == route
+    request = {
+        "desired_state": "open",
+        "expected": status,
+        "expected_connection_revision": 7,
+        "expected_group_fingerprint": "a" * 64,
+        "linear_state_id": str(workflow),
+    }
+    body = UpdateNativeLinearIssueTrackerStatusRequest.from_dict(request)
+    update = update_native_linear_issue_tracker_status._get_kwargs("payments", issue, link, body=body)
+    assert update["method"] == "post"
+    assert update["url"] == route
+    assert update["json"] == request

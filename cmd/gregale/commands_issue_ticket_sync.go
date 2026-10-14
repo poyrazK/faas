@@ -55,7 +55,7 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	issue := fs.String("issue", "", "issue UUID")
 	linkID := fs.String("link", "", "stored tracker reference UUID")
 	direction := fs.String("direction", "", "push Gregale status or pull provider status")
-	native := fs.Bool("native", false, "use the app owner's connected GitHub installation")
+	native := fs.Bool("native", false, "use the app owner's stored provider connection")
 	apply := fs.Bool("apply", false, "apply the previewed lifecycle change")
 	deployment := fs.String("deployment", "", "fixing deployment UUID for a pulled resolution")
 	linearState := fs.String("linear-state", "", "team workflow state UUID for a Linear push")
@@ -90,12 +90,12 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	if *native {
 		mixed := false
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "token-env" || f.Name == "linear-state" {
+			if f.Name == "token-env" {
 				mixed = true
 			}
 		})
 		if mixed {
-			return printErr("Invalid sync request", fmt.Errorf("native mode cannot use --token-env or --linear-state"))
+			return printErr("Invalid sync request", fmt.Errorf("native mode cannot use --token-env"))
 		}
 	}
 	if invalid {
@@ -132,10 +132,11 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 		return printErr("Invalid sync request", fmt.Errorf("Linear workflow state does not apply to GitHub"))
 	}
 	if *native {
-		if link.Provider != "github" {
-			return printErr("Native connection unavailable", fmt.Errorf("native sync currently supports connected GitHub repositories"))
+		if link.Provider == "linear" {
+			provider = &nativeLinearStatusProvider{client: client, app: *app, issue: detail.Issue.ID, link: link.ID}
+		} else {
+			provider = nativeIssueStatusProvider{client: client, app: *app, issue: detail.Issue.ID, link: link.ID}
 		}
-		provider = nativeIssueStatusProvider{client: client, app: *app, issue: detail.Issue.ID, link: link.ID}
 	}
 	if *tokenEnv == "" {
 		if link.Provider == "github" {

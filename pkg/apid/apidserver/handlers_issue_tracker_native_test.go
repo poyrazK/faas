@@ -621,3 +621,100 @@ func TestNativeIssueLinearCreationRecoversUUIDAndRejectsRevokedConnections(t *te
 		t.Fatal("disconnected credential dispatched", w.Code)
 	}
 }
+
+type nativeLinearLifecycleFake struct {
+	status        issuetracker.Status
+	reads, writes int
+	unsupported   bool
+}
+
+func (p *nativeLinearLifecycleFake) ReadStatus(_ context.Context, _ string, token string) (issuetracker.Status, error) {
+	p.reads++
+	if token != "lin_api_secret" {
+		return issuetracker.Status{}, errors.New("wrong credential")
+	}
+	if p.unsupported {
+		return issuetracker.Status{}, issuetracker.ErrUnsupportedStatus
+	}
+	return p.status, nil
+}
+func (p *nativeLinearLifecycleFake) SetStatus(_ context.Context, expected issuetracker.Status, token, wanted, selected string) (issuetracker.Status, error) {
+	if token != "lin_api_secret" {
+		return issuetracker.Status{}, errors.New("wrong credential")
+	}
+	if expected != p.status {
+		return issuetracker.Status{}, issuetracker.ErrStatusChanged
+	}
+	if p.status.State != wanted {
+		p.writes++
+		p.status.State = wanted
+		p.status.StateID = selected
+	}
+	return p.status, nil
+}
+
+// adr: 1217
+func TestNativeIssueLinearStatusPinsPreviewAndRequiresWorkflowSelection(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "linear-native-status")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	reporterToken := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	reporter := map[string]string{"Authorization": "Bearer " + reporterToken.Token}
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "LinearStatusError", Message: "failed"}, reporter), 202)
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", base+"/issues/"+accepted.IssueID+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://linear.app/acme/issue/PAY-42"}, nil), 200)
+	path := base + "/issues/" + accepted.IssueID + "/tracker-links/" + link.ID + "/native-linear-status"
+	if w := e.Do(t, "GET", path, nil, reporter); w.Code != 401 && w.Code != 403 {
+		t.Fatal("reporter read stored provider credentials", w.Code)
+	}
+	identity, _ := age.GenerateX25519Identity()
+	oldRecipient, oldIDs := *apidserver.SetSecretRecipient, *apidserver.MfaIdentities
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	*apidserver.MfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = oldRecipient; *apidserver.MfaIdentities = oldIDs })
+	verifier := &nativeLinearFake{}
+	apidserver.IssueNativeSetLinearVerifier(e, verifier)
+	connection := api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, TeamID: uuid.NewString(), APIKey: "lin_api_secret"}
+	connectionPath := base + "/issue-tracker-linear-connection"
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, connection, nil), 200)
+	provider := &nativeLinearLifecycleFake{status: issuetracker.Status{Provider: "linear", URL: link.URL, ID: uuid.NewString(), TeamID: connection.TeamID, StateID: uuid.NewString(), State: "resolved"}}
+	apidserver.IssueNativeSetClients(e, nil, provider)
+	preview := apidserver.IssueDecode[api.NativeLinearIssueTrackerStatus](t, e.Do(t, "GET", path, nil, nil), 200)
+	input := api.UpdateNativeLinearIssueTrackerStatusRequest{DesiredState: "open", Expected: preview.Status, ExpectedConnectionRevision: preview.ConnectionRevision, ExpectedGroupFingerprint: preview.GroupFingerprint}
+	if w := e.Do(t, "POST", path, input, nil); w.Code != 400 || provider.writes != 0 {
+		t.Fatal("implicit workflow state allowed", w.Code)
+	}
+	input.LinearStateID = uuid.NewString()
+	result := apidserver.IssueDecode[api.NativeLinearIssueTrackerStatus](t, e.Do(t, "POST", path, input, nil), 200)
+	if result.Status.State != "open" || result.Status.StateID != input.LinearStateID || provider.writes != 1 {
+		t.Fatal("selected workflow not used", result)
+	}
+	if w := e.Do(t, "POST", path, input, nil); w.Code != 409 || provider.writes != 1 {
+		t.Fatal("stale provider snapshot accepted", w.Code)
+	}
+	input.Expected = result.Status
+	input.ExpectedGroupFingerprint = strings.Repeat("b", 64)
+	if w := e.Do(t, "POST", path, input, nil); w.Code != 409 || provider.writes != 1 {
+		t.Fatal("stale group accepted", w.Code)
+	}
+	input.ExpectedGroupFingerprint = result.GroupFingerprint
+	connection.ExpectedRevision = 1
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, connection, nil), 200)
+	if w := e.Do(t, "POST", path, input, nil); w.Code != 409 || provider.writes != 1 {
+		t.Fatal("stale connection revision accepted", w.Code)
+	}
+	provider.unsupported = true
+	if w := e.Do(t, "GET", path, nil, nil); w.Code != 409 {
+		t.Fatal("unsupported provider state exposed as a resolution", w.Code)
+	}
+	provider.unsupported = false
+	provider.status.TeamID = uuid.NewString()
+	if w := e.Do(t, "GET", path, nil, nil); w.Code != 502 || provider.writes != 1 {
+		t.Fatal("foreign team evidence accepted", w.Code)
+	}
+	provider.status.TeamID = connection.TeamID
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 2}, nil), 200)
+	if w := e.Do(t, "GET", path, nil, nil); w.Code != 409 {
+		t.Fatal("disconnected provider read", w.Code)
+	}
+}
