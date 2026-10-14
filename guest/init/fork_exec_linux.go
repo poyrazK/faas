@@ -16,30 +16,16 @@ import (
 	"net"
 	"os"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 )
 
 func startForkExecListener(log *slog.Logger) error {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	// net.FileListener cannot wrap an AF_VSOCK socket (getsockname reports
+	// an unsupported family), so use the guest's vsock listener.
+	ln, err := listenGuestVsock(apptaskproto.ForkExecVsockPort)
 	if err != nil {
-		return fmt.Errorf("fork exec vsock socket: %w", err)
-	}
-	if err := unix.Bind(fd, &unix.SockaddrVM{CID: VsockAppTaskBindCID, Port: apptaskproto.ForkExecVsockPort}); err != nil {
-		_ = unix.Close(fd)
-		return fmt.Errorf("fork exec vsock bind port %d: %w", apptaskproto.ForkExecVsockPort, err)
-	}
-	if err := unix.Listen(fd, 1); err != nil {
-		_ = unix.Close(fd)
-		return fmt.Errorf("fork exec vsock listen: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), "fork-exec-vsock")
-	ln, err := net.FileListener(f)
-	_ = f.Close()
-	if err != nil {
-		return fmt.Errorf("fork exec vsock listener: %w", err)
+		return fmt.Errorf("fork exec listener: %w", err)
 	}
 	go serveForkExec(log, ln)
 	log.Info("fork exec listener started", "vsock_port", apptaskproto.ForkExecVsockPort)

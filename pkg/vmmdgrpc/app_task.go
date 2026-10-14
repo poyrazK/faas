@@ -107,10 +107,14 @@ func (s *Server) ExecForkCommand(ctx context.Context, req *vmmdpb.ExecuteAppTask
 			"Not a running fork", "fork exec runs only inside a running quarantined fork"))
 	}
 	if err != nil {
+		// The problem returned to schedd is deliberately generic; keep the
+		// transport cause in vmmd's log so a failed command is diagnosable.
+		s.log.Warn("vmmd: fork exec failed", "instance", req.GetInstance(), "err", err)
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(appTaskProblem(err))
 	}
 	if err := result.Validate(wireReq.MaxOutputBytes); err != nil {
+		s.log.Warn("vmmd: fork exec returned an invalid result", "instance", req.GetInstance(), "err", err)
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Internal), api.CodeInternal,
 			"Fork exec protocol failed", "vmmd received an invalid terminal result"))
