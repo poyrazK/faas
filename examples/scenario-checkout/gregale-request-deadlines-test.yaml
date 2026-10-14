@@ -56,7 +56,9 @@ scenarios:
           duration: 8s
           streams:
             - {name: dependency, requests: [dependency-probe], rate: 4, vus: 4}
-            - {name: health, requests: [health], rate: 5, vus: 2}
+            # ceil(5 arrivals/s * 750 ms) = 4 VUs; keep the probe stream
+            # capable of its declared healthy-route budget during phase barriers.
+            - {name: health, requests: [health], rate: 5, vus: 4}
           thresholds: {error_rate: 1}
           chaos_schedule:
             - {name: baseline, duration: 2s, assertions: [health-stays-responsive, successful-deadline]}
