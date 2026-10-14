@@ -3,7 +3,6 @@ package state
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -22,6 +21,7 @@ func (m *MemStore) ownedNotificationsLocked(account, app, bucket string) (Object
 	p := m.objectNotifications[bucket]
 	p.BucketID = bucket
 	p.Rules = api.CloneObjectNotificationRules(p.Rules)
+	p.ManagedRuleIDs = append([]string(nil), p.ManagedRuleIDs...)
 	return b, p, nil
 }
 func (m *MemStore) GetObjectBucketNotifications(_ context.Context, account, app, bucket string) (api.ObjectBucketNotifications, error) {
@@ -38,7 +38,13 @@ func (m *MemStore) notificationQueueLocked(t api.ObjectNotificationTarget) (stri
 	}
 	return "", nil, ErrNotFound
 }
-func (m *MemStore) SetObjectBucketNotifications(_ context.Context, account, app, bucket string, rules []api.ObjectNotificationRule) (api.ObjectBucketNotifications, error) {
+func (m *MemStore) SetObjectBucketNotifications(ctx context.Context, account, app, bucket string, rules []api.ObjectNotificationRule) (api.ObjectBucketNotifications, error) {
+	return m.changeObjectBucketNotifications(ctx, account, app, bucket, rules, nil)
+}
+func (m *MemStore) ReconcileObjectBucketComputeTriggers(ctx context.Context, account, app, bucket string, request api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
+	return m.changeObjectBucketNotifications(ctx, account, app, bucket, nil, &request)
+}
+func (m *MemStore) changeObjectBucketNotifications(_ context.Context, account, app, bucket string, rules []api.ObjectNotificationRule, request *api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
 	normal, err := api.NormalizeObjectNotificationRules(rules)
 	if err != nil {
 		return api.ObjectBucketNotifications{}, ErrObjectNotificationInvalid
@@ -49,7 +55,15 @@ func (m *MemStore) SetObjectBucketNotifications(_ context.Context, account, app,
 	if err != nil {
 		return p, err
 	}
-	for _, r := range normal {
+	next, err := objectNotificationChange(b, p, normal, request)
+	if err != nil {
+		return p, err
+	}
+	validateRules := next.Rules
+	if request != nil {
+		validateRules = managedObjectNotificationRules(next)
+	}
+	for _, r := range validateRules {
 		t, e := notificationTarget(r, b)
 		if e != nil {
 			return p, e
@@ -64,21 +78,20 @@ func (m *MemStore) SetObjectBucketNotifications(_ context.Context, account, app,
 			}
 		}
 	}
-	a, _ := json.Marshal(p.Rules)
-	z, _ := json.Marshal(normal)
-	if bytes.Equal(a, z) {
+	if sameObjectNotificationPolicy(p, next) {
 		return p, nil
 	}
 	if p.Revision >= api.MaxObjectStoragePolicyValue {
 		return p, ErrConflict
 	}
-	p.Revision++
-	p.Rules = normal
+	next.Revision = p.Revision + 1
+	p = next
 	if m.objectNotifications == nil {
 		m.objectNotifications = map[string]api.ObjectBucketNotifications{}
 	}
 	m.objectNotifications[bucket] = p
 	p.Rules = api.CloneObjectNotificationRules(p.Rules)
+	p.ManagedRuleIDs = append([]string(nil), p.ManagedRuleIDs...)
 	return p, nil
 }
 func (m *MemStore) EnqueueObjectNotification(_ context.Context, in Invocation, s ObjectNotificationSnapshot) error {

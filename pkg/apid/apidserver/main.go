@@ -40,6 +40,8 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
+	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
@@ -758,6 +760,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.realtime.RunManagedRealtimeHistoryReaper(ctx)
 		go srv.realtime.RunManagedRealtimeEntityExpirations(ctx)
 		go srv.realtime.RunManagedRealtimeSchedules(ctx)
+		go srv.realtime.RunRealtimeConsumerGroupAlerts(ctx)
+		go srv.realtime.RunRealtimeConsumerGroupDeadRetention(ctx)
+		go srv.realtime.RunRealtimeReplayJobs(ctx)
+		go srv.realtime.RunRealtimeConsumerGroupWorkerHealth(ctx)
+
 		go srv.realtime.RunManagedRealtimeFallbacks(ctx)
 		go srv.realtime.RunManagedRealtimePush(ctx)
 		go srv.realtime.RunManagedRealtimeDrainWorker(ctx)
@@ -1434,7 +1441,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
+		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
+		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
+		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
@@ -1451,7 +1462,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
-	srv.configureAIGateway(*cfg, deps.getenv)
+	if err := srv.configureAIGateway(*cfg, deps.getenv); err != nil {
+		return fmt.Errorf("apid: AI gateway: %w", err)
+	}
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)
@@ -1638,10 +1651,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) {
-				// invokeApp applies the plan-specific 5s/30s wait, and a
-				// deploy commit scans its source archive (H9-157); both
-				// get the platform ceiling instead of the 5 s default.
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+				// invokeApp applies the plan-specific 5s/30s wait, a deploy
+				// commit scans its source archive (H9-157), and realtime
+				// group claims may long-poll; all get the platform ceiling
+				// instead of the 5 s default.
 				return api.RequestBudgetMax
 			}
 			return 0
@@ -2414,6 +2428,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
+	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()

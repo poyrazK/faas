@@ -55,13 +55,13 @@ func (m *MemStore) multipartTransfersPendingLocked(id string) bool {
 }
 
 func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
-	if !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || size < 1 || size > api.MaxObjectUploadBytes || len(parts) < 1 || len(parts) > api.MaxMultipartParts {
+	if !validMultipartChecksumCompletion(u, parts, size) || !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || size < 1 || size > api.MaxObjectUploadBytes || len(parts) < 1 || len(parts) > api.MaxMultipartParts {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.objectMultipartUploads[u.ID]
-	if !ok || !current.Protection.Equal(u.Protection) || current.EncryptionDefaultRevision != u.EncryptionDefaultRevision || !current.Encryption.Equal(u.Encryption) || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) || ObjectMultipartIsCompleting(current.State) && (current.CompletionConditions != u.CompletionConditions || current.SizeBytes != size) {
+	if !ok || current.Checksum.Policy != u.Checksum.Policy || ObjectMultipartIsCompleting(current.State) && !current.Checksum.Equal(u.Checksum) || !current.Protection.Equal(u.Protection) || current.EncryptionDefaultRevision != u.EncryptionDefaultRevision || !current.Encryption.Equal(u.Encryption) || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) || ObjectMultipartIsCompleting(current.State) && (current.CompletionConditions != u.CompletionConditions || current.SizeBytes != size) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	// Validate the claim before changing the capacity ledger.
@@ -74,6 +74,7 @@ func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectM
 		return ObjectMultipartUpload{}, err
 	}
 	claimed.SizeBytes = size
+	claimed.Checksum = u.Checksum.Clone()
 	m.objectMultipartUploads[u.ID] = claimed
 	return cloneObjectMultipartUpload(claimed), nil
 }

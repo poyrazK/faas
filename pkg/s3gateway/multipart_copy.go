@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -32,6 +33,7 @@ func (h *Handler) copyMultipartPart(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 	c.ProviderUploadID = upload.ProviderUploadID
+	c.Checksum = upload.Checksum.Policy
 	copier, capable := req.provider.(objectstorage.MultipartPartCopier)
 	transfers, fenced := h.multipartStore.(state.ObjectMultipartTransferStore)
 	if !capable || !fenced {
@@ -192,6 +194,10 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		}
 		return
 	}
+	if !upload.Checksum.Empty() && (result.Checksum.Policy != upload.Checksum.Policy || !objectchecksum.ValidPart(result.Checksum.Algorithm, result.Checksum.Value)) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+		return
+	}
 	if !validGatewayETag(result.ETag) {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
 		return
@@ -208,10 +214,11 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if !result.LastModified.IsZero() {
 		lastModified = result.LastModified.UTC().Format(time.RFC3339Nano)
 	}
-	writeS3XML(w, http.StatusOK, req.requestID, copyMultipartPartResult{XMLNS: s3XMLNamespace, ETag: result.ETag, LastModified: lastModified})
+	writeS3XML(w, http.StatusOK, req.requestID, copyMultipartPartResult{checksumXML: checksumXMLFor(result.Checksum), XMLNS: s3XMLNamespace, ETag: result.ETag, LastModified: lastModified})
 }
 
 type copyMultipartPartResult struct {
+	checksumXML
 	XMLName      xml.Name `xml:"CopyPartResult"`
 	XMLNS        string   `xml:"xmlns,attr"`
 	ETag         string   `xml:"ETag"`

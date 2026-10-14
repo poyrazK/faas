@@ -1,6 +1,8 @@
 package state
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -43,6 +45,36 @@ func readinessCoordinationTimelineEvents(s api.OperationWorkflowReadinessSubscri
 	}
 	e := add("notification", "notification", n.Explanation, n.CreatedAt)
 	e.Status = n.Kind
+	if event := n.PlaybookEvidence; event != nil {
+		e.PlaybookProgressID = event.ProgressID
+		if event.OutcomeChange != nil {
+			outcome := event.OutcomeChange.After.Evidence
+			e.ExpectedOutcomeCode = outcome.ExpectedOutcomeCode
+			e.ReportedOutcomeCode = outcome.ReportedOutcomeCode
+			e.StateRevision = outcome.StateRevision
+			links(e, outcome.ReportingOperationID)
+		}
+		for _, change := range event.Changes {
+			links(e, change.After.ReportingOperationID)
+			if change.After.Evidence != nil {
+				links(e, change.After.Evidence.OperationID)
+			}
+		}
+	}
+	if regression := n.DependencyRegression; regression != nil {
+		labels := []string{}
+		for _, step := range regression.AffectedSteps {
+			labels = append(labels, step.OutcomeCode+": "+step.Label)
+		}
+		e.Summary = "Follow-up dependency regression: " + strings.Join(labels, ", ")
+	}
+	if recovery := n.DependencyRecovery; recovery != nil {
+		labels := []string{}
+		for _, step := range recovery.ReadySteps {
+			labels = append(labels, step.OutcomeCode+": "+step.Label)
+		}
+		e.Summary = "Follow-up dependency recovery: " + strings.Join(labels, ", ") + "; regression notice " + fmt.Sprint(recovery.Regression.Sequence)
+	}
 	if n.Change != nil {
 		links(e, n.Change.CurrentOperationID)
 	}
@@ -75,6 +107,17 @@ func readinessCoordinationTimelineEvents(s api.OperationWorkflowReadinessSubscri
 			e.ExpectedOutcomeCode = completion.ExpectedOutcomeCode
 			links(e, completion.EvidenceOperationIDs...)
 			links(e, completion.Evidence.ReportingOperationID)
+			if result := completion.PlaybookOutcome; result != nil {
+				e.Summary = "Playbook completion: " + result.Resolution + " · " + result.Alignment + ". " + result.Explanation
+				e.ExpectedOutcomeCode = result.Observation.Evidence.ExpectedOutcomeCode
+				e.ReportedOutcomeCode = result.Observation.Evidence.ReportedOutcomeCode
+				e.StateRevision = result.Observation.Evidence.StateRevision
+				if n.PlaybookEscalation != nil {
+					e.PlaybookProgressID = n.PlaybookEscalation.ProgressID
+				}
+				links(e, result.Observation.Evidence.ReportingOperationID)
+				observation("playbook_completion_outcome", result.Observation.Evidence)
+			}
 			if completion.BusinessOutcome != nil {
 				observation("completion_outcome", *completion.BusinessOutcome)
 			}

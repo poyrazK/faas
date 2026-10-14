@@ -34,6 +34,40 @@ func TestEnvironmentGitOpsCustomerEnforcementGate(t *testing.T) {
 	if err != nil || current.Generation != source.Generation || current.Spec.Mode != "report" {
 		t.Fatalf("rejection mutated source: %+v %v", current, err)
 	}
+	stop := srv.startEnvironmentGitAcceptanceEnforcement(t.Context(), func(name string) string {
+		if name == environmentGitOpsAcceptanceEnforcementFlag {
+			return "1"
+		}
+		return ""
+	})
+	stop()
+	if srv.environmentGitOpsAcceptanceEnforcement.Load() {
+		t.Fatal("acceptance flag without the test marker opened customer enforcement")
+	}
+	stop = srv.startEnvironmentGitAcceptanceEnforcement(t.Context(), func(name string) string {
+		if name == environmentGitOpsAcceptanceEnforcementFlag || name == "GREGALE_GITOPS_ACCEPTANCE" {
+			return "1"
+		}
+		return ""
+	})
+	stop()
+	if srv.environmentGitOpsAcceptanceEnforcement.Load() {
+		t.Fatal("acceptance markers without the dev marker opened customer enforcement")
+	}
+	stop = srv.startEnvironmentGitAcceptanceEnforcement(t.Context(), func(name string) string {
+		if name == environmentGitOpsAcceptanceEnforcementFlag || name == "GREGALE_GITOPS_ACCEPTANCE" || name == "FAAS_DEV" {
+			return "1"
+		}
+		return ""
+	})
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodPatch, "source", map[string]any{"expected_generation": source.Generation, "mode": "enforce"}, srv.updateEnvironmentGitSource)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("isolated acceptance gate rejected enforce mode: %d %s", rec.Code, rec.Body.String())
+	}
+	stop()
+	if srv.environmentGitOpsAcceptanceEnforcement.Load() {
+		t.Fatal("stopped acceptance worker left customer enforcement open")
+	}
 }
 func TestEnvironmentGitOpsBindingLifecycleHandlers(t *testing.T) {
 	srv, store, account, project, _ := newProjectLifecycleFixture(t)

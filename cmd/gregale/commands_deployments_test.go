@@ -267,6 +267,10 @@ func TestCmdDeployment_HappyPath(t *testing.T) {
 	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Errorf("cmdDeployment happy = %d, want 0", code)
 	}
+	// H10-6: inspect's recovery hints print `deployment get <id>`.
+	if code := cmdDeployment([]string{"get", "0123456789abcdef0123456789abcdef"}); code != 0 {
+		t.Errorf("cmdDeployment get = %d, want 0", code)
+	}
 }
 
 func TestCmdDeployment_Unauthenticated(t *testing.T) {

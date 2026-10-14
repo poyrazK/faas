@@ -1070,7 +1070,7 @@ WITH resident AS (
  SELECT i.deployment_id, i.state, i.started_at FROM instances i
  JOIN apps a ON a.id = i.app_id AND a.account_id = $2
  WHERE i.app_id = $1 AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('running','waking','cold_booting','warm','snapshotting','draining','migrating')
+   AND i.state IN ('running','waking','cold_booting','warm','frozen','snapshotting','draining','migrating')
 ), selected AS (
  SELECT d.id, d.status, COALESCE(NULLIF(d.scope, ''), 'default') AS scope FROM deployments d
  WHERE d.app_id = $1
@@ -9193,7 +9193,9 @@ VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  $11::jsonb->'deployment_inputs'->'override_healthcheck',$11::jsonb->'deployment_inputs'->'override_liveness_probe',
  $11::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce($11::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
  coalesce($11::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce($11::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
- coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+          nullif(($11::jsonb->'source'->>'full_rootfs')::boolean,false)),
  coalesce(($11::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  coalesce(($11::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
@@ -9238,17 +9240,21 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation, provider)
 SELECT p.account_id, p.id, e.id, $1::bigint,
        $2::bigint, $3::text,
        $4::text, $5::text,
        $6::text, $7::text, $8::boolean,
-       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0),
+       $9::text
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
-WHERE p.account_id = $9::uuid AND p.id = $10::uuid
-  AND e.slug = $11::text
-  AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE p.account_id = $10::uuid AND p.id = $11::uuid
+  AND e.slug = $12::text
+  AND (($9::text = 'github' AND p.repo_full_name = $3::text
+       AND p.install_id = $2::bigint)
+    OR ($9::text = 'gitlab' AND EXISTS (
+       SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -9260,6 +9266,7 @@ type CreateEnvironmentGitSourceParams struct {
 	Mode            string
 	ApprovalPolicy  string
 	Prune           bool
+	Provider        string
 	AccountID       pgtype.UUID
 	ProjectID       pgtype.UUID
 	EnvironmentSlug string
@@ -9275,6 +9282,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		arg.Mode,
 		arg.ApprovalPolicy,
 		arg.Prune,
+		arg.Provider,
 		arg.AccountID,
 		arg.ProjectID,
 		arg.EnvironmentSlug,
@@ -9306,6 +9314,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -10339,7 +10348,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -10381,6 +10390,8 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.SchedulePolicy,
 		&i.FailureRules,
 		&i.ScheduleRevision,
+		&i.ImageEntrypoint,
+		&i.ImageCmd,
 	)
 	return i, err
 }
@@ -11654,6 +11665,18 @@ func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db D
 	return err
 }
 
+const deleteGitLabOAuthConnection = `-- name: DeleteGitLabOAuthConnection :execrows
+DELETE FROM gitlab_oauth_connections WHERE account_id=$1::uuid
+`
+
+func (q *Queries) DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteGitLabOAuthConnection, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -12679,6 +12702,42 @@ func (q *Queries) EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX
 	return id, err
 }
 
+const environmentGitOpsHasServingManagedWorkload = `-- name: EnvironmentGitOpsHasServingManagedWorkload :one
+SELECT EXISTS (
+  SELECT 1 FROM deployments d
+  JOIN apps a ON a.id = d.app_id
+  WHERE a.account_id = $1::uuid
+    AND a.project_id = $2::uuid
+    AND d.scope = $3
+    AND d.environment_workload_runtime IS NOT NULL
+    AND (
+      (d.status = 'live' AND NOT d.environment_workload_held)
+      OR EXISTS (
+        SELECT 1 FROM project_release_sets rs
+        JOIN project_release_members rm ON rm.release_id = rs.id
+        WHERE rs.project_id = a.project_id AND rs.account_id = a.account_id
+          AND rs.environment_slug = $3 AND rs.active
+          AND rm.app_id = a.id AND rm.deployment_id = d.id
+      )
+    )
+) AS managed
+`
+
+type EnvironmentGitOpsHasServingManagedWorkloadParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Scope     string
+}
+
+// ADR-568: an empty definition cannot bypass a prior managed release or the
+// router's live-scope fallback when no active release exists.
+func (q *Queries) EnvironmentGitOpsHasServingManagedWorkload(ctx context.Context, db DBTX, arg EnvironmentGitOpsHasServingManagedWorkloadParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsHasServingManagedWorkload, arg.AccountID, arg.ProjectID, arg.Scope)
+	var managed bool
+	err := row.Scan(&managed)
+	return managed, err
+}
+
 const environmentGitOpsImageCandidate = `-- name: EnvironmentGitOpsImageCandidate :one
 SELECT id,app_id,status,coalesce(build_id::text,'')::text AS build_id,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
 FROM deployments WHERE id=$1::uuid AND environment_workload_runtime IS NOT NULL
@@ -13611,7 +13670,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -13645,6 +13704,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -19804,7 +19864,7 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text AND NOT s.detached
@@ -19845,12 +19905,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -19882,6 +19943,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -19934,6 +19996,26 @@ func (q *Queries) GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFea
 		&i.Actor,
 		&i.RestoredFrom,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getGitLabOAuthConnection = `-- name: GetGitLabOAuthConnection :one
+SELECT account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at FROM gitlab_oauth_connections WHERE account_id = $1::uuid
+`
+
+func (q *Queries) GetGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, getGitLabOAuthConnection, accountID)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -28261,7 +28343,7 @@ const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :m
 SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
-  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
+  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm', 'frozen')
 ORDER BY started_at
 `
 
@@ -28305,6 +28387,50 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 		return nil, err
 	}
 	return items, nil
+}
+
+const instanceLogsOwnedByApp = `-- name: InstanceLogsOwnedByApp :one
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = $1::uuid
+          AND i.app_id = $2::uuid
+          AND a.account_id = $3::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = $3::uuid
+          AND u.app_id = $2::uuid
+          AND u.instance_id = $1::uuid
+          AND u.minute >= $4::timestamptz
+          AND u.minute < $5::timestamptz
+    )
+)::boolean AS owned
+`
+
+type InstanceLogsOwnedByAppParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	FromMinute pgtype.Timestamptz
+	ToMinute   pgtype.Timestamptz
+}
+
+// Archived runtime logs are keyed by instance only. The instance row proves
+// ownership while it exists; afterwards the app's billing rows for that
+// instance in [from_minute, to_minute) do.
+func (q *Queries) InstanceLogsOwnedByApp(ctx context.Context, db DBTX, arg InstanceLogsOwnedByAppParams) (bool, error) {
+	row := db.QueryRow(ctx, instanceLogsOwnedByApp,
+		arg.InstanceID,
+		arg.AppID,
+		arg.AccountID,
+		arg.FromMinute,
+		arg.ToMinute,
+	)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
 }
 
 const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
@@ -28510,6 +28636,66 @@ func (q *Queries) IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddT
 	return err
 }
 
+const issueApplySplitRule = `-- name: IssueApplySplitRule :one
+WITH selected AS MATERIALIZED (
+ SELECT e.id,e.deployment_id,e.occurred_at FROM issue_events e WHERE e.issue_id=$1
+ AND ($2::text='' OR e.payload->>'exception_type'=$2)
+ AND ($3::text='' OR e.payload->>'error_code'=$3)
+ AND ($4::text='' OR e.payload->>'route'=$4)
+ AND ($5::text='' OR e.payload->>'source_kind'=$5)
+ AND NOT EXISTS (
+  SELECT 1 FROM issue_split_rules r WHERE r.source_issue_id=$1 AND r.enabled
+  AND (r.exception_type='' OR r.exception_type=e.payload->>'exception_type')
+  AND (r.error_code='' OR r.error_code=e.payload->>'error_code')
+  AND (r.route='' OR r.route=e.payload->>'route')
+  AND (r.source_kind='' OR r.source_kind=e.payload->>'source_kind')
+ )
+), transferred AS MATERIALIZED (
+ SELECT deployment_id,count(*)::bigint AS event_count,min(occurred_at) AS first_seen_at,max(occurred_at) AS last_seen_at FROM selected GROUP BY deployment_id
+), moved AS (
+ UPDATE issue_events e SET original_issue_id=COALESCE(e.original_issue_id,e.issue_id),issue_id=$6
+ WHERE e.id IN (SELECT s.id FROM selected s)
+), branch_releases AS (
+ INSERT INTO issue_releases(issue_id,deployment_id,commit_sha,image_digest,event_count,first_seen_at,last_seen_at)
+ SELECT $6,t.deployment_id,r.commit_sha,r.image_digest,t.event_count,t.first_seen_at,t.last_seen_at
+ FROM transferred t JOIN issue_releases r ON r.issue_id=$1 AND r.deployment_id=t.deployment_id
+), delete_empty_releases AS (
+ DELETE FROM issue_releases r USING transferred t WHERE r.issue_id=$1 AND r.deployment_id=t.deployment_id AND r.event_count=t.event_count
+), reduce_source_releases AS (
+ UPDATE issue_releases r SET event_count=r.event_count-t.event_count FROM transferred t
+ WHERE r.issue_id=$1 AND r.deployment_id=t.deployment_id AND r.event_count>t.event_count
+), reduce_source AS (
+ UPDATE app_issues SET event_count=event_count-(SELECT count(*) FROM selected) WHERE id=$1
+), branch_counts AS (
+ UPDATE app_issues SET event_count=(SELECT count(*) FROM selected),first_seen_at=COALESCE((SELECT min(occurred_at) FROM selected),first_seen_at),last_seen_at=COALESCE((SELECT max(occurred_at) FROM selected),last_seen_at)
+ WHERE id=$6
+)
+SELECT count(*)::bigint AS moved_event_count FROM selected
+`
+
+type IssueApplySplitRuleParams struct {
+	SourceIssueID pgtype.UUID
+	ExceptionType string
+	ErrorCode     string
+	Route         string
+	SourceKind    string
+	TargetIssueID pgtype.UUID
+}
+
+func (q *Queries) IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApplySplitRuleParams) (int64, error) {
+	row := db.QueryRow(ctx, issueApplySplitRule,
+		arg.SourceIssueID,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+		arg.TargetIssueID,
+	)
+	var moved_event_count int64
+	err := row.Scan(&moved_event_count)
+	return moved_event_count, err
+}
+
 const issueAssigneeAllowed = `-- name: IssueAssigneeAllowed :one
 SELECT EXISTS(SELECT 1 FROM apps a LEFT JOIN org_memberships m ON m.org_id=a.org_id AND m.account_id=$1 AND m.removed_at IS NULL
 WHERE a.id=$2 AND (a.account_id=$1 OR m.account_id IS NOT NULL))
@@ -28574,6 +28760,23 @@ func (q *Queries) IssueAttribution(ctx context.Context, db DBTX, arg IssueAttrib
 	return items, nil
 }
 
+const issueCanonicalID = `-- name: IssueCanonicalID :one
+SELECT a.canonical_issue_id FROM issue_group_assignments a JOIN app_issues i ON i.id=a.original_issue_id
+WHERE i.app_id=$1 AND i.id=$2
+`
+
+type IssueCanonicalIDParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueCanonicalID(ctx context.Context, db DBTX, arg IssueCanonicalIDParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, issueCanonicalID, arg.AppID, arg.ID)
+	var canonical_issue_id pgtype.UUID
+	err := row.Scan(&canonical_issue_id)
+	return canonical_issue_id, err
+}
+
 const issueCount = `-- name: IssueCount :one
 SELECT count(*) FROM app_issues WHERE app_id = $1
 `
@@ -28625,7 +28828,7 @@ func (q *Queries) IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UU
 
 const issueCreate = `-- name: IssueCreate :one
 INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+VALUES($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueCreateParams struct {
@@ -28667,6 +28870,118 @@ func (q *Queries) IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParam
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
+	)
+	return i, err
+}
+
+const issueCreateSplitGroup = `-- name: IssueCreateSplitGroup :one
+INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at,assignee_account_id,split_source_issue_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
+`
+
+type IssueCreateSplitGroupParams struct {
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Environment       string
+	Fingerprint       string
+	GroupingVersion   int32
+	Title             string
+	Now               pgtype.Timestamptz
+	AssigneeAccountID pgtype.UUID
+	SourceIssueID     pgtype.UUID
+}
+
+func (q *Queries) IssueCreateSplitGroup(ctx context.Context, db DBTX, arg IssueCreateSplitGroupParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueCreateSplitGroup,
+		arg.AccountID,
+		arg.AppID,
+		arg.Environment,
+		arg.Fingerprint,
+		arg.GroupingVersion,
+		arg.Title,
+		arg.Now,
+		arg.AssigneeAccountID,
+		arg.SourceIssueID,
+	)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
+	)
+	return i, err
+}
+
+const issueCreateSplitRule = `-- name: IssueCreateSplitRule :one
+INSERT INTO issue_split_rules(id,app_id,environment,source_issue_id,target_issue_id,priority,exception_type,error_code,route,source_kind,initial_moved_event_count,unavailable_history_event_count,created_at,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at
+`
+
+type IssueCreateSplitRuleParams struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	Environment      string
+	SourceIssueID    pgtype.UUID
+	TargetIssueID    pgtype.UUID
+	Priority         int32
+	ExceptionType    string
+	ErrorCode        string
+	Route            string
+	SourceKind       string
+	MovedCount       int64
+	UnavailableCount int64
+	Now              pgtype.Timestamptz
+}
+
+func (q *Queries) IssueCreateSplitRule(ctx context.Context, db DBTX, arg IssueCreateSplitRuleParams) (IssueSplitRule, error) {
+	row := db.QueryRow(ctx, issueCreateSplitRule,
+		arg.ID,
+		arg.AppID,
+		arg.Environment,
+		arg.SourceIssueID,
+		arg.TargetIssueID,
+		arg.Priority,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+		arg.MovedCount,
+		arg.UnavailableCount,
+		arg.Now,
+	)
+	var i IssueSplitRule
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Environment,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.Priority,
+		&i.ExceptionType,
+		&i.ErrorCode,
+		&i.Route,
+		&i.SourceKind,
+		&i.Enabled,
+		&i.InitialMovedEventCount,
+		&i.UnavailableHistoryEventCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -28803,7 +29118,9 @@ func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg Issue
 }
 
 const issueExpiredIgnores = `-- name: IssueExpiredIgnores :many
-SELECT app_id,id FROM app_issues WHERE state='ignored' AND ignored_until <= $1 ORDER BY ignored_until LIMIT $2
+SELECT app_id,id FROM app_issues i WHERE state='ignored' AND ignored_until <= $1
+AND NOT EXISTS (SELECT 1 FROM issue_group_links l WHERE l.issue_id=i.id)
+ORDER BY ignored_until LIMIT $2
 `
 
 type IssueExpiredIgnoresParams struct {
@@ -28859,7 +29176,7 @@ func (q *Queries) IssueFindEvent(ctx context.Context, db DBTX, arg IssueFindEven
 }
 
 const issueFindGroup = `-- name: IssueFindGroup :one
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND environment = $2
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM app_issues WHERE app_id = $1 AND environment = $2
 AND grouping_version = $3 AND fingerprint = $4 FOR UPDATE
 `
 
@@ -28896,8 +29213,39 @@ func (q *Queries) IssueFindGroup(ctx context.Context, db DBTX, arg IssueFindGrou
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
+}
+
+const issueFindSplitTarget = `-- name: IssueFindSplitTarget :one
+SELECT target_issue_id FROM issue_split_rules WHERE source_issue_id=$1 AND enabled
+AND (exception_type='' OR exception_type=$2::text)
+AND (error_code='' OR error_code=$3::text)
+AND (route='' OR route=$4::text)
+AND (source_kind='' OR source_kind=$5::text)
+ORDER BY priority LIMIT 1
+`
+
+type IssueFindSplitTargetParams struct {
+	SourceIssueID pgtype.UUID
+	ExceptionType string
+	ErrorCode     string
+	Route         string
+	SourceKind    string
+}
+
+func (q *Queries) IssueFindSplitTarget(ctx context.Context, db DBTX, arg IssueFindSplitTargetParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, issueFindSplitTarget,
+		arg.SourceIssueID,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+	)
+	var target_issue_id pgtype.UUID
+	err := row.Scan(&target_issue_id)
+	return target_issue_id, err
 }
 
 const issueFindToken = `-- name: IssueFindToken :one
@@ -28928,7 +29276,7 @@ func (q *Queries) IssueFindToken(ctx context.Context, db DBTX, arg IssueFindToke
 }
 
 const issueGet = `-- name: IssueGet :one
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM app_issues WHERE app_id = $1 AND id = $2
 `
 
 type IssueGetParams struct {
@@ -28957,6 +29305,42 @@ func (q *Queries) IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (Ap
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
+	)
+	return i, err
+}
+
+const issueGetGroup = `-- name: IssueGetGroup :one
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM issue_group_rollups WHERE app_id=$1 AND id=$2
+`
+
+type IssueGetGroupParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueGetGroup(ctx context.Context, db DBTX, arg IssueGetGroupParams) (IssueGroupRollup, error) {
+	row := db.QueryRow(ctx, issueGetGroup, arg.AppID, arg.ID)
+	var i IssueGroupRollup
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
@@ -28973,7 +29357,7 @@ func (q *Queries) IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID 
 }
 
 const issueGetLocked = `-- name: IssueGetLocked :one
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2 FOR UPDATE
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM app_issues WHERE app_id = $1 AND id = $2 FOR UPDATE
 `
 
 type IssueGetLockedParams struct {
@@ -29002,14 +29386,110 @@ func (q *Queries) IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLocke
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
 
+const issueGetSplitRule = `-- name: IssueGetSplitRule :one
+SELECT id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at FROM issue_split_rules WHERE app_id=$1 AND source_issue_id=$2 AND id=$3
+`
+
+type IssueGetSplitRuleParams struct {
+	AppID         pgtype.UUID
+	SourceIssueID pgtype.UUID
+	ID            pgtype.UUID
+}
+
+func (q *Queries) IssueGetSplitRule(ctx context.Context, db DBTX, arg IssueGetSplitRuleParams) (IssueSplitRule, error) {
+	row := db.QueryRow(ctx, issueGetSplitRule, arg.AppID, arg.SourceIssueID, arg.ID)
+	var i IssueSplitRule
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Environment,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.Priority,
+		&i.ExceptionType,
+		&i.ErrorCode,
+		&i.Route,
+		&i.SourceKind,
+		&i.Enabled,
+		&i.InitialMovedEventCount,
+		&i.UnavailableHistoryEventCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueGroupMembers = `-- name: IssueGroupMembers :many
+SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id FROM app_issues i
+WHERE i.id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) ORDER BY (i.id=$1) DESC,i.id
+`
+
+func (q *Queries) IssueGroupMembers(ctx context.Context, db DBTX, id pgtype.UUID) ([]AppIssue, error) {
+	rows, err := db.Query(ctx, issueGroupMembers, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppIssue{}
+	for rows.Next() {
+		var i AppIssue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Environment,
+			&i.Fingerprint,
+			&i.GroupingVersion,
+			&i.Title,
+			&i.State,
+			&i.AssigneeAccountID,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.EventCount,
+			&i.RegressionCount,
+			&i.ResolvedAt,
+			&i.FixedDeploymentID,
+			&i.FixedDeploymentCreatedAt,
+			&i.IgnoredUntil,
+			&i.SplitSourceIssueID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueHasSplitAudit = `-- name: IssueHasSplitAudit :one
+SELECT EXISTS(SELECT 1 FROM issue_activity WHERE issue_id=$1 AND action='split'
+AND details->>'canonical_issue_id'=$2::text)
+`
+
+type IssueHasSplitAuditParams struct {
+	MemberID    pgtype.UUID
+	CanonicalID string
+}
+
+func (q *Queries) IssueHasSplitAudit(ctx context.Context, db DBTX, arg IssueHasSplitAuditParams) (bool, error) {
+	row := db.QueryRow(ctx, issueHasSplitAudit, arg.MemberID, arg.CanonicalID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const issueImpact = `-- name: IssueImpact :one
-SELECT count(*) AS observed_events,count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
-count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
+SELECT count(*) AS observed_events,count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events e
+WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
 `
 
 type IssueImpactParams struct {
@@ -29032,11 +29512,9 @@ func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParam
 }
 
 const issueImpactCustomerCount = `-- name: IssueImpactCustomerCount :one
-SELECT count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id))
-FROM issue_events
-WHERE issue_id=$1
-  AND occurred_at >= $2
-  AND occurred_at <= $3
+SELECT count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id))
+FROM issue_events e
+WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
 `
 
 type IssueImpactCustomerCountParams struct {
@@ -29053,15 +29531,14 @@ func (q *Queries) IssueImpactCustomerCount(ctx context.Context, db DBTX, arg Iss
 }
 
 const issueImpactSummaries = `-- name: IssueImpactSummaries :many
-SELECT issue_id,
-       count(*) AS observed_events,
-       count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
-       count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_events
-WHERE issue_id = ANY($1::uuid[])
-  AND occurred_at >= $2::timestamptz
-  AND occurred_at <= $3::timestamptz
-GROUP BY issue_id
+SELECT a.canonical_issue_id AS issue_id,
+ count(*) AS observed_events,
+ count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+ count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_group_assignments a JOIN issue_events e ON e.issue_id=a.original_issue_id
+WHERE a.canonical_issue_id = ANY($1::uuid[])
+ AND e.occurred_at >= $2::timestamptz AND e.occurred_at <= $3::timestamptz
+GROUP BY a.canonical_issue_id
 `
 
 type IssueImpactSummariesParams struct {
@@ -29103,21 +29580,22 @@ func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueIm
 }
 
 const issueInsertEvent = `-- name: IssueInsertEvent :exec
-INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,original_issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 `
 
 type IssueInsertEventParams struct {
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	EventID      pgtype.UUID
-	IssueID      pgtype.UUID
-	PayloadHash  string
-	Payload      []byte
-	OccurredAt   pgtype.Timestamptz
-	ReceivedAt   pgtype.Timestamptz
-	ConsumerID   pgtype.UUID
-	TenantID     pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	EventID         pgtype.UUID
+	IssueID         pgtype.UUID
+	OriginalIssueID pgtype.UUID
+	PayloadHash     string
+	Payload         []byte
+	OccurredAt      pgtype.Timestamptz
+	ReceivedAt      pgtype.Timestamptz
+	ConsumerID      pgtype.UUID
+	TenantID        pgtype.UUID
 }
 
 func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsertEventParams) error {
@@ -29126,6 +29604,7 @@ func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsert
 		arg.DeploymentID,
 		arg.EventID,
 		arg.IssueID,
+		arg.OriginalIssueID,
 		arg.PayloadHash,
 		arg.Payload,
 		arg.OccurredAt,
@@ -29225,8 +29704,32 @@ func (q *Queries) IssueInvocationScope(ctx context.Context, db DBTX, arg IssueIn
 	return i, err
 }
 
+const issueLinkGroup = `-- name: IssueLinkGroup :exec
+INSERT INTO issue_group_links(issue_id,canonical_issue_id,app_id,environment,linked_at)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type IssueLinkGroupParams struct {
+	SourceID    pgtype.UUID
+	TargetID    pgtype.UUID
+	AppID       pgtype.UUID
+	Environment string
+	Now         pgtype.Timestamptz
+}
+
+func (q *Queries) IssueLinkGroup(ctx context.Context, db DBTX, arg IssueLinkGroupParams) error {
+	_, err := db.Exec(ctx, issueLinkGroup,
+		arg.SourceID,
+		arg.TargetID,
+		arg.AppID,
+		arg.Environment,
+		arg.Now,
+	)
+	return err
+}
+
 const issueList = `-- name: IssueList :many
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM issue_group_rollups WHERE app_id = $1
 AND ($2::text = '' OR state = $2)
 AND ($3::text = '' OR environment = $3)
 AND ($4::uuid IS NULL OR assignee_account_id = $4)
@@ -29246,7 +29749,7 @@ type IssueListParams struct {
 	PageLimit         int32
 }
 
-func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]AppIssue, error) {
+func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]IssueGroupRollup, error) {
 	rows, err := db.Query(ctx, issueList,
 		arg.AppID,
 		arg.State,
@@ -29261,9 +29764,9 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppIssue{}
+	items := []IssueGroupRollup{}
 	for rows.Next() {
-		var i AppIssue
+		var i IssueGroupRollup
 		if err := rows.Scan(
 			&i.ID,
 			&i.AccountID,
@@ -29282,6 +29785,7 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 			&i.FixedDeploymentID,
 			&i.FixedDeploymentCreatedAt,
 			&i.IgnoredUntil,
+			&i.SplitSourceIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -29294,7 +29798,10 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 }
 
 const issueListActivity = `-- name: IssueListActivity :many
-SELECT id, issue_id, action, actor_account_id, created_at, details FROM issue_activity WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (created_at,id) < ($2,$3::uuid)) ORDER BY created_at DESC,id DESC LIMIT $4
+SELECT t.id, t.issue_id, t.action, t.actor_account_id, t.created_at, t.details FROM issue_activity t
+WHERE t.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
+AND ($2::timestamptz IS NULL OR (t.created_at,t.id) < ($2,$3::uuid))
+ORDER BY t.created_at DESC,t.id DESC LIMIT $4
 `
 
 type IssueListActivityParams struct {
@@ -29338,24 +29845,25 @@ func (q *Queries) IssueListActivity(ctx context.Context, db DBTX, arg IssueListA
 
 const issueListByImpact = `-- name: IssueListByImpact :many
 WITH candidate_issues AS MATERIALIZED (
-    SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until FROM app_issues i
+    SELECT i.id,i.account_id,i.app_id,i.environment,i.fingerprint,i.grouping_version,i.title,i.state,i.assignee_account_id,i.first_seen_at::timestamptz AS first_seen_at,i.last_seen_at::timestamptz AS last_seen_at,i.event_count,i.regression_count,i.resolved_at,i.fixed_deployment_id,i.fixed_deployment_created_at,i.ignored_until,i.split_source_issue_id FROM issue_group_rollups i
     WHERE i.app_id = $7
       AND ($8::text = '' OR i.state = $8)
       AND ($9::text = '' OR i.environment = $9)
       AND ($10::uuid IS NULL OR i.assignee_account_id = $10)
       AND (NOT $11::bool OR i.assignee_account_id IS NULL)
 ), issue_impact AS (
-    SELECT e.issue_id,
+    SELECT a.canonical_issue_id AS issue_id,
            count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
            count(*) AS observed_events,
            count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
       FROM candidate_issues i
-      JOIN issue_events e ON e.issue_id = i.id
+      JOIN issue_group_assignments a ON a.canonical_issue_id = i.id
+      JOIN issue_events e ON e.issue_id = a.original_issue_id
      WHERE e.occurred_at >= $12::timestamptz
        AND e.occurred_at <= $13::timestamptz
-     GROUP BY e.issue_id
+     GROUP BY a.canonical_issue_id
 )
-SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until,
+SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id,
        COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
        COALESCE(impact.observed_events,0)::bigint AS observed_events,
        COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
@@ -29411,6 +29919,7 @@ type IssueListByImpactRow struct {
 	FixedDeploymentID        pgtype.UUID
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
+	SplitSourceIssueID       pgtype.UUID
 	IdentifiedCustomers      int64
 	ObservedEvents           int64
 	UnattributedEvents       int64
@@ -29457,6 +29966,7 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 			&i.FixedDeploymentID,
 			&i.FixedDeploymentCreatedAt,
 			&i.IgnoredUntil,
+			&i.SplitSourceIssueID,
 			&i.IdentifiedCustomers,
 			&i.ObservedEvents,
 			&i.UnattributedEvents,
@@ -29472,9 +29982,11 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 }
 
 const issueListEvents = `-- name: IssueListEvents :many
-SELECT id, app_id, deployment_id, event_id, issue_id, payload_hash, payload, occurred_at, received_at, attribution_checked_at, verified_consumer_id, verified_platform_tenant_id FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
-AND ($4::timestamptz IS NULL OR (occurred_at,id) < ($4,$5::uuid))
-ORDER BY occurred_at DESC,id DESC LIMIT $6
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id,COALESCE(e.original_issue_id,e.issue_id) AS provenance_issue_id,i.fingerprint,i.grouping_version FROM issue_events e
+JOIN app_issues i ON i.id=COALESCE(e.original_issue_id,e.issue_id)
+WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
+AND ($4::timestamptz IS NULL OR (e.occurred_at,e.id) < ($4,$5::uuid))
+ORDER BY e.occurred_at DESC,e.id DESC LIMIT $6
 `
 
 type IssueListEventsParams struct {
@@ -29486,7 +29998,26 @@ type IssueListEventsParams struct {
 	PageLimit  int32
 }
 
-func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEventsParams) ([]IssueEvent, error) {
+type IssueListEventsRow struct {
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	DeploymentID             pgtype.UUID
+	EventID                  pgtype.UUID
+	IssueID                  pgtype.UUID
+	PayloadHash              string
+	Payload                  []byte
+	OccurredAt               pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	AttributionCheckedAt     pgtype.Timestamptz
+	VerifiedConsumerID       pgtype.UUID
+	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
+	ProvenanceIssueID        pgtype.UUID
+	Fingerprint              string
+	GroupingVersion          int32
+}
+
+func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEventsParams) ([]IssueListEventsRow, error) {
 	rows, err := db.Query(ctx, issueListEvents,
 		arg.IssueID,
 		arg.Since,
@@ -29499,9 +30030,9 @@ func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEve
 		return nil, err
 	}
 	defer rows.Close()
-	items := []IssueEvent{}
+	items := []IssueListEventsRow{}
 	for rows.Next() {
-		var i IssueEvent
+		var i IssueListEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.AppID,
@@ -29515,6 +30046,53 @@ func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEve
 			&i.AttributionCheckedAt,
 			&i.VerifiedConsumerID,
 			&i.VerifiedPlatformTenantID,
+			&i.OriginalIssueID,
+			&i.ProvenanceIssueID,
+			&i.Fingerprint,
+			&i.GroupingVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListGroupSplitRules = `-- name: IssueListGroupSplitRules :many
+SELECT id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at FROM issue_split_rules
+WHERE source_issue_id IN (SELECT $1::uuid UNION ALL SELECT l.issue_id FROM issue_group_links l WHERE l.canonical_issue_id=$1)
+OR target_issue_id IN (SELECT $1::uuid UNION ALL SELECT l.issue_id FROM issue_group_links l WHERE l.canonical_issue_id=$1)
+ORDER BY source_issue_id,priority
+`
+
+func (q *Queries) IssueListGroupSplitRules(ctx context.Context, db DBTX, issueID pgtype.UUID) ([]IssueSplitRule, error) {
+	rows, err := db.Query(ctx, issueListGroupSplitRules, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueSplitRule{}
+	for rows.Next() {
+		var i IssueSplitRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Environment,
+			&i.SourceIssueID,
+			&i.TargetIssueID,
+			&i.Priority,
+			&i.ExceptionType,
+			&i.ErrorCode,
+			&i.Route,
+			&i.SourceKind,
+			&i.Enabled,
+			&i.InitialMovedEventCount,
+			&i.UnavailableHistoryEventCount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -29568,30 +30146,49 @@ func (q *Queries) IssueListOwnershipRules(ctx context.Context, db DBTX, appID pg
 }
 
 const issueListReleases = `-- name: IssueListReleases :many
-SELECT issue_id, deployment_id, commit_sha, image_digest, event_count, first_seen_at, last_seen_at FROM issue_releases WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (first_seen_at,deployment_id) < ($2,$3::uuid)) ORDER BY first_seen_at DESC,deployment_id DESC LIMIT $4
+WITH releases AS (
+ SELECT $4::uuid AS issue_id,r.deployment_id,
+ max(r.commit_sha)::text AS commit_sha,max(r.image_digest)::text AS image_digest,
+ sum(r.event_count)::bigint AS event_count,min(r.first_seen_at)::timestamptz AS first_seen_at,max(r.last_seen_at)::timestamptz AS last_seen_at
+ FROM issue_releases r
+ WHERE r.issue_id IN (SELECT $4::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$4)
+ GROUP BY r.deployment_id
+)
+SELECT issue_id, deployment_id, commit_sha, image_digest, event_count, first_seen_at, last_seen_at FROM releases WHERE ($1::timestamptz IS NULL OR (first_seen_at,deployment_id) < ($1,$2::uuid))
+ORDER BY first_seen_at DESC,deployment_id DESC LIMIT $3
 `
 
 type IssueListReleasesParams struct {
-	IssueID    pgtype.UUID
 	CursorTime pgtype.Timestamptz
 	CursorID   pgtype.UUID
 	PageLimit  int32
+	IssueID    pgtype.UUID
 }
 
-func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueRelease, error) {
+type IssueListReleasesRow struct {
+	IssueID      pgtype.UUID
+	DeploymentID pgtype.UUID
+	CommitSha    string
+	ImageDigest  string
+	EventCount   int64
+	FirstSeenAt  pgtype.Timestamptz
+	LastSeenAt   pgtype.Timestamptz
+}
+
+func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueListReleasesRow, error) {
 	rows, err := db.Query(ctx, issueListReleases,
-		arg.IssueID,
 		arg.CursorTime,
 		arg.CursorID,
 		arg.PageLimit,
+		arg.IssueID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []IssueRelease{}
+	items := []IssueListReleasesRow{}
 	for rows.Next() {
-		var i IssueRelease
+		var i IssueListReleasesRow
 		if err := rows.Scan(
 			&i.IssueID,
 			&i.DeploymentID,
@@ -29600,6 +30197,46 @@ func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListR
 			&i.EventCount,
 			&i.FirstSeenAt,
 			&i.LastSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListSourceSplitRules = `-- name: IssueListSourceSplitRules :many
+SELECT id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at FROM issue_split_rules WHERE source_issue_id=$1 ORDER BY priority
+`
+
+func (q *Queries) IssueListSourceSplitRules(ctx context.Context, db DBTX, sourceIssueID pgtype.UUID) ([]IssueSplitRule, error) {
+	rows, err := db.Query(ctx, issueListSourceSplitRules, sourceIssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueSplitRule{}
+	for rows.Next() {
+		var i IssueSplitRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Environment,
+			&i.SourceIssueID,
+			&i.TargetIssueID,
+			&i.Priority,
+			&i.ExceptionType,
+			&i.ErrorCode,
+			&i.Route,
+			&i.SourceKind,
+			&i.Enabled,
+			&i.InitialMovedEventCount,
+			&i.UnavailableHistoryEventCount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -29667,7 +30304,7 @@ const issueObserve = `-- name: IssueObserve :one
 UPDATE app_issues SET event_count=event_count+1,first_seen_at=LEAST(first_seen_at,$1),last_seen_at=GREATEST(last_seen_at,$1),
 state=CASE WHEN $2::boolean THEN 'open' ELSE state END,
 regression_count=regression_count+CASE WHEN $2::boolean THEN 1 ELSE 0 END
-WHERE id=$3 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+WHERE id=$3 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueObserveParams struct {
@@ -29697,6 +30334,7 @@ func (q *Queries) IssueObserve(ctx context.Context, db DBTX, arg IssueObservePar
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
@@ -29775,6 +30413,32 @@ func (q *Queries) IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePu
 	return result.RowsAffected(), nil
 }
 
+const issueReopenGroup = `-- name: IssueReopenGroup :exec
+UPDATE app_issues SET state='open' WHERE id=$1
+OR id IN (SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
+`
+
+func (q *Queries) IssueReopenGroup(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueReopenGroup, id)
+	return err
+}
+
+const issueReparentGroup = `-- name: IssueReparentGroup :exec
+UPDATE issue_group_links SET canonical_issue_id=$1,linked_at=$2
+WHERE canonical_issue_id=$3
+`
+
+type IssueReparentGroupParams struct {
+	TargetID pgtype.UUID
+	Now      pgtype.Timestamptz
+	SourceID pgtype.UUID
+}
+
+func (q *Queries) IssueReparentGroup(ctx context.Context, db DBTX, arg IssueReparentGroupParams) error {
+	_, err := db.Exec(ctx, issueReparentGroup, arg.TargetID, arg.Now, arg.SourceID)
+	return err
+}
+
 const issueRequestAttribution = `-- name: IssueRequestAttribution :many
 SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
 WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
@@ -29837,7 +30501,7 @@ func (q *Queries) IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevoke
 
 const issueSetNewIssueAssignee = `-- name: IssueSetNewIssueAssignee :one
 UPDATE app_issues SET assignee_account_id=$1
- WHERE id=$2 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+ WHERE id=$2 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueSetNewIssueAssigneeParams struct {
@@ -29866,8 +30530,115 @@ func (q *Queries) IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg Iss
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
+}
+
+const issueSetSplitRuleEnabled = `-- name: IssueSetSplitRuleEnabled :one
+UPDATE issue_split_rules SET enabled=$1,updated_at=$2 WHERE id=$3 RETURNING id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at
+`
+
+type IssueSetSplitRuleEnabledParams struct {
+	Enabled bool
+	Now     pgtype.Timestamptz
+	ID      pgtype.UUID
+}
+
+func (q *Queries) IssueSetSplitRuleEnabled(ctx context.Context, db DBTX, arg IssueSetSplitRuleEnabledParams) (IssueSplitRule, error) {
+	row := db.QueryRow(ctx, issueSetSplitRuleEnabled, arg.Enabled, arg.Now, arg.ID)
+	var i IssueSplitRule
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Environment,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.Priority,
+		&i.ExceptionType,
+		&i.ErrorCode,
+		&i.Route,
+		&i.SourceKind,
+		&i.Enabled,
+		&i.InitialMovedEventCount,
+		&i.UnavailableHistoryEventCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueSplitPreviewCounts = `-- name: IssueSplitPreviewCounts :one
+WITH evidence AS MATERIALIZED (
+ SELECT e.id,e.occurred_at,
+  NOT EXISTS (SELECT 1 FROM issue_split_rules r WHERE r.source_issue_id=$2 AND r.enabled
+   AND (r.exception_type='' OR r.exception_type=e.payload->>'exception_type')
+   AND (r.error_code='' OR r.error_code=e.payload->>'error_code')
+   AND (r.route='' OR r.route=e.payload->>'route')
+   AND (r.source_kind='' OR r.source_kind=e.payload->>'source_kind')) AS eligible,
+  ($3::text = '' OR payload->>'exception_type' = $3)
+  AND ($4::text = '' OR payload->>'error_code' = $4)
+  AND ($5::text = '' OR payload->>'route' = $5)
+  AND ($6::text = '' OR payload->>'source_kind' = $6) AS matches
+ FROM issue_events e WHERE e.issue_id = $2
+)
+SELECT count(*)::bigint AS retained_event_count,
+ count(*) FILTER (WHERE matches)::bigint AS matching_event_count,
+ count(*) FILTER (WHERE matches AND eligible)::bigint AS eligible_event_count,
+ count(*) FILTER (WHERE matches AND NOT eligible)::bigint AS shadowed_event_count,
+ ARRAY(SELECT id FROM evidence WHERE matches AND eligible ORDER BY occurred_at DESC,id DESC LIMIT $1)::uuid[] AS eligible_event_ids,
+ ARRAY(SELECT id FROM evidence WHERE matches ORDER BY occurred_at DESC,id DESC LIMIT $1)::uuid[] AS matching_event_ids
+FROM evidence
+`
+
+type IssueSplitPreviewCountsParams struct {
+	SampleLimit   int32
+	IssueID       pgtype.UUID
+	ExceptionType string
+	ErrorCode     string
+	Route         string
+	SourceKind    string
+}
+
+type IssueSplitPreviewCountsRow struct {
+	RetainedEventCount int64
+	MatchingEventCount int64
+	EligibleEventCount int64
+	ShadowedEventCount int64
+	EligibleEventIds   []pgtype.UUID
+	MatchingEventIds   []pgtype.UUID
+}
+
+func (q *Queries) IssueSplitPreviewCounts(ctx context.Context, db DBTX, arg IssueSplitPreviewCountsParams) (IssueSplitPreviewCountsRow, error) {
+	row := db.QueryRow(ctx, issueSplitPreviewCounts,
+		arg.SampleLimit,
+		arg.IssueID,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+	)
+	var i IssueSplitPreviewCountsRow
+	err := row.Scan(
+		&i.RetainedEventCount,
+		&i.MatchingEventCount,
+		&i.EligibleEventCount,
+		&i.ShadowedEventCount,
+		&i.EligibleEventIds,
+		&i.MatchingEventIds,
+	)
+	return i, err
+}
+
+const issueSyncGroupAction = `-- name: IssueSyncGroupAction :exec
+UPDATE app_issues i SET state=r.state,assignee_account_id=r.assignee_account_id,resolved_at=r.resolved_at,
+fixed_deployment_id=r.fixed_deployment_id,fixed_deployment_created_at=r.fixed_deployment_created_at,ignored_until=r.ignored_until
+FROM app_issues r WHERE r.id=$1 AND i.id IN (SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=r.id)
+`
+
+func (q *Queries) IssueSyncGroupAction(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueSyncGroupAction, id)
+	return err
 }
 
 const issueTokenStillValid = `-- name: IssueTokenStillValid :one
@@ -29894,7 +30665,7 @@ func (q *Queries) IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTo
 }
 
 const issueUnattributedEvents = `-- name: IssueUnattributedEvents :many
-SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
 WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
 AND e.attribution_checked_at < $1 ORDER BY e.attribution_checked_at LIMIT $2
 `
@@ -29917,6 +30688,7 @@ type IssueUnattributedEventsRow struct {
 	AttributionCheckedAt     pgtype.Timestamptz
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
 	AccountID                pgtype.UUID
 	Environment              string
 }
@@ -29943,6 +30715,7 @@ func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg Issu
 			&i.AttributionCheckedAt,
 			&i.VerifiedConsumerID,
 			&i.VerifiedPlatformTenantID,
+			&i.OriginalIssueID,
 			&i.AccountID,
 			&i.Environment,
 		); err != nil {
@@ -29956,9 +30729,26 @@ func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg Issu
 	return items, nil
 }
 
+const issueUnlinkGroup = `-- name: IssueUnlinkGroup :execrows
+DELETE FROM issue_group_links WHERE issue_id=$1 AND canonical_issue_id=$2
+`
+
+type IssueUnlinkGroupParams struct {
+	MemberID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+func (q *Queries) IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error) {
+	result, err := db.Exec(ctx, issueUnlinkGroup, arg.MemberID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const issueUpdateAction = `-- name: IssueUpdateAction :one
 UPDATE app_issues SET state=$1,assignee_account_id=$2,resolved_at=$3,
-fixed_deployment_id=$4,fixed_deployment_created_at=$5,ignored_until=$6 WHERE id=$7 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+fixed_deployment_id=$4,fixed_deployment_created_at=$5,ignored_until=$6 WHERE id=$7 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueUpdateActionParams struct {
@@ -30000,6 +30790,7 @@ func (q *Queries) IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdat
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
@@ -30294,7 +31085,7 @@ SELECT EXISTS (
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
-           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
@@ -31721,7 +32512,7 @@ select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.se
 	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
 	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
 	  where s.account_id = $1::uuid and o.app_id = $2::uuid and ($3::text = '' or o.scope = $3::text)
-	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc
 `
 
@@ -31814,7 +32605,7 @@ SELECT s.scope,
    AND ($3::text = '' OR s.scope = $3::text)
    AND ($4::text = '' OR s.key = $4::text)
    AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
         OR d.override_env_secrets ? s.key)
@@ -31852,7 +32643,7 @@ SELECT s.scope,
    AND ($3::text = '' OR s.scope = $3::text)
    AND ($4::text = '' OR s.key = $4::text)
    AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND sidecar.value->>'type' = 'sidecar'
    AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
 ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC
@@ -38230,11 +39021,11 @@ const listReadinessFollowUps = `-- name: ListReadinessFollowUps :many
 SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_id',s.id,'subscription_name',s.payload #>> '{subscription,name}',
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
- 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{escalation_response,source,platform_tenant_id}',''),s.tenant_id::text),
+ 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{escalation_response,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{playbook_evidence,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
- 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation',
- 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}',n.payload #>> '{escalation_response,source,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}',n.payload #>> '{escalation_response,source,instance_id}'),
- 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}',n.payload #> '{escalation_response,source,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}',n.payload #>> '{escalation_response,source,operation}'),
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation','playbook_escalation',n.payload->'playbook_escalation','playbook_step',n.payload->'playbook_step','business_impact',n.payload->'business_impact','review_response',n.payload->'review_response',
+ 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}',n.payload #>> '{escalation_response,source,workflow}',n.payload #>> '{playbook_evidence,workflow}',n.payload #>> '{business_impact,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}',n.payload #>> '{escalation_response,source,instance_id}',n.payload #>> '{playbook_evidence,instance_id}'),
+ 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}',n.payload #> '{escalation_response,source,subject}',n.payload #> '{playbook_evidence,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}',n.payload #>> '{escalation_response,source,operation}'),
  'from_state',COALESCE(n.payload #>> '{change,baseline,from_state}',n.payload #>> '{verification,source,from_state}',n.payload #>> '{business_outcome,source,from_state}',n.payload #>> '{escalation_response,source,from_state}'),'to_state',COALESCE(n.payload #>> '{change,baseline,to_state}',n.payload #>> '{verification,source,to_state}',n.payload #>> '{business_outcome,source,to_state}',n.payload #>> '{escalation_response,source,to_state}')
 ))::jsonb AS item
 FROM customer_workflow_readiness_subscriptions s
@@ -38242,7 +39033,7 @@ JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
 WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid
  AND s.scope=$3::text AND s.operator=$4::boolean
  AND (s.operator OR s.tenant_id::text=$5::text)
- AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ AND (n.payload #>> '{coordination,follow_up_at}' IS NOT NULL OR n.payload #> '{coordination,fulfillment_reviews}' @> '[{"review_required":true}]'::jsonb)
 ORDER BY s.id,n.sequence LIMIT $6::integer
 `
 
@@ -41534,7 +42325,7 @@ func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DB
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -41573,6 +42364,7 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -44092,7 +44884,7 @@ const lockRuntimeSecretDeliveryAttempt = `-- name: LockRuntimeSecretDeliveryAtte
 SELECT id FROM instances
 WHERE id=$1::uuid AND app_id=$2::uuid
     AND deployment_id=$3::uuid AND wake_id=$4::uuid
-    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
         OR (NOT $5::boolean AND state='failed'))
 FOR SHARE
 `
@@ -44152,7 +44944,7 @@ SELECT d.id AS deployment_id,COALESCE(NULLIF(d.scope,''),'default')::text AS sco
 FROM apps a JOIN deployments d ON d.app_id=a.id JOIN instances i ON i.deployment_id=d.id AND i.app_id=a.id
 WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND i.id=$3::uuid AND a.status<>'deleted'
     AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
-    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen'))
 FOR SHARE OF a,d FOR KEY SHARE OF i
 `
 
@@ -46256,7 +47048,7 @@ WHERE lifecycle = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM instances
       WHERE instances.node_id = compute_nodes.id
-        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm', 'frozen')
   )
 ORDER BY name
 `
@@ -49164,7 +49956,7 @@ func (q *Queries) ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, ar
 }
 
 const objectLifecycleMultipartList = `-- name: ObjectLifecycleMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
 ORDER BY id LIMIT $6::int
 `
@@ -49236,6 +50028,8 @@ func (q *Queries) ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -49496,7 +50290,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
@@ -49558,12 +50352,14 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
 
 const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
@@ -49618,6 +50414,8 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -49625,36 +50423,38 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 const objectMultipartClaim = `-- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=$1, lease_token=$2,
+checksum_snapshot=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional') THEN $3::jsonb ELSE checksum_snapshot END,
 encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE $2::text END,
 protection_lease_token=CASE WHEN protection_snapshot='{}' THEN '' ELSE $2::text END,
-lease_until=now()+($3::int * interval '1 second'),
-completion_if_match=CASE WHEN state='active' THEN $4::text ELSE completion_if_match END,
-completion_if_none_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_none_match END,
+lease_until=now()+($4::int * interval '1 second'),
+completion_if_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_match END,
+completion_if_none_match=CASE WHEN state='active' THEN $6::text ELSE completion_if_none_match END,
 completion_parts=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional')
-  THEN $6::jsonb ELSE completion_parts END,
+  THEN $7::jsonb ELSE completion_parts END,
 attempt_count=CASE WHEN state<>$1::text THEN 1 ELSE least(attempt_count+1,30) END,
 last_error_code=CASE WHEN state<>$1::text THEN '' ELSE last_error_code END,
 retry_at=now(), updated_at=now()
-WHERE account_id=$7 AND app_id=$8
-AND bucket_id=$9 AND id=$10
+WHERE account_id=$8 AND app_id=$9
+AND bucket_id=$10 AND id=$11
 AND (lease_until IS NULL OR lease_until<now())
 AND (encryption_snapshot='{}' OR octet_length($2::text)<=128)
 AND (retry_at<=now() OR state<>$1::text)
-AND (NOT $11::boolean OR state=$1::text
+AND (NOT $12::boolean OR state=$1::text
   OR (state='active' AND $1::text='aborting'))
 AND (
   ($1::text='initiating' AND state='initiating' AND provider_upload_id='') OR
   ($1::text IN ('completing','completing_conditional') AND (state='active' OR state=$1::text)
-    AND (state<>'active' OR (($1::text='completing') = ($4::text='' AND $5::text='')))
+    AND (state<>'active' OR (($1::text='completing') = ($5::text='' AND $6::text='')))
     AND (state<>'active' OR expires_at>now())
-    AND (state<>'active' OR jsonb_array_length($6::jsonb)>0)) OR
+    AND (state<>'active' OR jsonb_array_length($7::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartClaimParams struct {
 	Operation             string
 	Token                 pgtype.Text
+	ChecksumSnapshot      []byte
 	LeaseSeconds          int32
 	CompletionIfMatch     string
 	CompletionIfNoneMatch string
@@ -49670,6 +50470,7 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 	row := db.QueryRow(ctx, objectMultipartClaim,
 		arg.Operation,
 		arg.Token,
+		arg.ChecksumSnapshot,
 		arg.LeaseSeconds,
 		arg.CompletionIfMatch,
 		arg.CompletionIfNoneMatch,
@@ -49723,6 +50524,8 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -49802,7 +50605,7 @@ func (q *Queries) ObjectMultipartDispatch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -49860,6 +50663,8 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -49893,13 +50698,14 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 }
 
 const objectMultipartFinishResult = `-- name: ObjectMultipartFinishResult :one
-UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=$1::boolean,protection_verified=$2::boolean,completion_etag=$3,completion_version_id=$4,
- completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $5::boolean,
+UPDATE object_storage_multipart_uploads SET state='completed',checksum_verified=$1::boolean,encryption_verified=$2::boolean,protection_verified=$3::boolean,completion_etag=$4,completion_version_id=$5,
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $6::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$6 AND lease_token=$7 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+WHERE id=$7 AND lease_token=$8 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartFinishResultParams struct {
+	ChecksumVerified   bool
 	EncryptionVerified bool
 	ProtectionVerified bool
 	Etag               string
@@ -49911,6 +50717,7 @@ type ObjectMultipartFinishResultParams struct {
 
 func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error) {
 	row := db.QueryRow(ctx, objectMultipartFinishResult,
+		arg.ChecksumVerified,
 		arg.EncryptionVerified,
 		arg.ProtectionVerified,
 		arg.Etag,
@@ -49962,6 +50769,8 @@ func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg 
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -49987,7 +50796,7 @@ func (q *Queries) ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBT
 }
 
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -50048,6 +50857,8 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -50107,8 +50918,8 @@ func (q *Queries) ObjectMultipartInitiationRead(ctx context.Context, db DBTX, mu
 
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision,checksum_snapshot)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint,$16::jsonb) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartInsertParams struct {
@@ -50127,6 +50938,7 @@ type ObjectMultipartInsertParams struct {
 	ProtectionSnapshot        []byte
 	FixedAdmission            bool
 	EncryptionDefaultRevision int64
+	ChecksumSnapshot          []byte
 }
 
 func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error) {
@@ -50146,6 +50958,7 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		arg.ProtectionSnapshot,
 		arg.FixedAdmission,
 		arg.EncryptionDefaultRevision,
+		arg.ChecksumSnapshot,
 	)
 	var i ObjectStorageMultipartUpload
 	err := row.Scan(
@@ -50190,12 +51003,14 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -50265,6 +51080,8 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -50752,7 +51569,7 @@ func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBT
 }
 
 const objectMultipartResultLock = `-- name: ObjectMultipartResultLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
 `
 
 type ObjectMultipartResultLockParams struct {
@@ -50812,6 +51629,8 @@ func (q *Queries) ObjectMultipartResultLock(ctx context.Context, db DBTX, arg Ob
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -51101,18 +51920,19 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 }
 
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
 
 type ObjectNotificationsGetRow struct {
-	Revision  int64
-	Rules     []byte
-	Name      string
-	Region    string
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	Name         string
+	Region       string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -51121,6 +51941,7 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 	err := row.Scan(
 		&i.Revision,
 		&i.Rules,
+		&i.ManagedRules,
 		&i.Name,
 		&i.Region,
 		&i.AccountID,
@@ -51130,18 +51951,24 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
-INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
 `
 
 type ObjectNotificationsSaveParams struct {
-	BucketID pgtype.UUID
-	Revision int64
-	Rules    []byte
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
 }
 
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
-	_, err := db.Exec(ctx, objectNotificationsSave, arg.BucketID, arg.Revision, arg.Rules)
+	_, err := db.Exec(ctx, objectNotificationsSave,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
 	return err
 }
 
@@ -51948,7 +52775,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
 AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
 AND starts_with(object_key,$4::text)
@@ -52026,6 +52853,8 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -56284,7 +57113,7 @@ UPDATE instances SET netns=$1::text, host_ip=$2::inet,
 WHERE id=$5::uuid AND app_id=$6::uuid
     AND deployment_id=$7::uuid AND node_id=$8::uuid
     AND wake_id=$9::uuid AND state=$10::text
-    AND ($10::text<>'warm' OR EXISTS (
+    AND ($10::text NOT IN ('warm','frozen') OR EXISTS (
         SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
             AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
             AND proof.deployment_id=instances.deployment_id
@@ -56773,6 +57602,46 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		&i.Schedule,
 		&i.Variables,
 		&i.JobID,
+	)
+	return i, err
+}
+
+const putGitLabOAuthConnection = `-- name: PutGitLabOAuthConnection :one
+INSERT INTO gitlab_oauth_connections (account_id, gitlab_user_id, username, credentials_sealed, expires_at)
+VALUES ($1::uuid, $2::bigint,
+        $3::text, $4::bytea, $5::timestamptz)
+ON CONFLICT (account_id) DO UPDATE SET gitlab_user_id=EXCLUDED.gitlab_user_id,
+    username=EXCLUDED.username, credentials_sealed=EXCLUDED.credentials_sealed,
+    expires_at=EXCLUDED.expires_at, version=gitlab_oauth_connections.version+1, updated_at=now()
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type PutGitLabOAuthConnectionParams struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, putGitLabOAuthConnection,
+		arg.AccountID,
+		arg.GitlabUserID,
+		arg.Username,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -58299,7 +59168,7 @@ SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
         OR d.override_env_secrets ? s.key)
@@ -58338,7 +59207,7 @@ SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND sidecar.value->>'type' = 'sidecar'
    AND sidecar.value->'env_secrets'->>s.key = 'secret:' || s.key
 )
@@ -59506,6 +60375,7 @@ SELECT jsonb_build_object(
  'issue_releases.deployment_id', (SELECT count(*) FROM issue_releases WHERE deployment_id=$1::uuid),
  'issue_resolutions.fixed_deployment_id', (SELECT count(*) FROM issue_resolutions WHERE fixed_deployment_id=$1::uuid),
  'log_events.deployment_id', (SELECT count(*) FROM log_events WHERE deployment_id=$1::uuid),
+ 'managed_postgres_cutover_drain_plan_members.deployment_id', (SELECT count(*) FROM managed_postgres_cutover_drain_plan_members WHERE deployment_id=$1::uuid),
  'managed_postgres_cutover_drains.deployment_id', (SELECT count(*) FROM managed_postgres_cutover_drains WHERE deployment_id=$1::uuid),
  'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=$1::uuid),
  'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=$1::uuid),
@@ -68590,6 +69460,28 @@ func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db 
 	return i, err
 }
 
+const renewInvocationLease = `-- name: RenewInvocationLease :execrows
+UPDATE invocations
+SET lease_expires_at = now() + $1::integer * interval '1 second'
+WHERE id = $2::uuid AND operation_id IS NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now()
+`
+
+type RenewInvocationLeaseParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewInvocationLease(ctx context.Context, db DBTX, arg RenewInvocationLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, renewInvocationLease, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const renewNotificationClaim = `-- name: RenewNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -70976,7 +71868,7 @@ WITH retained_deployments AS (
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
-           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
@@ -72084,6 +72976,41 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateGitLabOAuthConnection = `-- name: RotateGitLabOAuthConnection :one
+UPDATE gitlab_oauth_connections SET credentials_sealed=$1::bytea,
+    expires_at=$2::timestamptz, version=version+1, updated_at=now()
+WHERE account_id=$3::uuid AND version=$4::bigint
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type RotateGitLabOAuthConnectionParams struct {
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	AccountID         pgtype.UUID
+	ExpectedVersion   int64
+}
+
+func (q *Queries) RotateGitLabOAuthConnection(ctx context.Context, db DBTX, arg RotateGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, rotateGitLabOAuthConnection,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const routeCustomerHealthObservation = `-- name: RouteCustomerHealthObservation :one
@@ -73475,6 +74402,24 @@ func (q *Queries) SaveManagedPostgresCutoverVerification(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const saveReadinessSubscriptionWatches = `-- name: SaveReadinessSubscriptionWatches :execrows
+UPDATE customer_workflow_readiness_subscriptions SET payload=$2, lease_token=NULL, lease_until=NULL, next_evaluation_at=$3 WHERE id=$1
+`
+
+type SaveReadinessSubscriptionWatchesParams struct {
+	ID               pgtype.UUID
+	Payload          []byte
+	NextEvaluationAt pgtype.Timestamptz
+}
+
+func (q *Queries) SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX, arg SaveReadinessSubscriptionWatchesParams) (int64, error) {
+	result, err := db.Exec(ctx, saveReadinessSubscriptionWatches, arg.ID, arg.Payload, arg.NextEvaluationAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveRuntimeInstanceConfigProof = `-- name: SaveRuntimeInstanceConfigProof :exec
 INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
 SELECT id,wake_id,node_id,deployment_id,$1::uuid,$2::text,
@@ -74099,7 +75044,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -74137,6 +75082,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -76237,21 +77183,22 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 
 const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one
 UPDATE app_binding_release_policies p SET mode=$1,revision=p.revision+1,max_age_seconds=$2,
- require_application_ack=$3,reason=$4,updated_at=clock_timestamp()
-FROM apps a WHERE p.app_id=a.id AND a.id=$5 AND a.account_id=$6 AND a.status<>'deleted'
- AND p.scope=$7 AND p.revision=$8
+ require_application_ack=$3,reason=$4,object_storage_requirements=$5::jsonb,updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=$6 AND a.account_id=$7 AND a.status<>'deleted'
+ AND p.scope=$8 AND p.revision=$9
 RETURNING to_jsonb(p)::jsonb AS policy
 `
 
 type UpdateBindingReleasePolicyParams struct {
-	Mode                  string
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
-	Scope                 string
-	ExpectedRevision      int64
+	Mode                      string
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
+	Scope                     string
+	ExpectedRevision          int64
 }
 
 func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error) {
@@ -76260,6 +77207,7 @@ func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg U
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 		arg.Scope,
@@ -76544,7 +77492,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -76590,6 +77538,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -78107,7 +79056,7 @@ func (q *Queries) WithdrawCloneCheckpointPgPublication(ctx context.Context, db D
 const workerAdmissionCount = `-- name: WorkerAdmissionCount :one
 select count(*)::bigint from instances i join apps a on a.id=i.app_id
 where a.account_id=$1 and i.mode='worker'
-and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 `
 
 func (q *Queries) WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
@@ -78676,25 +79625,26 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 }
 
 const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
-INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
-SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6
-FROM apps a WHERE a.id=$7 AND a.account_id=$8 AND a.status<>'deleted'
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements)
+SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb
+FROM apps a WHERE a.id=$8 AND a.account_id=$9 AND a.status<>'deleted'
  AND $3::bigint=0
 ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
- max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,updated_at=clock_timestamp()
 WHERE app_binding_release_policies.revision=$3::bigint
 RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy
 `
 
 type WriteBindingReleasePolicyParams struct {
-	Scope                 string
-	Mode                  string
-	ExpectedRevision      int64
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
+	Scope                     string
+	Mode                      string
+	ExpectedRevision          int64
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
 }
 
 func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error) {
@@ -78705,6 +79655,7 @@ func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg Wr
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 	)

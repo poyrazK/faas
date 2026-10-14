@@ -47,6 +47,11 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		readmeHas []string // substrings the README must contain
 	}{
 		{
+			name:      "object-storage-node",
+			files:     []string{"app.mjs", "server.mjs", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+			readmeHas: []string{"GREGALE_S3_ASSETS", "gregale add bucket", "STORAGE_APP_TOKEN", "SIGHUP", "lease", "--create-only"},
+		},
+		{
 			name:      "customer-platform",
 			files:     []string{"app/server.js", "app/http.js", "app/store.js", "app/schema.sql", "app/migrate.js", "tools/customer.js", "tools/client.js", "Procfile", "Dockerfile", "package.json", "package-lock.json", "README.md"},
 			readmeHas: []string{"platform_tenant_required", "DATABASE_URL", "BYPASSRLS", "gregale secrets set", "retry", "suspend"},
@@ -408,6 +413,7 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		want []string
 	}{
 		{"customer-platform", []string{"DATABASE_URL", "BYPASSRLS", "--platform-tenant-required", "--no-require-authn", "tools/customer.js"}},
+		{"object-storage-node", []string{"--create-only", "--secrets-file", "GREGALE_S3_ASSETS", "STORAGE_APP_TOKEN", "read_write"}},
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
@@ -464,6 +470,8 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		want  string
 		noErr bool
 	}{
+		{tpl: "object-storage-node", want: "missing required secret(s): STORAGE_APP_TOKEN"},
+		{tpl: "object-storage-node", pairs: []secretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
 		{tpl: "customer-platform", want: "missing required secret(s): DATABASE_URL"},
 		{tpl: "customer-platform", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},

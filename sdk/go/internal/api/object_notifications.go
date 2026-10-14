@@ -11,9 +11,10 @@ type ObjectNotificationRule struct {
 }
 
 type ObjectBucketNotifications struct {
-	BucketID string                   `json:"bucket_id"`
-	Revision int64                    `json:"revision"`
-	Rules    []ObjectNotificationRule `json:"rules"`
+	ManagedRuleIDs []string                 `json:"managed_rule_ids,omitempty"`
+	BucketID       string                   `json:"bucket_id"`
+	Revision       int64                    `json:"revision"`
+	Rules          []ObjectNotificationRule `json:"rules"`
 }
 
 type ObjectBucketNotificationsRequest struct {

@@ -12,10 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointCaptureRetirementFailureStore struct {
-	*state.PgStore
+	PgStore                            *state.PgStore
 	loseReserve, loseClaim, loseFinish bool
 }
 
@@ -125,7 +126,7 @@ func checkpointCaptureRetirementFixture(t *testing.T, phase string) (*cloneCoord
 		t.Fatal("source compensation", err)
 	}
 	store := &checkpointCaptureRetirementFailureStore{PgStore: sourceStore.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, &checkpointCaptureRetirementTestDriver{t: t, f: f}
 }
 
@@ -139,7 +140,7 @@ func TestPGCloneCheckpointCaptureRetirementOriginalStatesAndReplay(t *testing.T)
 			if err != nil || d.calls != 1 || d.reads != 1 {
 				t.Fatal("retirement", d.calls, d.reads, err)
 			}
-			in, err := store.ProjectEnvironmentCloneCheckpointCaptureRetirementForLease(t.Context(), f.lease)
+			in, err := store.PgStore.ProjectEnvironmentCloneCheckpointCaptureRetirementForLease(t.Context(), f.lease)
 			if err != nil || in.State != "retired" || in.ObservationSHA256 != cloneCheckpointDigest(d.proof) {
 				t.Fatal("terminal journal", err)
 			}
@@ -171,7 +172,7 @@ func TestPGCloneCheckpointCaptureRetirementLostRepliesAndHandoff(t *testing.T) {
 			if _, err = f.pool.Exec(t.Context(), "UPDATE project_environment_clone_operations SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1", old.Operation.ID); err != nil {
 				t.Fatal(err)
 			}
-			f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+			f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -186,7 +187,7 @@ func TestPGCloneCheckpointCaptureRetirementLostRepliesAndHandoff(t *testing.T) {
 				if !errors.Is(err, objectstorage.ErrNotFound) || d.calls != 0 {
 					t.Fatal("lost claim redispatched or fabricated absence", d.calls, err)
 				}
-				in, err := store.ProjectEnvironmentCloneCheckpointCaptureRetirementForLease(t.Context(), f.lease)
+				in, err := store.PgStore.ProjectEnvironmentCloneCheckpointCaptureRetirementForLease(t.Context(), f.lease)
 				if err != nil || in.State != "requested" {
 					t.Fatal(err)
 				}
@@ -217,13 +218,13 @@ func TestPGCloneCheckpointCaptureRetirementRejectsAdoptedCaptures(t *testing.T) 
 
 func TestPGCloneCheckpointCaptureRetirementUnusedAdoptedCatalogue(t *testing.T) {
 	f, store, d := checkpointCaptureRetirementFixture(t, "adopted")
-	source, err := store.ProjectEnvironmentCloneCheckpointSourceCompensationForLease(t.Context(), f.lease)
+	source, err := store.PgStore.ProjectEnvironmentCloneCheckpointSourceCompensationForLease(t.Context(), f.lease)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, original := range source.Plan.Capture.Sources {
 		if original.Kind == "object_storage" {
-			if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, original.ID); err != nil {
+			if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, original.ID); err != nil {
 				t.Fatal(err)
 			}
 		}

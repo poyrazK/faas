@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -54,7 +55,8 @@ func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (ma
 }
 
 func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Account, app state.App, dep state.Deployment, request api.ResolvedCreateAppTaskRequest) (*state.BindingVerificationPin, error) {
-	if request.CommandShell || len(request.Command) != 2 {
+	write := api.IsObjectStorageWriteProbeCommand(request.Command, request.CommandShell)
+	if !write && (request.CommandShell || len(request.Command) != 2) {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), bindingInventoryReadTimeout)
@@ -84,7 +86,7 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 		if len(section.issues) > 0 {
 			return nil, errors.New("binding metadata unavailable")
 		}
-	case api.AppTaskObjectStorageBindingProbeCommand:
+	case api.AppTaskObjectStorageBindingProbeCommand, api.AppTaskObjectStorageWriteProbeCommand:
 		if !middleware.HasScope(r, api.ScopesStorageManageSurface...) {
 			return nil, nil
 		}
@@ -105,10 +107,25 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 			matches = item.Name == selection
 		}
 		if matches {
+			mode := ""
+			if write {
+				// Pin the current binding permission, not a caller's broader claim.
+				if item.Access != request.Command[2] || !api.ValidObjectStorageWriteProbeMode(item.Access) || item.Scope != scope {
+					return nil, nil
+				}
+				allowed, err := s.object.WriteProbeAllowed(ctx, acct.ID, app.ID, item.Name, scope)
+				if err != nil {
+					return nil, err
+				}
+				if !allowed {
+					return nil, nil
+				}
+				mode = item.Access
+			}
 			// The command selects a service name, while its public inventory key is an env key.
 			base := section.revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)]
 			return &state.BindingVerificationPin{Type: item.Type, Binding: selection,
-				Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration}, nil
+				Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration, ObjectStorageMode: mode}, nil
 		}
 	}
 	return nil, nil // A generic task can probe an unmanaged env key; it supplies no binding evidence.
@@ -122,7 +139,7 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	if inventory.RequestedDeploymentID != "" {
 		dep, err = s.store.DeploymentByID(ctx, inventory.RequestedDeploymentID)
 		if err == nil && (dep.AppID != app.ID || dep.Status != state.DeployLive || dep.RootfsKey == "" || dep.ImageDigest == "") {
-			appendVerificationIssue(inventory)
+			bindings.AppendVerificationIssue(inventory)
 			return
 		}
 	} else {
@@ -132,7 +149,7 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 		return
 	}
 	if err != nil {
-		appendVerificationIssue(inventory)
+		bindings.AppendVerificationIssue(inventory)
 		return
 	}
 	inventory.VerificationDeploymentID, inventory.VerificationScope = dep.ID, dep.Scope
@@ -141,12 +158,12 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	}
 	changedAt, _, err := s.store.AppRuntimeConfigChangedAt(ctx, app.ID)
 	if err != nil {
-		appendVerificationIssue(inventory)
+		bindings.AppendVerificationIssue(inventory)
 		return
 	}
 	store, ok := s.store.(state.BindingVerificationStore)
 	if !ok {
-		appendVerificationIssue(inventory)
+		bindings.AppendVerificationIssue(inventory)
 		return
 	}
 	kinds := []string{api.BindingTypeService}
@@ -162,7 +179,7 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	}
 	tasks, err := store.ListBindingVerificationTasks(ctx, acct.ID, app.ID, kinds, state.BindingVerificationSelection{DeploymentID: dep.ID, AllowFallback: inventory.RequestedDeploymentID == ""})
 	if err != nil {
-		appendVerificationIssue(inventory)
+		bindings.AppendVerificationIssue(inventory)
 		return
 	}
 	byBinding := map[string]state.BindingVerificationTask{}
@@ -202,86 +219,6 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	}
 }
 
-func appendVerificationIssue(inventory *api.AppBindingInventory) {
-	issue := api.BindingInventoryIssue{Type: "verification", Code: "query_failed", Severity: "error", Message: "Binding verification metadata could not be read."}
-	inventory.Issues = append(inventory.Issues, issue)
-	inventory.Warnings = append(inventory.Warnings, issue.Message)
-}
-
 func normalizeBindingVerification(task state.BindingVerificationTask) *api.BindingVerification {
-	result := &api.BindingVerification{Result: "unknown", Source: "task_guest", DeploymentID: task.DeploymentID,
-		Scope: task.Scope, CheckedAt: task.FinishedAt, CredentialGeneration: task.Pin.CredentialGeneration}
-	if !state.AppTaskStatus(task.Status).Terminal() {
-		result.Reason = "probe_pending"
-		return result
-	}
-	if task.OutputTruncated || len(task.Stdout) > 4096 {
-		result.Reason = "report_truncated"
-		return result
-	}
-	switch task.Status {
-	case string(state.AppTaskTimedOut):
-		result.Result, result.Reason = "failed", "probe_timed_out"
-		return result
-	case string(state.AppTaskCancelled):
-		result.Reason = "probe_cancelled"
-		return result
-	}
-	var names, statuses []string
-	reportFailed := false
-	switch task.Pin.Type {
-	case api.BindingTypeService:
-		var report api.ServiceBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Service != task.Pin.Binding {
-			result.Reason = "report_invalid"
-			return result
-		}
-		reportFailed = report.Error != ""
-		names = []string{"dns", "tls", "authorization", "routing"}
-		statuses = []string{report.DNS.Status, report.TLS.Status, report.Authorization.Status, report.Routing.Status}
-	case api.BindingTypePostgres:
-		var report api.PostgresBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.EnvironmentKey != task.Pin.Binding {
-			result.Reason = "report_invalid"
-			return result
-		}
-		reportFailed = report.Error != ""
-		names = []string{"environment", "configuration", "connection", "query"}
-		statuses = []string{report.Environment.Status, report.Configuration.Status, report.Connection.Status, report.Query.Status}
-	case api.BindingTypeOutbound:
-		var report api.OutboundBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.IntegrationID != task.Pin.Binding {
-			result.Reason = "report_invalid"
-			return result
-		}
-		reportFailed = report.Error != ""
-		names = []string{"configuration", "identity", "gateway", "response"}
-		statuses = []string{report.Configuration.Status, report.Identity.Status, report.Gateway.Status, report.Response.Status}
-	case api.BindingTypeObjectStorage:
-		var report api.ObjectStorageBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Prefix != task.Pin.Binding {
-			result.Reason = "report_invalid"
-			return result
-		}
-		reportFailed = report.Error != ""
-		names = []string{"environment", "configuration", "connection", "authorization", "bucket_access"}
-		statuses = []string{report.Environment.Status, report.Configuration.Status, report.Connection.Status, report.Authorization.Status, report.BucketAccess.Status}
-	default:
-		result.Reason = "report_invalid"
-		return result
-	}
-	passed := true
-	for index, status := range statuses {
-		if status != "passed" && status != "failed" && status != "not_checked" {
-			result.Reason = "report_invalid"
-			return result
-		}
-		result.Checks = append(result.Checks, api.BindingVerificationCheck{Name: names[index], Status: status})
-		passed = passed && status == "passed"
-	}
-	result.Result, result.Reason = "failed", "check_failed"
-	if passed && !reportFailed && task.Status == string(state.AppTaskSucceeded) && task.ExitCode != nil && *task.ExitCode == 0 {
-		result.Result, result.Reason = "passed", ""
-	}
-	return result
+	return bindings.NormalizeVerification(task)
 }

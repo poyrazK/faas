@@ -529,6 +529,43 @@ func TestPendingJobMaterializationClaimFailureIsObservable(t *testing.T) {
 	}
 }
 
+// adr: 1161
+func TestMaterializeJobRecordsImageConfigForImageRuns(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "image-run-config@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	ensured, err := store.JobEnsureImageRun(ctx, state.ImageRunEnsure{
+		AccountID: acct.ID, Name: "ir-0123456789abcdef", ImageRef: "registry.example/tool:latest",
+		RAMMB: 256, TaskTimeoutSec: 60, MaxCached: 3,
+	})
+	if err != nil {
+		t.Fatalf("JobEnsureImageRun: %v", err)
+	}
+	puller := &jobMaterializationPuller{
+		digest:   "sha256:" + strings.Repeat("c", 64),
+		manifest: oci.Manifest{Layers: []oci.Descriptor{{Digest: "sha256:" + strings.Repeat("d", 64)}}},
+		config:   oci.ImageConfig{Entrypoint: []string{"/usr/bin/tool"}, Cmd: []string{"--help"}},
+		blob:     []byte("gzip-tar-placeholder"),
+	}
+	appsRoot := t.TempDir()
+	h := New(store, &fakeNotifier{}, puller, &fakeBuilder{bytesOut: 123}, "./guest-init", appsRoot, silentLogger()).
+		WithStorage(mustLocalStorage(t, appsRoot))
+	if err := h.MaterializeJob(ctx, ensured.Job.ID); err != nil {
+		t.Fatalf("MaterializeJob: %v", err)
+	}
+	got, err := store.JobGetByID(ctx, ensured.Job.ID)
+	if err != nil {
+		t.Fatalf("JobGetByID: %v", err)
+	}
+	if got.ImageMaterializationStatus != "ready" || !got.ImageConfigRecorded ||
+		strings.Join(got.ImageEntrypoint, " ") != "/usr/bin/tool" || strings.Join(got.ImageCmd, " ") != "--help" {
+		t.Fatalf("runner job = %+v, want ready with the image ENTRYPOINT and CMD", got)
+	}
+}
+
 var _ oci.ManifestPuller = (*jobMaterializationPuller)(nil)
 var _ oci.AuthPuller = (*jobMaterializationPuller)(nil)
 var _ oci.AuthManifestPuller = (*jobMaterializationPuller)(nil)

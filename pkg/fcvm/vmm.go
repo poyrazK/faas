@@ -402,7 +402,7 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) || guestInitStageLine(line) || benignGuestKernelLine(line) {
+		if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
 			continue
 		}
 		// The guest serial console's tty turns every '\n' into "\r\n"
@@ -425,6 +425,43 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 // guest-init's app restart and crash lines stay customer-visible.
 func guestInitStageLine(line []byte) bool {
 	return bytes.HasPrefix(bytes.TrimSpace(line), []byte("guest-init: stage "))
+}
+
+// guestInitPlatformMessages are the leading words of guest-init's own log
+// messages about platform plumbing. guest-init logs through Go's default slog
+// handler onto the console, so they reached every customer's logs and drains
+// as app stdout - three "WARN stateless advisory fanotify_mark failed" lines
+// on every boot (hunt #10, H10-15). The console file keeps them for operators.
+var guestInitPlatformMessages = []string{
+	"workload identity proxy ", "event publish proxy ", "outbound relay ",
+	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
+	"sidecar ", "healthcheck: ", "WatchOOM",
+}
+
+// guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05
+// LEVEL msg ...") whose message is one of guestInitPlatformMessages. The
+// message match keeps customer apps that also log in this format visible.
+func guestInitPlatformLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	const stamp = len("2006/01/02 15:04:05 ")
+	if len(text) <= stamp || text[4] != '/' || text[7] != '/' || text[10] != ' ' || text[13] != ':' || text[16] != ':' || text[19] != ' ' {
+		return false
+	}
+	level, msg, ok := strings.Cut(text[stamp:], " ")
+	if !ok {
+		return false
+	}
+	switch level {
+	case "DEBUG", "INFO", "WARN", "ERROR":
+	default:
+		return false
+	}
+	for _, prefix := range guestInitPlatformMessages {
+		if strings.HasPrefix(msg, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // benignGuestKernelLine matches kernel messages every guest prints that only
@@ -496,6 +533,7 @@ func firecrackerControlLine(line []byte) bool {
 	}
 	for _, marker := range []string{
 		"running firecracker",
+		"listening on api socket",
 		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
@@ -7468,7 +7506,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	if v.storage == nil {
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
-	rc, err := v.storage.Get(ctx, key)
+	// A wake reads what it fetched from the page cache; the node cache
+	// makes the fill durable and installs it after the wake has it.
+	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}

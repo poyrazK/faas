@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointCredentialFailureStore struct {
@@ -126,7 +127,7 @@ func checkpointCredentialFixture(t *testing.T) (*cloneCoordinatorFixture, *check
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := base.ProjectEnvironmentCloneBindings(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID)
+	views, err := base.PgStore.ProjectEnvironmentCloneBindings(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,12 +153,12 @@ func checkpointCredentialFixture(t *testing.T) (*cloneCoordinatorFixture, *check
 	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{key} }
 	t.Cleanup(func() { setSecretRecipient, mfaIdentities = oldRecipient, oldIdentities })
 	store := &checkpointCredentialFailureStore{checkpointRuntimeFailureStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, &checkpointCredentialTestDriver{checkpointRuntimeTestDriver: runtime, key: key, keys: []*age.X25519Identity{key}, bindingCount: count, credentials: make(map[string]state.ProjectEnvironmentCloneCheckpointPostgresCredentialObservation)}, bindingID, id
 }
 func assertCheckpointCredentialPrivate(t *testing.T, f *cloneCoordinatorFixture, s *checkpointCredentialFailureStore, d *checkpointCredentialTestDriver, bindingID, id, want string) state.ProjectEnvironmentCloneCheckpointPostgresCredential {
 	t.Helper()
-	in, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, bindingID)
+	in, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, bindingID)
 	if err != nil || in.State != want {
 		t.Fatal("credential journal state", in.State, err)
 	}
@@ -441,12 +442,12 @@ func TestPGCloneCheckpointPostgresCredentialCleanupGuard(t *testing.T) {
 	assertCheckpointCredentialPrivate(t, f, s, d, bindingID, id, "sealed")
 	op := f.lease.Operation
 	var err error
-	f.lease.Operation, err = s.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = s.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	reclaimCommonCheckpointWorker(t, f)
-	if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+	if _, err = s.PgStore.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("owned credentials allowed native fork retirement", err)
 	}
 }
@@ -474,7 +475,7 @@ func TestPGCloneCheckpointPostgresCredentialPasswordRedaction(t *testing.T) {
 }
 func TestPGCloneCheckpointPostgresCredentialRejectsForeignSource(t *testing.T) {
 	f, s, _, _, _ := checkpointCredentialFixture(t)
-	if _, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
+	if _, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("foreign binding reserved credential", err)
 	}
 }
@@ -483,7 +484,7 @@ func TestPGCloneCheckpointPostgresCredentialRejectsUnboundEnvelope(t *testing.T)
 	for _, kind := range []string{"namespace", "plan", "length"} {
 		t.Run(kind, func(t *testing.T) {
 			f, s, d, bindingID, id := checkpointCredentialFixture(t)
-			in, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, bindingID)
+			in, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, bindingID)
 			if err != nil {
 				t.Fatal(err)
 			}

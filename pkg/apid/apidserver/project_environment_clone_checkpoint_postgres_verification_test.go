@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointVerificationFailureStore struct {
@@ -83,12 +84,12 @@ func checkpointVerificationFixture(t *testing.T) (*cloneCoordinatorFixture, *che
 		t.Fatal(err)
 	}
 	store := &checkpointVerificationFailureStore{checkpointIsolationFailureStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, &checkpointVerificationTestDriver{checkpointIsolationTestDriver: isolation}, id
 }
 func assertCheckpointVerification(t *testing.T, f *cloneCoordinatorFixture, store *checkpointVerificationFailureStore, id, want string) {
 	t.Helper()
-	in, err := store.ReserveProjectEnvironmentCloneCheckpointPostgresVerification(t.Context(), f.lease, id)
+	in, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresVerification(t.Context(), f.lease, id)
 	if err != nil || in.State != want {
 		t.Fatal("verification state", in.State, err)
 	}
@@ -248,7 +249,7 @@ func TestPGCloneCheckpointPostgresVerificationReplayChangedProof(t *testing.T) {
 }
 func TestPGCloneCheckpointPostgresVerificationRequiresAdoption(t *testing.T) {
 	f, store, _, id := checkpointIsolationFixture(t)
-	if _, err := store.ReserveProjectEnvironmentCloneCheckpointPostgresVerification(t.Context(), f.lease, id); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresVerification(t.Context(), f.lease, id); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("unisolated fork verified", err)
 	}
 }
@@ -342,7 +343,7 @@ func TestPGCloneCheckpointPostgresVerificationLateFailureAndMigration(t *testing
 
 func TestPGCloneCheckpointPostgresVerificationSubstitutedOwner(t *testing.T) {
 	f, store, d, id := checkpointVerificationFixture(t)
-	in, err := store.ReserveProjectEnvironmentCloneCheckpointPostgresVerification(t.Context(), f.lease, id)
+	in, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresVerification(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}

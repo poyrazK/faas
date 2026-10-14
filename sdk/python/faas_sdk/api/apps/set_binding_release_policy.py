@@ -113,7 +113,9 @@ def sync_detailed(
     canary advance evaluate the policy; request flags may only strengthen it.
     New candidates must be admitted with explicit zero traffic. Automatic
     cutovers, legacy recovery and project release graph switches fail closed
-    until they support binding fences. To recover without evidence, explicitly
+    until they support binding fences. Policies with storage requirements must use
+    release-policy-with-object-storage for updates, including explicit clearing.
+    To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
 
@@ -161,7 +163,9 @@ def sync(
     canary advance evaluate the policy; request flags may only strengthen it.
     New candidates must be admitted with explicit zero traffic. Automatic
     cutovers, legacy recovery and project release graph switches fail closed
-    until they support binding fences. To recover without evidence, explicitly
+    until they support binding fences. Policies with storage requirements must use
+    release-policy-with-object-storage for updates, including explicit clearing.
+    To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
 
@@ -204,7 +208,9 @@ async def asyncio_detailed(
     canary advance evaluate the policy; request flags may only strengthen it.
     New candidates must be admitted with explicit zero traffic. Automatic
     cutovers, legacy recovery and project release graph switches fail closed
-    until they support binding fences. To recover without evidence, explicitly
+    until they support binding fences. Policies with storage requirements must use
+    release-policy-with-object-storage for updates, including explicit clearing.
+    To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
 
@@ -250,7 +256,9 @@ async def asyncio(
     canary advance evaluate the policy; request flags may only strengthen it.
     New candidates must be admitted with explicit zero traffic. Automatic
     cutovers, legacy recovery and project release graph switches fail closed
-    until they support binding fences. To recover without evidence, explicitly
+    until they support binding fences. Policies with storage requirements must use
+    release-policy-with-object-storage for updates, including explicit clearing.
+    To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
 

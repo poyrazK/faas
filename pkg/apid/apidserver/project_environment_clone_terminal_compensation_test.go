@@ -11,12 +11,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Embed the production interface implementation so any unexpected legacy/native
 // call fails instead of being silently modeled as successful metadata cleanup.
 type terminalCompensationWorkerTestStore struct {
-	*state.PgStore
+	PgStore              *state.PgStore
 	t                    *testing.T
 	lease                state.ProjectEnvironmentCloneLease
 	events               []string
@@ -25,7 +26,7 @@ type terminalCompensationWorkerTestStore struct {
 	wrongReceipt         bool
 }
 
-var _ projectEnvironmentCloneCoordinatorStore = (*terminalCompensationWorkerTestStore)(nil)
+var _ projectEnvironmentCloneCoordinatorStore = (*statetest.Pg)(nil)
 
 func (s *terminalCompensationWorkerTestStore) ClaimNextProjectEnvironmentClone(_ context.Context, token string, _ time.Duration) (state.ProjectEnvironmentCloneLease, error) {
 	s.events = append(s.events, "claim")
@@ -100,7 +101,7 @@ func terminalCompensationWorkerFixture(t *testing.T) (*server, *terminalCompensa
 			Resources: []state.ProjectEnvironmentCloneResource{{Kind: "data_checkpoint_adoption", Name: "production", Status: "adopted"}}},
 		Token: uuid.NewString(), ExpiresAt: time.Now().Add(time.Minute),
 	}}
-	srv := &server{store: store, cloneWorkerAdmission: func(ctx context.Context) error { store.events = append(store.events, "admit"); return ctx.Err() }}
+	srv := &server{store: statetest.NewPg(store), cloneWorkerAdmission: func(ctx context.Context) error { store.events = append(store.events, "admit"); return ctx.Err() }}
 	return srv, store
 }
 
@@ -110,7 +111,7 @@ func TestCloneTerminalCompensationWorkerCommitsWithoutReleasingClearedLease(t *t
 			srv, store := terminalCompensationWorkerFixture(t)
 			store.lostReply = lost
 			resources := append([]state.ProjectEnvironmentCloneResource(nil), store.lease.Operation.Resources...)
-			if err := srv.processNextProjectEnvironmentClone(t.Context(), store); err != nil {
+			if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{"claim", "renew", "admit", "configuration", "admit", "workloads", "admit", "deployments", "admit", "environment", "admit", "complete"}
@@ -132,7 +133,7 @@ func TestCloneTerminalCompensationWorkerStopsOnEveryFailedPredecessor(t *testing
 		t.Run(step, func(t *testing.T) {
 			srv, store := terminalCompensationWorkerFixture(t)
 			store.failStep = step
-			if err := srv.processNextProjectEnvironmentClone(t.Context(), store); !errors.Is(err, state.ErrConflict) {
+			if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); !errors.Is(err, state.ErrConflict) {
 				t.Fatal(err)
 			}
 			want := []string{"claim", "renew"}
@@ -162,7 +163,7 @@ func TestCloneTerminalCompensationWorkerAdmissionAndReceiptIdentity(t *testing.T
 			case "wrong_receipt":
 				store.wrongReceipt = true
 			}
-			if err := srv.processNextProjectEnvironmentClone(t.Context(), store); err == nil {
+			if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); err == nil {
 				t.Fatal("invalid worker admission or receipt accepted")
 			}
 			if store.committed || store.events[len(store.events)-1] != "release" {
@@ -184,7 +185,7 @@ func TestCloneTerminalCompensationWorkerReturnsTerminalRevision(t *testing.T) {
 	srv, store := terminalCompensationWorkerFixture(t)
 	ctx, cancel := context.WithDeadline(t.Context(), store.lease.ExpiresAt)
 	defer cancel()
-	finished, err := srv.processProjectEnvironmentCloneLease(ctx, store, store.lease)
+	finished, err := srv.processProjectEnvironmentCloneLease(ctx, statetest.NewPg(store), store.lease)
 	if err != nil || finished.Operation.Status != state.CloneOperationCompensated || finished.Operation.Revision != store.lease.Operation.Revision+1 || finished.Token != "" || !finished.ExpiresAt.IsZero() {
 		t.Fatal("terminal lease view", finished, err)
 	}
@@ -206,7 +207,7 @@ func TestCloneTerminalCompensationWorkerStopsWhenHostAdmissionIsLost(t *testing.
 				}
 				return ctx.Err()
 			}
-			if err := srv.processNextProjectEnvironmentClone(t.Context(), store); !errors.Is(err, state.ErrConflict) {
+			if err := srv.processNextProjectEnvironmentClone(t.Context(), statetest.NewPg(store)); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("host loss accepted", err)
 			}
 			want := []string{"claim", "renew"}

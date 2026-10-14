@@ -443,6 +443,9 @@ type Instance struct {
 	// vmmd's live map but do not start liveness/framework monitors until the
 	// scheduler explicitly resumes them.
 	Paused bool
+	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
+	// instance keeps running between requests (quiet_pause.go).
+	QuietPauseAfter time.Duration
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -1165,6 +1168,15 @@ type Manager struct {
 	// host policy so concurrent static-egress and SMTP allowlist changes
 	// cannot overwrite each other's fields.
 	hostPolicyMu sync.Mutex
+
+	// Quiet pause (ADR-1151; quiet_pause.go). quietActivity is nil unless
+	// vmmd.toml enables quiet pause. quietMu guards quietStates and is a
+	// leaf lock: it is never held while m.mu or a quietState lock is taken.
+	quietActivity QuietActivity
+	quietMetrics  *QuietPauseMetrics
+	quietTick     time.Duration
+	quietMu       sync.Mutex
+	quietStates   map[string]*quietState
 }
 
 type appCPUPolicy struct {
@@ -3376,6 +3388,12 @@ type WakeRequest struct {
 	// guest. It is intentionally valid only with Snapshot; cold boots cannot
 	// produce a paused pool entry.
 	KeepPaused bool
+	// QuietPauseAfter (ADR-1151) pauses the instance's vCPUs after this long
+	// without a forwarded request, stream or tail task in flight, and resumes
+	// it on the next one. Zero keeps it running between requests. The
+	// Manager ignores it for instances that cannot be paused safely; see
+	// quietPauseAfterFor.
+	QuietPauseAfter time.Duration
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -4496,7 +4514,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
 	phases.mark("pre_network")
-	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly {
+	// Native recovery serializes host helpers and image staging under one
+	// owner. Starting network helpers alongside jail provisioning can leave a
+	// helper in flight when image staging checks the owner's retired effects.
+	// Complete the network before provisioning on native-owned VMs.
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
 		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
@@ -4791,6 +4813,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		QuietPauseAfter:  quietPauseAfterFor(req, qualificationOnly),
 		ExecutionMode:    req.ExecutionMode,
 		Characterization: report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
@@ -5736,6 +5759,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	if !owner {
 		return flight.killSignal, int32(flight.exitCode), flight.err
 	}
+	// A quiet-paused guest (ADR-1151) cannot act on the signal. The stop is
+	// registered now, so the pause pass will not pause it again.
+	m.quietResumeBestEffort(ctx, instance)
 	interruptOnly := false
 	defer func() { m.finishInstanceTeardown(instance, flight, int(exitCode), killSignalSent, interruptOnly, err) }()
 	joinedOperation := m.hasInstanceOperation(instance)

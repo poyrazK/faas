@@ -112,6 +112,12 @@ Call `Flush(ctx)` or `Close(ctx)` during graceful shutdown, and inspect
 an ungraceful process exit can lose queued events. See
 [`docs/issues.md`](../../docs/issues.md) for the full privacy and token guidance.
 
+Set `IssueReporterOptions.GroupingStrategy` to `"failure-site-v1"` to group by
+the nearest application reporting frame and a normalized message, or a stable
+`IssueContext.ErrorCode`. `FingerprintOverride` takes precedence. The default
+remains legacy grouping. Opting in creates version 2 groups without migrating
+existing issue history; see the grouping transition guidance in `docs/issues.md`.
+
 ## Disposable agent executions
 
 Runs execute in an isolated, networkless microVM with only ephemeral guest
@@ -1209,3 +1215,26 @@ Use the attention reason `sla_breached` to find known breaches. Performance coho
 Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
+
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.
+
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `NewSecretReloadCoordinator` with `storage.SecretConsumer()` to adopt atomic
+credential snapshots on startup, SIGHUP and manual refresh. Start with the
+workload's lifetime context before serving requests. Opt into
+`ObjectStorageBindingOptions[T]{Retire: ...}` and use `Acquire()`/`Release()`
+through response-body closure to retire old clients safely. Managed bindings
+reject raw `Current()` acquisition. After stopping admission and the coordinator,
+use `WaitForRetirement(ctx)` with a fresh shutdown budget. Without a retirement
+hook, `Current()` keeps caller-owned lifetime behavior. All registered consumers
+must succeed before a revision is ACKed.

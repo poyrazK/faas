@@ -5,6 +5,13 @@ daily serialized workflow renews only hosts inside the 30-day issuance
 threshold. The control plane keeps the fleet CA private key and produces a
 separate trust-only bundle for every compute identity.
 
+## Alerts
+
+Every internal mTLS alert is warn except `FaasInternalMTLSLeafExpiryImminent`,
+which pages when a leaf has under 72 hours left (ADR-1236). At that point the
+scheduled renewal has failed for weeks; reissue the leaf by hand before
+internal RPCs to and from that daemon fail.
+
 ## Signals
 
 `faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds` is the earliest

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BackendFromEnv is the shared seaming point for imaged / vmmd / any
@@ -187,11 +189,13 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	// remote fetch. An operator diagnosing wake latency should not have to
 	// infer it from the machine shape.
 	slog.Default().Info("storage: artifact cache budget resolved",
-		"dir", dir, "max_bytes", maxBytes, "source", source)
+		"dir", dir, "max_bytes", maxBytes, "source", source,
+		"min_free_bytes", api.ArtifactCacheMinFreeBytes)
 	cache, err := NewLocalCacheBackend(parent, dir, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache backend: %w", err)
 	}
+	cache.SetMinFreeBytes(api.ArtifactCacheMinFreeBytes)
 	return cache, nil
 }
 

@@ -8,9 +8,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type heldEnvironmentPrimeStore struct{ state.Store }
+type heldEnvironmentPrimeStore struct{ Store state.Store }
 
 func (s heldEnvironmentPrimeStore) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
 	dep, err := s.Store.DeploymentByID(ctx, id)
@@ -23,7 +24,7 @@ func (s heldEnvironmentPrimeStore) DeploymentByID(ctx context.Context, id string
 func TestEnvironmentWorkloadPrimeAndRecoveryHoldBeforeVMAdmission(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 256, 2)
-	engine := newEngine(t, heldEnvironmentPrimeStore{store}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewStore(heldEnvironmentPrimeStore{store}), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	if err := engine.Prime(t.Context(), app.ID, dep.ID); err != nil {
 		t.Fatal(err)
 	}

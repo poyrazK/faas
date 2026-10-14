@@ -9,7 +9,8 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"strings"
+	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -83,7 +84,7 @@ func operationDeclarations(t *testing.T, path string) map[string]string {
 		for _, spec := range general.Specs {
 			switch spec := spec.(type) {
 			case *ast.TypeSpec:
-				dropUnserializedFields(spec.Type)
+				operationWireFields(t, spec.Type)
 				var out bytes.Buffer
 				if err := format.Node(&out, fset, spec.Type); err != nil {
 					t.Fatal(err)
@@ -109,20 +110,65 @@ func operationDeclarations(t *testing.T, path string) map[string]string {
 	return result
 }
 
-// dropUnserializedFields removes `json:"-"` fields from a struct type. The
-// platform keeps server-side evidence on wire types (#4492), and the SDK
-// rightly does not copy fields that never cross the wire.
-func dropUnserializedFields(expr ast.Expr) {
-	structType, ok := expr.(*ast.StructType)
-	if !ok || structType.Fields == nil {
-		return
-	}
-	kept := structType.Fields.List[:0]
-	for _, field := range structType.Fields.List {
-		if field.Tag != nil && strings.Contains(field.Tag.Value, `json:"-"`) {
-			continue
+// Server readiness projections are explicitly absent from JSON. Compare the
+// wire declarations while retaining every serialized field, type and tag.
+func operationWireFields(t *testing.T, declaration ast.Expr) {
+	t.Helper()
+	ast.Inspect(declaration, func(node ast.Node) bool {
+		structure, ok := node.(*ast.StructType)
+		if !ok {
+			return true
 		}
-		kept = append(kept, field)
+		fields := structure.Fields.List[:0]
+		for _, field := range structure.Fields.List {
+			if field.Tag != nil {
+				tag, err := strconv.Unquote(field.Tag.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if reflect.StructTag(tag).Get("json") == "-" {
+					continue
+				}
+			}
+			fields = append(fields, field)
+		}
+		structure.Fields.List = fields
+		return true
+	})
+}
+
+func TestOperationDeclarationsPreserveSerializedFieldDrift(t *testing.T) {
+	baseline := "type Snapshot struct { Value string `json:\"value\"` }"
+	for _, test := range []struct {
+		name        string
+		declaration string
+		match       bool
+	}{
+		{"server projection", "type Snapshot struct { Hidden time.Time `json:\"-\"`; Value string `json:\"value\"` }", true},
+		{"public type", "type Snapshot struct { Value int `json:\"value\"` }", false},
+		{"public name", "type Snapshot struct { Other string `json:\"value\"` }", false},
+		{"public tag", "type Snapshot struct { Value string `json:\"renamed\"` }", false},
+		{"public options", "type Snapshot struct { Value string `json:\"value,omitempty\"` }", false},
+		{"missing field", "type Snapshot struct {}", false},
+		{"extra default field", "type Snapshot struct { Value string `json:\"value\"`; Hidden string }", false},
+		{"empty tag", "type Snapshot struct { Value string `json:\"value\"`; Hidden string `json:\"\"` }", false},
+		{"serialized dash", "type Snapshot struct { Value string `json:\"value\"`; Hidden string `json:\"-,omitempty\"` }", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name, declaration string) map[string]string {
+				t.Helper()
+				path := filepath.Join(dir, name)
+				if err := os.WriteFile(path, []byte("package api\n"+declaration), 0600); err != nil {
+					t.Fatal(err)
+				}
+				return operationDeclarations(t, path)
+			}
+			want := write("baseline.go", baseline)
+			got := write("candidate.go", test.declaration)
+			if match := got["Snapshot"] == want["Snapshot"]; match != test.match {
+				t.Fatalf("wire match = %v, want %v; got %s; want %s", match, test.match, got["Snapshot"], want["Snapshot"])
+			}
+		})
 	}
-	structType.Fields.List = kept
 }

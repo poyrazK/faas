@@ -14,10 +14,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type routeAdviceTestStore struct {
-	*state.MemStore
+	MemStore    *state.MemStore
 	stats       sqlc.RouteAdviceRouteStatsParams
 	excess      []sqlc.RouteAdviceThrottleExcessParams
 	statRows    []sqlc.RouteAdviceRouteStatsRow
@@ -73,7 +74,7 @@ func TestRouteAdviceSuggestsCacheAndThrottle(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	app := apidserver.MustSeedApp(t, e, "shop")
 	store := routeAdviceFixture(e)
-	(*(*e.S()).Store()) = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	out := getRouteAdviceResponse(t, e, "/v1/apps/shop/routes/advice")
 	if out.Slug != "shop" || out.CacheMaxAgeSeconds != 60 || out.RoutesAnalyzed != 2 || out.WindowClamped || len(out.Suggestions) != 2 {
 		t.Fatalf("response = %+v", out)
@@ -113,7 +114,7 @@ func TestRouteAdviceSkipsRulesTheAppAlreadyHas(t *testing.T) {
 	if res.Code != http.StatusCreated {
 		t.Fatalf("create rule: %d %s", res.Code, res.Body.String())
 	}
-	(*(*e.S()).Store()) = routeAdviceFixture(e)
+	(*(*e.S()).Store()) = statetest.NewMem(routeAdviceFixture(e))
 	out := getRouteAdviceResponse(t, e, "/v1/apps/shop/routes/advice")
 	for _, s := range out.Suggestions {
 		if s.Kind == api.RouteAdviceKindCache {
@@ -126,7 +127,7 @@ func TestRouteAdviceWhatIfAndWindow(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
 	apidserver.MustSeedApp(t, e, "shop")
 	store := routeAdviceFixture(e)
-	(*(*e.S()).Store()) = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	out := getRouteAdviceResponse(t, e, "/v1/apps/shop/routes/advice?cache_max_age=300")
 	if out.CacheMaxAgeSeconds != 300 || store.stats.CacheMaxAgeSeconds != 300 {
 		t.Fatalf("what-if max age not applied: %+v / %+v", out, store.stats)
@@ -158,7 +159,7 @@ func TestRouteAdviceRejectsAndDegrades(t *testing.T) {
 	}
 	store := routeAdviceFixture(e)
 	store.err = errors.New("boom")
-	(*(*e.S()).Store()) = store
+	(*(*e.S()).Store()) = statetest.NewMem(store)
 	if res := e.Do(t, "GET", "/v1/apps/shop/routes/advice", nil, nil); res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("read failure: %d %s", res.Code, res.Body.String())
 	}

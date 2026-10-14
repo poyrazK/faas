@@ -805,10 +805,22 @@ type UpsertDevSessionRequest struct {
 	Runtime     string              `json:"runtime,omitempty"`      // required for functions
 	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+	Buckets     []DevBucketRequest  `json:"buckets,omitempty"`
 	// LeaseSeconds chooses how long the environment survives after its
 	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
 	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
 	LeaseSeconds int64 `json:"lease_seconds,omitempty"`
+	// Watch opts the environment into watch mode (ADR-1170): it runs Command,
+	// the app's development server, instead of the production build. Omitted
+	// turns watch mode off. Takes effect from the next developer build.
+	Watch *DevWatch `json:"watch,omitempty"`
+}
+
+// DevWatch is a developer environment's watch-mode setting (ADR-1170).
+type DevWatch struct {
+	// Command starts the development server, for example "npm run dev".
+	// At most DevWatchCommandMaxBytes, one line.
+	Command string `json:"command"`
 }
 
 // DevPatchPreview reports whether one developer sync could have been applied
@@ -861,6 +873,9 @@ type DevSessionResponse struct {
 	App       AppResponse          `json:"app"`
 	ExpiresAt time.Time            `json:"expires_at"`
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
+	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
+	// Watch is the stored watch-mode setting (ADR-1170); omitted when off.
+	Watch *DevWatch `json:"watch,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -884,17 +899,19 @@ type InjectScenarioTestChaosRequest struct {
 
 // ScenarioTestChaosRule describes one bounded HTTP, DNS, or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
-	From             string `json:"from,omitempty"`
-	To               string `json:"to"`
-	Kind             string `json:"kind"`
-	Percent          int    `json:"percent"`
-	LatencyMS        int64  `json:"latency_ms,omitempty"`
-	StatusCode       int    `json:"status_code,omitempty"`
-	Seed             uint64 `json:"seed"`
-	Port             int    `json:"port,omitempty"`
-	Direction        string `json:"direction,omitempty"`
-	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
-	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
+	CorrelationScope  string `json:"correlation_scope,omitempty"`
+	From              string `json:"from,omitempty"`
+	To                string `json:"to"`
+	Kind              string `json:"kind"`
+	Percent           int    `json:"percent"`
+	LatencyMS         int64  `json:"latency_ms,omitempty"`
+	StatusCode        int    `json:"status_code,omitempty"`
+	RetryAfterSeconds int64  `json:"retry_after_seconds,omitempty"`
+	Seed              uint64 `json:"seed"`
+	Port              int    `json:"port,omitempty"`
+	Direction         string `json:"direction,omitempty"`
+	RateKiBPerSecond  int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS      int64  `json:"reset_after_ms,omitempty"`
 }
 
 type InjectScenarioTestChaosResponse struct {
@@ -11081,6 +11098,10 @@ type DebugTelemetrySpan struct {
 	// span (ADR-958): "SELECT orders", an HTTP host, an RPC method. It never
 	// carries literals, paths, query strings or credentials.
 	DependencyName string `json:"dependency_name,omitempty"`
+	// ErrorType is the failure class of an error span ("QueryTimeout",
+	// "503"), from error.type or the first recorded exception.type. Exception
+	// messages and stack traces are never retained.
+	ErrorType string `json:"error_type,omitempty"`
 }
 
 // DebugRequestCriticalPath is the bounded causal path reconstructed from
@@ -11156,6 +11177,13 @@ type DebugDependencyLatencyItem struct {
 	BaselineErrorRatePct   float64 `json:"baseline_error_rate_pct,omitempty"`
 	CurrentErrorRatePct    float64 `json:"current_error_rate_pct,omitempty"`
 	ErrorRateDeltaPct      float64 `json:"error_rate_delta_pct,omitempty"`
+	// FailureRegression is the error-rate counterpart of Regression: enough
+	// calls on both sides, at least 3 failed current calls, and an error rate
+	// at least 5 points and 2x above baseline.
+	FailureRegression bool `json:"failure_regression"`
+	// TopErrorType is the most frequent span failure class, from the current
+	// side when it has failures.
+	TopErrorType string `json:"top_error_type,omitempty"`
 }
 
 // DebugDependencyImpactEdge is a bounded parent-to-child rollup reconstructed
@@ -11703,6 +11731,13 @@ type DebugSuspectedDependency struct {
 	P95BaseMS        int64   `json:"p95_base_ms"`
 	P95MS            int64   `json:"p95_ms"`
 	RegressionFactor float64 `json:"regression_factor"`
+	// Reason is "latency" when the dependency's p95 regressed and "failures"
+	// when it started failing more often. Empty on suspects stored before
+	// failure attribution, which were all latency suspects.
+	Reason               string  `json:"reason,omitempty"`
+	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
+	ErrorRatePct         float64 `json:"error_rate_pct,omitempty"`
+	ErrorType            string  `json:"error_type,omitempty"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug

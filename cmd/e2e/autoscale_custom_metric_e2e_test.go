@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -174,14 +173,11 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 		metricName   = "mcp_tasks_outstanding"
 		perWorker    = 2.0
 	)
-	// An MCP task pool scales to zero only through a separate, always-on
-	// observer that reports a fresh heartbeat (#4490).
 	request := api.CreateAppRequest{
 		Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false),
 		ExecutionMode: api.ExecutionModeWorker, MaxConcurrency: 5,
 		WorkerReplicas: &api.WorkerScaling{
-			Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName, Target: perWorker,
-			ObserverAppSlug: observerSlug,
+			Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: metricName, Target: perWorker, ObserverAppSlug: observerSlug,
 		},
 	}
 	f := newNormalPathFixtureWithRequest(t, slug, api.PlanScale, 0, request)
@@ -189,45 +185,66 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 		return
 	}
 
-	policy := &api.ScalingPolicy{
-		MinInstances:      0,
-		MaxInstances:      5,
-		Targets:           []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: metricName, Value: perWorker}},
-		ScaleOutCooldownS: api.MinScaleOutCooldownS,
-		ScaleInCooldownS:  api.MinScaleInCooldownS,
-	}
-	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
-		api.UpdateAppRequest{ScalingPolicy: policy})
-	if status != http.StatusOK {
-		t.Fatalf("PATCH worker scaling policy: status=%d body=%s", status, body)
-	}
-
-	body, status = doReq(t, f.h, f.key, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	// A separately running observer and its fresh heartbeat own scale-in to
+	// zero. Exercise that production prerequisite rather than bypassing it.
+	body, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: observerSlug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false),
 		ExecutionMode: api.ExecutionModeWorker, MaxConcurrency: 1,
 		WorkerReplicas: &api.WorkerScaling{Min: 1, Max: 1},
 	})
 	if status != http.StatusCreated {
-		t.Fatalf("create MCP task observer: status=%d body=%s", status, body)
+		t.Fatalf("create observer app: status=%d body=%s", status, body)
 	}
-	observer, err := f.store.AppBySlug(f.ctx, observerSlug)
-	if err != nil {
-		t.Fatalf("load MCP task observer: %v", err)
+	var observer api.AppResponse
+	if err := json.Unmarshal(body, &observer); err != nil {
+		t.Fatalf("decode observer: %v", err)
 	}
-	observerDep, err := f.store.CreateDeployment(f.ctx, state.Deployment{
-		AppID: observer.ID, Kind: state.DeploymentKindImage,
-		ImageDigest: "sha256:" + strings.Repeat("4", 64),
+	observerDeployment, err := f.store.CreateDeployment(f.ctx, state.Deployment{
+		AppID: observer.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("4", 64),
 	})
 	if err != nil {
 		t.Fatalf("create observer deployment: %v", err)
 	}
-	if err := f.store.MarkDeploymentLive(f.ctx, observerDep.ID); err != nil {
+	if err := f.store.MarkDeploymentLive(f.ctx, observerDeployment.ID); err != nil {
 		t.Fatalf("mark observer deployment live: %v", err)
 	}
-	publishNormalPathLayer(t, f, observerDep.ID)
-	if _, err := f.store.CreateInstanceWithMode(f.ctx, observer.ID, observerDep.ID, string(state.StateRunning),
-		e2etest.FakeSnapshotRAMMB, f.nodeID, "", string(state.InstanceModeWorker)); err != nil {
-		t.Fatalf("create observer instance: %v", err)
+	publishNormalPathLayer(t, f, observerDeployment.ID)
+	// Store-only promotion does not emit imaged's deployment lifecycle
+	// notification. Start the observer through the public wake path after
+	// its signed rootfs is ready, then verify real worker admission below.
+	body, status = doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+observerSlug+"/wake", nil)
+	if status != http.StatusAccepted && status != http.StatusOK {
+		t.Fatalf("wake observer app: status=%d body=%s", status, body)
+	}
+	observerReady := false
+	for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); {
+		instances, err := f.store.ListInstancesForApp(f.ctx, observer.ID)
+		if err != nil {
+			t.Fatalf("list observer instances: %v", err)
+		}
+		for _, instance := range instances {
+			observerReady = observerReady || (instance.DeploymentID == observerDeployment.ID && instance.Mode == string(state.InstanceModeWorker) && instance.State == string(state.StateRunning))
+		}
+		if observerReady {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !observerReady {
+		t.Fatal("dedicated MCP observer never reached running worker state")
+	}
+
+	policy := &api.ScalingPolicy{
+		MinInstances:      0,
+		MaxInstances:      5,
+		ScaleOutCooldownS: api.MinScaleOutCooldownS,
+		ScaleInCooldownS:  api.MinScaleInCooldownS,
+		Targets:           []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: metricName, Value: perWorker}},
+	}
+	body, status = doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
+		api.UpdateAppRequest{ScalingPolicy: policy})
+	if status != http.StatusOK {
+		t.Fatalf("PATCH worker scaling policy: status=%d body=%s", status, body)
 	}
 
 	dep, err := f.store.CreateDeployment(f.ctx, state.Deployment{
@@ -262,21 +279,19 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 		t.Fatalf("worker pool did not scale to four for fresh MCP backlog: got %d", got)
 	}
 
-	// The observer's fresh heartbeat is what authorizes scale-in.
-	body, status = doReq(t, f.h, f.key, http.MethodPut,
-		"/v1/apps/"+f.app.Slug+"/custom-metrics/mcp_tasks_observer_heartbeat",
-		api.CustomMetricRequest{Value: 1})
-	if status != http.StatusNoContent {
-		t.Fatalf("publish MCP observer heartbeat: status=%d body=%s", status, body)
-	}
 	body, status = doReq(t, f.h, f.key, http.MethodPut,
 		"/v1/apps/"+f.app.Slug+"/custom-metrics/"+metricName,
 		api.CustomMetricRequest{Value: 0})
 	if status != http.StatusNoContent {
 		t.Fatalf("publish empty MCP backlog: status=%d body=%s", status, body)
 	}
-	// Scale-in waits until the peak demand of the last stabilization window
-	// (ADR-829) has dropped, so the four-worker samples must age out first.
+	body, status = doReq(t, f.h, f.key, http.MethodPut,
+		"/v1/apps/"+f.app.Slug+"/custom-metrics/mcp_tasks_observer_heartbeat",
+		api.CustomMetricRequest{Value: 1})
+	if status != http.StatusNoContent {
+		t.Fatalf("publish observer heartbeat: status=%d body=%s", status, body)
+	}
+	// Retain the four-worker demand until the production stabilization window ages out.
 	deadline = time.Now().Add(time.Duration(api.WorkerScaleInStabilizationSeconds)*time.Second + 45*time.Second)
 	for time.Now().Before(deadline) {
 		if mcpWorkerInstanceCount(t, f) == 0 {

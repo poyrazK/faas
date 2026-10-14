@@ -16,7 +16,7 @@ export type WorkflowScheduleResponse = {
    */
   catch_up?: 'skip' | 'latest';
   /**
-   * Effective recovery duration
+   * Effective recovery duration, present only for latest.
    */
   catch_up_window?: string;
   enabled: boolean;
