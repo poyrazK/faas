@@ -193,6 +193,7 @@ from .app_manifest_execution_mode_type_1 import AppManifestExecutionModeType1
 from .app_manifest_execution_mode_type_2_type_1 import AppManifestExecutionModeType2Type1
 from .app_manifest_execution_mode_type_3_type_1 import AppManifestExecutionModeType3Type1
 from .app_manifest_healthcheck import AppManifestHealthcheck
+from .app_manifest_release_policy import AppManifestReleasePolicy
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
@@ -239,6 +240,7 @@ from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_preview_pr_state import AppResponsePreviewPrState
+from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
 from .app_response_status import AppResponseStatus
 from .app_response_type import AppResponseType
@@ -551,6 +553,7 @@ from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
+from .create_app_request_release_policy import CreateAppRequestReleasePolicy
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
@@ -3568,12 +3571,18 @@ from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
 from .rollback_operation_status import RollbackOperationStatus
+from .rollback_operation_trigger import RollbackOperationTrigger
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_aborted_webhook_payload_rollout_state import RolloutAbortedWebhookPayloadRolloutState
 from .rollout_completed_webhook_payload import RolloutCompletedWebhookPayload
 from .rollout_completed_webhook_payload_rollout_state import RolloutCompletedWebhookPayloadRolloutState
+from .rollout_decision import RolloutDecision
+from .rollout_decision_kind import RolloutDecisionKind
+from .rollout_decision_rule import RolloutDecisionRule
+from .rollout_decision_sample import RolloutDecisionSample
+from .rollout_decision_signals import RolloutDecisionSignals
 from .rollout_recovery_receipt import RolloutRecoveryReceipt
 from .rollout_recovery_receipt_restored_traffic_percent import RolloutRecoveryReceiptRestoredTrafficPercent
 from .rollout_transition_response import RolloutTransitionResponse
@@ -4119,6 +4128,9 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_release_policy_type_1 import UpdateAppRequestReleasePolicyType1
+from .update_app_request_release_policy_type_2_type_1 import UpdateAppRequestReleasePolicyType2Type1
+from .update_app_request_release_policy_type_3_type_1 import UpdateAppRequestReleasePolicyType3Type1
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -4640,6 +4652,7 @@ __all__ = (
     "AppManifestExecutionModeType2Type1",
     "AppManifestExecutionModeType3Type1",
     "AppManifestHealthcheck",
+    "AppManifestReleasePolicy",
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
@@ -4686,6 +4699,7 @@ __all__ = (
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponsePreviewPrState",
+    "AppResponseReleasePolicy",
     "AppResponseRuntime",
     "AppResponseStatus",
     "AppResponseType",
@@ -4963,6 +4977,7 @@ __all__ = (
     "CreateAppRequestCrawlerPolicy",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
+    "CreateAppRequestReleasePolicy",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestServiceBindingPolicy",
@@ -7728,12 +7743,18 @@ __all__ = (
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",
     "RollbackOperationStatus",
+    "RollbackOperationTrigger",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutAbortedWebhookPayloadRolloutState",
     "RolloutCompletedWebhookPayload",
     "RolloutCompletedWebhookPayloadRolloutState",
+    "RolloutDecision",
+    "RolloutDecisionKind",
+    "RolloutDecisionRule",
+    "RolloutDecisionSample",
+    "RolloutDecisionSignals",
     "RolloutRecoveryReceipt",
     "RolloutRecoveryReceiptRestoredTrafficPercent",
     "RolloutTransitionResponse",
@@ -8261,6 +8282,9 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestReleasePolicyType1",
+    "UpdateAppRequestReleasePolicyType2Type1",
+    "UpdateAppRequestReleasePolicyType3Type1",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",

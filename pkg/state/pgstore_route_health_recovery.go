@@ -76,7 +76,7 @@ func (s *PgStore) RecoverCanaryRouteHealth(ctx context.Context, accountID, appID
 	if err != nil {
 		return result, err
 	}
-	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, d.ID, report.StableDeploymentID, "abort", "critical route server error regression", nil, &audit)
+	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, d.ID, report.StableDeploymentID, "abort", "critical route server error regression", nil, &audit, nil)
 	if err != nil {
 		return result, err
 	}

@@ -19,6 +19,7 @@ from ..models.app_manifest_execution_mode_type_3_type_1 import (
     AppManifestExecutionModeType3Type1,
     check_app_manifest_execution_mode_type_3_type_1,
 )
+from ..models.app_manifest_release_policy import AppManifestReleasePolicy, check_app_manifest_release_policy
 from ..models.app_manifest_restart_policy_type_1 import (
     AppManifestRestartPolicyType1,
     check_app_manifest_restart_policy_type_1,
@@ -184,6 +185,8 @@ class AppManifest:
     """Whether the edge issues its own host-only rollout-affinity cookie."""
     revision_pin_ttl_seconds: int | Unset = 0
     """Configured revision pin window in seconds; zero disables pinning."""
+    release_policy: AppManifestReleasePolicy | Unset = UNSET
+    """Effective default rollout for production releases (ADR-1160)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -362,6 +365,10 @@ class AppManifest:
 
         revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
+        release_policy: str | Unset = UNSET
+        if not isinstance(self.release_policy, Unset):
+            release_policy = self.release_policy
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -439,6 +446,8 @@ class AppManifest:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if revision_pin_ttl_seconds is not UNSET:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
 
         return field_dict
 
@@ -811,6 +820,13 @@ class AppManifest:
 
         revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
+        _release_policy = d.pop("release_policy", UNSET)
+        release_policy: AppManifestReleasePolicy | Unset
+        if isinstance(_release_policy, Unset):
+            release_policy = UNSET
+        else:
+            release_policy = check_app_manifest_release_policy(_release_policy)
+
         app_manifest = cls(
             entrypoint=entrypoint,
             profiling=profiling,
@@ -848,6 +864,7 @@ class AppManifest:
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
         )
 
         app_manifest.additional_properties = d

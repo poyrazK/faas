@@ -165,6 +165,10 @@ export type AppResponse = {
    */
   revision_pin_ttl_seconds?: number;
   /**
+   * Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the balanced health-gated canary with first-wake 5xx rollback; immediate moves all traffic at once.
+   */
+  release_policy?: 'safe' | 'immediate';
+  /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;

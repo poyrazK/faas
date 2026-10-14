@@ -12,6 +12,7 @@ import type { DevPatchPreview } from './DevPatchPreview.js';
 import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { RollbackOperation } from './RollbackOperation.js';
+import type { RolloutDecision } from './RolloutDecision.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
@@ -255,6 +256,14 @@ export type DeploymentResponse = {
    * Operator or orchestrator reason recorded when the rollout is aborted.
    */
   rollout_aborted_reason?: string;
+  /**
+   * Evidence recorded with the latest rollout transition (ADR-1237). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort.
+   */
+  rollout_decision?: RolloutDecision;
+  /**
+   * The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1237). Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  rollout_hold?: RolloutDecision;
   rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
 };

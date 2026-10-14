@@ -317,6 +317,15 @@ const RollbackOutcomeBatchSize = 100
 // Plan-independent: it bounds a wait, it does not price anything.
 const CanaryLowTrafficMaxHold = 5 * time.Minute
 
+// Explained rollout decisions (ADR-1237). A decision record is aggregate-only
+// evidence, bounded so a malformed worker request cannot grow the deployment
+// row or its audit timeline. A held canary records its hold again only after
+// RolloutHoldRefreshInterval unless the hold's rule changes, so a long hold
+// adds at most one audit row per rule per interval.
+const RolloutDecisionMaxBytes = 2048
+const RolloutDecisionSummaryMaxBytes = 256
+const RolloutHoldRefreshInterval = 5 * time.Minute
+
 // Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
 // below DefaultClientTimeout so a slow invocation answers with a 504 naming
 // the invocation rather than a client-side "could not reach Gregale".

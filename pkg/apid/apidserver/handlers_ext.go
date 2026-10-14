@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -2017,7 +2018,7 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
+	writeJSON(w, http.StatusOK, s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app)))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -5915,6 +5916,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 		RolloutCompletedAt:   d.RolloutCompletedAt,
 		RolloutAbortedAt:     d.RolloutAbortedAt,
 		RolloutAbortedReason: d.RolloutAbortedReason,
+		RolloutDecision:      release.DecodeDecision(d.RolloutDecision),
 		APIHostingReceipt:    d.APIHostingReceipt,
 	}
 	if d.ServiceRolloutHandoff.Action != "" {

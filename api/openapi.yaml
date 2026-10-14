@@ -66214,6 +66214,12 @@ components:
         rollout_aborted_reason:
           type: string
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
+        rollout_decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "Evidence recorded with the latest rollout transition (ADR-1237). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort."
+        rollout_hold:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1237). Filled on GET /v1/deployments/{id} and the deployment summary."
         rollback_operation:
           $ref: '#/components/schemas/RollbackOperation'
         service_rollout_handoff:
@@ -66430,6 +66436,57 @@ components:
           minimum: 0
           description: "The canary_step the caller read before requesting the next stage."
           example: 1
+        decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "Reserved for Gregale's Safe Deploy worker (ADR-1237). Public requests that set it are rejected with 422."
+
+    RolloutDecision:
+      description: "Evidence behind one decision about a rollout (ADR-1237): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text."
+      type: object
+      required: [kind, rule, step, traffic_percent, decided_at]
+      properties:
+        kind: { type: string, enum: [advance, hold, abort] }
+        rule:
+          type: string
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired]
+          description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
+        summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
+        step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The candidate's share during the observation window." }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        stable_deployment_id: { type: string, format: uuid }
+        candidate: { $ref: '#/components/schemas/RolloutDecisionSample' }
+        stable: { $ref: '#/components/schemas/RolloutDecisionSample' }
+        probes_included: { type: boolean, description: "The 5xx sample included synthetic probes of the app (ADR-1160)." }
+        signals: { $ref: '#/components/schemas/RolloutDecisionSignals' }
+        decided_at: { type: string, format: date-time }
+
+    RolloutDecisionSample:
+      description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
+      type: object
+      required: [requests, server_errors]
+      properties:
+        requests: { type: integer, minimum: 0 }
+        server_errors: { type: integer, minimum: 0 }
+        probe_requests: { type: integer, minimum: 0 }
+        probe_server_errors: { type: integer, minimum: 0 }
+        p95_latency_ms: { type: number, minimum: 0 }
+        cold_boot_requests: { type: integer, minimum: 0 }
+        cold_boot_p95_latency_ms: { type: number, minimum: 0 }
+        cpu_requests: { type: integer, minimum: 0 }
+        cpu_usec: { type: integer, minimum: 0 }
+        dependency_calls: { type: integer, minimum: 0 }
+        dependency_errors: { type: integer, minimum: 0 }
+
+    RolloutDecisionSignals:
+      description: "The candidate's OOM kills and both sides' liveness-driven restarts over the window."
+      type: object
+      required: [oom_kills, candidate_liveness_restarts, stable_liveness_restarts]
+      properties:
+        oom_kills: { type: number, minimum: 0 }
+        candidate_liveness_restarts: { type: number, minimum: 0 }
+        stable_liveness_restarts: { type: number, minimum: 0 }
 
     CanaryAdvanceResponse:
       description: "The atomic canary transition result and the deployment_audit row id."
@@ -85349,6 +85406,9 @@ components:
         rollout_state: { type: string, enum: [complete] }
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         completed_at: { type: string, format: date-time }
+        decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "The advance evidence that completed the rollout (ADR-1237)."
       additionalProperties: true
 
     RolloutAbortedWebhookPayload:
@@ -85362,6 +85422,9 @@ components:
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         reason: { type: string }
         aborted_at: { type: string, format: date-time }
+        decision:
+          $ref: '#/components/schemas/RolloutDecision'
+          description: "The abort evidence when the circuit breaker, a person, or the worker lease expiry aborted the rollout (ADR-1237). Aborts by route monitors, alert rollbacks and profile gates carry only reason."
       additionalProperties: true
 
     ErrorNewWebhookPayload:

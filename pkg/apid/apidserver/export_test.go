@@ -845,7 +845,7 @@ func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 func (r *server) ManagedPostgresCutovers() **managedpostgres.CutoverService {
 	return &r.managedPostgresCutovers
 }
-func (r *server) Notif() *Notifier                        { return &r.notif }
+func (r *server) Notif() *Notifier { return &r.notif }
 func (r *server) DrainRouteProbes(ctx context.Context) error {
 	return r.drainRouteProbes(ctx)
 }

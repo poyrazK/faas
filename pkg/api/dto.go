@@ -3387,11 +3387,19 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState          string                         `json:"rollout_state,omitempty"`
-	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RolloutState         string     `json:"rollout_state,omitempty"`
+	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the evidence recorded with the latest rollout
+	// transition (ADR-1237). It explains an outcome only when its kind matches:
+	// an advance record for completion, an abort record for an abort.
+	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
+	// RolloutHold is the newest hold recorded since the current canary step
+	// started, while the rollout is in flight (ADR-1237). Only single-deployment
+	// reads and the deployment summary fill it.
+	RolloutHold           *RolloutDecision               `json:"rollout_hold,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
@@ -3556,6 +3564,9 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
+	// Decision is the circuit-breaker evidence for this advance (ADR-1237).
+	// Reserved for the lease-bound internal worker; public requests reject it.
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
@@ -11948,6 +11959,8 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+	// Decision is the circuit-breaker evidence for the abort (ADR-1237).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutTransitionResponse is the body returned by

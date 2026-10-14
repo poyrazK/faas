@@ -379,6 +379,10 @@ type CanaryAdvanceParams struct {
 	RouteCheckFingerprint     RouteCheckFingerprinter
 	RouteGateDecision         *api.RouteGateDecision
 	RouteHealthDecision       *api.RouteHealthDecision
+	// Decision is the validated api.RolloutDecision behind this advance
+	// (ADR-1237). It is written to deployments.rollout_decision in the same
+	// UPDATE as the traffic change; nil clears the column.
+	Decision json.RawMessage
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test

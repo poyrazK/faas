@@ -152,6 +152,10 @@ export type CreateAppRequest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
+   * Default rollout for production releases that name no rollout policy (ADR-1160). Omit for safe.
+   */
+  release_policy?: 'safe' | 'immediate';
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

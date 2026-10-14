@@ -1871,6 +1871,9 @@ export type { RollbackOperatorRuntimeConfigRequest } from './RollbackOperatorRun
 export type { RollbackRequest } from './RollbackRequest.js';
 export type { RolloutAbortedWebhookPayload } from './RolloutAbortedWebhookPayload.js';
 export type { RolloutCompletedWebhookPayload } from './RolloutCompletedWebhookPayload.js';
+export type { RolloutDecision } from './RolloutDecision.js';
+export type { RolloutDecisionSample } from './RolloutDecisionSample.js';
+export type { RolloutDecisionSignals } from './RolloutDecisionSignals.js';
 export type { RolloutRecoveryReceipt } from './RolloutRecoveryReceipt.js';
 export type { RolloutTransitionResponse } from './RolloutTransitionResponse.js';
 export type { RotateAlertRuleSecretRequest } from './RotateAlertRuleSecretRequest.js';

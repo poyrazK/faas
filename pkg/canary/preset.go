@@ -110,13 +110,16 @@ type exactRolloutRecoveryClient interface {
 // returns []state.Deployment; the meterd wiring wraps each row into
 // this shape at the seam.
 type CanaryRow struct {
-	ID                string
-	AppID             string
-	AppSlug           string
-	Scope             string
-	CanaryPreset      string
-	CanaryStep        int
-	CanaryTotalSteps  int
+	ID               string
+	AppID            string
+	AppSlug          string
+	Scope            string
+	CanaryPreset     string
+	CanaryStep       int
+	CanaryTotalSteps int
+	// TrafficPercent is the candidate's current share; rollout decision
+	// records report it (ADR-1237).
+	TrafficPercent    int
 	CanaryStepStarted time.Time
 	RolloutStarted    time.Time
 	RolloutState      string
@@ -301,7 +304,8 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		if currentStage.MirrorClean != nil && !p.mirrorCleanReady(ctx, row, currentStage.MirrorClean, now, &stats) {
 			continue
 		}
-		if !p.circuitBreakerReady(ctx, row, currentStage.Duration, now, &stats) {
+		ready, record := p.circuitBreakerReady(ctx, row, currentStage.Duration, now, &stats)
+		if !ready {
 			continue
 		}
 		elapsed := now.Sub(row.CanaryStepStarted)
@@ -309,13 +313,13 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 			stats.SkippedNotElapsed++
 			continue
 		}
-		if !p.safeReleaseHealthReady(ctx, row, &stats) {
+		if !p.safeReleaseHealthReady(ctx, row, now, &stats) {
 			continue
 		}
 		// Advance through APID's atomic state transition. The endpoint
 		// derives nextStage.Percent from the persisted preset, so the
 		// runtime cannot apply a stale or caller-invented traffic value.
-		response, err := p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep)
+		response, err := p.advance(ctx, row, record)
 		if err != nil {
 			var problem *api.Problem
 			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked || problem.Code == api.CodeProfileGateBlocked) {
@@ -382,7 +386,7 @@ func (p *Progression) mirrorCleanReady(ctx context.Context, row CanaryRow, condi
 // The store is optional for the package's small unit-test seam. Production's
 // canaryStoreAdapter always implements it; when present, a read error fails
 // closed and leaves the canary at its current traffic share.
-func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow, stats *Stats) bool {
+func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow, now time.Time, stats *Stats) bool {
 	checker, ok := p.Store.(SafeReleaseHealthStore)
 	if !ok {
 		return true
@@ -392,6 +396,8 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 		p.Log.Warn("canary: safe-release health gate unavailable; holding promotion",
 			"deployment_id", row.ID, "err", err)
 		stats.Errors++
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldObservation,
+			"safe-release health alerts could not be read", nil, time.Time{}, now))
 		return false
 	}
 	if len(signals) == 0 {
@@ -404,6 +410,9 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 		}
 	}
 	first := signals[0]
+	p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldHealthAlert,
+		fmt.Sprintf("%d safe-release health alert(s) with a rollback action firing (metric %s)", len(signals), first.Metric),
+		nil, time.Time{}, now))
 	p.Log.Warn("canary: promotion held by firing safe-release health alert",
 		"deployment_id", row.ID,
 		"rule_id", first.RuleID,
@@ -419,7 +428,10 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 // canary can gain more traffic. Clear 5xx, p95, or OOM regressions abort via
 // APID's atomic rollout-recovery transaction. Inconclusive samples hold only
 // at the stage boundary, so the normal stage timer still controls exposure.
-func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stageDuration time.Duration, now time.Time, stats *Stats) bool {
+//
+// The returned record is the evidence for an advance taken this tick
+// (ADR-1237); holds are reported to APID here and aborts carry their record.
+func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stageDuration time.Duration, now time.Time, stats *Stats) (bool, *api.RolloutDecision) {
 	checker, ok := p.Store.(CircuitBreakerStore)
 	if !ok {
 		p.Log.Error("canary: circuit-breaker observation unavailable; holding promotion",
@@ -427,7 +439,9 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		stats.Errors++
 		stats.SkippedCircuitBreaker++
 		p.recordCircuitBreakerEvent("hold_observation_unavailable")
-		return false
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldObservation,
+			"circuit-breaker observation unavailable", nil, time.Time{}, now))
+		return false, nil
 	}
 	since := row.CanaryStepStarted
 	if since.IsZero() {
@@ -440,23 +454,27 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		stats.Errors++
 		stats.SkippedCircuitBreaker++
 		p.recordCircuitBreakerEvent("hold_observation_unavailable")
-		return false
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldObservation,
+			"circuit-breaker observation unavailable", nil, since, now))
+		return false, nil
 	}
 	decision := EvaluateCircuitBreaker(observation)
 	switch decision.Action {
 	case CircuitBreakerAdvance:
-		return true
+		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
+		return true, &record
 	case CircuitBreakerAbort:
-		if p.abortCircuitBreaker(ctx, row, decision, observation, stats) {
-			return false
+		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
+		if p.abortCircuitBreaker(ctx, row, decision, observation, record, stats) {
+			return false, nil
 		}
 		// If APID is temporarily unavailable, keep the candidate at the
 		// current weight and retry the same safe decision on the next tick.
-		return false
+		return false, nil
 	default:
 		held := now.Sub(row.CanaryStepStarted) - stageDuration
 		if held < 0 {
-			return true
+			return true, nil
 		}
 		if ProbeEvidenceAdvanceAllowed(decision, observation) {
 			p.Log.Info("canary: advancing low-traffic stage on synthetic probe evidence",
@@ -468,7 +486,8 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 				"stable_probe_5xx", observation.Stable.ProbeServerErrors)
 			stats.ProbeEvidenceAdvanced++
 			p.recordCircuitBreakerEvent("advance_probe_evidence")
-			return true
+			record := rolloutDecisionRecord(row, api.RolloutRuleAdvanceProbeEvidence, decision.Reason, &observation, since, now)
+			return true, &record
 		}
 		if held >= api.CanaryLowTrafficMaxHold && LowTrafficAdvanceAllowed(decision, observation) {
 			p.Log.Info("canary: advancing low-traffic stage on clean evidence",
@@ -478,7 +497,8 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 				"held", held.Round(time.Second).String())
 			stats.LowTrafficAdvanced++
 			p.recordCircuitBreakerEvent("advance_low_traffic")
-			return true
+			record := rolloutDecisionRecord(row, api.RolloutRuleAdvanceLowTraffic, decision.Reason, &observation, since, now)
+			return true, &record
 		}
 		p.Log.Warn("canary: circuit breaker is inconclusive; holding promotion",
 			"deployment_id", row.ID,
@@ -486,11 +506,26 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 			"reason", decision.Reason)
 		stats.SkippedCircuitBreaker++
 		p.recordCircuitBreakerEvent(circuitBreakerHoldEvent(decision.Reason))
-		return false
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, circuitBreakerHoldEvent(decision.Reason), decision.Reason, &observation, since, now))
+		return false, nil
 	}
 }
 
-func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, decision CircuitBreakerDecision, observation CircuitBreakerObservation, stats *Stats) bool {
+// advance asks APID for one step, carrying the evidence when the client can
+// record it (ADR-1237).
+func (p *Progression) advance(ctx context.Context, row CanaryRow, record *api.RolloutDecision) (api.CanaryAdvanceResponse, error) {
+	if client, ok := p.APID.(decisionAdvanceClient); ok && record != nil {
+		err := record.Validate()
+		if err == nil {
+			return client.AdvanceCanaryWithDecision(ctx, row.ID, row.CanaryStep, *record)
+		}
+		p.Log.Warn("canary: rollout decision record invalid; advancing without it",
+			"deployment_id", row.ID, "rule", record.Rule, "err", err)
+	}
+	return p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep)
+}
+
+func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, decision CircuitBreakerDecision, observation CircuitBreakerObservation, record api.RolloutDecision, stats *Stats) bool {
 	recovery, ok := p.APID.(exactRolloutRecoveryClient)
 	if !ok || observation.StableDeploymentID == "" {
 		p.Log.Error("canary: circuit-breaker abort unavailable; holding candidate traffic",
@@ -520,7 +555,13 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
-	if _, err := recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key); err != nil {
+	var err error
+	if client, ok := p.APID.(decisionRecoveryClient); ok && record.Validate() == nil {
+		_, err = client.RecoverDeploymentRolloutWithDecision(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key, record)
+	} else {
+		_, err = recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key)
+	}
+	if err != nil {
 		p.Log.Warn("canary: circuit-breaker abort failed",
 			"deployment_id", row.ID, "stable_deployment_id", observation.StableDeploymentID, "reason", decision.Reason, "err", err)
 		stats.Errors++

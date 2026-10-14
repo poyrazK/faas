@@ -140,7 +140,7 @@ func (m *MemStore) CommitAlertRollback(ctx context.Context, r api.AlertRollback)
 		return m.requestServiceAlertRollbackLocked(ctx, current)
 	}
 	audit := alertRollbackAudit(ctx, current)
-	_, auditID, err := m.recoverRolloutLocked(ctx, current.AppID, current.CandidateDeploymentID, current.PredecessorDeploymentID, "abort", current.Reason, &audit)
+	_, auditID, err := m.recoverRolloutLocked(ctx, current.AppID, current.CandidateDeploymentID, current.PredecessorDeploymentID, "abort", current.Reason, &audit, nil)
 	if err != nil {
 		return r, err
 	}

@@ -429,6 +429,9 @@ func cmdDeploymentWait(args []string) int {
 				if reason == "" {
 					reason = "the rollout was aborted"
 				}
+				if why := rolloutDecisionOfKind(d, api.RolloutDecisionAbort); why != "" {
+					reason += " (" + why + ")"
+				}
 				return printErr("Safe rollout did not complete", fmt.Errorf("deployment %s stopped before 100%% traffic: %s", d.ID, reason))
 			}
 			if !*rollout || deploymentRolloutComplete(d) {
