@@ -3096,6 +3096,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if secretErr != nil {
 			return printErr("Could not read --secrets-file", secretErr)
 		}
+		// The file itself must stay out of the source archive. `gregale
+		// start` excluded it, but `deploy --secrets-file` packed a .env-style
+		// file kept in the source tree verbatim (hunt #10, H10-41).
+		if abs, absErr := filepath.Abs(*secretsFile); absErr == nil {
+			execution.extraSourceExcludes = append(execution.extraSourceExcludes, abs)
+		}
 		if *templateName != "" {
 			if err := validateTemplateSecrets(*templateName, deploySecrets); err != nil {
 				return printErr("Invalid --secrets-file", err)
