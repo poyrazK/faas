@@ -759,6 +759,7 @@ func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.complete
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
 func (r *mfaTestEnv) Cookie() **http.Cookie   { return &r.cookie }
 func (r *mfaTestEnv) H() *http.Handler        { return &r.h }
+func (r *mfaTestEnv) Srv() **server           { return &r.srv }
 func (r *mfaTestEnv) Store() **state.MemStore { return &r.store }
 func (r mfaTestEnv) GenerateEnrolledAccount(p0 *testing.T) ([]string, string, *http.Cookie) {
 	return r.generateEnrolledAccount(p0)

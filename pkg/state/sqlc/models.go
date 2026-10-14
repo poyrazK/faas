@@ -246,6 +246,7 @@ type AlertRule struct {
 	Action                          string
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
+	EdgeRuleID                      pgtype.UUID
 }
 
 type ApiConsumer struct {

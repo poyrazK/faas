@@ -141,8 +141,16 @@ func selectImagePlatform(body []byte) (Descriptor, error) {
 	available := []string{}
 	matches := map[string]Descriptor{}
 	var selected Descriptor
+	// The OCI index spec makes platform optional. A child without one is a
+	// candidate only when no child declares linux/amd64; resolveImageManifest
+	// then checks the selected config's own OS and architecture.
+	var unspecified []Descriptor
 	for _, entry := range index.Manifests {
 		if entry.Platform == nil {
+			available = append(available, "unspecified")
+			if isImageManifest(entry.MediaType, "") && validateDigest(entry.Digest) == nil && entry.Size > 0 {
+				unspecified = append(unspecified, entry.Descriptor)
+			}
 			continue
 		}
 		p := entry.Platform
@@ -164,6 +172,12 @@ func selectImagePlatform(body []byte) (Descriptor, error) {
 		selected = entry.Descriptor
 	}
 	sort.Strings(available)
+	if len(matches) == 0 && len(unspecified) == 1 {
+		return unspecified[0], nil
+	}
+	if len(matches) == 0 && len(unspecified) > 1 {
+		return Descriptor{}, &PlatformSelectionError{Reason: "multiple image manifests without a platform; pin the intended child digest", Available: available}
+	}
 	if len(matches) == 0 {
 		return Descriptor{}, &PlatformSelectionError{Reason: "no compatible image manifest (nested indexes and additional CPU/OS requirements are not supported)", Available: available}
 	}

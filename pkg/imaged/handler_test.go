@@ -1492,6 +1492,8 @@ func TestHandleDeployment_NoOverrideLeavesManifestUntouched(t *testing.T) {
 		Env:        map[string]string{"FROM": "image", "PORT": "8080"},
 		WorkingDir: "/srv",
 		Healthz:    "/healthz",
+		// The image declares no USER, so it runs as root (ADR-1239).
+		User: "0",
 	}
 	if !reflect.DeepEqual(in.Manifest, want) {
 		t.Errorf("manifest changed by applyOverrides with no override: got %+v, want %+v", in.Manifest, want)

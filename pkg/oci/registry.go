@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -917,7 +918,15 @@ func retryablePullError(err error) bool {
 // underlying Basic Auth value cannot leak through slog / RFC 7807
 // error surfaces.
 func (c *RegistryClient) fetchToken(ctx context.Context, ch authChallenge, auth *BasicAuth) (string, error) {
-	tok, err := FetchToken(ctx, c.hc, c.ua, newAuthChallenge(ch), auth)
+	challenge := newAuthChallenge(ch)
+	if auth != nil && c.scheme == "https" {
+		// The registry chooses the realm. Never let it downgrade the
+		// customer's Basic credential to a cleartext request.
+		if realm, err := url.Parse(challenge.Realm()); err != nil || !strings.EqualFold(realm.Scheme, "https") {
+			return "", errors.New("oci: registry token realm must use https to receive credentials")
+		}
+	}
+	tok, err := FetchToken(ctx, c.hc, c.ua, challenge, auth)
 	if err != nil {
 		return "", scrubAuthFromError(err, auth)
 	}

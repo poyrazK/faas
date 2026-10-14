@@ -178,6 +178,8 @@ func TestPlatformSelectionPolicy(t *testing.T) {
 	nested.MediaType = testIndexMediaType
 	missing := amd
 	missing.Platform = nil
+	missingOther := other
+	missingOther.Platform = nil
 	invalid := amd
 	invalid.Digest = "sha256:bad"
 	for _, tc := range []struct {
@@ -195,7 +197,12 @@ func TestPlatformSelectionPolicy(t *testing.T) {
 		{"cpu requirement", []platformDescriptor{variant}, false},
 		{"os requirement", []platformDescriptor{features}, false},
 		{"nested", []platformDescriptor{nested}, false},
-		{"missing platform", []platformDescriptor{missing}, false},
+		// The OCI index spec makes platform optional: a lone child without one
+		// is selected, and its config's own platform is checked afterwards.
+		{"missing platform", []platformDescriptor{missing}, true},
+		{"missing platform beside arm64", []platformDescriptor{arm, missing}, true},
+		{"declared amd64 beats missing platform", []platformDescriptor{amd, missingOther}, true},
+		{"two missing platforms", []platformDescriptor{missing, missingOther}, false},
 		{"invalid digest", []platformDescriptor{invalid}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

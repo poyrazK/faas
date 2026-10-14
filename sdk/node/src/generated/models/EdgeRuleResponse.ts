@@ -32,7 +32,7 @@ export type EdgeRuleResponse = {
   account_id: string;
   app_id: string;
   /**
-   * Host glob. `*` matches any; `*.example.com` matches any subdomain.
+   * Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1191) covers every hostname the rule's app serves, including custom domains added later.
    */
   match_host: string;
   /**
