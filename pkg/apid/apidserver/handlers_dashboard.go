@@ -174,6 +174,25 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			}
 			// G8 / issue #1397 — outbound webhook subscriptions,
 			// recent deliveries, secret rotation, and dead-letter retry.
+
+			if strings.HasSuffix(slug, "/realtime/replay-jobs/dry-run") {
+				r.SetPathValue("mode", "dry_run")
+				s.renderRealtimeReplayJobAction(w, r, acct, strings.TrimSuffix(slug, "/realtime/replay-jobs/dry-run"))
+				return
+			}
+			if strings.HasSuffix(slug, "/realtime/replay-jobs") {
+				rslug := strings.TrimSuffix(slug, "/realtime/replay-jobs")
+				s.renderRealtimeReplayJobAction(w, r, acct, rslug)
+				return
+			}
+			if rslug, ok := parseAppRealtimeDeadLetterExportPath(slug); ok {
+				s.renderRealtimeDeadLetterExport(w, r, acct, rslug)
+				return
+			}
+			if rslug, ok := parseAppRealtimePath(slug); ok {
+				s.renderAppRealtime(w, r, log, acct, rslug)
+				return
+			}
 			if wslug, ok := parseAppWebhooksPath(slug); ok {
 				s.renderAppWebhooks(w, r, log, acct, wslug)
 				return

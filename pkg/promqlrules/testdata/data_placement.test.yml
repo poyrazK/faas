@@ -79,7 +79,7 @@ tests:
         alertname: FaasUpstreamRttDegraded
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: meterd
               family: data_placement
               kind: postgres
@@ -275,7 +275,7 @@ tests:
         alertname: FaasUpstreamProbeOutcomeDegraded
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: meterd
               family: probe_outcome
             exp_annotations:
@@ -344,7 +344,7 @@ tests:
         alertname: FaasUpstreamClassifierFailure
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: apid
               family: data_placement
               reason: salt_missing

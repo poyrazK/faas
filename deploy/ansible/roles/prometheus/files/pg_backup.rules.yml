@@ -21,7 +21,7 @@ groups:
         expr: apid_pg_backup_last_pushed_seconds == 0 or time() - apid_pg_backup_last_pushed_seconds > 93600
         for: 5m
         labels:
-          severity: page
+          severity: warn
           family: pg_backup
         annotations:
           summary: "Postgres basebackup has no recent verified off-host copy"

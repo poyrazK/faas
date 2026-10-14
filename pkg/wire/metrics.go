@@ -2354,7 +2354,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready_reason",
 		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
 	}, []string{"daemon", "reason"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale", "other"} {
+	for _, daemon := range identityDaemons(prefix) {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -3834,7 +3834,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Count of recovery-timeline events emitted via pkg/events.Platform.EmitRecovery, labelled by kind (the substring after `node.` / `instance.`, e.g. `draining`, `drained`, `failed`, `recovered`, `migrated`, `recreated`) and result ∈ {ok, failed} (Workstream B / issue #1184, ADR-137). Single-registry: registered on every daemon; only schedd / apid increment via Platform.EmitRecovery. The closed 7-kind set is pre-instantiated at boot so the recovery-dashboard panel surfaces zero on an idle daemon.",
 	}, []string{"kind", "result"})
 	// commonCollectors is the per-daemon collector set that every
-	// prefix registers. PR-E adds ociEgressDeny to the set when
+	// prefix registers, minus the single-owner collectors that
+	// withoutForeignCollectors keeps off other daemons (owner map
+	// above reg.MustRegister below). PR-E adds ociEgressDeny to the set when
 	// prefix == "imaged" — keeping the common slice as a single source
 	// of truth (review finding #5 on PR #332) means a future collector
 	// only needs to be added here, not in two parallel MustRegister
@@ -4140,7 +4142,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// registered on every daemon; only gatewayd-public
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_spans_ingested_total",
+		Name: prefix + "_otel_spans_ingested_total",
 		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
@@ -4150,7 +4152,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// single-registry pattern; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelSpansTruncated.
 	gatewaydPublicOtelSpansTruncated := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_spans_truncated_total",
+		Name: prefix + "_otel_spans_truncated_total",
 		Help: "OTel spans writer truncation tripwire on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D). Fires once per OTLP POST when the inbound body has more spans than the plan's DebugTelemetrySpansPerTrace ceiling (Hobby=50/Pro=200/Scale=1000). Sustained non-zero means the customer's app is chatty enough that the slowest-N selection is dropping signal — alertable via SpansTruncationRateSlo. Unlabelled — single-registry pattern; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansTruncated.",
 	})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansTruncated)
@@ -4160,7 +4162,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only gatewayd-public increments via
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_auth_failures_total",
+		Name: prefix + "_otel_auth_failures_total",
 		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)
@@ -4810,6 +4812,107 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp,
 	)
+	// Single-owner collectors register only on the daemons whose code
+	// writes them. Registered everywhere, their pre-instantiated label
+	// sets exported zero-valued copies from every daemon: 55k of
+	// the 207k series on the two-node test fleet. An owner is a daemon
+	// whose binary reaches one of the collector's accessors; ownership
+	// is pinned by TestSingleOwnerCollectorsRegisterOnOwners and
+	// TestSingleOwnerAccessorsHaveKnownCallers. Calling an accessor from
+	// another daemon still works but exports nothing until the daemon is
+	// added here.
+	schedd := []string{"schedd"}
+	meterd := []string{"meterd"}
+	// pkg/events.Platform: built with the daemon's OpsMetrics in apid,
+	// builderd, gatewayd-internal, schedd and vmmd.
+	eventEmitters := []string{"apid", "builderd", "gatewayd", "schedd", "vmmd"}
+	// pkg/audit.Auditor with metrics: apid, githubd, meterd and schedd
+	// (gatewayd-internal builds its auditor with nil metrics).
+	auditors := []string{"apid", "githubd", "meterd", "schedd"}
+	commonCollectors = withoutForeignCollectors(prefix, commonCollectors, map[prometheus.Collector][]string{
+		// Spec §4 names vmmd as the waitUntil tail owner; nothing
+		// writes these yet.
+		guestTailSeconds:     {"vmmd"},
+		guestTailFailedTotal: {"vmmd"},
+		tailCapReached:       {"vmmd"},
+		guestInitDuration:    {"vmmd"},
+		bridgeFramingTotal:   {"vmmd"},
+		// pkg/apid/apidserver, pkg/apid/apidsource and pkg/imaged; the
+		// last is linked into builderd and vmmd too.
+		apiHostingPhaseTotal:    {"apid", "builderd", "imaged", "vmmd"},
+		apiHostingPhaseDuration: {"apid", "builderd", "imaged", "vmmd"},
+		imagedOCIPull:           {"builderd", "imaged", "vmmd"},
+		deployStageDuration:     {"builderd", "imaged", "vmmd"},
+		// pkg/meter runs in apid and meterd.
+		stripePushDur:         {"apid", "meterd"},
+		paddlePushDur:         {"apid", "meterd"},
+		polarPushDur:          {"apid", "meterd"},
+		meteredMBSecondsTotal: {"apid", "meterd"},
+
+		buildDur:                {"builderd"},
+		gatewayDrainWaitSeconds: {"gatewayd", "gatewayd_public"},
+		writeRedirectTotal:      {"gatewayd"},
+		writeRedirectLatency:    {"gatewayd"},
+		// pkg/sched types that only cmd/schedd constructs: Engine, Loop,
+		// Drain, ExecutionCoordinator and the scale-up Trigger.
+		executionActive:                    schedd,
+		executionTotal:                     schedd,
+		executionPhaseDuration:             schedd,
+		executionFailures:                  schedd,
+		executionOutputBytes:               schedd,
+		executionSweeps:                    schedd,
+		executionQueueDepth:                schedd,
+		executionQueueOldestWait:           schedd,
+		executionWorkers:                   schedd,
+		wakeRPCDuration:                    schedd,
+		serviceRolloutHandoffPhaseDuration: schedd,
+		serviceReplicaStatus:               schedd,
+		esmPollsTotal:                      schedd,
+		esmRecordsConsumedTotal:            schedd,
+		esmLagSeconds:                      schedd,
+		esmRecordsOutcomeTotal:             schedd,
+		esmRecordProcessingSeconds:         schedd,
+		esmConsumerLagMessages:             schedd,
+		esmConsumerLagAgeSeconds:           schedd,
+		cronFireNowDispatchDur:             schedd,
+		delayedTasks.dispatchTotal:         schedd,
+		delayedTasks.scheduleLagSeconds:    schedd,
+		evictionFiredTotal:                 schedd,
+		scaleUpAdmitRPS:                    schedd,
+		eventsWriteFail:                    schedd,
+		wakePhaseEmitted:                   eventEmitters,
+		wakeIdentityInvalid:                eventEmitters,
+		wakePhaseDur:                       eventEmitters,
+		recoveryEventEmitted:               eventEmitters,
+		auditWriteFail:                     auditors,
+		auditWriteDur:                      auditors,
+		auditLogWriteTotal:                 auditors,
+		auditLogWriteFailuresTotal:         auditors,
+		// Only cmd/meterd constructs the safe-deploy orchestrator and the
+		// canary progression; the *AlertFired counters have no writer yet
+		// and stay with their family.
+		canaryProgressionAdvancedTotal:                   meterd,
+		canaryProgressionErrorsTotal:                     meterd,
+		canaryProgressionCircuitBreakerTotal:             meterd,
+		canaryProgressionZeroTimestampTotal:              meterd,
+		canaryProgressionHealthGateBlockedTotal:          meterd,
+		safedeployOrchestratorStartedTotal:               meterd,
+		safedeployOrchestratorCompletedTotal:             meterd,
+		safedeployOrchestratorAbortedTotal:               meterd,
+		safedeployOrchestratorStuckDetectedTotal:         meterd,
+		safedeployOrchestratorAuditEmitFailedTotal:       meterd,
+		safedeployOrchestratorStuckCheckMissingTimestamp: meterd,
+		safedeployOrchestratorAutoAbortedTotal:           meterd,
+		safedeployOrchestratorAutoAbortFailedTotal:       meterd,
+		safedeployInFlightRollouts:                       meterd,
+		deploymentAuditEmittedTotal:                      meterd,
+		deploymentAuditGCFailedTotal:                     meterd,
+		deploymentAuditGCRowsDeletedTotal:                meterd,
+		canaryStuckStepAlertFiredTotal:                   meterd,
+		safedeployAuditEmitFailingAlertFiredTotal:        meterd,
+		deploymentAuditGCFailingAlertFiredTotal:          meterd,
+		canaryFleetInFlightHighAlertFiredTotal:           meterd,
+	})
 	reg.MustRegister(commonCollectors...)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in
@@ -5709,12 +5812,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 	if m == nil || n <= 0 {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	if version == "" {
 		version = Version
 	}
@@ -5733,12 +5831,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	if version == "" {
 		version = Version
 	}
@@ -5756,12 +5849,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	m.daemonUptimeSeconds.WithLabelValues(daemon).Set(seconds)
 }
 
@@ -5782,12 +5870,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	v := 0
 	if ready {
 		v = 1

@@ -3358,8 +3358,12 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			scheme = httpsScheme
 		}
 		tr := &http.Transport{
-			TLSClientConfig:       tlsCfg,
-			ResponseHeaderTimeout: api.GatewaySynthDispatchTimeout,
+			TLSClientConfig: tlsCfg,
+			// The gateway answers a dispatch only when the invocation ends.
+			// The context-bound client shares this transport, so the header
+			// wait must cover the longest dispatch (ADR-1180); the client's
+			// Timeout or the call's context bounds every other call.
+			ResponseHeaderTimeout: api.AsyncInvocationDispatchMax,
 		}
 		return &httpGatewaySynth{
 			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
@@ -3433,6 +3437,11 @@ func (h *httpGatewaySynth) WithMintInternalSvcToken(mint func(appID string) (str
 	return h
 }
 
+// triggerClientTimeout is the trigger client's outer bound: the longest
+// batch any app's invocations allow (ADR-1180). postBatch sets each call's
+// own deadline.
+const triggerClientTimeout = api.AsyncInvocationDispatchMax + api.AsyncInvocationLeaseMargin
+
 func HTTPClientForGatewaySynthTarget(target string) (*http.Client, string, error) {
 	if target == "" {
 		return nil, "", errors.New("sched: gateway synth target is empty")
@@ -3448,13 +3457,26 @@ func HTTPClientForGatewaySynthTarget(target string) (*http.Client, string, error
 				return net.Dial("unix", t.Address)
 			},
 		}
-		return &http.Client{Transport: tr, Timeout: 60 * time.Second}, httpUnixBasePrefix, nil
+		return &http.Client{Transport: tr, Timeout: triggerClientTimeout}, httpUnixBasePrefix, nil
 	case wire.SchemeTCP, wire.SchemeDNS:
 		scheme := httpScheme
-		return &http.Client{Timeout: 60 * time.Second}, scheme + "://" + t.Address, nil
+		return &http.Client{Timeout: triggerClientTimeout}, scheme + "://" + t.Address, nil
 	default:
 		return nil, "", fmt.Errorf("sched: gateway synth target scheme %q not supported", t.Scheme)
 	}
+}
+
+type longDispatchKey struct{}
+
+// withLongDispatch marks an invocation of a long-timeout app (ADR-1180): the
+// context's deadline, not the synth client's 30 s, bounds its dispatch.
+func withLongDispatch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, longDispatchKey{}, true)
+}
+
+func isLongDispatch(ctx context.Context) bool {
+	long, _ := ctx.Value(longDispatchKey{}).(bool)
+	return long
 }
 
 // SynthesizeRequest posts {app_id, method, path} to gatewayd-internal's internal
@@ -3682,7 +3704,13 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 }
 
 func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
-	return h.invokeWithStatusUsing(ctx, h.client, appID, inv, wake)
+	// A long-timeout app's invocation is bounded by its own dispatch
+	// deadline, not the client's 30 s (ADR-1180).
+	client := h.client
+	if isLongDispatch(ctx) {
+		client = h.contextBoundClient()
+	}
+	return h.invokeWithStatusUsing(ctx, client, appID, inv, wake)
 }
 
 // contextBoundClient shares the synth transport but drops the client-wide
@@ -4634,6 +4662,18 @@ func nonZeroSchedTimePtr(value time.Time) *time.Time {
 	return &value
 }
 
+// cronHandsOffToDrain reports whether a cron fire for appID is delivered by
+// the drain rather than inline: true when the app's invocations may run past
+// 30 s (ADR-1180). A failed lookup keeps the inline path.
+func (l *Loop) cronHandsOffToDrain(ctx context.Context, appID string) bool {
+	store := l.engine.Store()
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return false
+	}
+	return state.AsyncInvocationTimeout(ctx, store, app) > api.AsyncInvocationTimeoutFloor
+}
+
 // dispatchCronLocked is the post-boundary part of the cron fire path.
 // Called by both the 60s tick (trigger=TriggerSchedule) and the
 // fire-now API (trigger=TriggerManual). The deferred audit emit is
@@ -4812,6 +4852,14 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// the lifecycle must mirror the drain's: claim → invoke → stamp
 	// → complete. Doing the claim here also keeps the row out of
 	// the drain's next tick (which filters state='pending').
+	// A function whose invocations may run past 30 s would hold this loop,
+	// and every cron behind it, for the whole run. Leave the persisted row to
+	// the drain, which delivers it in the background under a lease sized to
+	// the run (ADR-1180).
+	if enq.ID != "" && l.cronHandsOffToDrain(ctx, c.AppID) {
+		l.log.Debug("cron: long invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID)
+		return CronRun{InvocationID: enq.ID}, true
+	}
 	if enq.ID != "" {
 		maxInflight := api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
 		claimed, claimErr := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight)

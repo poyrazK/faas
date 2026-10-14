@@ -56,7 +56,7 @@ func cloneNeedsLayerPins(op ProjectEnvironmentCloneOperation) bool {
 
 func layerArtifactInstanceActive(raw string) bool {
 	switch State(strings.ToLower(raw)) {
-	case StateWaking, StateColdBooting, StateRunning, StateSnapshotting, StateMigrating, StateWarm, StateDraining:
+	case StateWaking, StateColdBooting, StateRunning, StateSnapshotting, StateMigrating, StateWarm, StateFrozen, StateDraining:
 		return true
 	}
 	return raw == "pending"

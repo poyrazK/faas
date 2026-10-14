@@ -19,6 +19,10 @@ func NotFound(w http.ResponseWriter, what string) {
 	api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what))
 }
 
+// NoSuchRoute writes the 404 apid returns for an unregistered /v1 route.
+// Routes hidden from customers reuse it so they look exactly like missing ones.
+func NoSuchRoute(w http.ResponseWriter) { NotFound(w, "no such API route") }
+
 // WriteCustomerInternalProblem keeps dependency and storage error text in
 // logs while returning customer-safe recovery guidance.
 func WriteCustomerInternalProblem(w http.ResponseWriter, r *http.Request, log *slog.Logger, operation, detail, hint string, cause error) {

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestQuiet_ReportsWhenTheLastRequestEnded — ADR-957 measures idleness
+// TestQuiet_ReportsWhenTheLastRequestEnded — ADR-1151 measures idleness
 // from the end of the last request, so Quiet reports the time inflight
 // dropped to zero, not the time a request began.
 func TestQuiet_ReportsWhenTheLastRequestEnded(t *testing.T) {

@@ -154,6 +154,17 @@ func (m *MemStore) DeleteManagedRealtimeEndpoint(_ context.Context, id string) e
 		return ErrNotFound
 	}
 	delete(m.managedRealtimeEndpoints, id)
+	for key, row := range m.realtimeTickets {
+		if row.EndpointID == id {
+			delete(m.realtimeTickets, key)
+		}
+	}
+	for key, f := range m.realtimeChannelWebhookFilters {
+		if f.EndpointID == id {
+			delete(m.realtimeChannelWebhookFilters, key)
+		}
+	}
+	delete(m.managedRealtimeAccess, id)
 	delete(m.realtimeNotificationTimeline, id)
 	for key := range m.managedRealtimeSchedules {
 		if key.endpointID == id {

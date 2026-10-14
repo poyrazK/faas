@@ -8,6 +8,14 @@ import type { OperationWorkflowPlaybookEvidence } from './OperationWorkflowPlayb
  */
 export type OperationWorkflowPlaybookProgressUpdateRequest = {
   /**
+   * OperationWorkflowPlaybookProgressUpdateRequest.owner. Optional manual outcome-step reassignment; omission preserves the current owner and an empty value clears it. Requires outcome_code.
+   */
+  owner?: string;
+  /**
+   * OperationWorkflowPlaybookProgressUpdateRequest.outcome_code. Optional outcome-specific follow-up selector; item_index addresses that pinned step list. First review captures fresh comparable evidence of this exact outcome.
+   */
+  outcome_code?: string;
+  /**
    * OperationWorkflowPlaybookProgressUpdateRequest.revision. Expected current progress revision; conflicting edits return 409.
    */
   revision: number;

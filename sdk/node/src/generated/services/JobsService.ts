@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateImageRunRequest } from '../models/CreateImageRunRequest.js';
 import type { CreateJobRequest } from '../models/CreateJobRequest.js';
 import type { CreateJobRunRequest } from '../models/CreateJobRunRequest.js';
 import type { ExclusiveJobOperationRequest } from '../models/ExclusiveJobOperationRequest.js';
 import type { ExclusiveOperationAccepted } from '../models/ExclusiveOperationAccepted.js';
+import type { ImageRunResponse } from '../models/ImageRunResponse.js';
 import type { JobArtifactDownloadResponse } from '../models/JobArtifactDownloadResponse.js';
 import type { JobRegistryCredentialListResponse } from '../models/JobRegistryCredentialListResponse.js';
 import type { JobRegistryCredentialResponse } from '../models/JobRegistryCredentialResponse.js';
@@ -25,6 +27,59 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class JobsService {
+  /**
+   * Run one command from an OCI image (ADR-1161).
+   * `docker run`-shaped entry point. apid keeps one platform-managed
+   * runner job (kind `image_run`) per account and normalized image, so
+   * the image is pulled once and later runs start from the cached
+   * artifact. While the image is being pulled the call returns 202
+   * `pulling`; call again once `GET /v1/jobs/{job}` reports
+   * `image_materialization_status: ready` to create a one-task run
+   * (201 `queued`). The command follows Docker's rules: `entrypoint`
+   * replaces the image ENTRYPOINT (and drops its CMD unless `args` is
+   * set) and `args` replaces the image CMD. Runs, logs and cancellation
+   * use `/v1/jobs/{job}/runs`. Free accounts get 402
+   * `jobs_not_allowed`; the route returns 404 until the operator sets
+   * `FAAS_IMAGE_RUNS=1`.
+   *
+   * @returns ImageRunResponse A one-task run was queued.
+   * @throws ApiError
+   */
+  public static createImageRun({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: CreateImageRunRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ImageRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/image-runs',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Image runs need a plan with Jobs (not Free).`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
   /**
    * List jobs on the account.
    * Page-based pagination via ?limit / ?offset. NextOffset=-1

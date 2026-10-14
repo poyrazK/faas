@@ -11,15 +11,16 @@ import (
 // Both schedulers execute the same complete HTTP journey, with private captures
 // and an identity derived from its iteration or scheduled arrival number.
 type testLoadJourney struct {
-	Shared          *testLoadCollector
-	Indexes         []int
-	Client          *http.Client
-	BaseURL         string
-	RunID           string
-	ConsumerKeys    map[string]string
-	Steps           []testHTTPRequest
-	Data            map[string]any
-	InitialCaptures map[string]string
+	Shared           *testLoadCollector
+	Indexes          []int
+	Client           *http.Client
+	BaseURL          string
+	CorrelationRunID string
+	RunID            string
+	ConsumerKeys     map[string]string
+	Steps            []testHTTPRequest
+	Data             map[string]any
+	InitialCaptures  map[string]string
 }
 
 func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, iteration int) {
@@ -47,9 +48,20 @@ func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, 
 			interrupted = true
 			break
 		}
+		if cfg.CorrelationGate != nil {
+			cfg.CorrelationGate.RLock()
+		}
 		result := testHTTPRequestEvidence{Name: step.Name, Method: step.Method}
 		requestStarted := time.Now()
-		err := runOneTestHTTPRequestWithBody(ctx, j.Client, j.BaseURL, step, values, j.ConsumerKeys, captures, j.Data, &result, true)
+		atPhase := requestCollector.phaseIndex(requestStarted)
+		correlationRunID := j.CorrelationRunID
+		if correlationRunID == "" {
+			correlationRunID = j.RunID
+		}
+		result.CorrelationID = requestCollector.correlationID(cfg, step.Name, correlationRunID, atPhase)
+		requestCtx, cancelRequest, deadlineStep := prepareTestRequestDeadline(ctx, cfg, atPhase, step, requestStarted)
+		err := runOneTestHTTPRequestWithBody(requestCtx, j.Client, j.BaseURL, deadlineStep, values, j.ConsumerKeys, captures, j.Data, &result, true)
+		cancelRequest()
 		result.Passed = err == nil
 		if err != nil {
 			result.Error = err.Error()
@@ -59,6 +71,9 @@ func (j testLoadJourney) run(ctx context.Context, collector *testLoadCollector, 
 			index = j.Indexes[i]
 		}
 		requestCollector.recordAt(index, result, time.Since(requestStarted), requestStarted)
+		if cfg.CorrelationGate != nil {
+			cfg.CorrelationGate.RUnlock()
+		}
 		if err != nil {
 			failed, interrupted = true, ctx.Err() != nil
 			break

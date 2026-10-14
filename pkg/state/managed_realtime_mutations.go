@@ -97,7 +97,7 @@ func (m *MemStore) MutateManagedRealtimeMessage(ctx context.Context, ep, stream 
 		binary = false
 		data = nil
 	}
-	updated := ManagedRealtimeChannelMessage{Metadata: cloneRealtimeMetadata(current.Metadata), EndpointID: ep, Channel: channel, Sequence: *next, Data: append([]byte(nil), data...), Binary: binary, CreatedAt: now, TargetMessageID: id, Version: version + 1, MessageEvent: event, Deleted: remove}
+	updated := ManagedRealtimeChannelMessage{TTLSeconds: current.TTLSeconds, ExpiresAt: current.ExpiresAt, Metadata: cloneRealtimeMetadata(current.Metadata), EndpointID: ep, Channel: channel, Sequence: *next, Data: append([]byte(nil), data...), Binary: binary, CreatedAt: now, TargetMessageID: id, Version: version + 1, MessageEvent: event, Deleted: remove}
 	for i := range *rows {
 		msg := &(*rows)[i]
 		if msg.TargetMessageID == id {
@@ -121,6 +121,9 @@ func (m *MemStore) MutateManagedRealtimeMessage(ctx context.Context, ep, stream 
 		}
 	}
 	*rows = append(*rows, updated)
+	if !inbox {
+		m.enqueueRealtimeChannelWebhookLocked(updated)
+	}
 	*next++
 	newFloor := floor
 	if limit := updated.Sequence - int64(maxRows) + 1; limit > newFloor {

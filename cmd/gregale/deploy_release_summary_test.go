@@ -337,3 +337,28 @@ func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 		t.Fatalf("mid-canary summary still offers a rollback past the serving release:\n%s", got)
 	}
 }
+
+// H10-10: after rollback v2→v1, deploying v3 at 50% printed
+// `rollback --to v2`, a release nobody served.
+func TestRenderDeploymentReleaseSummary_TrafficSplitOffersPromote(t *testing.T) {
+	var out bytes.Buffer
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: statusLive, TrafficPercent: 50},
+		Previous:   &api.DeploymentResponse{ID: "d2", Revision: 2, Status: "superseded"},
+	}, "h10-hello-node")
+	got := out.String()
+	if !strings.Contains(got, "Undo split: gregale traffic status h10-hello-node, then gregale traffic promote --app h10-hello-node") {
+		t.Fatalf("split summary lacks the promote hint:\n%s", got)
+	}
+	if strings.Contains(got, "rollback h10-hello-node --to") || strings.Contains(got, "Rollback: unavailable") {
+		t.Fatalf("split summary offers a plain rollback:\n%s", got)
+	}
+	out.Reset()
+	renderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
+		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: statusLive, TrafficPercent: 50},
+		Previous:   &api.DeploymentResponse{ID: "d1", Revision: 1, Status: statusLive, TrafficPercent: 50},
+	}, "h10-hello-node")
+	if got := out.String(); !strings.Contains(got, "Undo split: gregale traffic promote --app h10-hello-node --deployment v1") {
+		t.Fatalf("split summary with a live previous release lacks its exact promote command:\n%s", got)
+	}
+}

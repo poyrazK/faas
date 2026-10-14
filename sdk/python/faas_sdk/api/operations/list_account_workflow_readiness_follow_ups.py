@@ -7,8 +7,26 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.list_account_workflow_readiness_follow_ups_action_kind import (
+    ListAccountWorkflowReadinessFollowUpsActionKind,
+)
+from ...models.list_account_workflow_readiness_follow_ups_action_trigger import (
+    ListAccountWorkflowReadinessFollowUpsActionTrigger,
+)
 from ...models.list_account_workflow_readiness_follow_ups_due import (
     ListAccountWorkflowReadinessFollowUpsDue,
+)
+from ...models.list_account_workflow_readiness_follow_ups_impact_kind import (
+    ListAccountWorkflowReadinessFollowUpsImpactKind,
+)
+from ...models.list_account_workflow_readiness_follow_ups_impact_priority import (
+    ListAccountWorkflowReadinessFollowUpsImpactPriority,
+)
+from ...models.list_account_workflow_readiness_follow_ups_sort import (
+    ListAccountWorkflowReadinessFollowUpsSort,
+)
+from ...models.list_account_workflow_readiness_follow_ups_view import (
+    ListAccountWorkflowReadinessFollowUpsView,
 )
 from ...models.operation_workflow_readiness_follow_ups_response import OperationWorkflowReadinessFollowUpsResponse
 from ...models.problem import Problem
@@ -18,6 +36,9 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    view: ListAccountWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListAccountWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     tenant_id: UUID | Unset = UNSET,
     owner: str | Unset = UNSET,
@@ -26,9 +47,31 @@ def _get_kwargs(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListAccountWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListAccountWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    json_view: str | Unset = UNSET
+    if not isinstance(view, Unset):
+        json_view = view
+
+    params["view"] = json_view
+
+    json_action_kind: str | Unset = UNSET
+    if not isinstance(action_kind, Unset):
+        json_action_kind = action_kind
+
+    params["action_kind"] = json_action_kind
+
+    json_action_trigger: str | Unset = UNSET
+    if not isinstance(action_trigger, Unset):
+        json_action_trigger = action_trigger
+
+    params["action_trigger"] = json_action_trigger
 
     params["scope"] = scope
 
@@ -52,6 +95,26 @@ def _get_kwargs(
     params["limit"] = limit
 
     params["reminder_only"] = reminder_only
+
+    json_impact_priority: str | Unset = UNSET
+    if not isinstance(impact_priority, Unset):
+        json_impact_priority = impact_priority
+
+    params["impact_priority"] = json_impact_priority
+
+    json_impact_kind: str | Unset = UNSET
+    if not isinstance(impact_kind, Unset):
+        json_impact_kind = impact_kind
+
+    params["impact_kind"] = json_impact_kind
+
+    params["impact_code"] = impact_code
+
+    json_sort: str | Unset = UNSET
+    if not isinstance(sort, Unset):
+        json_sort = sort
+
+    params["sort"] = json_sort
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -125,6 +188,9 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient,
+    view: ListAccountWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListAccountWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     tenant_id: UUID | Unset = UNSET,
     owner: str | Unset = UNSET,
@@ -133,6 +199,10 @@ def sync_detailed(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListAccountWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListAccountWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> Response[OperationWorkflowReadinessFollowUpsResponse | Problem]:
     """List Account readiness follow-up work queue
 
@@ -143,6 +213,9 @@ def sync_detailed(
 
     Args:
         slug (str):
+        view (ListAccountWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListAccountWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         tenant_id (UUID | Unset):
         owner (str | Unset):
@@ -151,6 +224,10 @@ def sync_detailed(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListAccountWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListAccountWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,6 +239,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        view=view,
+        action_kind=action_kind,
+        action_trigger=action_trigger,
         scope=scope,
         tenant_id=tenant_id,
         owner=owner,
@@ -170,6 +250,10 @@ def sync_detailed(
         offset=offset,
         limit=limit,
         reminder_only=reminder_only,
+        impact_priority=impact_priority,
+        impact_kind=impact_kind,
+        impact_code=impact_code,
+        sort=sort,
     )
 
     response = client.get_httpx_client().request(
@@ -183,6 +267,9 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient,
+    view: ListAccountWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListAccountWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     tenant_id: UUID | Unset = UNSET,
     owner: str | Unset = UNSET,
@@ -191,6 +278,10 @@ def sync(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListAccountWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListAccountWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> OperationWorkflowReadinessFollowUpsResponse | Problem | None:
     """List Account readiness follow-up work queue
 
@@ -201,6 +292,9 @@ def sync(
 
     Args:
         slug (str):
+        view (ListAccountWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListAccountWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         tenant_id (UUID | Unset):
         owner (str | Unset):
@@ -209,6 +303,10 @@ def sync(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListAccountWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListAccountWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,6 +319,9 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        view=view,
+        action_kind=action_kind,
+        action_trigger=action_trigger,
         scope=scope,
         tenant_id=tenant_id,
         owner=owner,
@@ -229,6 +330,10 @@ def sync(
         offset=offset,
         limit=limit,
         reminder_only=reminder_only,
+        impact_priority=impact_priority,
+        impact_kind=impact_kind,
+        impact_code=impact_code,
+        sort=sort,
     ).parsed
 
 
@@ -236,6 +341,9 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient,
+    view: ListAccountWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListAccountWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     tenant_id: UUID | Unset = UNSET,
     owner: str | Unset = UNSET,
@@ -244,6 +352,10 @@ async def asyncio_detailed(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListAccountWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListAccountWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> Response[OperationWorkflowReadinessFollowUpsResponse | Problem]:
     """List Account readiness follow-up work queue
 
@@ -254,6 +366,9 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        view (ListAccountWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListAccountWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         tenant_id (UUID | Unset):
         owner (str | Unset):
@@ -262,6 +377,10 @@ async def asyncio_detailed(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListAccountWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListAccountWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -273,6 +392,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        view=view,
+        action_kind=action_kind,
+        action_trigger=action_trigger,
         scope=scope,
         tenant_id=tenant_id,
         owner=owner,
@@ -281,6 +403,10 @@ async def asyncio_detailed(
         offset=offset,
         limit=limit,
         reminder_only=reminder_only,
+        impact_priority=impact_priority,
+        impact_kind=impact_kind,
+        impact_code=impact_code,
+        sort=sort,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -292,6 +418,9 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient,
+    view: ListAccountWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListAccountWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     tenant_id: UUID | Unset = UNSET,
     owner: str | Unset = UNSET,
@@ -300,6 +429,10 @@ async def asyncio(
     offset: int | Unset = UNSET,
     limit: int | Unset = UNSET,
     reminder_only: bool | Unset = UNSET,
+    impact_priority: ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset = UNSET,
+    impact_kind: ListAccountWorkflowReadinessFollowUpsImpactKind | Unset = UNSET,
+    impact_code: str | Unset = UNSET,
+    sort: ListAccountWorkflowReadinessFollowUpsSort | Unset = UNSET,
 ) -> OperationWorkflowReadinessFollowUpsResponse | Problem | None:
     """List Account readiness follow-up work queue
 
@@ -310,6 +443,9 @@ async def asyncio(
 
     Args:
         slug (str):
+        view (ListAccountWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListAccountWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListAccountWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         tenant_id (UUID | Unset):
         owner (str | Unset):
@@ -318,6 +454,10 @@ async def asyncio(
         offset (int | Unset):
         limit (int | Unset):
         reminder_only (bool | Unset):
+        impact_priority (ListAccountWorkflowReadinessFollowUpsImpactPriority | Unset):
+        impact_kind (ListAccountWorkflowReadinessFollowUpsImpactKind | Unset):
+        impact_code (str | Unset):
+        sort (ListAccountWorkflowReadinessFollowUpsSort | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -331,6 +471,9 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            view=view,
+            action_kind=action_kind,
+            action_trigger=action_trigger,
             scope=scope,
             tenant_id=tenant_id,
             owner=owner,
@@ -339,5 +482,9 @@ async def asyncio(
             offset=offset,
             limit=limit,
             reminder_only=reminder_only,
+            impact_priority=impact_priority,
+            impact_kind=impact_kind,
+            impact_code=impact_code,
+            sort=sort,
         )
     ).parsed

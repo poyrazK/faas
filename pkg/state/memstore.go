@@ -719,6 +719,7 @@ type MemStore struct {
 
 	invocationEnvironmentQueueAdmissions map[string]InvocationEnvironmentQueueAdmission
 	invocationEnvironmentQueueReceipts   map[string]environmentQueueReceipt
+	invocationQueueLeaseReceipts         map[string]queueLeaseReceipt
 	invocationWorkEnvironmentAdmissions  map[string]InvocationWorkEnvironmentAdmission
 	invocationWorkEnvironmentDomains     map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
@@ -1106,6 +1107,9 @@ type MemStore struct {
 	runtimeUpgradeCutovers          map[string]RuntimeUpgradeCutover
 	runtimeUpgradeOperations        map[string]RuntimeUpgradeOperation
 	appHealthHistory                map[string]appHealthRecord
+	realtimeTickets                 map[string]storedRealtimeTicket
+	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
+	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -1497,6 +1501,7 @@ func NewMemStore() *MemStore {
 
 		invocationEnvironmentQueueAdmissions: map[string]InvocationEnvironmentQueueAdmission{},
 		invocationEnvironmentQueueReceipts:   map[string]environmentQueueReceipt{},
+		invocationQueueLeaseReceipts:         map[string]queueLeaseReceipt{},
 		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
 		invocationWorkEnvironmentDomains:     map[string]string{},
 		runtimeInstanceConfigProofs:          map[string]runtimeInstanceConfigProof{},
@@ -6561,6 +6566,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.keyedReplayChildren, key)
 			delete(m.plainReplayChildren, key)
 			delete(m.invocationEnvironmentQueueReceipts, key)
+			delete(m.invocationQueueLeaseReceipts, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -8660,6 +8666,17 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
 	}
 
+	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
+	// live rows carrying all traffic must not collapse their split (H10-11).
+	remaining := 0
+	for id, other := range m.deployments {
+		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+			remaining += other.TrafficPercent
+		}
+	}
+	if remaining == 100 {
+		return
+	}
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
@@ -14711,7 +14728,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateDraining):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
 			out = append(out, ins)
 		}
 	}
@@ -14788,7 +14805,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm, StateFrozen:
 		default:
 			continue
 		}
@@ -26147,6 +26164,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 			delete(m.keyedReplayChildren, id)
 			delete(m.plainReplayChildren, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)
+			delete(m.invocationQueueLeaseReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)
 			n++

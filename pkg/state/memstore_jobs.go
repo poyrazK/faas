@@ -120,7 +120,7 @@ func (m *MemStore) JobCreateIfUnderQuota(_ context.Context, accountID, name, kin
 	defer m.mu.Unlock()
 	count := 0
 	for _, j := range m.jobs {
-		if j.AccountID == accountID && j.Status != "deleted" {
+		if j.AccountID == accountID && j.Status != "deleted" && j.Kind != JobKindImageRun {
 			count++
 		}
 	}
@@ -137,7 +137,7 @@ func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, li
 	defer m.mu.Unlock()
 	count := 0
 	for _, existing := range m.jobs {
-		if existing.AccountID == job.AccountID && existing.Status != "deleted" {
+		if existing.AccountID == job.AccountID && existing.Status != "deleted" && existing.Kind != JobKindImageRun {
 			count++
 		}
 	}
@@ -227,7 +227,7 @@ func (m *MemStore) JobListByAccount(_ context.Context, accountID string, limit, 
 	defer m.mu.Unlock()
 	var matched []Job
 	for _, j := range m.jobs {
-		if j.AccountID == accountID && j.Status != "deleted" {
+		if j.AccountID == accountID && j.Status != "deleted" && j.Kind != JobKindImageRun {
 			matched = append(matched, j)
 		}
 	}
@@ -335,6 +335,7 @@ func (m *MemStore) jobUpdateLocked(id string, command []string, imageRef *string
 		j.ImageMaterializedAt = nil
 		j.ImageMaterializationAttempts = 0
 		j.ImageMaterializationNextAttemptAt = nil
+		j.ImageEntrypoint, j.ImageCmd, j.ImageConfigRecorded = nil, nil, false
 		delete(m.jobMaterializationClaims, id)
 	}
 	if ramMB != nil {
@@ -729,7 +730,7 @@ func (m *MemStore) JobCountByAccount(_ context.Context, accountID string) (int, 
 	defer m.mu.Unlock()
 	count := 0
 	for _, j := range m.jobs {
-		if j.AccountID == accountID && j.Status != "deleted" {
+		if j.AccountID == accountID && j.Status != "deleted" && j.Kind != JobKindImageRun {
 			count++
 		}
 	}

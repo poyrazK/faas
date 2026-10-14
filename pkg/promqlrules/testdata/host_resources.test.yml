@@ -287,7 +287,7 @@ tests:
           - exp_labels:
               job: node
               instance: 127.0.0.1:9100
-              severity: page
+              severity: warn
               component: node
               family: host_exporter
               public_status: internal
