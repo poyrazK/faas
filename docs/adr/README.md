@@ -1017,3 +1017,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1131: Customer service map from unsampled service-proxy edges](1131-customer-service-map.md)
 
 - [ADR-1134: Wake-ahead learns private TCP edges](1134-wake-ahead-learns-private-tcp.md)
+- [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
