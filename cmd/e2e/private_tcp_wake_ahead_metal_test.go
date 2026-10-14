@@ -4,6 +4,10 @@
 // session to a parked internal service after each of its own cold wakes
 // teaches the gateway that edge; once the caller opts in, the service is
 // restored while the caller wakes instead of after it connects.
+//
+// The comparison alternates blocks with the opt-in on and off inside one run,
+// on one gateway: a shared metal host's load drifts by minutes, and restores
+// measured an hour apart differed by 3x on n2.
 package e2e_test
 
 import (
@@ -20,9 +24,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// privateTCPWakeAheadOnCycles is how many cold wakes are measured after the
-// caller opts in.
-const privateTCPWakeAheadOnCycles = 8
+// privateTCPWakeAheadBlocks alternate on, off, on, off, … after learning;
+// each block measures privateTCPWakeAheadBlockCycles cold wakes.
+const (
+	privateTCPWakeAheadBlocks      = 4
+	privateTCPWakeAheadBlockCycles = 4
+)
 
 // privateTCPWakeAheadMaxFailed is how many cold cycles per phase may fail
 // (a slow restore on the shared metal host) before the measurement is void.
@@ -66,36 +73,49 @@ func TestPrivateTCPWakeAheadMetal(t *testing.T) {
 		return elapsed, true
 	}
 
-	// Wake-ahead is off while the gateway learns the edge: these cycles are
-	// the sequential baseline.
-	var off []time.Duration
+	// Wake-ahead is off while the gateway learns the edge.
+	var learn []time.Duration
 	for i := 0; i < api.ServiceWakeAheadMinWakes+2+privateTCPWakeAheadMaxFailed; i++ {
 		if d, ok := coldDial("learn", i); ok {
-			off = append(off, d)
+			learn = append(learn, d)
 		}
 	}
 
-	if raw, status := doReq(t, f.h, f.key, http.MethodPut, "/v1/apps/"+f.caller.Slug+"/service-wake-ahead", map[string]bool{"enabled": true}); status != http.StatusOK {
-		t.Fatalf("opt %s into wake-ahead: status=%d body=%s", f.caller.Slug, status, raw)
+	optIn := func(enabled bool) {
+		t.Helper()
+		if raw, status := doReq(t, f.h, f.key, http.MethodPut, "/v1/apps/"+f.caller.Slug+"/service-wake-ahead", map[string]bool{"enabled": enabled}); status != http.StatusOK {
+			t.Fatalf("set %s wake-ahead to %v: status=%d body=%s", f.caller.Slug, enabled, status, raw)
+		}
+		// The gateway caches the opt-in for ServiceWakeAheadCacheTTL.
+		time.Sleep(api.ServiceWakeAheadCacheTTL + 5*time.Second)
 	}
-	// The gateway caches the opt-in for ServiceWakeAheadCacheTTL.
-	time.Sleep(api.ServiceWakeAheadCacheTTL + 5*time.Second)
-
-	var on []time.Duration
-	for i := 0; i < privateTCPWakeAheadOnCycles; i++ {
-		if d, ok := coldDial("ahead", i); ok {
-			on = append(on, d)
+	var on, off []time.Duration
+	for block := 0; block < privateTCPWakeAheadBlocks; block++ {
+		enabled := block%2 == 0
+		optIn(enabled)
+		phase := map[bool]string{true: "ahead", false: "off"}[enabled]
+		for i := 0; i < privateTCPWakeAheadBlockCycles; i++ {
+			d, ok := coldDial(phase, block*privateTCPWakeAheadBlockCycles+i)
+			switch {
+			case !ok:
+			case enabled:
+				on = append(on, d)
+			default:
+				off = append(off, d)
+			}
 		}
 	}
+	onCycles := privateTCPWakeAheadBlocks / 2 * privateTCPWakeAheadBlockCycles
 
 	caller, service := uuid.MustParse(f.caller.ID).String(), uuid.MustParse(f.service.ID).String()
 	started := gatewayWakeAheadEdgeCount(t, f.h.GatewayControlURL, caller, service, "started")
 	used := gatewayWakeAheadEdgeCount(t, f.h.GatewayControlURL, caller, service, "used")
-	t.Logf("cold caller -> TCP service, wake-ahead off: p50=%s p95=%s (n=%d)", percentileDuration(off, 50), percentileDuration(off, 95), len(off))
-	t.Logf("cold caller -> TCP service, wake-ahead on:  p50=%s p95=%s (n=%d)", percentileDuration(on, 50), percentileDuration(on, 95), len(on))
-	t.Logf("wake-ahead of the TCP service for this caller: started=%g used=%g; failed cold dials: learn=%d ahead=%d", started, used, failed["learn"], failed["ahead"])
-	if used < privateTCPWakeAheadOnCycles/2 {
-		t.Fatalf("wake-ahead used %g of %d cold wakes (started %g); the TCP edge was not learned or not acted on", used, privateTCPWakeAheadOnCycles, started)
+	t.Logf("cold caller -> TCP service while learning: p50=%s p95=%s (n=%d)", percentileDuration(learn, 50), percentileDuration(learn, 95), len(learn))
+	t.Logf("cold caller -> TCP service, wake-ahead off: p50=%s p95=%s (n=%d, interleaved)", percentileDuration(off, 50), percentileDuration(off, 95), len(off))
+	t.Logf("cold caller -> TCP service, wake-ahead on:  p50=%s p95=%s (n=%d, interleaved)", percentileDuration(on, 50), percentileDuration(on, 95), len(on))
+	t.Logf("wake-ahead of the TCP service for this caller: started=%g used=%g; failed cold dials: learn=%d off=%d ahead=%d", started, used, failed["learn"], failed["off"], failed["ahead"])
+	if used < float64(onCycles)/2 {
+		t.Fatalf("wake-ahead used %g of %d cold wakes (started %g); the TCP edge was not learned or not acted on", used, onCycles, started)
 	}
 }
 
