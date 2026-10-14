@@ -1,5 +1,7 @@
 # Deployment Companion Read Model Implementation Plan
 
+Current-base continuation (October15): the original reviewed implementation in #4638 passed CI, then conflicted with newer main. This branch preserves its behavior on immutable `c70cf7689d54f61f162159ebbc102a29f31aa542`; only AST-source and generated Python import lists needed conflict resolution, retaining both additions. The old numeric server ratchet was removed by newer main; this change raises no budget and still shrinks the server facade. Generated Node/Python clients are included. No PR or default branch is merged or force-pushed.
+
 > **For agentic workers:** Use superpowers:executing-plans inline. Steps use checkboxes for tracking.
 
 **Goal:** Let the console inspect actual declared deployment companions without revealing environment values or inventing health.
