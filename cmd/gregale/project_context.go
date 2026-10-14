@@ -33,9 +33,11 @@ type localProjectContext struct {
 }
 
 type projectContextReceipt struct {
-	Context    localProjectContext `json:"context"`
-	Path       string              `json:"path"`
-	Connection *connectionContext  `json:"connection,omitempty"`
+	Context      localProjectContext       `json:"context"`
+	Path         string                    `json:"path"`
+	Connection   *connectionContext        `json:"connection,omitempty"`
+	Targeting    *projectTargetingOverview `json:"targeting,omitempty"`
+	Verification *contextVerification      `json:"verification,omitempty"`
 }
 
 func projectContextPath(root string) string {

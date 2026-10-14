@@ -3807,6 +3807,15 @@ type InvocationPlainReplay struct {
 	ReplayCreatedAt    pgtype.Timestamptz
 }
 
+type InvocationQueueLeaseReceipt struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	TokenHash        string
+	IssuedAt         pgtype.Timestamptz
+	LeaseExpiresAt   pgtype.Timestamptz
+}
+
 type InvocationWorkCancellation struct {
 	ID             pgtype.UUID
 	AppID          pgtype.UUID

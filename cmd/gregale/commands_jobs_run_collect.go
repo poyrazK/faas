@@ -33,7 +33,7 @@ func waitAndCollectJobRun(parentCtx context.Context, client *api.Client, name st
 	if !jobRunIDPattern.MatchString(accepted.ID) || accepted.JobID == "" || accepted.AccountID == "" {
 		receipt.ExitCode = 1
 		receipt.Error = "the selected run lacks a complete identity; inspect run history before submitting again"
-		receipt.ResumeCommand = fmt.Sprintf("%s jobs runs %s", recoveryCLI(), recoveryArgument(name))
+		receipt.ResumeCommand = savedNameSuggestionCommand([]string{"jobs", "runs", name})
 		if jsonOutput {
 			if code := jsonOut(writeJSONSingle(receipt)); code != 0 {
 				return code
@@ -41,9 +41,9 @@ func waitAndCollectJobRun(parentCtx context.Context, client *api.Client, name st
 		}
 		return printErr("Cannot collect Job run", fmt.Errorf("%s; inspect %s", receipt.Error, receipt.ResumeCommand))
 	}
-	waitCommand := fmt.Sprintf("%s jobs wait %s %s --timeout %s --poll-interval %s", recoveryCLI(), recoveryArgument(name), recoveryArgument(accepted.ID), timeout.String(), interval.String())
-	waitCommand += " --out-dir " + recoveryArgument(directory)
-	downloadCommand := fmt.Sprintf("%s jobs artifact-download %s %s --all-tasks --out-dir %s", recoveryCLI(), recoveryArgument(name), recoveryArgument(accepted.ID), recoveryArgument(directory))
+	waitCommand := savedNameSuggestionCommand([]string{"jobs", "wait", name, accepted.ID, "--timeout", timeout.String(), "--poll-interval", interval.String(), "--out-dir", directory})
+	downloadCommand := savedNameSuggestionCommand([]string{"jobs", "artifact-download", name, accepted.ID, "--all-tasks", "--out-dir", directory})
+	statusCommand := savedNameSuggestionCommand([]string{"jobs", "status", name, accepted.ID})
 	if resume {
 		downloadCommand += " --resume"
 	}
@@ -73,7 +73,7 @@ func waitAndCollectJobRun(parentCtx context.Context, client *api.Client, name st
 	if code != 0 {
 		if waitErr == nil {
 			receipt.Error = "the run did not succeed; artifact collection was not started"
-			receipt.ResumeCommand = fmt.Sprintf("%s jobs status %s %s", recoveryCLI(), recoveryArgument(name), recoveryArgument(accepted.ID))
+			receipt.ResumeCommand = statusCommand
 		}
 		if jsonOutput {
 			if outputCode := jsonOut(writeJSONSingle(receipt)); outputCode != 0 {

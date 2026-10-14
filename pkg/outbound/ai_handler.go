@@ -18,7 +18,12 @@ type AIUsageBackend interface {
 	RecordAIUsage(context.Context, AIUsageRecord) error
 }
 
-const aiUsageRecordTimeout = 2 * time.Second
+// aiUsageRecordTimeout bounds one settlement write. The preview soak
+// (ADR-998) dropped usage at 2 s when calls of one integration queued on its
+// admission-state row; a timed-out commit may still land, so the write is
+// not retried, and a longer bound keeps transient contention from losing
+// usage.
+const aiUsageRecordTimeout = 15 * time.Second
 
 // observedBody hands every byte read from the provider to the usage observer
 // as the gateway forwards it. Closing it closes the provider body.

@@ -721,6 +721,7 @@ type MemStore struct {
 
 	invocationEnvironmentQueueAdmissions map[string]InvocationEnvironmentQueueAdmission
 	invocationEnvironmentQueueReceipts   map[string]environmentQueueReceipt
+	invocationQueueLeaseReceipts         map[string]queueLeaseReceipt
 	invocationWorkEnvironmentAdmissions  map[string]InvocationWorkEnvironmentAdmission
 	invocationWorkEnvironmentDomains     map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
@@ -1502,6 +1503,7 @@ func NewMemStore() *MemStore {
 
 		invocationEnvironmentQueueAdmissions: map[string]InvocationEnvironmentQueueAdmission{},
 		invocationEnvironmentQueueReceipts:   map[string]environmentQueueReceipt{},
+		invocationQueueLeaseReceipts:         map[string]queueLeaseReceipt{},
 		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
 		invocationWorkEnvironmentDomains:     map[string]string{},
 		runtimeInstanceConfigProofs:          map[string]runtimeInstanceConfigProof{},
@@ -6586,6 +6588,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.keyedReplayChildren, key)
 			delete(m.plainReplayChildren, key)
 			delete(m.invocationEnvironmentQueueReceipts, key)
+			delete(m.invocationQueueLeaseReceipts, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -8721,6 +8724,17 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
 	}
 
+	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
+	// live rows carrying all traffic must not collapse their split (H10-11).
+	remaining := 0
+	for id, other := range m.deployments {
+		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+			remaining += other.TrafficPercent
+		}
+	}
+	if remaining == 100 {
+		return
+	}
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
@@ -26209,6 +26223,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 			delete(m.keyedReplayChildren, id)
 			delete(m.plainReplayChildren, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)
+			delete(m.invocationQueueLeaseReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)
 			n++
