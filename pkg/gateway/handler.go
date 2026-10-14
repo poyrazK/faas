@@ -1238,7 +1238,7 @@ type Handler struct {
 	// commit 14.
 	responseCache *ResponseCache
 	// contentObserver compares anonymous GET responses on routes without a
-	// cache rule (ADR-1156); only the outcome reaches request telemetry.
+	// cache rule (ADR-1188); only the outcome reaches request telemetry.
 	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
@@ -6550,7 +6550,7 @@ haveApp:
 		// resolved above, no point doing it twice).
 	} else if !deploymentSmoke && rule == nil && sidecarName == "" && h.contentObserver != nil && contentObservable(r) {
 		// No cache rule: observe whether this anonymous GET response repeats
-		// (ADR-1156). The tee only hashes; observe() records the outcome once
+		// (ADR-1188). The tee only hashes; observe() records the outcome once
 		// the origin response is complete.
 		tee := newContentTee(w, h.contentObserver, app.ID, r)
 		w = tee

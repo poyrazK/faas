@@ -175,7 +175,7 @@ func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 	_, _ = fmt.Fprintf(w, "\nApply one with `gregale routes advise %s --apply ID` (same --since and --cache-max-age); rules are created disabled unless you add --enable, and settings take effect at once.\n", a.Slug)
 }
 
-// routeAdviceContentLine summarizes learned cacheability evidence (ADR-1156).
+// routeAdviceContentLine summarizes learned cacheability evidence (ADR-1188).
 func routeAdviceContentLine(e api.RouteAdviceEvidence) string {
 	if e.ContentObserved == 0 {
 		return ""

@@ -11,7 +11,7 @@ type RouteAwakeOptions struct {
 	Until string
 }
 
-// GetRouteAwake reads which routes kept an app awake (ADR-1155).
+// GetRouteAwake reads which routes kept an app awake (ADR-1187).
 func (c *Client) GetRouteAwake(ctx context.Context, slug string, opts RouteAwakeOptions) (RouteAwakeResponse, error) {
 	var out RouteAwakeResponse
 	q := url.Values{}

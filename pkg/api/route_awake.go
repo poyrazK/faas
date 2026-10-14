@@ -1,6 +1,6 @@
 package api
 
-// Route awake patterns and suggestion kinds (ADR-1155).
+// Route awake patterns and suggestion kinds (ADR-1187).
 const (
 	RouteAwakePatternPeriodic  = "periodic"
 	RouteAwakePatternIrregular = "irregular"

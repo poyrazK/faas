@@ -1,4 +1,4 @@
-# ADR-1155: Route awake report — which routes keep a scale-to-zero app awake
+# ADR-1187: Route awake report — which routes keep a scale-to-zero app awake
 
 - Status: Accepted
 - Date: 2026-10-13

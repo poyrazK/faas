@@ -663,7 +663,7 @@ type IncrementRequestTelemetryRequest struct {
 	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,35,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"`
 	// Bounded canonical application-reported flag decisions; no customer attributes.
 	FlagEvidenceJson string `protobuf:"bytes,36,opt,name=flag_evidence_json,json=flagEvidenceJson,proto3" json:"flag_evidence_json,omitempty"`
-	// ADR-1156: how an anonymous GET body compared with the previous response
+	// ADR-1188: how an anonymous GET body compared with the previous response
 	// for its URL on the same gateway; empty when not observed. Never a hash.
 	ContentOutcome string `protobuf:"bytes,37,opt,name=content_outcome,json=contentOutcome,proto3" json:"content_outcome,omitempty"`
 	unknownFields  protoimpl.UnknownFields

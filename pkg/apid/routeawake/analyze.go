@@ -1,5 +1,5 @@
 // Package routeawake reports which routes keep a scale-to-zero app awake
-// (ADR-1155). Awake time is the app's billed running time per minute; it is
+// (ADR-1187). Awake time is the app's billed running time per minute; it is
 // attributed to the routes whose requests restarted the idle timer, and for
 // each busy route the report estimates how much awake time, and how many cold
 // wakes, the app would have had without that route's requests.

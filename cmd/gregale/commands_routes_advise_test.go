@@ -136,7 +136,7 @@ func TestRoutesAdviseCLIEnableAndFailures(t *testing.T) {
 	}
 }
 
-// adr: 1156
+// adr: 1188
 func TestRouteAdviceContentLine(t *testing.T) {
 	for want, e := range map[string]api.RouteAdviceEvidence{
 		"": {},

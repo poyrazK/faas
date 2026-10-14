@@ -6,7 +6,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ContentStats counts a route's observed anonymous GET responses (ADR-1156).
+// ContentStats counts a route's observed anonymous GET responses (ADR-1188).
 // Same and Changed are indexed like api.RouteContentWindows and are not
 // cumulative: Same[i] counts identical responses whose previous response for
 // the URL was seen within window i but not within window i-1.

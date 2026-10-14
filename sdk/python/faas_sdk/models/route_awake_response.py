@@ -18,7 +18,7 @@ T = TypeVar("T", bound="RouteAwakeResponse")
 
 @_attrs_define
 class RouteAwakeResponse:
-    """How long the app was awake in the window and which routes kept it awake (ADR-1155). Seconds are instance-seconds of
+    """How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of
     billed running time.
 
     """

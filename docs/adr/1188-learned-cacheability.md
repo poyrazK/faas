@@ -1,14 +1,14 @@
-# ADR-1156: Learned cacheability — measure whether a route is safe to cache, and for how long
+# ADR-1188: Learned cacheability — measure whether a route is safe to cache, and for how long
 
 - Status: Accepted
 - Date: 2026-10-14
-- Related: ADR-122 (edge response cache), ADR-127 (request telemetry), ADR-976 (route advisor), ADR-1155 (route awake report), ADR-124 (traffic mirroring)
+- Related: ADR-122 (edge response cache), ADR-127 (request telemetry), ADR-976 (route advisor), ADR-1187 (route awake report), ADR-124 (traffic mirroring)
 
 ## Context
 
 On a scale-to-zero platform an edge cache hit never wakes the app, so a
 cache rule is the strongest single lever on wakes, latency and cost. The
-route advisor (ADR-976) and the awake report (ADR-1155) suggest cache rules
+route advisor (ADR-976) and the awake report (ADR-1187) suggest cache rules
 from a heuristic: anonymous, successful GET traffic with repeats inside the
 proposed lifetime. Neither knows whether the response is actually the same
 from one request to the next, so the customer has to guess a safe

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { RouteAwakeRoute } from './RouteAwakeRoute.js';
 /**
- * How long the app was awake in the window and which routes kept it awake (ADR-1155). Seconds are instance-seconds of billed running time.
+ * How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time.
  */
 export type RouteAwakeResponse = {
   slug: string;

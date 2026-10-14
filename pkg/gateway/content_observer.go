@@ -1,6 +1,6 @@
 package gateway
 
-// Learned cacheability (ADR-1156). For anonymous GET requests on routes
+// Learned cacheability (ADR-1188). For anonymous GET requests on routes
 // without a cache rule, gatewayd-internal hashes the response body with a
 // per-process key and compares it with the previous response for the same
 // URL. Only the outcome leaves the gateway, on the request telemetry row:

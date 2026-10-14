@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Content outcomes on request telemetry (ADR-1156): how an anonymous GET
+// Content outcomes on request telemetry (ADR-1188): how an anonymous GET
 // response compared with the previous response for the same URL on the same
 // gateway. Empty means the response was not observed.
 const (

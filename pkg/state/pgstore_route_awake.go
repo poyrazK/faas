@@ -7,7 +7,7 @@ import (
 )
 
 // RouteAwakeMinutes and RouteAwakeRouteMinutes read billed running time and
-// retained request telemetry for the route awake report (ADR-1155).
+// retained request telemetry for the route awake report (ADR-1187).
 func (s *PgStore) RouteAwakeMinutes(ctx context.Context, arg sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
 	return s.appErrorsQueries().RouteAwakeMinutes(ctx, s.pool, arg)
 }

@@ -4954,7 +4954,7 @@ export class AppsService {
   }
   /**
    * Show which routes keep a scale-to-zero app awake.
-   * Read-only awake-time report (ADR-1155). Awake time is the app's billed
+   * Read-only awake-time report (ADR-1187). Awake time is the app's billed
    * running time (plan RAM + 8 MB per running second) from the usage
    * ledger. It is attributed, minute by minute, to the routes whose
    * requests restarted the idle timer: a 2xx response from an instance, or

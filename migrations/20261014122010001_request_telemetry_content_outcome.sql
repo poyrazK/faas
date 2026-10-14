@@ -1,4 +1,4 @@
--- ADR-1156: learned cacheability. How an anonymous GET body compared with
+-- ADR-1188: learned cacheability. How an anonymous GET body compared with
 -- the previous response for its URL on the same gateway; empty when the
 -- response was not observed. Never a body or hash.
 

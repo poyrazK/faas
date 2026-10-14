@@ -454,7 +454,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		out.Outcome = rtOutcomeDBError
 		return out
 	}
-	// ADR-1156: an outcome this apid does not know is dropped, not the row.
+	// ADR-1188: an outcome this apid does not know is dropped, not the row.
 	contentOutcome := req.GetContentOutcome()
 	if !api.ValidContentOutcome(contentOutcome) {
 		contentOutcome = ""

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// getRouteAwake serves GET /v1/apps/{slug}/routes/awake (ADR-1155): how long
+// getRouteAwake serves GET /v1/apps/{slug}/routes/awake (ADR-1187): how long
 // the app was awake in the window, which routes kept it awake, and what each
 // busy route's requests cost in awake time. It never writes.
 func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct state.Account) {

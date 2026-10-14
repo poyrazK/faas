@@ -19874,7 +19874,7 @@ paths:
       operationId: getRouteAwake
       summary: Show which routes keep a scale-to-zero app awake.
       description: |
-        Read-only awake-time report (ADR-1155). Awake time is the app's billed
+        Read-only awake-time report (ADR-1187). Awake time is the app's billed
         running time (plan RAM + 8 MB per running second) from the usage
         ledger. It is attributed, minute by minute, to the routes whose
         requests restarted the idle timer: a 2xx response from an instance, or
@@ -56846,7 +56846,7 @@ components:
         pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
     RouteAwakeResponse:
       type: object
-      description: "How long the app was awake in the window and which routes kept it awake (ADR-1155). Seconds are instance-seconds of billed running time."
+      description: "How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time."
       required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, other_routes_seconds, routes_limit, routes]
       properties:
         slug: {"type": "string"}
@@ -56956,7 +56956,7 @@ components:
         top_consumer_requests: {"type": "integer", "format": "int64"}
         top_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
         next_consumer_peak_per_minute: {"type": "integer", "format": "int64"}
-        content_observed: {"type": "integer", "format": "int64", "description": "Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1156). Cache suggestions only."}
+        content_observed: {"type": "integer", "format": "int64", "description": "Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache suggestions only."}
         content_repeats: {"type": "integer", "format": "int64", "description": "Observed responses identical to the previous one for their URL within the longest content window (1 h)."}
         content_changes: {"type": "integer", "format": "int64", "description": "Observed responses that differed from the previous one for their URL within the longest content window."}
         content_uncacheable: {"type": "integer", "format": "int64", "description": "Observed responses the edge cache could not store (Set-Cookie, Cache-Control no-store or private, Vary, or size)."}

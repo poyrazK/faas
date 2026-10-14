@@ -40,7 +40,7 @@ type RouteAwakeMinutesRow struct {
 	ColdBoots int64
 }
 
-// Route awake report reads (ADR-1155): which routes keep a scale-to-zero app
+// Route awake report reads (ADR-1187): which routes keep a scale-to-zero app
 // awake. usage_minutes is the billed running time; request_telemetry is
 // retained debugger telemetry. Both are read only.
 // The app's billed running time and cold boots per minute, summed over its

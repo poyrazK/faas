@@ -9808,7 +9808,7 @@ const (
 	RouteAdviceMaxCriticalRoutes = 3
 )
 
-// RouteAwake bounds the awake-time report (ADR-1155): which routes keep a
+// RouteAwake bounds the awake-time report (ADR-1187): which routes keep a
 // scale-to-zero app awake. It reads the busiest RouteAwakeMaxRoutes routes
 // (the rest are one "other routes" bucket) over at most the plan's request
 // telemetry retention.
@@ -9829,7 +9829,7 @@ const (
 	RouteAwakeCacheMinAnonymousShare = 0.9
 )
 
-// RouteContent bounds learned cacheability (ADR-1156). Each gateway
+// RouteContent bounds learned cacheability (ADR-1188). Each gateway
 // remembers the last anonymous GET body hash for at most
 // RouteContentObserverMaxURLs URLs. Outcomes are bucketed by
 // RouteContentWindows, which are also the max-ages the advisor can propose.
