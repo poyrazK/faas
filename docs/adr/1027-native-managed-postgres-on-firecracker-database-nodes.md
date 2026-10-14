@@ -646,6 +646,55 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   and the existing login survive, and a shrink is refused.
   `TestMetalQualifyProvider` passes all 27 checks.
 
+### Moves and node evacuation
+
+A database moves to another node by copying its parked volume, not by
+restoring it: a restore-based move would promote onto a new timeline, and a
+move aborted after promotion would leave that timeline in the archive for
+later recoveries to follow past the source's newer commits. A byte copy
+keeps the timeline, so the archive simply continues from the new node, and
+an abort only has to discard the copy.
+
+- **Copy.** vmmd's `ExportDatabaseVolume` streams a stopped volume's data
+  extents (holes and all-zero chunks skipped, zstd on the wire) and
+  `ImportDatabaseVolume` writes them to a temporary file on the target.
+  Both hash every extent's offset, length and bytes, then the size; the
+  target installs the volume only on a matching digest. schedd relays one
+  stream into the other, so no node-to-node identity is needed; the bytes
+  cross the control plane, acceptable for an operation this rare. A volume
+  in transfer cannot boot.
+- **Archive handoff.** Before the switch, `SyncDatabaseArchive` makes the
+  old node's dbbackupd ship every archive file it still holds to the shared
+  bucket (admin op `sync`). After it, `DeleteDatabaseVolume.release_archive`
+  deletes the old volume and drops that node's archive copy (admin op
+  `release`, which ships anything left first); the bucket keeps everything.
+  Moves therefore need `shared_archive`.
+- **schedd.** `Move` parks a running database, marks it `moving` with
+  `move_node` and a lease (`BeginMove` picks the active node with the most
+  free volume capacity unless one is named, under that node's lock),
+  discards any copy a failed earlier move left there, copies, syncs, and
+  switches `node_id` (`FinishMove`, fenced by the lease). A moving volume
+  counts against both nodes' capacity, and a moving database cannot wake,
+  park, resize or be deleted. Any failure before the switch aborts the
+  move: the database stays parked on its node with `move_failed`, its
+  volume there untouched, and the copy is discarded. A running or
+  always-on database is woken on its new node, so clients see one stop and
+  boot plus the copy. A replica that dies mid-move leaves its lease to
+  lapse, and `SettleMoves` (at startup and in the idle sweep) aborts the
+  move. `CollectOrphans` releases a moved database's leftover volume, or a
+  failed move's copy, without touching the bucket.
+- **Evacuation.** With `[database_scheduler] evacuate_draining`, the backup
+  sweep moves databases off draining nodes one at a time: parked ones, and
+  always-on ones, which never park. A running scale-to-zero database moves
+  once it parks, so its clients see no extra downtime.
+- **Known gaps.** The history meter samples each node's local archive, so
+  a moved database's pre-move history, now only in the bucket, stops being
+  metered. Moves have no operator RPC yet; only evacuation drives them.
+- The database-node method allowlist had missed four RPCs added after it
+  (`ListDatabaseVolumes`, `GrowDatabaseVolume`, `PruneDatabaseArchive`,
+  `DatabaseArchiveBytes`); a test now derives it from the service
+  descriptor.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives
