@@ -72,3 +72,10 @@ refused prediction never becomes a wake error a real request could join, and
   requests that joined it. The guard therefore decides before any wake starts.
 - **Durable edge statistics in Postgres.** The gateway does not write
   customer tables; in-memory evidence is enough to decide and bounded.
+
+## Amendment (ADR-1134, 2026-10-13)
+
+Private TCP sessions (ADR-576) teach the learner too. The service TCP proxy
+observes each authorized session once, when it hands the session to a
+replica, with whether it had to wake the target. All thresholds, bounds and
+guards above are unchanged.

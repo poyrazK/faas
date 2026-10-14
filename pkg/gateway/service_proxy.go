@@ -516,6 +516,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upgrade := isUpgradeRequest(r)
 	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
 	var dependencyHealthCaller ServiceCaller
+	// dependencyWoke records that the call found its target parked and held
+	// while it was restored (ADR-196), for the per-edge wake counter that the
+	// service map's cold-call share reads (ADR-1131).
+	dependencyWoke := false
 	var dependencyHealthTarget ServiceTarget
 	dependencyCallEligible := false
 	dispatchWriter := http.ResponseWriter(traceWriter)
@@ -563,6 +567,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					p.now().Sub(dependencyStarted),
 					traceIDFromContext(dependencyCtx),
 				)
+				if dependencyWoke {
+					p.metrics.IncServiceDependencyEdgeWake(dependencyHealthCaller.AppID, dependencyHealthTarget.AppID)
+				}
 				if dependencyHealthCaller.DeploymentID != "" {
 					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
 				}
@@ -892,19 +899,24 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// unauthorized requests from release health.
 	dependencyCallEligible = true
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
+	dependencyWoke = woken
 	if !served {
 		return
 	}
 	if responseFault != nil {
 		capture := newScenarioHTTPResponseWriter(dispatchWriter)
-		p.dispatch(capture, r, targetPath, target, callerInfo, versionDeploymentID, endpoints, woken) //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
+		if p.dispatch(capture, r, targetPath, target, callerInfo, versionDeploymentID, endpoints, woken) { //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
+			dependencyWoke = true
+		}
 		capture.finish(r.Context(), func() {
 			p.observeScenarioHTTPFault(dependencySpan, responseFault.runID, responseFault.callerAppID, responseFault.generation, responseFault.rule)
 			dispatchWriter.Header().Set("X-Gregale-Chaos-Injected", responseFault.rule.Kind)
 		})
 		return
 	}
-	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, versionDeploymentID, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	if p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, versionDeploymentID, endpoints, woken) { //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+		dependencyWoke = true
+	}
 }
 
 // applyScenarioChaos runs only after the normal identity, namespace, tenant,
@@ -1085,7 +1097,10 @@ func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, deploymentID string, endpoints []ServiceEndpoint, woken bool) {
+//
+// rerouteWoke reports that forwardOnce's re-route had to wake the target
+// (ADR-1133), so the call still counts as a cold edge call (ADR-1131).
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, deploymentID string, endpoints []ServiceEndpoint, woken bool) (rerouteWoke bool) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
 			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
@@ -1107,7 +1122,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 	}
 	p.countForward(woken)
 	p.observeWakeAheadCall(caller, target, woken)
-	p.forwardOnce(w, r, targetPath, target, caller, deploymentID, endpoints, woken)
+	return p.forwardOnce(w, r, targetPath, target, caller, deploymentID, endpoints, woken)
 }
 
 // observeWakeAheadCall feeds the ADR-977 learner. Preview callers are left
@@ -1613,7 +1628,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, deploymentID string, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, deploymentID string, endpoints []ServiceEndpoint, woken bool) (rerouteWoke bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1668,6 +1683,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 				return
 			}
 			endpoints, woken = fresh, woken || freshWoken
+			rerouteWoke = freshWoken
 			endpoint, ok = p.pick(appID, endpoints)
 		}
 		if !ok {
@@ -1764,6 +1780,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			timer.Stop()
 		}
 	}
+	return rerouteWoke
 }
 
 // applyServiceEndpointIdentity replaces guest-controlled identity claims with

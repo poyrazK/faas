@@ -1512,6 +1512,7 @@ from .get_route_health_investigation_signal import GetRouteHealthInvestigationSi
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
+from .get_service_map_range import GetServiceMapRange
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
 )
@@ -4003,6 +4004,9 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_map_edge import ServiceMapEdge
+from .service_map_node import ServiceMapNode
+from .service_map_response import ServiceMapResponse
 from .service_reliability_policies import ServiceReliabilityPolicies
 from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
@@ -6048,6 +6052,7 @@ __all__ = (
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
     "GetRuntimePolicyStatusEdgeRulesScope",
+    "GetServiceMapRange",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
@@ -8311,6 +8316,9 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceMapEdge",
+    "ServiceMapNode",
+    "ServiceMapResponse",
     "ServiceReliabilityPolicies",
     "ServiceReliabilityPolicy",
     "ServiceReplicas",
