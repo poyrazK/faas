@@ -1936,6 +1936,10 @@ type DebugRegressionObservation struct {
 	DismissedUntil      pgtype.Timestamptz
 	ResolvedAt          pgtype.Timestamptz
 	SuspectedDependency []byte
+	Kind                string
+	ErrorRatePct        pgtype.Numeric
+	ErrorRateBasePct    pgtype.Numeric
+	ErrorCount          int32
 }
 
 type DeployToken struct {
@@ -2321,6 +2325,7 @@ type DevWatchSetting struct {
 	AppID     pgtype.UUID
 	Command   string
 	UpdatedAt pgtype.Timestamptz
+	Host      string
 }
 
 type DeveloperSyncHistory struct {
@@ -9198,6 +9203,19 @@ type WorkflowEventReceipt struct {
 	AdmittedAt  pgtype.Timestamptz
 }
 
+type WorkflowInitialRecoveryReview struct {
+	ID                      pgtype.UUID
+	AppID                   pgtype.UUID
+	FailureID               pgtype.UUID
+	PolicyVersion           int64
+	PreparedAt              pgtype.Timestamptz
+	ExpiresAt               pgtype.Timestamptz
+	SubmittedAt             pgtype.Timestamptz
+	JobID                   pgtype.UUID
+	Review                  []byte
+	CompletionNextObserveAt pgtype.Timestamptz
+}
+
 type WorkflowOperationEffect struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -9259,22 +9277,25 @@ type WorkflowRecoveryHistoryEvent struct {
 }
 
 type WorkflowRecoveryPolicy struct {
-	AppID                pgtype.UUID
-	Version              int64
-	Enabled              bool
-	Policy               []byte
-	UpdatedAt            pgtype.Timestamptz
-	ActorKind            string
-	ActorID              string
-	NextEvaluateAt       pgtype.Timestamptz
-	LastEvaluatedAt      pgtype.Timestamptz
-	JobCursor            pgtype.UUID
-	Status               string
-	NextExecuteAt        pgtype.Timestamptz
-	AutomaticFailures    int32
-	AutomaticPausedAt    pgtype.Timestamptz
-	AutomaticPauseReason string
-	NextHealthAt         pgtype.Timestamptz
+	AppID                     pgtype.UUID
+	Version                   int64
+	Enabled                   bool
+	Policy                    []byte
+	UpdatedAt                 pgtype.Timestamptz
+	ActorKind                 string
+	ActorID                   string
+	NextEvaluateAt            pgtype.Timestamptz
+	LastEvaluatedAt           pgtype.Timestamptz
+	JobCursor                 pgtype.UUID
+	Status                    string
+	NextExecuteAt             pgtype.Timestamptz
+	AutomaticFailures         int32
+	AutomaticPausedAt         pgtype.Timestamptz
+	AutomaticPauseReason      string
+	NextHealthAt              pgtype.Timestamptz
+	InitialFailureCursor      pgtype.UUID
+	AutomaticPollFailure      []byte
+	AutomaticPollNotification []byte
 }
 
 type WorkflowRecoveryPolicyControl struct {

@@ -34,7 +34,7 @@ func (m *MemStore) ControlWorkflowRecoveryPolicy(ctx context.Context, account, a
 	if p == nil || !recoveryControlMatches(p.Response, r) {
 		return api.WorkflowRecoveryPolicyResponse{}, ErrWorkflowRecoveryPolicyConflict
 	}
-	if !p.Response.Policy.Enabled || p.Response.Policy.Mode != "automatic_retry" {
+	if !p.Response.Policy.Enabled || !api.WorkflowRecoveryPolicyAutomaticMode(p.Response.Policy.Mode) {
 		return api.WorkflowRecoveryPolicyResponse{}, ErrEventRecoveryQuery
 	}
 	now := time.Now().UTC()
@@ -52,6 +52,7 @@ func (m *MemStore) ControlWorkflowRecoveryPolicy(ctx context.Context, account, a
 		a.PausedAt = nil
 		a.PauseReason = ""
 		a.ConsecutiveFailures = 0
+		a.PollingFailure = nil
 		p.Response.Status = "monitoring"
 	}
 	p.NextExecute = now
@@ -59,6 +60,8 @@ func (m *MemStore) ControlWorkflowRecoveryPolicy(ctx context.Context, account, a
 	return recoveryPolicyClone(p.Response), nil
 }
 func (m *MemStore) GetWorkflowRecoveryAutomaticQueue(ctx context.Context, account, app string) (api.WorkflowRecoveryAutomaticQueue, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
 	out := api.WorkflowRecoveryAutomaticQueue{ObservedAt: time.Now().UTC(), Entries: []api.WorkflowRecoveryAutomaticQueueEntry{}}
 	if err := eventRecoveryIDs(account, app); err != nil {
 		return out, err
@@ -72,7 +75,10 @@ func (m *MemStore) GetWorkflowRecoveryAutomaticQueue(ctx context.Context, accoun
 		return out, ErrNotFound
 	}
 	queue, _ := m.workflowRecoveryAutomaticQueueLocked(app, out.ObservedAt, false)
-	return queue, nil
+	if err := m.recoveryQueueEvidenceLocked(ctx, account, app, &queue); err != nil {
+		return out, err
+	}
+	return recoveryPolicyClone(queue), nil
 }
 func (m *MemStore) workflowRecoveryAutomaticQueueLocked(app string, now time.Time, allPending bool) (api.WorkflowRecoveryAutomaticQueue, *time.Time) {
 	out := api.WorkflowRecoveryAutomaticQueue{ObservedAt: now, Entries: []api.WorkflowRecoveryAutomaticQueueEntry{}}
@@ -84,7 +90,11 @@ func (m *MemStore) workflowRecoveryAutomaticQueueLocked(app string, now time.Tim
 	out.Policy = recoveryPolicyClone(p.Response)
 	out.HealthIncident = recoveryPolicyClone(p.HealthIncident)
 	var last *time.Time
+	charges := m.initialAutomaticChargesLocked(app)
 	for _, at := range p.Charges {
+		charges = append(charges, at)
+	}
+	for _, at := range charges {
 		if last == nil || at.After(*last) {
 			v := at
 			last = &v
@@ -108,6 +118,20 @@ func (m *MemStore) workflowRecoveryAutomaticQueueLocked(app string, now time.Tim
 		}
 		out.Entries = append(out.Entries, api.WorkflowRecoveryAutomaticQueueEntry{QueuedAt: r.ObservedAt, ReviewID: r.ID, PolicyVersion: r.PolicyVersion, Action: recoveryPolicyClone(*e)})
 		observed[r.ID] = r.ObservedAt
+	}
+	for _, r := range m.initialRecoveryReviews {
+		if !sameMemUUID(r.AppID, app) || r.Policy.Mode != "automatic_initial" {
+			continue
+		}
+		if r.Status == "prepared" && (allPending || r.PolicyVersion == p.Response.Version) {
+			out.Pending++
+		} else if initialReviewUnresolved(r) {
+			out.Outstanding++
+		} else {
+			continue
+		}
+		out.Entries = append(out.Entries, initialAutomaticQueueEntry(r))
+		observed[r.ID] = r.PreparedAt
 	}
 	sort.Slice(out.Entries, func(i, j int) bool {
 		a, b := out.Entries[i], out.Entries[j]

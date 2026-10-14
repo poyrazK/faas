@@ -59,6 +59,7 @@ import type { EventSubscriptionSchemaVersionsResponse } from '../models/EventSub
 import type { PlatformTenantPublishEventResponse } from '../models/PlatformTenantPublishEventResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { PublishEventBatchRequest } from '../models/PublishEventBatchRequest.js';
 import type { PublishEventBatchResponse } from '../models/PublishEventBatchResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
@@ -73,6 +74,14 @@ import type { SetWorkflowRecoveryPolicyRequest } from '../models/SetWorkflowReco
 import type { SuppressWorkflowRecoveryAutomaticActionRequest } from '../models/SuppressWorkflowRecoveryAutomaticActionRequest.js';
 import type { WorkflowEventReplayBackfillRequest } from '../models/WorkflowEventReplayBackfillRequest.js';
 import type { WorkflowEventReplayPreviewResponse } from '../models/WorkflowEventReplayPreviewResponse.js';
+import type { WorkflowInitialEvidenceDiagnosis } from '../models/WorkflowInitialEvidenceDiagnosis.js';
+import type { WorkflowInitialEvidenceRepairRequest } from '../models/WorkflowInitialEvidenceRepairRequest.js';
+import type { WorkflowInitialFailures } from '../models/WorkflowInitialFailures.js';
+import type { WorkflowInitialRecoveryPreview } from '../models/WorkflowInitialRecoveryPreview.js';
+import type { WorkflowInitialRecoveryReview } from '../models/WorkflowInitialRecoveryReview.js';
+import type { WorkflowInitialRecoveryReviewDecisionRequest } from '../models/WorkflowInitialRecoveryReviewDecisionRequest.js';
+import type { WorkflowInitialRecoveryReviewRequest } from '../models/WorkflowInitialRecoveryReviewRequest.js';
+import type { WorkflowInitialRecoveryReviews } from '../models/WorkflowInitialRecoveryReviews.js';
 import type { WorkflowRecoveryActionReceipt } from '../models/WorkflowRecoveryActionReceipt.js';
 import type { WorkflowRecoveryAutomaticAction } from '../models/WorkflowRecoveryAutomaticAction.js';
 import type { WorkflowRecoveryAutomaticQueue } from '../models/WorkflowRecoveryAutomaticQueue.js';
@@ -89,6 +98,7 @@ import type { WorkflowRecoveryPolicyReviews } from '../models/WorkflowRecoveryPo
 import type { WorkflowRecoveryReport } from '../models/WorkflowRecoveryReport.js';
 import type { WorkflowRecoveryReviewDecisionRequest } from '../models/WorkflowRecoveryReviewDecisionRequest.js';
 import type { WorkflowRecoveryReviewStatus } from '../models/WorkflowRecoveryReviewStatus.js';
+import type { WorkflowRetryEvidenceDiagnosis } from '../models/WorkflowRetryEvidenceDiagnosis.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -2482,7 +2492,7 @@ export class EventsService {
   }
   /**
    * Configure a recovery policy
-   * Updates an app policy with optimistic version checks. Preview prepares plans from retained native evidence. Opt-in automatic_retry authorizes bounded retries of saved failures for explicit workflows and failure statuses. Requires deploy write permission and MFA; cancellation remains manual.
+   * Updates an app policy with optimistic version checks. Preview prepares plans from retained native evidence. Opt-in automatic_retry authorizes bounded retries of saved failures; automatic_initial authorizes bounded generation-zero recovery with explicit workflow and failure-status filters. Enabling automatic_initial requires the workflow runtime. Requires deploy write permission and MFA; cancellation remains manual.
    * @returns WorkflowRecoveryPolicyResponse Result of setWorkflowRecoveryPolicy.
    * @throws ApiError
    */
@@ -2513,6 +2523,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }
@@ -2552,7 +2563,7 @@ export class EventsService {
   /**
    * Preview a recovery policy replacement
    * Read-only impact of replacing the observed policy version. Every replacement suppresses old pending automatic intents and preserves unresolved applied children and spent charges. Inspects up to five newest matching recovery jobs and returns up to 25 candidate decisions. Retained preparation targets continue to prevent duplicate plans. Requires read access and MFA. No plans, controls, retries or notifications are written. Advisory evidence can change before a separately authorized version-fenced update.
-   * @returns WorkflowRecoveryPolicyChangePreview Result of previewWorkflowRecoveryPolicyChange.
+   * @returns WorkflowRecoveryPolicyChangePreview Read-only proposed-policy snapshot with parent-job and bounded initial-failure candidates. No reviews, jobs or notifications are created.
    * @throws ApiError
    */
   public static previewWorkflowRecoveryPolicyChange({
@@ -2619,6 +2630,451 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Prepare a durable first-recovery review
+   * Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Initial recovery review
+   * @throws ApiError
+   */
+  public static prepareWorkflowInitialRecoveryReview({
+    slug,
+    failureId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Captured initial workflow failure identifier.
+     */
+    failureId: string,
+    requestBody: WorkflowInitialRecoveryReviewRequest,
+  }): CancelablePromise<WorkflowInitialRecoveryReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-reviews',
+      path: {
+        'slug': slug,
+        'failureID': failureId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Diagnose pending retry parent evidence
+   * Read-only diagnosis of the exact parent generation and item required by the frozen pending retry plan. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
+   * @returns WorkflowRetryEvidenceDiagnosis Consistent retained evidence diagnosis.
+   * @returns Problem Error.
+   * @throws ApiError
+   */
+  public static diagnoseWorkflowRetryParentEvidence({
+    slug,
+    reviewId,
+    actionId,
+  }: {
+    /**
+     * Application slug used to diagnose pending retry parent evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier.
+     */
+    actionId: string,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+    });
+  }
+  /**
+   * Save verified pending retry parent terminal evidence
+   * Requires deploy write and MFA. Re-inspects the exact parent generation, item and admission lineage under lock. Repair applies only to pending actions and does not authorize child submission. Parent and child repair receipts are separate. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowRetryEvidenceDiagnosis Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified pending retry parent terminal evidence failed.
+   * @throws ApiError
+   */
+  public static repairWorkflowRetryParentEvidence({
+    slug,
+    reviewId,
+    actionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to save verified pending retry parent terminal evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to save verified pending retry parent terminal evidence.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier used to save verified pending retry parent terminal evidence.
+     */
+    actionId: string,
+    requestBody: WorkflowInitialEvidenceRepairRequest,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent/repair',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Diagnose retained automatic retry evidence
+   * Read-only exact retry-generation diagnosis with frozen parent and child lineage checks. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
+   * @returns WorkflowRetryEvidenceDiagnosis Diagnose retained automatic retry evidence. Consistent retained evidence diagnosis.
+   * @returns Problem Diagnose retained automatic retry evidence failed.
+   * @throws ApiError
+   */
+  public static diagnoseWorkflowRetryEvidence({
+    slug,
+    reviewId,
+    actionId,
+  }: {
+    /**
+     * Application slug used to diagnose retained automatic retry evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to diagnose retained automatic retry evidence.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier used to diagnose retained automatic retry evidence.
+     */
+    actionId: string,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+    });
+  }
+  /**
+   * Save verified automatic retry terminal evidence
+   * Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowRetryEvidenceDiagnosis Save verified automatic retry terminal evidence. Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified automatic retry terminal evidence failed.
+   * @throws ApiError
+   */
+  public static repairWorkflowRetryEvidence({
+    slug,
+    reviewId,
+    actionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to save verified automatic retry terminal evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to save verified automatic retry terminal evidence.
+     */
+    reviewId: string,
+    /**
+     * Frozen retry action identifier used to save verified automatic retry terminal evidence.
+     */
+    actionId: string,
+    requestBody: WorkflowInitialEvidenceRepairRequest,
+  }): CancelablePromise<WorkflowRetryEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/repair',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+        'actionID': actionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Diagnose retained initial recovery evidence
+   * Read-only exact-generation diagnosis. Missing admission history and superseded runs cannot be repaired. Requires read scope and MFA.
+   * @returns WorkflowInitialEvidenceDiagnosis Diagnose retained initial recovery evidence. Consistent retained evidence diagnosis.
+   * @returns Problem Diagnose retained initial recovery evidence failed.
+   * @throws ApiError
+   */
+  public static diagnoseWorkflowInitialEvidence({
+    slug,
+    reviewId,
+  }: {
+    /**
+     * Application slug used to diagnose retained initial recovery evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to diagnose retained initial recovery evidence.
+     */
+    reviewId: string,
+  }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+    });
+  }
+  /**
+   * Save verified initial recovery terminal evidence
+   * Save verified initial recovery terminal evidence. Requires deploy write and MFA. Re-inspects the exact generation and admission lineage under lock. Saves a missing result once and records the operator reason. Never overwrites retained evidence or resumes a paused policy. Replaying the same request ID and reason returns its receipt; changes conflict. The worker observes repaired proof on its next eligible poll.
+   * @returns WorkflowInitialEvidenceDiagnosis Save verified initial recovery terminal evidence. Retained repair receipt and evidence diagnosis.
+   * @returns Problem Save verified initial recovery terminal evidence failed.
+   * @throws ApiError
+   */
+  public static repairWorkflowInitialEvidence({
+    slug,
+    reviewId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to save verified initial recovery terminal evidence.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to save verified initial recovery terminal evidence.
+     */
+    reviewId: string,
+    requestBody: WorkflowInitialEvidenceRepairRequest,
+  }): CancelablePromise<WorkflowInitialEvidenceDiagnosis | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence/repair',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect a durable first-recovery review
+   * Inspect a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Inspect a durable first-recovery review result.
+   * @throws ApiError
+   */
+  public static getWorkflowInitialRecoveryReview({
+    slug,
+    reviewId,
+  }: {
+    /**
+     * Application slug for inspect a durable first-recovery review.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier for inspect a durable first-recovery review.
+     */
+    reviewId: string,
+  }): CancelablePromise<WorkflowInitialRecoveryReview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Submit or cancel a durable first-recovery review
+   * Submit or cancel a durable first-recovery review. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReview Submit or cancel a durable first-recovery review result.
+   * @throws ApiError
+   */
+  public static decideWorkflowInitialRecoveryReview({
+    slug,
+    reviewId,
+    requestBody,
+  }: {
+    /**
+     * Application slug used to submit or cancel a durable first-recovery review.
+     */
+    slug: string,
+    /**
+     * Durable recovery review identifier used to submit or cancel a durable first-recovery review.
+     */
+    reviewId: string,
+    requestBody: WorkflowInitialRecoveryReviewDecisionRequest,
+  }): CancelablePromise<WorkflowInitialRecoveryReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/initial-recovery-reviews/{reviewID}/decision',
+      path: {
+        'slug': slug,
+        'reviewID': reviewId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List retained first-recovery reviews
+   * List retained first-recovery reviews. Policy-version-fenced initial recovery. Preparation captures retained generation-zero evidence and a live safety preview. Submit repeats evidence, safety, cooldown and budget checks and atomically creates a native recovery job. Ready notifications use the existing delivery ledger. Reads never prepare or submit. Expiry and changed policy authority block submission and pending admission. Submission is explicit; no automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryReviews List retained first-recovery reviews result.
+   * @throws ApiError
+   */
+  public static listWorkflowInitialRecoveryReviews({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Application slug used to list retained first-recovery reviews.
+     */
+    slug: string,
+    /**
+     * Opaque cursor from the previous page.
+     */
+    after?: string,
+    /**
+     * Maximum number of results to return.
+     */
+    limit?: number,
+  }): CancelablePromise<WorkflowInitialRecoveryReviews> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/initial-recovery-reviews',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List captured initial workflow failures
+   * Read-only, policy-independent generation-zero failure inbox. Capture is prospective and partial, retained for 30 days with at most 10000 entries per app. Newest-first cursors bind the account, app, workflow filter and observation ceiling. Retention may remove entries between pages. Evidence alone does not prove that a run can safely resume. No run inputs, outputs or error text are returned.
+   * @returns WorkflowInitialFailures Retained initial failures.
+   * @throws ApiError
+   */
+  public static listWorkflowInitialFailures({
+    slug,
+    workflow,
+    after,
+    limit = 25,
+  }: {
+    /**
+     * Application slug used to list captured initial workflow failures.
+     */
+    slug: string,
+    /**
+     * Workflow name to filter captured failures.
+     */
+    workflow?: string,
+    /**
+     * Opaque cursor from the previous page used to list captured initial workflow failures.
+     */
+    after?: string,
+    /**
+     * Maximum number of results to return used to list captured initial workflow failures.
+     */
+    limit?: number,
+  }): CancelablePromise<WorkflowInitialFailures> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-failures',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'workflow': workflow,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Review first recovery eligibility for a captured failure
+   * Read-only consistent live inspection of retained generation-zero evidence, current generation, safe resume diagnostics and operation ownership. Returns a generation-fenced target only when eligible. Cached later eligibility and policy existence do not authorize recovery. This does not prepare a policy review or admit a run. Operators may submit the exact reviewed target through event recovery creation with a stable request_id; creation and worker admission recheck evidence retention and generation, and resume rechecks safety and capacity. No automatic first recovery is enabled.
+   * @returns WorkflowInitialRecoveryPreview Live first recovery diagnostic.
+   * @throws ApiError
+   */
+  public static previewWorkflowInitialRecovery({
+    slug,
+    failureId,
+  }: {
+    /**
+     * Application slug for review first recovery eligibility for a captured failure.
+     */
+    slug: string,
+    /**
+     * Captured initial workflow failure identifier for review first recovery eligibility for a captured failure.
+     */
+    failureId: string,
+  }): CancelablePromise<WorkflowInitialRecoveryPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview',
+      path: {
+        'slug': slug,
+        'failureID': failureId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
       },
     });
   }

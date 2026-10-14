@@ -21,8 +21,12 @@ import (
 
 func seedResumeRun(t *testing.T, store Store, spec api.WorkflowSpec) (*WorkflowRun, App) {
 	t.Helper()
-	ctx := context.Background()
-	app, _ := seedWorkflowSchedule(t, store, "allow")
+	return seedResumeRunWithContext(t, context.Background(), store, spec)
+}
+
+func seedResumeRunWithContext(t *testing.T, ctx context.Context, store Store, spec api.WorkflowSpec) (*WorkflowRun, App) {
+	t.Helper()
+	app, _ := seedWorkflowScheduleWithContext(t, ctx, store, "allow")
 	snapshot, _ := json.Marshal(spec)
 	run := &WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, Input: json.RawMessage(`{"enabled":true}`), DefinitionSnapshot: snapshot}
 	if err := store.CreateWorkflowRun(ctx, run); err != nil {
@@ -42,8 +46,12 @@ func seedResumeRun(t *testing.T, store Store, spec api.WorkflowSpec) (*WorkflowR
 }
 func failResumeRun(t *testing.T, store Store, run *WorkflowRun, name string) {
 	t.Helper()
-	ctx := context.Background()
-	step := guardStep(t, store, run.ID, name)
+	failResumeRunWithContext(t, context.Background(), store, run, name)
+}
+
+func failResumeRunWithContext(t *testing.T, ctx context.Context, store Store, run *WorkflowRun, name string) {
+	t.Helper()
+	step := guardStepWithContext(t, ctx, store, run.ID, name)
 	if _, err := store.StartWorkflowStep(ctx, run.ID, name, step.Attempt+1, json.RawMessage(`{"literal":"{{input.keep_literal}}"}`)); err != nil {
 		t.Fatal(err)
 	}

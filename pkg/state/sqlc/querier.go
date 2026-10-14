@@ -1127,7 +1127,7 @@ type Querier interface {
 	GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error)
 	GetDevSourceManifest(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DevSourceManifest, error)
 	GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetDevSourcePatchStatusParams) (GetDevSourcePatchStatusRow, error)
-	GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
+	GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (GetDevWatchSettingRow, error)
 	GetEntityOutboxAcceptanceFingerprint(ctx context.Context, db DBTX, messageID string) (string, error)
 	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
@@ -1718,9 +1718,11 @@ type Querier interface {
 	ListAccountCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsBySubjectParams) ([][]byte, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
-	// plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
-	// DESC, last_detected_at DESC matches the dashboard render order
-	// (worst regression at the top, then most-recently-reconfirmed).
+	// plan's DebugTelemetryRetentionDays cap. Observations that include the
+	// error signal come first (an errors-only row stores regression_factor
+	// 1.00, which would otherwise always sort it last), then regression_factor
+	// DESC, last_detected_at DESC: the dashboard render order (worst regression
+	// at the top, then most-recently-reconfirmed).
 	// Uses debug_regression_observations_app_idx (00436).
 	ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg ListActiveRegressionsByAppParams) ([]ListActiveRegressionsByAppRow, error)
 	ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcpListener, error)
@@ -3454,6 +3456,24 @@ type Querier interface {
 	// for requests dropped before persistence, so the API must not invent a
 	// capture percentage.
 	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
+	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
+	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
+	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
+	// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
+	// exceeds p95_base_ms * 1.20). The detections persist here.
+	//
+	// A native sqlc RequestTelemetryRegression query was tried during the PR-A
+	// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
+	// reference" parser on (deployment_id) even after explicit ON clauses;
+	// the workaround is a LATERAL join that requires a more invasive query
+	// refactor. Go-side composition of the two PR-A queries above is the
+	// chosen workaround (cheap, no parser gymnastics).
+	// Per-route represented request and server-error (HTTP 5xx) counts for one
+	// deployment and window, weighted by the publisher's collapsed-row count.
+	// The regression detector compares the error share of the current and the
+	// previous deployment (ADR-127 amendment: error-rate regressions). Same
+	// index as RequestTelemetryBaselineP95ByRoute.
+	RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)
@@ -3861,7 +3881,7 @@ type Querier interface {
 	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)
 	// ADR-740 developer live source patches.
 	UpsertDevSourceManifest(ctx context.Context, db DBTX, arg UpsertDevSourceManifestParams) error
-	// ADR-1170: a developer environment's watch-mode command.
+	// ADR-1170: a developer environment's watch-mode command and public hostname.
 	UpsertDevWatchSetting(ctx context.Context, db DBTX, arg UpsertDevWatchSettingParams) error
 	UpsertEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, arg UpsertEnvironmentQueueDeliveryReceiptParams) (int64, error)
 	UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg UpsertEnvironmentWorkloadServingRouteParams) error
@@ -3894,18 +3914,6 @@ type Querier interface {
 	// full row as stored.
 	UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg UpsertOIDCTrustPolicyParams) (UpsertOIDCTrustPolicyRow, error)
 	UpsertQueueLeaseReceipt(ctx context.Context, db DBTX, arg UpsertQueueLeaseReceiptParams) error
-	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
-	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
-	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
-	// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
-	// exceeds p95_base_ms * 1.20). The detections persist here.
-	//
-	// A native sqlc RequestTelemetryRegression query was tried during the PR-A
-	// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
-	// reference" parser on (deployment_id) even after explicit ON clauses;
-	// the workaround is a LATERAL join that requires a more invasive query
-	// refactor. Go-side composition of the two PR-A queries above is the
-	// chosen workaround (cheap, no parser gymnastics).
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most
 	// one row per (deployment, route) across all cron passes, not one row
@@ -3914,6 +3922,12 @@ type Querier interface {
 	// (or a dismissal expires). The webhook trigger uses that timestamp as
 	// the detection transition's idempotency key. last_detected_at is
 	// refreshed on every pass and backs the dashboard's since filter.
+	//
+	// A latency-only observation that gains the error signal reopens: a route
+	// that starts failing is a new incident even when its slowness was already
+	// acknowledged or dismissed, so state returns to active with a new
+	// first_detected_at (and therefore a new webhook transition). In ON CONFLICT
+	// DO UPDATE, debug_regression_observations.* is the row before this update.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UpsertTenantWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertTenantWorkflowScheduleCursorParams) (PlatformTenantWorkflowScheduleCursor, error)
 	UpsertWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)
@@ -3957,6 +3971,32 @@ type Querier interface {
 	WorkflowGenerationCurrent(ctx context.Context, db DBTX, arg WorkflowGenerationCurrentParams) (bool, error)
 	WorkflowGuardOutputs(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowGuardOutputsRow, error)
 	WorkflowGuardStartAllowed(ctx context.Context, db DBTX, arg WorkflowGuardStartAllowedParams) (bool, error)
+	WorkflowInitialAutomaticOutstanding(ctx context.Context, db DBTX, appID pgtype.UUID) ([]byte, error)
+	WorkflowInitialAutomaticPending(ctx context.Context, db DBTX, arg WorkflowInitialAutomaticPendingParams) ([]byte, error)
+	WorkflowInitialAutomaticUnresolved(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error)
+	WorkflowInitialEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowInitialEvidenceRepairParams) (int64, error)
+	WorkflowInitialEvidenceRepairWake(ctx context.Context, db DBTX, arg WorkflowInitialEvidenceRepairWakeParams) error
+	WorkflowInitialEvidenceResultExists(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
+	WorkflowInitialFailure(ctx context.Context, db DBTX, arg WorkflowInitialFailureParams) (WorkflowInitialFailureRow, error)
+	WorkflowInitialFailures(ctx context.Context, db DBTX, arg WorkflowInitialFailuresParams) ([]WorkflowInitialFailuresRow, error)
+	WorkflowInitialManualCompletionAdvance(ctx context.Context, db DBTX, arg WorkflowInitialManualCompletionAdvanceParams) error
+	WorkflowInitialManualCompletionClaim(ctx context.Context, db DBTX, arg WorkflowInitialManualCompletionClaimParams) ([]byte, error)
+	WorkflowInitialManualCompletionFailure(ctx context.Context, db DBTX, arg WorkflowInitialManualCompletionFailureParams) error
+	WorkflowInitialManualCompletionNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowInitialManualCompletionNextRow, error)
+	WorkflowInitialPolicyChangeFailures(ctx context.Context, db DBTX, arg WorkflowInitialPolicyChangeFailuresParams) ([]WorkflowInitialPolicyChangeFailuresRow, error)
+	WorkflowInitialPollingNotificationSave(ctx context.Context, db DBTX, arg WorkflowInitialPollingNotificationSaveParams) error
+	WorkflowInitialRecoveryPending(ctx context.Context, db DBTX, arg WorkflowInitialRecoveryPendingParams) (bool, error)
+	WorkflowInitialRecoveryPolicyFailures(ctx context.Context, db DBTX, arg WorkflowInitialRecoveryPolicyFailuresParams) ([]pgtype.UUID, error)
+	WorkflowInitialReviewAdmission(ctx context.Context, db DBTX, jobID pgtype.UUID) (WorkflowInitialReviewAdmissionRow, error)
+	WorkflowInitialReviewAuthority(ctx context.Context, db DBTX, jobID pgtype.UUID) (WorkflowInitialReviewAuthorityRow, error)
+	WorkflowInitialReviewBudget(ctx context.Context, db DBTX, arg WorkflowInitialReviewBudgetParams) (WorkflowInitialReviewBudgetRow, error)
+	WorkflowInitialReviewGet(ctx context.Context, db DBTX, arg WorkflowInitialReviewGetParams) ([]byte, error)
+	WorkflowInitialReviewInsert(ctx context.Context, db DBTX, arg WorkflowInitialReviewInsertParams) error
+	WorkflowInitialReviewList(ctx context.Context, db DBTX, arg WorkflowInitialReviewListParams) ([][]byte, error)
+	WorkflowInitialReviewPolicy(ctx context.Context, db DBTX, arg WorkflowInitialReviewPolicyParams) (WorkflowInitialReviewPolicyRow, error)
+	WorkflowInitialReviewPrune(ctx context.Context, db DBTX, arg WorkflowInitialReviewPruneParams) error
+	WorkflowInitialReviewRetainedCount(ctx context.Context, db DBTX, arg WorkflowInitialReviewRetainedCountParams) (int64, error)
+	WorkflowInitialReviewUpdate(ctx context.Context, db DBTX, arg WorkflowInitialReviewUpdateParams) error
 	WorkflowJoinSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowJoinStepsRow, error)
 	WorkflowOutboundAttempt(ctx context.Context, db DBTX, arg WorkflowOutboundAttemptParams) (WorkflowOutboundAttemptRow, error)
 	WorkflowOutboundBinding(ctx context.Context, db DBTX, arg WorkflowOutboundBindingParams) (WorkflowOutboundBindingRow, error)
@@ -3983,7 +4023,9 @@ type Querier interface {
 	WorkflowRecoveryAutomaticPending(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPendingParams) (WorkflowRecoveryAutomaticPendingRow, error)
 	WorkflowRecoveryAutomaticPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyAdvanceParams) error
 	WorkflowRecoveryAutomaticPolicyClaim(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyClaimParams) (WorkflowRecoveryAutomaticPolicyClaimRow, error)
+	WorkflowRecoveryAutomaticPolicyFailure(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyFailureParams) error
 	WorkflowRecoveryAutomaticPolicyNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryAutomaticPolicyNextRow, error)
+	WorkflowRecoveryAutomaticPollingNotificationSave(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPollingNotificationSaveParams) error
 	WorkflowRecoveryAutomaticQueue(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueParams) ([]byte, error)
 	WorkflowRecoveryAutomaticQueueApp(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueAppParams) (pgtype.UUID, error)
 	WorkflowRecoveryAutomaticResult(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticResultParams) error
@@ -4007,6 +4049,11 @@ type Querier interface {
 	WorkflowRecoveryHistoryExpire(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryExpireParams) (int64, error)
 	WorkflowRecoveryHistoryPrune(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryPruneParams) error
 	WorkflowRecoveryHistorySequence(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	WorkflowRecoveryOverviewApp(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewAppParams) (string, error)
+	WorkflowRecoveryOverviewDelivery(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewDeliveryParams) ([]byte, error)
+	WorkflowRecoveryOverviewLastAlert(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewLastAlertParams) ([]byte, error)
+	WorkflowRecoveryOverviewManual(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewManualParams) ([]byte, error)
+	WorkflowRecoveryOverviewRetry(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewRetryParams) ([]byte, error)
 	WorkflowRecoveryPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyAdvanceParams) error
 	WorkflowRecoveryPolicyBudget(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyBudgetParams) (WorkflowRecoveryPolicyBudgetRow, error)
 	WorkflowRecoveryPolicyChangeJobs(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyChangeJobsParams) ([]pgtype.UUID, error)
@@ -4037,6 +4084,12 @@ type Querier interface {
 	WorkflowRecoveryReviewNotificationReceivers(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationReceiversParams) ([]pgtype.UUID, error)
 	WorkflowResumeHasRunningAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)
 	WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowResumeStepsRow, error)
+	WorkflowRetryEvidenceAction(ctx context.Context, db DBTX, arg WorkflowRetryEvidenceActionParams) (WorkflowRecoveryPolicyExecution, error)
+	WorkflowRetryEvidenceReceipt(ctx context.Context, db DBTX, arg WorkflowRetryEvidenceReceiptParams) (int64, error)
+	WorkflowRetryEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowRetryEvidenceRepairParams) (int64, error)
+	WorkflowRetryParentEvidenceReceipt(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceReceiptParams) (int64, error)
+	WorkflowRetryParentEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceRepairParams) (int64, error)
+	WorkflowRetryParentEvidenceResultExists(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceResultExistsParams) (bool, error)
 	WorkflowRunRecoveryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryCandidateParams) (WorkflowRunRecoveryCandidateRow, error)
 	WorkflowRunRecoveryRetryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryRetryCandidateParams) (WorkflowRunRecoveryRetryCandidateRow, error)
 	WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error)

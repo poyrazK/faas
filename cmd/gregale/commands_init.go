@@ -277,6 +277,8 @@ func docsURLForTemplate(name string) string {
 		return "https://gregale.dev/docs/durable-entity-development"
 	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
+	case "auth":
+		return "https://gregale.dev/docs/application-auth"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
@@ -489,6 +491,8 @@ func nextStepsFor(tpl string) []string {
 			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
 			"  cd <dest> && gregale deploy",
 		}
+	case "auth":
+		return []string{"Deploy application Auth bound to a ready managed database:", "  gregale auth create <slug> --database <database> --site-url https://app.example.com", "See README.md for sign-up, tokens and Data API RLS."}
 	case "data-api":
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
 	case "data-api-support-console":

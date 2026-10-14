@@ -10,16 +10,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+// DevWatchSetting is a developer app's watch mode (ADR-1170).
+type DevWatchSetting struct {
+	// Command is the development command; "" means watch mode is off.
+	Command string
+	// Host is the developer app's public hostname, which the watch-mode
+	// image hands to its development server. It may be empty.
+	Host string
+}
+
 // DevWatchStore holds developer watch-mode settings (ADR-1170): apid writes
-// the development command when the CLI upserts a developer session, and
-// builderd reads it for that app's developer builds. It is an optional
-// Store capability so older test doubles keep working.
+// them when the CLI upserts a developer session, and builderd reads them for
+// that app's developer builds. It is an optional Store capability so older
+// test doubles keep working.
 type DevWatchStore interface {
-	// SetDevWatchCommand stores command for appID; an empty command turns
-	// watch mode off.
-	SetDevWatchCommand(ctx context.Context, appID, command string) error
-	// DevWatchCommand returns appID's command, or "" when watch mode is off.
-	DevWatchCommand(ctx context.Context, appID string) (string, error)
+	// SetDevWatch stores setting for appID; an empty Command turns watch
+	// mode off.
+	SetDevWatch(ctx context.Context, appID string, setting DevWatchSetting) error
+	// DevWatch returns appID's setting, with an empty Command when watch
+	// mode is off.
+	DevWatch(ctx context.Context, appID string) (DevWatchSetting, error)
 }
 
 var (
@@ -27,60 +37,60 @@ var (
 	_ DevWatchStore = (*MemStore)(nil)
 )
 
-// SetDevWatchCommand implements DevWatchStore.
-func (s *PgStore) SetDevWatchCommand(ctx context.Context, appID, command string) error {
+// SetDevWatch implements DevWatchStore.
+func (s *PgStore) SetDevWatch(ctx context.Context, appID string, setting DevWatchSetting) error {
 	app, err := parsePgUUID(appID)
 	if err != nil {
 		return err
 	}
-	if command == "" {
+	if setting.Command == "" {
 		err = sqlc.New().DeleteDevWatchSetting(ctx, s.pool, app)
 	} else {
-		err = sqlc.New().UpsertDevWatchSetting(ctx, s.pool, sqlc.UpsertDevWatchSettingParams{AppID: app, Command: command})
+		err = sqlc.New().UpsertDevWatchSetting(ctx, s.pool, sqlc.UpsertDevWatchSettingParams{AppID: app, Command: setting.Command, Host: setting.Host})
 	}
 	if err != nil {
-		return fmt.Errorf("state: set developer watch command: %w", err)
+		return fmt.Errorf("state: set developer watch mode: %w", err)
 	}
 	return nil
 }
 
-// DevWatchCommand implements DevWatchStore.
-func (s *PgStore) DevWatchCommand(ctx context.Context, appID string) (string, error) {
+// DevWatch implements DevWatchStore.
+func (s *PgStore) DevWatch(ctx context.Context, appID string) (DevWatchSetting, error) {
 	app, err := parsePgUUID(appID)
 	if err != nil {
-		return "", err
+		return DevWatchSetting{}, err
 	}
-	command, err := sqlc.New().GetDevWatchSetting(ctx, s.pool, app)
+	row, err := sqlc.New().GetDevWatchSetting(ctx, s.pool, app)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return DevWatchSetting{}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("state: load developer watch command: %w", err)
+		return DevWatchSetting{}, fmt.Errorf("state: load developer watch mode: %w", err)
 	}
-	return command, nil
+	return DevWatchSetting{Command: row.Command, Host: row.Host}, nil
 }
 
-// SetDevWatchCommand mirrors PgStore.SetDevWatchCommand.
-func (m *MemStore) SetDevWatchCommand(_ context.Context, appID, command string) error {
+// SetDevWatch mirrors PgStore.SetDevWatch.
+func (m *MemStore) SetDevWatch(_ context.Context, appID string, setting DevWatchSetting) error {
 	if appID == "" {
-		return errors.New("state: developer watch command needs an app id")
+		return errors.New("state: developer watch mode needs an app id")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if command == "" {
-		delete(m.devWatchCommands, appID)
+	if setting.Command == "" {
+		delete(m.devWatch, appID)
 		return nil
 	}
-	if m.devWatchCommands == nil {
-		m.devWatchCommands = map[string]string{}
+	if m.devWatch == nil {
+		m.devWatch = map[string]DevWatchSetting{}
 	}
-	m.devWatchCommands[appID] = command
+	m.devWatch[appID] = setting
 	return nil
 }
 
-// DevWatchCommand mirrors PgStore.DevWatchCommand.
-func (m *MemStore) DevWatchCommand(_ context.Context, appID string) (string, error) {
+// DevWatch mirrors PgStore.DevWatch.
+func (m *MemStore) DevWatch(_ context.Context, appID string) (DevWatchSetting, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.devWatchCommands[appID], nil
+	return m.devWatch[appID], nil
 }
