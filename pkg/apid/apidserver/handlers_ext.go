@@ -7272,8 +7272,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
+			// Every terminal status ends the stream. Cancelled and
+			// superseded rows used to keep it open until the 10-min
+			// backstop, so a waiting `gregale deploy` sat on a
+			// cancelled build for minutes (H10-48).
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
-				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
+				if d2.Status == state.DeployLive || d2.Status.IsTerminal() {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
 					if flusher != nil {

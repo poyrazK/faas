@@ -325,6 +325,13 @@ func newDeployStatusJSON(dep api.DeploymentResponse, ss state.StageState, termin
 // deployment row, so this avoids making the operator switch to
 // `gregale inspect <slug> --errors` just to learn what to fix.
 func renderDeployFailureIfPresent(w io.Writer, dep api.DeploymentResponse) {
+	// The stage summary alone showed a cancelled deployment as unfinished
+	// stages with no outcome (H10-48).
+	if dep.Status == deploymentStatusCancelled {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "  Cancelled before it went live; the live release is unchanged.")
+		return
+	}
 	if dep.Status != deploymentStatusFailed || !hasDeploymentFailureDetails(dep) {
 		return
 	}

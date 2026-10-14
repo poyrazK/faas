@@ -7723,6 +7723,16 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	if d.Status == statusLive {
 		return renderSuccessfulDeployment(ctx, c, d, appSlug)
 	}
+	// A retracted deployment did not fail; say what happened and keep the
+	// build-cancelled exit code (H10-48).
+	switch d.Status {
+	case deploymentStatusCancelled:
+		PrintWarn(os.Stderr, "deployment %s was cancelled before it went live; the live release is unchanged", d.ID)
+		return 2
+	case deploymentStatusSuperseded:
+		PrintWarn(os.Stderr, "deployment %s was superseded by a newer deployment before it went live", d.ID)
+		return 2
+	}
 	if onFailure != nil {
 		onFailure(d, "", d.Error)
 	}
