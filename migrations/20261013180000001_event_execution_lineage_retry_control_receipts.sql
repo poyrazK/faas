@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE event_execution_lineage_retry_control_receipts (
+CREATE TABLE IF NOT EXISTS event_execution_lineage_retry_control_receipts (
  subscription_id uuid NOT NULL,
  job_request_id uuid NOT NULL,
  command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),

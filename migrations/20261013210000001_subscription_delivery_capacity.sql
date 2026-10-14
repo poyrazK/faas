@@ -1,7 +1,7 @@
 -- ADR-1174: Live per-subscription ceilings share the existing capacity mutex.
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE event_subscription_delivery_controls ADD COLUMN max_pending_deliveries integer NOT NULL DEFAULT 0 CHECK (max_pending_deliveries >= 0);
+ALTER TABLE event_subscription_delivery_controls ADD COLUMN IF NOT EXISTS max_pending_deliveries integer NOT NULL DEFAULT 0 CHECK (max_pending_deliveries >= 0);
 CREATE OR REPLACE FUNCTION guard_event_delivery_replay() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
  consumer_count bigint; app_count bigint; account_count bigint; scope text; consumer_limit integer;

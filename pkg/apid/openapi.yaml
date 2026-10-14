@@ -37995,7 +37995,7 @@ paths:
         - name: slug
           in: path
           required: true
-          description: Application slug.
+          description: Application whose retained diagnostic scan is being paused.
           schema: { type: string }
         - name: subscriptionID
           in: path

@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE event_execution_lineage_cases ADD COLUMN diagnostic_id uuid CHECK(diagnostic_id IS NULL OR diagnostic_id<>'00000000-0000-0000-0000-000000000000'::uuid);
+ALTER TABLE event_execution_lineage_cases ADD COLUMN IF NOT EXISTS diagnostic_id uuid CHECK(diagnostic_id IS NULL OR diagnostic_id<>'00000000-0000-0000-0000-000000000000'::uuid);
 
 -- +goose Down
 -- Refuse to discard incarnation guards while diagnostic cases or guarded work remain.

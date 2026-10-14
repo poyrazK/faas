@@ -1531,7 +1531,7 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application whose retained diagnostic scan is being paused.
      */
     slug: string,
     /**
