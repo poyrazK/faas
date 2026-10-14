@@ -6857,6 +6857,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 		collector = newExplainCollector(slug, deployment)
 	}
 	printedLines := 0
+	parkedFallback := false
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -6865,6 +6866,12 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 		// side). Move 3's `not_implemented` shape is dead code;
 		// removed.
 		if e.Event == "degraded" {
+			// A parked app has no running instance; show its newest
+			// retained logs instead of only naming the archive flags (H10-72).
+			if archive == nil && !follow && !jsonOutput && isNoRunningInstanceLogs(e.Data) {
+				parkedFallback = true
+				return true, 0
+			}
 			if jsonOutput {
 				_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
 			} else {
@@ -6896,6 +6903,9 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
+			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
+				return false, 0
+			}
 			printedLines++
 			line := e.Data
 			if !jsonOutput {
@@ -6913,6 +6923,9 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if parkedFallback {
+		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
 		next := recoveryCLI() + " inspect " + recoveryArgument(slug)

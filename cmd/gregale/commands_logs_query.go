@@ -59,6 +59,9 @@ func normalizeLogsSince(raw, source string, now time.Time) (string, error) {
 			}
 			return lookback.String(), nil
 		}
+		if !timestamp.Before(now) {
+			return "", fmt.Errorf("--since timestamp must be in the past")
+		}
 		return timestamp.UTC().Format(time.RFC3339Nano), nil
 	}
 
