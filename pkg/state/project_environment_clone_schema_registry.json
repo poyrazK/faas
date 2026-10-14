@@ -7136,6 +7136,37 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_plan_assignments",
+    "columns": [
+      "account_id",
+      "created_at",
+      "effective_from",
+      "id",
+      "plan_id",
+      "rate_card_id",
+      "tenant_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "platform_tenant_plans",
+    "columns": [
+      "account_id",
+      "created_at",
+      "currency",
+      "id",
+      "included_units_per_month",
+      "max_requests_per_day",
+      "max_requests_per_minute",
+      "name",
+      "price_millicents_per_unit",
+      "route_weights",
+      "tiers",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "platform_tenant_rate_cards",
     "columns": [
       "account_id",
@@ -7146,6 +7177,7 @@
       "included_units_per_month",
       "platform_tenant_id",
       "price_millicents_per_unit",
+      "route_weights",
       "tiers",
       "unit"
     ],

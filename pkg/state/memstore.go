@@ -894,6 +894,10 @@ type MemStore struct {
 	// platformTenantRateCards is keyed by card ID and unique per tenant and
 	// effective minute, matching the immutable Postgres commercial tariff log.
 	platformTenantRateCards map[string]PlatformTenantRateCard
+	// platformTenantPlans (by ID) and platformTenantPlanAssignments back
+	// tenant plans (ADR-1307).
+	platformTenantPlans           map[string]PlatformTenantPlan
+	platformTenantPlanAssignments []PlatformTenantPlanAssignment
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement

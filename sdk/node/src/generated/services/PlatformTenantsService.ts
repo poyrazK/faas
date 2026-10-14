@@ -15,6 +15,7 @@ import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhook
 import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
 import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
+import type { AssignPlatformTenantPlanRequest } from '../models/AssignPlatformTenantPlanRequest.js';
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
@@ -44,6 +45,11 @@ import type { PlatformTenantOffboardingApplyResponse } from '../models/PlatformT
 import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
 import type { PlatformTenantOffboardingReceiptListResponse } from '../models/PlatformTenantOffboardingReceiptListResponse.js';
 import type { PlatformTenantOffboardingReceiptResponse } from '../models/PlatformTenantOffboardingReceiptResponse.js';
+import type { PlatformTenantPlanAssignmentListResponse } from '../models/PlatformTenantPlanAssignmentListResponse.js';
+import type { PlatformTenantPlanAssignmentResponse } from '../models/PlatformTenantPlanAssignmentResponse.js';
+import type { PlatformTenantPlanListResponse } from '../models/PlatformTenantPlanListResponse.js';
+import type { PlatformTenantPlanRequest } from '../models/PlatformTenantPlanRequest.js';
+import type { PlatformTenantPlanResponse } from '../models/PlatformTenantPlanResponse.js';
 import type { PlatformTenantRateCardListResponse } from '../models/PlatformTenantRateCardListResponse.js';
 import type { PlatformTenantRateCardResponse } from '../models/PlatformTenantRateCardResponse.js';
 import type { PlatformTenantReconciliationApplyResponse } from '../models/PlatformTenantReconciliationApplyResponse.js';
@@ -879,6 +885,181 @@ export class PlatformTenantsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List the account's tenant plans by name (ADR-1307).
+   * @returns PlatformTenantPlanListResponse The account's tenant plans.
+   * @throws ApiError
+   */
+  public static listPlatformTenantPlans(): CancelablePromise<PlatformTenantPlanListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-plans',
+      errors: {
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Create a reusable tenant plan of rate card terms and a request budget.
+   * An account keeps at most 100 tenant plans. A plan changes no tenant until it is assigned.
+   * @returns PlatformTenantPlanResponse The new tenant plan.
+   * @throws ApiError
+   */
+  public static createPlatformTenantPlan({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: PlatformTenantPlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenant-plans',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read one tenant plan.
+   * @returns PlatformTenantPlanResponse The plan.
+   * @throws ApiError
+   */
+  public static getPlatformTenantPlan({
+    planId,
+  }: {
+    /**
+     * Tenant plan to read or replace.
+     */
+    planId: string,
+  }): CancelablePromise<PlatformTenantPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-plans/{plan_id}',
+      path: {
+        'plan_id': planId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Replace a tenant plan's name and terms.
+   * Tenants already on the plan keep their rate card and budget until the plan is assigned to them again.
+   * @returns PlatformTenantPlanResponse The updated tenant plan.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantPlan({
+    planId,
+    requestBody,
+  }: {
+    /**
+     * Tenant plan to read or replace.
+     */
+    planId: string,
+    requestBody: PlatformTenantPlanRequest,
+  }): CancelablePromise<PlatformTenantPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenant-plans/{plan_id}',
+      path: {
+        'plan_id': planId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * List a tenant's plan assignments, newest first.
+   * @returns PlatformTenantPlanAssignmentListResponse The tenant's assignments.
+   * @throws ApiError
+   */
+  public static listPlatformTenantPlanAssignments({
+    id,
+  }: {
+    /**
+     * Tenant whose plan is assigned or listed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantPlanAssignmentListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/plan-assignments',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Move a tenant onto a plan from the next minute (ADR-1307).
+   * Creates the tenant's rate card version from the plan's terms,
+   * effective the next UTC minute, and sets the plan's request budget at
+   * once when the plan has one. The tenant's existing currency must match
+   * the plan's.
+   *
+   * @returns PlatformTenantPlanAssignmentResponse The assignment and the rate card it created.
+   * @throws ApiError
+   */
+  public static assignPlatformTenantPlan({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Tenant whose plan is assigned or listed.
+     */
+    id: string,
+    requestBody: AssignPlatformTenantPlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantPlanAssignmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/plan-assignments',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

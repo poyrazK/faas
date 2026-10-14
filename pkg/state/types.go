@@ -960,15 +960,19 @@ type PlatformTenantRateCard struct {
 	// Tiers is an optional graduated ladder counted per tenant per UTC month
 	// across every attributed app (ADR-975); it replaces the flat price and
 	// allowance, and PriceMillicentsPerUnit records the last step's price.
-	Tiers         []APIConsumerRateCardTier
+	Tiers []APIConsumerRateCardTier
+	// RouteWeights charge a consumer request on a route that many units
+	// (ADR-1307); other routes and non-consumer subjects count 1.
+	RouteWeights  map[string]int64
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
 }
 
-// MonthlyPricing reports whether the card prices usage by its position in
-// the tenant's UTC month, so statements must re-price whole months.
+// MonthlyPricing reports whether statements must re-price whole months:
+// the card prices usage by its position in the tenant's UTC month, or
+// weights routes, which per-minute coverage deltas cannot express.
 func (c PlatformTenantRateCard) MonthlyPricing() bool {
-	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage

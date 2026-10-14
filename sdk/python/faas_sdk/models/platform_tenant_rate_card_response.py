@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+    from ..models.platform_tenant_rate_card_response_route_weights import PlatformTenantRateCardResponseRouteWeights
 
 
 T = TypeVar("T", bound="PlatformTenantRateCardResponse")
@@ -36,6 +37,8 @@ class PlatformTenantRateCardResponse:
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     """Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."""
+    route_weights: PlatformTenantRateCardResponseRouteWeights | Unset = UNSET
+    """Units per consumer request on a route (ADR-1307); absent when every request counts 1."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +65,10 @@ class PlatformTenantRateCardResponse:
                 tiers_item = tiers_item_data.to_dict()
                 tiers.append(tiers_item)
 
+        route_weights: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.route_weights, Unset):
+            route_weights = self.route_weights.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -78,12 +85,15 @@ class PlatformTenantRateCardResponse:
         )
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
+        if route_weights is not UNSET:
+            field_dict["route_weights"] = route_weights
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+        from ..models.platform_tenant_rate_card_response_route_weights import PlatformTenantRateCardResponseRouteWeights
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -111,6 +121,13 @@ class PlatformTenantRateCardResponse:
 
                 tiers.append(tiers_item)
 
+        _route_weights = d.pop("route_weights", UNSET)
+        route_weights: PlatformTenantRateCardResponseRouteWeights | Unset
+        if isinstance(_route_weights, Unset):
+            route_weights = UNSET
+        else:
+            route_weights = PlatformTenantRateCardResponseRouteWeights.from_dict(_route_weights)
+
         platform_tenant_rate_card_response = cls(
             id=id,
             tenant_id=tenant_id,
@@ -121,6 +138,7 @@ class PlatformTenantRateCardResponse:
             effective_from=effective_from,
             created_at=created_at,
             tiers=tiers,
+            route_weights=route_weights,
         )
 
         platform_tenant_rate_card_response.additional_properties = d

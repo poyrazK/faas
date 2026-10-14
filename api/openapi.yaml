@@ -7736,6 +7736,126 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenant-plans:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantPlans
+      summary: List the account's tenant plans by name (ADR-1307).
+      responses:
+        '200':
+          description: The account's tenant plans.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantPlan
+      summary: Create a reusable tenant plan of rate card terms and a request budget.
+      description: An account keeps at most 100 tenant plans. A plan changes no tenant until it is assigned.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformTenantPlanRequest' }
+      responses:
+        '201':
+          description: The new tenant plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenant-plans/{plan_id}:
+    parameters:
+      - name: plan_id
+        in: path
+        required: true
+        description: Tenant plan to read or replace.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantPlan
+      summary: Read one tenant plan.
+      responses:
+        '200':
+          description: The plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: updatePlatformTenantPlan
+      summary: Replace a tenant plan's name and terms.
+      description: Tenants already on the plan keep their rate card and budget until the plan is assigned to them again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformTenantPlanRequest' }
+      responses:
+        '200':
+          description: The updated tenant plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/plan-assignments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose plan is assigned or listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantPlanAssignments
+      summary: List a tenant's plan assignments, newest first.
+      responses:
+        '200':
+          description: The tenant's assignments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanAssignmentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: assignPlatformTenantPlan
+      summary: Move a tenant onto a plan from the next minute (ADR-1307).
+      description: |
+        Creates the tenant's rate card version from the plan's terms,
+        effective the next UTC minute, and sets the plan's request budget at
+        once when the plan has one. The tenant's existing currency must match
+        the plan's.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignPlatformTenantPlanRequest' }
+      responses:
+        '201':
+          description: The assignment and the rate card it created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanAssignmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}/usage:
     parameters:
       - name: id
@@ -56987,7 +57107,12 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
           description: "Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."
-        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers." }
+        route_weights:
+          type: object
+          maxProperties: 50
+          description: "Counts each consumer request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes; ADR-1307). Unlisted routes, tenant surfaces and JWT rules count 1. Statements for periods it prices must cover one calendar month."
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers or route weights." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
@@ -57004,8 +57129,97 @@ components:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
           description: "Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
+        route_weights:
+          type: object
+          description: "Units per consumer request on a route (ADR-1307); absent when every request counts 1."
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
+
+    PlatformTenantPlanBudget:
+      description: "The request budget a tenant plan sets (ADR-240); zero disables a ceiling."
+      type: object
+      required: [max_requests_per_minute, max_requests_per_day]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, maximum: 1000000 }
+        max_requests_per_day: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+
+    PlatformTenantPlanRequest:
+      description: "A reusable tenant plan (ADR-1307): rate card terms and an optional request budget that assigning the plan applies."
+      type: object
+      required: [name, currency, price_millicents_per_unit]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          maxProperties: 50
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
+
+    PlatformTenantPlanResponse:
+      description: "One tenant plan."
+      type: object
+      required: [id, name, currency, price_millicents_per_unit, included_units_per_month, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
+        request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantPlanListResponse:
+      description: "An account's tenant plans by name."
+      type: object
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+
+    AssignPlatformTenantPlanRequest:
+      description: "Moves a tenant onto a plan from the next minute."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+
+    PlatformTenantPlanAssignmentResponse:
+      description: "One plan assignment and the tenant rate card it created."
+      type: object
+      required: [id, tenant_id, plan_id, rate_card_id, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        plan_name: { type: string }
+        rate_card_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PlatformTenantPlanAssignmentListResponse:
+      description: "A tenant's plan assignments, newest first."
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantPlanAssignmentResponse' }
 
     PlatformTenantRateCardListResponse:
       description: Chronological immutable tariff versions for one customer.

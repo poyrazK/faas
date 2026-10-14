@@ -16,7 +16,7 @@ import (
 // `gregale platform-tenants`, mapped to the flags each accepts.
 var platformTenantBillingVerbs = map[string][]string{
 	"rate-cards":         {"id"},
-	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "effective-from"},
+	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "weight", "effective-from"},
 	"statements":         {"id", "month", "period-start", "period-end"},
 	"statement-draft":    {"id", "month", "period-start", "period-end"},
 	"statement-show":     {"id", "statement-id"},
@@ -31,7 +31,7 @@ type platformTenantBillingFlags struct {
 	currency, effectiveFrom       string
 	priceMillicents               int64
 	includedUnits                 int64
-	tiers                         multiFlag
+	tiers, weights                multiFlag
 	month, periodStart, periodEnd string
 }
 
@@ -53,6 +53,7 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per tenant per UTC calendar month across all apps")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS counted per tenant per UTC month, repeatable; the last step's UP_TO is inf")
+	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\" for consumer requests, repeatable; unlisted routes count 1")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
@@ -101,6 +102,9 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "rate-card-create":
 		rateCard, err = buildPricingRequest(consumerFlags{currency: f.currency, priceMillicents: f.priceMillicents,
 			includedUnits: f.includedUnits, tiers: f.tiers, effectiveFrom: f.effectiveFrom})
+		if err == nil {
+			rateCard.RouteWeights, err = parseRouteWeights(f.weights)
+		}
 	case "statements", "statement-draft":
 		start, end, err = statementPeriod(f.periodStart, f.periodEnd, f.month)
 	case "statement-handoff":
@@ -123,7 +127,7 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "rate-card-create":
 		out, err = client.CreatePlatformTenantRateCard(ctx, f.id, api.CreatePlatformTenantRateCardRequest{
 			Currency: rateCard.Currency, PriceMillicentsPerUnit: rateCard.PriceMillicentsPerUnit, EffectiveFrom: rateCard.EffectiveFrom,
-			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers,
+			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers, RouteWeights: rateCard.RouteWeights,
 		})
 	case "statements":
 		out, err = client.ListPlatformTenantStatements(ctx, f.id, start, end)

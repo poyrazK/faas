@@ -7727,7 +7727,7 @@ List a customer&#39;s cross-app price versions
 
 Add a customer-wide per-request price version
 
-`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--effective-from <RFC3339>]`
+`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--effective-from <RFC3339>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7736,6 +7736,7 @@ Add a customer-wide per-request price version
 | `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
 | `--included-units <N>` | free requests per tenant per UTC calendar month across all apps |  |
 | `--tier <UP_TO:PRICE>` | graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units) |  |
+| `--weight <"METHOD /template=N">` | units per consumer request on a route; repeat per route, unlisted routes count 1 (statements then cover calendar months) |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
 
 ### platform-tenants statements
@@ -7810,6 +7811,72 @@ Create an invoice in Stripe, Paddle or Lago for a finalized revision and record 
 | `--statement-id <UUID>` | statement revision UUID | required |
 | `--customer <ID>` | provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the tenant&#39;s external_ref when it is one) |  |
 | `--provider <PROVIDER>` | billing provider (default stripe) | one of `stripe` · `paddle` · `lago` |
+
+### platform-tenants plans
+
+List tenant plans: reusable price and request-budget bundles
+
+### platform-tenants plan-create
+
+Create a tenant plan
+
+`gregale platform-tenants plan-create --name <NAME> [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | plan name (lowercase letters, digits, hyphens) | required |
+| `--currency <CODE>` | ISO-4217 currency (default EUR) |  |
+| `--price-millicents <N>` | price per request unit; 100000 = 1.00 |  |
+| `--included-units <N>` | free units per tenant per UTC calendar month |  |
+| `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf |  |
+| `--weight <"METHOD /template=N">` | units per consumer request on a route; repeat per route |  |
+| `--max-requests-per-minute <N>` | request budget per minute the plan sets (with --max-requests-per-day) |  |
+| `--max-requests-per-day <N>` | request budget per day the plan sets (with --max-requests-per-minute) |  |
+
+Examples:
+
+```sh
+gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 --weight "POST /generate=5" --max-requests-per-minute 600 --max-requests-per-day 100000
+```
+
+### platform-tenants plan-update
+
+Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again
+
+`gregale platform-tenants plan-update --plan <NAME> [--name <NAME>] [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <NAME>` | plan to change | required |
+| `--name <NAME>` | new plan name |  |
+| `--currency <CODE>` | ISO-4217 currency |  |
+| `--price-millicents <N>` | price per request unit; 100000 = 1.00 |  |
+| `--included-units <N>` | free units per tenant per UTC calendar month |  |
+| `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf |  |
+| `--weight <"METHOD /template=N">` | units per consumer request on a route; repeat per route |  |
+| `--max-requests-per-minute <N>` | request budget per minute (with --max-requests-per-day) |  |
+| `--max-requests-per-day <N>` | request budget per day (with --max-requests-per-minute) |  |
+
+### platform-tenants set-plan
+
+Move a tenant onto a plan: its rate card from the next minute and its request budget at once
+
+`gregale platform-tenants set-plan --id <UUID> --plan <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--plan <NAME>` | tenant plan name | required |
+
+### platform-tenants plan-history
+
+List a tenant&#39;s plan assignments, newest first
+
+`gregale platform-tenants plan-history --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
 
 
 ## edge-rule-lists

@@ -185,6 +185,7 @@ export type { AppWebhookDeliveryResponse } from './models/AppWebhookDeliveryResp
 export type { AppWebhookResponse } from './models/AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './models/AppWebhookRetryDeliveryResponse.js';
 export type { AssignAPIConsumerPlanRequest } from './models/AssignAPIConsumerPlanRequest.js';
+export type { AssignPlatformTenantPlanRequest } from './models/AssignPlatformTenantPlanRequest.js';
 export type { AsyncInvokeResponse } from './models/AsyncInvokeResponse.js';
 export type { AuditEventResponse } from './models/AuditEventResponse.js';
 export type { AuditLogEntry } from './models/AuditLogEntry.js';
@@ -1455,6 +1456,12 @@ export type { PlatformTenantOffboardingPlanResponse } from './models/PlatformTen
 export type { PlatformTenantOffboardingReceiptListResponse } from './models/PlatformTenantOffboardingReceiptListResponse.js';
 export type { PlatformTenantOffboardingReceiptResponse } from './models/PlatformTenantOffboardingReceiptResponse.js';
 export type { PlatformTenantOffboardingReceiptSummary } from './models/PlatformTenantOffboardingReceiptSummary.js';
+export type { PlatformTenantPlanAssignmentListResponse } from './models/PlatformTenantPlanAssignmentListResponse.js';
+export type { PlatformTenantPlanAssignmentResponse } from './models/PlatformTenantPlanAssignmentResponse.js';
+export type { PlatformTenantPlanBudget } from './models/PlatformTenantPlanBudget.js';
+export type { PlatformTenantPlanListResponse } from './models/PlatformTenantPlanListResponse.js';
+export type { PlatformTenantPlanRequest } from './models/PlatformTenantPlanRequest.js';
+export type { PlatformTenantPlanResponse } from './models/PlatformTenantPlanResponse.js';
 export type { PlatformTenantPublishEventResponse } from './models/PlatformTenantPublishEventResponse.js';
 export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './models/PlatformTenantRateCardResponse.js';

@@ -423,21 +423,45 @@ statements and a customer-wide rate card with
 ```bash
 gregale platform-tenants rate-card-create --id TENANT_ID --currency EUR --price-millicents 20 --included-units 50000
 gregale platform-tenants rate-card-create --id TENANT_ID --currency EUR --tier 100000:0 --tier inf:15
+gregale platform-tenants rate-card-create --id TENANT_ID --currency EUR --price-millicents 20 --weight "POST /generate=5"
 gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
 ```
 
 - **Shared allowance and tiers.** A tenant card's free requests and tiers
   count the customer's usage across all their apps, in minute order through
   each UTC month.
-- **Monthly statements.** While such a card is in force, cross-app statements
-  must cover one calendar month. Late usage re-prices the month: the
-  adjustment bills only the difference, so a line can be negative when free
-  units move to an earlier minute, but the total never is.
+- **Route weights.** `--weight` charges each of the customer's consumer
+  requests on a route that many units, in every app. Unlisted routes count 1.
+  Requests through a tenant surface or JWT rule also count 1.
+- **Monthly statements.** While a card with free requests, tiers or route
+  weights is in force, cross-app statements must cover one calendar month.
+  Late usage re-prices the month: the adjustment bills only the difference,
+  so a line can be negative when free units move to an earlier minute, but
+  the total never is.
 - **App cards underneath.** An app's own free requests, tiers, route weights
   or plans don't block a cross-app statement for minutes a tenant card prices.
   A minute only an app card prices still needs a flat app card; otherwise bill
   those consumers with app statements.
-- **Not yet available.** Tenant cards don't take route weights or plans.
+
+### Tenant plans
+
+Package a customer-wide price and request budget once, and move customers
+onto it:
+
+```bash
+gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 \
+  --weight "POST /generate=5" --max-requests-per-minute 600 --max-requests-per-day 100000
+gregale platform-tenants set-plan --id TENANT_ID --plan growth
+gregale platform-tenants plan-history --id TENANT_ID
+```
+
+- **Assigning.** `set-plan` adds the plan's rate card for the tenant from the
+  next minute and sets its [request budget](platform-tenants.md) at once. The
+  tenant keeps its earlier cards for earlier minutes.
+- **Changing a plan.** `plan-update` changes the plan for future assignments.
+  Customers already on it keep their price until you run `set-plan` again.
+- **Limits.** An account keeps up to 100 tenant plans. A plan's currency must
+  match the tenant's existing cards.
 
 ## Limits
 
@@ -445,8 +469,8 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   compute time or bytes is not available.
 - Tiers are graduated. Pricing every request in the month at the price of the
   step the month ends in is not available.
-- Customer-wide (platform tenant) cards support free requests and tiers but
-  not route weights or plans.
+- Customer-wide (platform tenant) route weights apply to consumer requests
+  only; surface and JWT-rule requests always count 1.
 - A billable request's usage is written to disk before the client receives
   the end of the response. A gateway crash can therefore no longer lose a
   served request. A request whose usage can't be recorded is not completed
@@ -471,8 +495,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1302](adr/1302-statement-invoice-payment-status.md),
 [ADR-1303](adr/1303-usage-durable-before-response-completes.md),
 [ADR-1304](adr/1304-consumer-billing-self-service.md),
-[ADR-1305](adr/1305-paddle-and-lago-statement-exports.md), and
-[ADR-1306](adr/1306-consumer-prepaid-credit-and-spend-caps.md) for the billing rules.
+[ADR-1305](adr/1305-paddle-and-lago-statement-exports.md),
+[ADR-1306](adr/1306-consumer-prepaid-credit-and-spend-caps.md), and
+[ADR-1307](adr/1307-platform-tenant-route-weights-and-plans.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

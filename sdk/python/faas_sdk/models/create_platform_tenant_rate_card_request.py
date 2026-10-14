@@ -11,6 +11,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+    from ..models.create_platform_tenant_rate_card_request_route_weights import (
+        CreatePlatformTenantRateCardRequestRouteWeights,
+    )
 
 
 T = TypeVar("T", bound="CreatePlatformTenantRateCardRequest")
@@ -31,9 +34,13 @@ class CreatePlatformTenantRateCardRequest:
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975).
     Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."""
+    route_weights: CreatePlatformTenantRateCardRequestRouteWeights | Unset = UNSET
+    """Counts each consumer request on a listed "METHOD /template" route as that many units (1..1000, at most 50
+    routes; ADR-1307). Unlisted routes, tenant surfaces and JWT rules count 1. Statements for periods it prices must
+    cover one calendar month."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any
-    tenant card has included units or tiers."""
+    tenant card has included units, tiers or route weights."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +56,10 @@ class CreatePlatformTenantRateCardRequest:
             for tiers_item_data in self.tiers:
                 tiers_item = tiers_item_data.to_dict()
                 tiers.append(tiers_item)
+
+        route_weights: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.route_weights, Unset):
+            route_weights = self.route_weights.to_dict()
 
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
@@ -71,6 +82,8 @@ class CreatePlatformTenantRateCardRequest:
             field_dict["included_units_per_month"] = included_units_per_month
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
+        if route_weights is not UNSET:
+            field_dict["route_weights"] = route_weights
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -79,6 +92,9 @@ class CreatePlatformTenantRateCardRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+        from ..models.create_platform_tenant_rate_card_request_route_weights import (
+            CreatePlatformTenantRateCardRequestRouteWeights,
+        )
 
         d = dict(src_dict)
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
@@ -95,6 +111,13 @@ class CreatePlatformTenantRateCardRequest:
                 tiers_item = APIConsumerRateCardTier.from_dict(tiers_item_data)
 
                 tiers.append(tiers_item)
+
+        _route_weights = d.pop("route_weights", UNSET)
+        route_weights: CreatePlatformTenantRateCardRequestRouteWeights | Unset
+        if isinstance(_route_weights, Unset):
+            route_weights = UNSET
+        else:
+            route_weights = CreatePlatformTenantRateCardRequestRouteWeights.from_dict(_route_weights)
 
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -118,6 +141,7 @@ class CreatePlatformTenantRateCardRequest:
             currency=currency,
             included_units_per_month=included_units_per_month,
             tiers=tiers,
+            route_weights=route_weights,
             effective_from=effective_from,
         )
 

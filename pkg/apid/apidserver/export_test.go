@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
+	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -865,6 +866,7 @@ func (r *server) StatementInvoices() *statementinvoices.Service { return &r.stat
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
+func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
 func (r *server) Store() *state.Store                           { return &r.store }
 func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
 func (r *server) WorkflowRuntimeEnabled() *bool                 { return &r.workflowRuntimeEnabled }

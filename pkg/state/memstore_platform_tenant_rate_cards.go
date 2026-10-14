@@ -40,7 +40,7 @@ func (m *MemStore) CreatePlatformTenantRateCardVersion(_ context.Context, in Pla
 		ID: uuid.NewString(), AccountID: accountID, TenantID: tenantID,
 		Currency: currency, Unit: PlatformTenantRateCardUnitRequest,
 		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit, IncludedUnitsPerMonth: in.IncludedUnitsPerMonth,
-		Tiers: in.Tiers, EffectiveFrom: effectiveFrom, CreatedAt: time.Now().UTC(),
+		Tiers: in.Tiers, RouteWeights: in.RouteWeights, EffectiveFrom: effectiveFrom, CreatedAt: time.Now().UTC(),
 	}
 	m.platformTenantRateCards[card.ID] = card
 	return card, nil

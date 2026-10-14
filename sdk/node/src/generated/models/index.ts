@@ -179,6 +179,7 @@ export type { ApproveRouteLifecycleRequest } from './ApproveRouteLifecycleReques
 export type { ApproveRouteRemovalRequest } from './ApproveRouteRemovalRequest.js';
 export type { AppsMetricsResponse } from './AppsMetricsResponse.js';
 export type { AssignAPIConsumerPlanRequest } from './AssignAPIConsumerPlanRequest.js';
+export type { AssignPlatformTenantPlanRequest } from './AssignPlatformTenantPlanRequest.js';
 export type { AsyncInvokeResponse } from './AsyncInvokeResponse.js';
 export type { AuditEventResponse } from './AuditEventResponse.js';
 export type { AuditLogEntry } from './AuditLogEntry.js';
@@ -1449,6 +1450,12 @@ export type { PlatformTenantOffboardingPlanResponse } from './PlatformTenantOffb
 export type { PlatformTenantOffboardingReceiptListResponse } from './PlatformTenantOffboardingReceiptListResponse.js';
 export type { PlatformTenantOffboardingReceiptResponse } from './PlatformTenantOffboardingReceiptResponse.js';
 export type { PlatformTenantOffboardingReceiptSummary } from './PlatformTenantOffboardingReceiptSummary.js';
+export type { PlatformTenantPlanAssignmentListResponse } from './PlatformTenantPlanAssignmentListResponse.js';
+export type { PlatformTenantPlanAssignmentResponse } from './PlatformTenantPlanAssignmentResponse.js';
+export type { PlatformTenantPlanBudget } from './PlatformTenantPlanBudget.js';
+export type { PlatformTenantPlanListResponse } from './PlatformTenantPlanListResponse.js';
+export type { PlatformTenantPlanRequest } from './PlatformTenantPlanRequest.js';
+export type { PlatformTenantPlanResponse } from './PlatformTenantPlanResponse.js';
 export type { PlatformTenantPublishEventResponse } from './PlatformTenantPublishEventResponse.js';
 export type { PlatformTenantRateCardListResponse } from './PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardResponse.js';

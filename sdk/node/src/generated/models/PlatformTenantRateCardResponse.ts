@@ -20,6 +20,10 @@ export type PlatformTenantRateCardResponse = {
    * Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards.
    */
   tiers?: Array<APIConsumerRateCardTier>;
+  /**
+   * Units per consumer request on a route (ADR-1307); absent when every request counts 1.
+   */
+  route_weights?: Record<string, number>;
   effective_from: string;
   created_at: string;
 };

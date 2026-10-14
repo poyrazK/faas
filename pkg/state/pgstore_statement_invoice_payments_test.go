@@ -98,3 +98,10 @@ func TestPgStoreConsumerCredits(t *testing.T) {
 	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
 	checkConsumerCredits(t, ctx, store, accountID, appID)
 }
+
+// adr: 1307
+func TestPgStorePlatformTenantPlans(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	checkPlatformTenantPlans(t, ctx, store, accountID)
+}

@@ -18,7 +18,11 @@ export type CreatePlatformTenantRateCardRequest = {
    */
   tiers?: Array<APIConsumerRateCardTier>;
   /**
-   * UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers.
+   * Counts each consumer request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes; ADR-1307). Unlisted routes, tenant surfaces and JWT rules count 1. Statements for periods it prices must cover one calendar month.
+   */
+  route_weights?: Record<string, number>;
+  /**
+   * UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers or route weights.
    */
   effective_from?: string | null;
 };

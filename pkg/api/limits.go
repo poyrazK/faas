@@ -239,6 +239,10 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
+// PlatformTenantPlansMax bounds the tenant plans one account keeps
+// (ADR-1307).
+const PlatformTenantPlansMax = 100
+
 type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int

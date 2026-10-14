@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type PlatformTenantRateCardInput struct {
 	PriceMillicentsPerUnit int64
 	IncludedUnitsPerMonth  int64
 	Tiers                  []APIConsumerRateCardTier
+	RouteWeights           map[string]int64
 	EffectiveFrom          time.Time
 }
 
@@ -49,6 +51,13 @@ func normalizePlatformTenantRateCardInput(in PlatformTenantRateCardInput) (Platf
 	}
 	if in.IncludedUnitsPerMonth < 0 {
 		return in, fmt.Errorf("%s: %w: included_units_per_month must be non-negative", op, ErrInvalidArgument)
+	}
+	if err := ValidateAPIConsumerRouteWeights(in.RouteWeights); err != nil {
+		return in, fmt.Errorf("%s: %w: %w", op, ErrInvalidArgument, err)
+	}
+	in.RouteWeights = maps.Clone(in.RouteWeights)
+	if len(in.RouteWeights) == 0 {
+		in.RouteWeights = nil
 	}
 	if err := validatePlatformTenantRateCardInput(op, in.AccountID, in.TenantID, in.Currency, in.PriceMillicentsPerUnit, in.EffectiveFrom); err != nil {
 		return in, err

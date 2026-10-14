@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
+	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -83,6 +84,7 @@ type server struct {
 	billingRuns                            billingruns.Service       // ADR-1301; Host wired in newServer
 	consumerBilling                        consumerbilling.Service   // ADR-1304; Host wired in newServer
 	consumerCredits                        consumercredits.Service   // ADR-1306; Host wired in newServer
+	tenantPlans                            tenantplans.Service       // ADR-1307; Host wired in newServer
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
 	objectStorage                 *objectstorage.Registry
@@ -1203,6 +1205,7 @@ func newServerWithDeps(
 	s.billingRuns.Host = billingRunsHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
 	s.consumerCredits.Host = consumerCreditsHost{s}
+	s.tenantPlans.Host = tenantPlansHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -1622,6 +1625,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/request-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantRequestBudget))))
 	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/request-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantRequestBudget))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantRateCards))))
+	// ADR-1307: tenant plans bundle card terms and a request budget.
+	mux.HandleFunc("GET /v1/account/platform-tenant-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListPlans))))
+	mux.HandleFunc("POST /v1/account/platform-tenant-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.CreatePlan)))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.GetPlan))))
+	mux.HandleFunc("PUT /v1/account/platform-tenant-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.tenantPlans.UpdatePlan))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListAssignments))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.AssignPlan)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantRateCard)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))

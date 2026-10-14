@@ -340,8 +340,11 @@ type CreatePlatformTenantRateCardRequest struct {
 	IncludedUnitsPerMonth int64 `json:"included_units_per_month,omitempty"`
 	// Tiers is an optional graduated ladder counted per tenant per UTC month
 	// (ADR-975); it replaces the price and the allowance.
-	Tiers         []APIConsumerRateCardTier `json:"tiers,omitempty"`
-	EffectiveFrom *time.Time                `json:"effective_from,omitempty"`
+	Tiers []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	// RouteWeights charge a consumer request on a "METHOD /template" route
+	// that many units (ADR-1307); statements then cover calendar months.
+	RouteWeights  map[string]int64 `json:"route_weights,omitempty"`
+	EffectiveFrom *time.Time       `json:"effective_from,omitempty"`
 }
 
 // PlatformTenantRateCardResponse is one immutable tenant-wide request price.
@@ -354,6 +357,7 @@ type PlatformTenantRateCardResponse struct {
 	// IncludedUnitsPerMonth are free units per tenant per UTC month (ADR-975).
 	IncludedUnitsPerMonth int64                     `json:"included_units_per_month"`
 	Tiers                 []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	RouteWeights          map[string]int64          `json:"route_weights,omitempty"`
 	EffectiveFrom         time.Time                 `json:"effective_from"`
 	CreatedAt             time.Time                 `json:"created_at"`
 }

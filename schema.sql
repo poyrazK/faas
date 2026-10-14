@@ -26266,6 +26266,54 @@ CREATE TABLE public.platform_tenant_offboarding_receipts (
 
 
 --
+-- Name: platform_tenant_plan_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_plan_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    rate_card_id uuid NOT NULL,
+    effective_from timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: platform_tenant_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    currency text NOT NULL,
+    price_millicents_per_unit bigint NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    max_requests_per_minute bigint,
+    max_requests_per_day bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_plans_budget_chk CHECK ((((max_requests_per_minute IS NULL) = (max_requests_per_day IS NULL)) AND ((max_requests_per_minute IS NULL) OR ((max_requests_per_minute >= 0) AND (max_requests_per_day >= 0))))),
+    CONSTRAINT platform_tenant_plans_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT platform_tenant_plans_price_chk CHECK (((price_millicents_per_unit >= 0) AND (included_units_per_month >= 0))),
+    CONSTRAINT platform_tenant_plans_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT platform_tenant_plans_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0))))
+);
+
+
+--
+-- Name: TABLE platform_tenant_plans; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_plans IS 'Reusable platform tenant price and request-budget bundle; assigning one creates the tenant''s rate card and sets its budget (ADR-1307).';
+
+
+--
 -- Name: platform_tenant_rate_cards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26280,10 +26328,12 @@ CREATE TABLE public.platform_tenant_rate_cards (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     included_units_per_month bigint DEFAULT 0 NOT NULL,
     tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT platform_tenant_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
     CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
     CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = 'request'::text))
 );
@@ -26301,6 +26351,13 @@ COMMENT ON COLUMN public.platform_tenant_rate_cards.included_units_per_month IS 
 --
 
 COMMENT ON COLUMN public.platform_tenant_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.';
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.route_weights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.route_weights IS 'Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.';
 
 
 --
@@ -36328,6 +36385,30 @@ ALTER TABLE ONLY public.platform_tenant_offboarding_receipts
 
 
 --
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: platform_tenant_plans platform_tenant_plans_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plans
+    ADD CONSTRAINT platform_tenant_plans_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: platform_tenant_plans platform_tenant_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plans
+    ADD CONSTRAINT platform_tenant_plans_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: platform_tenant_rate_cards platform_tenant_rate_cards_account_id_platform_tenant_id_ef_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44069,6 +44150,13 @@ CREATE INDEX platform_tenant_access_tokens_tenant_idx ON public.platform_tenant_
 --
 
 CREATE INDEX platform_tenant_offboarding_receipts_history_idx ON public.platform_tenant_offboarding_receipts USING btree (account_id, tenant_id, applied_at DESC, receipt_id DESC);
+
+
+--
+-- Name: platform_tenant_plan_assignments_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_plan_assignments_tenant_idx ON public.platform_tenant_plan_assignments USING btree (tenant_id, effective_from DESC);
 
 
 --
@@ -55756,6 +55844,46 @@ ALTER TABLE ONLY public.platform_tenant_hostname_policies
 
 ALTER TABLE ONLY public.platform_tenant_offboarding_receipts
     ADD CONSTRAINT platform_tenant_offboarding_receipts_account_id_tenant_id_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.platform_tenant_plans(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_rate_card_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_rate_card_id_fkey FOREIGN KEY (rate_card_id) REFERENCES public.platform_tenant_rate_cards(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plans platform_tenant_plans_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plans
+    ADD CONSTRAINT platform_tenant_plans_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

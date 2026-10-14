@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -186,8 +187,39 @@ func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenant
 			return state.PlatformTenantStatementInput{}, err
 		}
 	}
+	routes, err := s.tenantRouteUsage(ctx, accountID, tenantCards, monthUsage, start, end)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
 	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, time.Now().UTC(), revision, priorStatus,
-		usageDelta, monthUsage, cards, tenantCards, previous)
+		usageDelta, monthUsage, cards, tenantCards, previous, routes)
+}
+
+// tenantRouteUsage loads each consumer subject's route counts when a tenant
+// card weights routes (ADR-1307).
+func (s *server) tenantRouteUsage(ctx context.Context, accountID string, tenantCards []state.PlatformTenantRateCard,
+	monthUsage []state.APIConsumerUsageBucket, start, end time.Time) (billing.TenantRouteUsage, error) {
+	weighted := false
+	for _, card := range tenantCards {
+		weighted = weighted || len(card.RouteWeights) > 0
+	}
+	routeStore, ok := s.store.(state.ConsumerRouteUsageStore)
+	if !weighted || !ok {
+		return nil, nil
+	}
+	routes := billing.TenantRouteUsage{}
+	for _, bucket := range monthUsage {
+		key := billing.TenantRouteKey(bucket.AppID, bucket.ConsumerKey)
+		if _, loaded := routes[key]; loaded || bucket.ConsumerKey == "" {
+			continue
+		}
+		rows, err := routeStore.ListAPIConsumerRouteUsage(ctx, accountID, bucket.AppID, bucket.ConsumerKey, start, end)
+		if err != nil {
+			return nil, fmt.Errorf("list tenant route usage: %w", err)
+		}
+		routes[key] = rows
+	}
+	return routes, nil
 }
 
 // tenantStatementProblem explains why a tenant statement could not be
