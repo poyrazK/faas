@@ -6108,7 +6108,7 @@ List deployments or manage stable named URLs for immutable revisions
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page |  |
-| `--wide` | include annotation columns (by / pr / tag / reason) |  |
+| `--wide` | include the revision (vN) and annotation columns (by / pr / tag / reason) |  |
 
 Examples:
 

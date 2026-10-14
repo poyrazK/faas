@@ -2027,7 +2027,7 @@ var cliCommands = []cliCommand{
 			{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 			{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 			{Name: "all", Short: "walk every page"},
-			{Name: "wide", Short: "include annotation columns (by / pr / tag / reason)"},
+			{Name: "wide", Short: "include the revision (vN) and annotation columns (by / pr / tag / reason)"},
 		},
 	},
 	{
