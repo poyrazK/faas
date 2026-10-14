@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE workflow_recovery_policies ADD COLUMN automatic_poll_failure jsonb
+ALTER TABLE workflow_recovery_policies ADD COLUMN IF NOT EXISTS automatic_poll_failure jsonb
 CHECK (automatic_poll_failure IS NULL OR (
  jsonb_typeof(automatic_poll_failure)='object'
  AND automatic_poll_failure->>'code' IN ('invalid_policy_authority','invalid_polling_data','invalid_recovery_identity')

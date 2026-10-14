@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -151,7 +152,7 @@ func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 				if !reflect.DeepEqual(before, get()) {
 					t.Fatal("queue read mutated review/receipt/evaluation")
 				}
-				if _, err = operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); err != ErrNotFound {
+				if _, err = operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); !errors.Is(err, ErrNotFound) {
 					t.Fatalf("foreign scope %v", err)
 				}
 				second, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)

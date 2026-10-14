@@ -16,9 +16,13 @@ import (
 
 func seedInitialReview(t *testing.T, s Store) (*WorkflowRun, App, string, api.WorkflowRecoveryPolicyResponse) {
 	t.Helper()
-	ctx := context.Background()
-	run, app := seedResumeRun(t, s, simpleResumeSpec())
-	failResumeRun(t, s, run, "send")
+	return seedInitialReviewWithContext(t, context.Background(), s)
+}
+
+func seedInitialReviewWithContext(t *testing.T, ctx context.Context, s Store) (*WorkflowRun, App, string, api.WorkflowRecoveryPolicyResponse) {
+	t.Helper()
+	run, app := seedResumeRunWithContext(t, ctx, s, simpleResumeSpec())
+	failResumeRunWithContext(t, ctx, s, run, "send")
 	page, err := s.(WorkflowInitialRecoveryStore).ListWorkflowInitialFailures(ctx, app.AccountID, app.ID, api.WorkflowInitialFailureOptions{})
 	if err != nil || len(page.Items) != 1 {
 		t.Fatalf("failures %+v %v", page, err)
@@ -32,7 +36,11 @@ func seedInitialReview(t *testing.T, s Store) (*WorkflowRun, App, string, api.Wo
 }
 func mutateInitialReview(t *testing.T, s Store, id string, mutate func(*api.WorkflowInitialRecoveryReview)) {
 	t.Helper()
-	ctx := context.Background()
+	mutateInitialReviewWithContext(t, context.Background(), s, id, mutate)
+}
+
+func mutateInitialReviewWithContext(t *testing.T, ctx context.Context, s Store, id string, mutate func(*api.WorkflowInitialRecoveryReview)) {
+	t.Helper()
 	if m, ok := s.(*MemStore); ok {
 		m.mu.Lock()
 		defer m.mu.Unlock()

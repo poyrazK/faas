@@ -17,7 +17,7 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		seed := func() (App, api.WorkflowInitialRecoveryReview) {
-			_, app, failure, p := seedInitialReview(t, s)
+			_, app, failure, p := seedInitialReviewWithContext(t, ctx, s)
 			reviews := s.(WorkflowInitialRecoveryReviewStore)
 			r, err := reviews.PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, api.WorkflowInitialRecoveryReviewRequest{ExpectedPolicyVersion: p.Version})
 			if err != nil {
@@ -32,7 +32,7 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 		badApp, bad := seed()
 		healthyApp, healthy := seed()
 		originalRun := bad.Target.RunID
-		mutateInitialReview(t, s, bad.ID, func(r *api.WorkflowInitialRecoveryReview) { r.Target.RunID = "invalid" })
+		mutateInitialReviewWithContext(t, ctx, s, bad.ID, func(r *api.WorkflowInitialRecoveryReview) { r.Target.RunID = "invalid" })
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		if m, ok := s.(*MemStore); ok {
 			m.initialCompletionNext = map[string]time.Time{bad.ID: now.Add(-time.Hour), healthy.ID: now}
@@ -50,7 +50,7 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 		if !poll(now) {
 			t.Fatal("poison review not deferred")
 		}
-		failed := initialAutomaticReview(t, s, badApp, bad.ID)
+		failed := initialAutomaticReviewWithContext(t, ctx, s, badApp, bad.ID)
 		f := failed.ObservationFailure
 		if f == nil || f.Code != "invalid_recovery_identity" || f.Attempts != 1 || !f.RetryAt.Equal(now.Add(time.Minute)) || failed.Attention != nil || failed.Result != nil {
 			t.Fatalf("failure state %+v", failed)
@@ -58,7 +58,7 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 		if !poll(now) {
 			t.Fatal("healthy review starved")
 		}
-		good := initialAutomaticReview(t, s, healthyApp, healthy.ID)
+		good := initialAutomaticReviewWithContext(t, ctx, s, healthyApp, healthy.ID)
 		if good.Attention == nil || good.ObservationFailure != nil {
 			t.Fatal("healthy review not observed")
 		}
@@ -68,7 +68,7 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 		if pg, ok := s.(*PgStore); ok {
 			s = NewPgStore(pg.pool)
 		}
-		if got := initialAutomaticReview(t, s, badApp, bad.ID).ObservationFailure; !reflect.DeepEqual(got, f) {
+		if got := initialAutomaticReviewWithContext(t, ctx, s, badApp, bad.ID).ObservationFailure; !reflect.DeepEqual(got, f) {
 			t.Fatal("failure lost on restart")
 		}
 		cancelled, cancel := context.WithCancel(ctx)
@@ -76,22 +76,22 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 		if _, err := s.(WorkflowInitialManualCompletionStore).ProcessNextWorkflowInitialManualCompletion(cancelled, f.RetryAt); !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancellation %v", err)
 		}
-		if got := initialAutomaticReview(t, s, badApp, bad.ID).ObservationFailure; !reflect.DeepEqual(got, f) {
+		if got := initialAutomaticReviewWithContext(t, ctx, s, badApp, bad.ID).ObservationFailure; !reflect.DeepEqual(got, f) {
 			t.Fatal("cancellation changed retry state")
 		}
 		for range 2 {
 			poll(f.RetryAt)
 		}
-		failed = initialAutomaticReview(t, s, badApp, bad.ID)
+		failed = initialAutomaticReviewWithContext(t, ctx, s, badApp, bad.ID)
 		second := failed.ObservationFailure
 		if second == nil || second.Attempts != 2 || !second.RetryAt.Equal(f.RetryAt.Add(2*time.Minute)) {
 			t.Fatalf("backoff %+v", second)
 		}
-		mutateInitialReview(t, s, bad.ID, func(r *api.WorkflowInitialRecoveryReview) { r.Target.RunID = originalRun })
+		mutateInitialReviewWithContext(t, ctx, s, bad.ID, func(r *api.WorkflowInitialRecoveryReview) { r.Target.RunID = originalRun })
 		for range 2 {
 			poll(second.RetryAt)
 		}
-		recovered := initialAutomaticReview(t, s, badApp, bad.ID)
+		recovered := initialAutomaticReviewWithContext(t, ctx, s, badApp, bad.ID)
 		if recovered.ObservationFailure != nil || recovered.Attention == nil || recovered.Result != nil || recovered.JobID != bad.JobID {
 			t.Fatal("successful observation did not reset failure safely")
 		}
@@ -135,7 +135,7 @@ func TestWorkflowInitialObservationFailureRollback(t *testing.T) {
 			t.Skip("PostgreSQL savepoint regression")
 		}
 		ctx := context.Background()
-		run, app, failure, p := seedInitialReview(t, s)
+		run, app, failure, p := seedInitialReviewWithContext(t, ctx, s)
 		reviews := s.(WorkflowInitialRecoveryReviewStore)
 		r, err := reviews.PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, api.WorkflowInitialRecoveryReviewRequest{ExpectedPolicyVersion: p.Version})
 		if err != nil {
@@ -163,7 +163,7 @@ func TestWorkflowInitialObservationFailureRollback(t *testing.T) {
 		if did, e := pg.ProcessNextWorkflowInitialManualCompletion(ctx, now); e != nil || !did {
 			t.Fatalf("defer %v %v", did, e)
 		}
-		saved := initialAutomaticReview(t, s, app, r.ID)
+		saved := initialAutomaticReviewWithContext(t, ctx, s, app, r.ID)
 		if saved.ObservationFailure == nil || saved.ObservationFailure.Code != "invalid_observation_data" || saved.Result != nil {
 			t.Fatalf("failed transaction leaked result %+v", saved)
 		}
@@ -181,7 +181,7 @@ func TestWorkflowInitialObservationFailureRollback(t *testing.T) {
 		if did, e := pg.ProcessNextWorkflowInitialManualCompletion(ctx, saved.ObservationFailure.RetryAt); e != nil || !did {
 			t.Fatalf("retry %v %v", did, e)
 		}
-		saved = initialAutomaticReview(t, pg, app, r.ID)
+		saved = initialAutomaticReviewWithContext(t, ctx, pg, app, r.ID)
 		if saved.ObservationFailure != nil || saved.Result == nil || saved.Result.Outcome != "failed" {
 			t.Fatal("verified result missing after retry")
 		}

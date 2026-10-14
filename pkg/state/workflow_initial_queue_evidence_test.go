@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -64,7 +65,7 @@ func TestWorkflowInitialQueuePreparedEvidence(t *testing.T) {
 			if !reflect.DeepEqual(before, retained()) {
 				t.Fatal("queue changed prepared review or receipts")
 			}
-			if _, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); err != ErrNotFound {
+			if _, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("scope %v", err)
 			}
 		})

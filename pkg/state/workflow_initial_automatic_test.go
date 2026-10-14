@@ -35,7 +35,12 @@ func pollInitialAutomatic(t *testing.T, s Store, now time.Time) {
 }
 func initialAutomaticReview(t *testing.T, s Store, app App, id string) api.WorkflowInitialRecoveryReview {
 	t.Helper()
-	r, err := s.(WorkflowInitialRecoveryReviewStore).GetWorkflowInitialRecoveryReview(context.Background(), app.AccountID, app.ID, id)
+	return initialAutomaticReviewWithContext(t, context.Background(), s, app, id)
+}
+
+func initialAutomaticReviewWithContext(t *testing.T, ctx context.Context, s Store, app App, id string) api.WorkflowInitialRecoveryReview {
+	t.Helper()
+	r, err := s.(WorkflowInitialRecoveryReviewStore).GetWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, id)
 	if err != nil {
 		t.Fatal(err)
 	}

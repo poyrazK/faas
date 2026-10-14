@@ -1,5 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
+DO $replay_guard$
+BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='workflow_initial_recovery_reviews'::regclass AND conname='workflow_initial_automatic_result_check') THEN RETURN; END IF;
 ALTER TABLE workflow_recovery_policies DROP CONSTRAINT workflow_recovery_policies_policy_check;
 ALTER TABLE workflow_recovery_policies ADD CONSTRAINT workflow_recovery_policies_policy_check CHECK(jsonb_typeof(policy)='object' AND policy->>'mode' IN ('preview','automatic_retry','automatic_initial'));
 ALTER TABLE workflow_initial_recovery_reviews ADD CONSTRAINT workflow_initial_automatic_result_check CHECK((NOT review ? 'automatic_result' OR (
@@ -11,6 +14,7 @@ ALTER TABLE workflow_initial_recovery_reviews ADD CONSTRAINT workflow_initial_au
  AND (review->'automatic_result'->>'resume_count')::integer=1
  AND review->'automatic_result'->>'child_job_id'=job_id::text
 )) IS TRUE);
+END $replay_guard$;
 -- +goose StatementEnd
 
 -- +goose Down

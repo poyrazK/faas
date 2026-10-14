@@ -30,7 +30,7 @@ func TestWorkflowRecoveryPollingAlerts(t *testing.T) {
 						}
 						originalPolicy = p.Policy
 					} else {
-						_, a, failure, p := seedInitialReview(t, s)
+						_, a, failure, p := seedInitialReviewWithContext(t, ctx, s)
 						app = a
 						var e error
 						reviews := s.(WorkflowInitialRecoveryReviewStore)
@@ -46,7 +46,7 @@ func TestWorkflowRecoveryPollingAlerts(t *testing.T) {
 					mutate := func(broken bool) {
 						t.Helper()
 						if scope == "manual_initial" {
-							mutateInitialReview(t, s, review.ID, func(r *api.WorkflowInitialRecoveryReview) {
+							mutateInitialReviewWithContext(t, ctx, s, review.ID, func(r *api.WorkflowInitialRecoveryReview) {
 								r.Target.RunID = review.Target.RunID
 								if broken {
 									r.Target.RunID = "invalid"
@@ -75,7 +75,7 @@ func TestWorkflowRecoveryPollingAlerts(t *testing.T) {
 					read := func() (*api.WorkflowRecoveryPollingNotification, time.Time) {
 						t.Helper()
 						if scope == "manual_initial" {
-							r := initialAutomaticReview(t, s, app, review.ID)
+							r := initialAutomaticReviewWithContext(t, ctx, s, app, review.ID)
 							var retry time.Time
 							if r.ObservationFailure != nil {
 								retry = r.ObservationFailure.RetryAt
@@ -162,7 +162,7 @@ func TestWorkflowRecoveryPollingAlerts(t *testing.T) {
 					if recovered == nil || recovered.Payload.State != "recovered" || recovered.Payload.Sequence != 2 || recovered.Payload.RetryAt != nil || !recovered.Payload.MonitoringOnly {
 						t.Fatal("recovery receipt", recovered)
 					}
-					if r := initialAutomaticReview(t, s, app, review.ID); r.Result != nil || r.AutomaticResult != nil {
+					if r := initialAutomaticReviewWithContext(t, ctx, s, app, review.ID); r.Result != nil || r.AutomaticResult != nil {
 						t.Fatal("monitoring recovery invented a workflow result")
 					}
 					// Polling clocks advance into the future to exercise backoff without

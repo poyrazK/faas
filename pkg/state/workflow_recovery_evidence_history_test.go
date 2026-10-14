@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -107,7 +108,7 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 		if len(seen) != len(out.Entries) {
 			t.Fatal("pagination lost events")
 		}
-		if _, err := history.GetWorkflowRecoveryHistory(ctx, uuid.NewString(), app.ID, api.WorkflowRecoveryHistoryOptions{}); err != ErrNotFound {
+		if _, err := history.GetWorkflowRecoveryHistory(ctx, uuid.NewString(), app.ID, api.WorkflowRecoveryHistoryOptions{}); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("foreign scope %v", err)
 		}
 		// Parent and child repairs keep independent audit identities on one action.
