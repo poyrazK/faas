@@ -114,11 +114,11 @@ func runCmdInitList(stdout io.Writer) int {
 	if jsonOutput {
 		return jsonOut(writeJSONTo(stdout, struct {
 			Templates []string `json:"templates"`
-		}{Templates: templates.Names}))
+		}{Templates: templates.ListedNames()}))
 	}
 	for _, cat := range templates.CategoryOrder {
 		var inCat []string
-		for _, n := range templates.Names {
+		for _, n := range templates.ListedNames() {
 			if templates.CategoryFor(n) == cat {
 				inCat = append(inCat, n)
 			}
@@ -159,7 +159,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// touch the embed FS.
 	if !templates.Exists(tpl) {
 		PrintFail(stderr, "unknown --template %q (known: %s)",
-			tpl, strings.Join(templates.Names, ", "))
+			tpl, strings.Join(templates.ListedNames(), ", "))
 		return 1
 	}
 	if deploy && (templates.CategoryFor(tpl) == "operations" || templates.CategoryFor(tpl) == "durable-entities") {

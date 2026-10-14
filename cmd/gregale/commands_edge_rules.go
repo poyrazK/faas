@@ -79,7 +79,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|recipes|recipe|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -97,6 +97,10 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesEvents(args[1:])
 	case "trace":
 		return cmdEdgeRulesTrace(args[1:])
+	case "recipes":
+		return cmdEdgeRulesRecipes(args[1:])
+	case "recipe":
+		return cmdEdgeRulesRecipe(args[1:])
 	case subCreate:
 		return cmdEdgeRulesCreate(args[1:])
 	case subGet:
@@ -204,7 +208,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf (required)")
-	matchHost := fs.String("match-host", "", "host to match (required)")
+	matchHost := fs.String("match-host", "", "host to match (required; @app covers every host the app serves)")
 	matchPath := fs.String("match-path", "/", "path glob to match (default / covers only the root; /** covers every path)")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")

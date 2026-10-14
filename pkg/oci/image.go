@@ -366,6 +366,16 @@ func stopGraceFromRaw(_ *rawConfig) int {
 	return 0
 }
 
+// ImageProcessUser is the OCI user a customer-supplied image runs as. An image
+// without USER runs as root, as it does under Docker (ADR-1239); the guest's
+// default app user remains for platform-built runtimes and source builds.
+func ImageProcessUser(user string) string {
+	if user == "" {
+		return "0"
+	}
+	return user
+}
+
 // normalizeUser maps an OCI User field to a guest user name. A bare numeric uid
 // that matches the default app uid is normalised to the default user name; empty
 // stays empty (guest-init applies its default).

@@ -343,6 +343,19 @@ const QueueBindingMaxConcurrency = 10000
 // one binding can run, so a binding allowed thousands of concurrent records
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
+
+// Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
+// takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
+// timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the
+// ceiling is the plan's MaxAsyncInvocationDeadlineSeconds. A lease stops
+// adding messages once their payloads and headers would pass
+// QueueLeaseMaxResponseBytes, but always returns at least one. A lease that
+// finds nothing waits up to QueueLeaseMaxWaitSeconds for a message.
+const QueueLeaseMaxMessages = 100
+const QueueLeaseMaxReceipts = 100
+const QueueLeaseDefaultVisibilitySeconds = 30
+const QueueLeaseMaxResponseBytes = 8 << 20
+const QueueLeaseMaxWaitSeconds = 20
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 
@@ -4642,6 +4655,14 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
+	// in memory after its idle timeout before schedd parks it. 10 min gave
+	// the same capacity as 1 h in the ADR's simulation while holding fewer
+	// resident VMs.
+	FrozenTTLSeconds = 600
+	// FrozenMaxPerNode caps a node's frozen instances: each holds a
+	// Firecracker process, a jail uid and a network namespace.
+	FrozenMaxPerNode = 1000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
@@ -5388,6 +5409,13 @@ const (
 	// TCP session. TCP ingress is long-lived, so this is a safety ceiling for a
 	// runaway connection rather than an HTTP request-body limit.
 	RawTCPStreamMaxBytes int64 = 1 * 1024 * 1024 * 1024
+
+	// RawTCPLookupCacheTTL is how long the public TCP edge reuses a listener's
+	// route-by-port, TLS domain and live-deployment lookups across new
+	// connections, so a connection flood does not cost every query per
+	// connection. The app and listener-intent reads, which reject a stale
+	// route, and instance selection are never cached.
+	RawTCPLookupCacheTTL = time.Second
 
 	// Post-response tail (issue #667 / ADR-078).
 	//
@@ -10839,3 +10867,75 @@ const MaxObjectChecksumValueBytes = 128
 const MaxObjectAttributesHeaderBytes = 128
 const MaxObjectStorageClassBytes = 64
 const MaxObjectAttributesSelections = 5
+
+// MCP catalog monitoring bounds retained transition evidence and request work.
+const (
+	MCPCatalogMonitorMaxRequestBytes         = 1 << 20
+	MCPCatalogMonitorHistoryLimit            = 32
+	MCPCatalogMonitorMaxChanges              = 128
+	MCPCatalogMonitorMaxDiffBytes            = 64 << 10
+	MCPCatalogMonitorDefaultFreshnessSeconds = 90
+	MCPCatalogMonitorMinFreshnessSeconds     = 15
+	MCPCatalogMonitorMaxFreshnessSeconds     = 3600
+)
+
+const MCPCatalogMonitorRoleLimit = 16
+
+const (
+	MCPCatalogObserverDefaultIntervalSeconds = 30
+	MCPCatalogObserverMinIntervalSeconds     = 30
+	MCPCatalogObserverMaxIntervalSeconds     = 3600
+	MCPCatalogObserverDefaultTimeoutSeconds  = 10
+	MCPCatalogObserverMaxTimeoutSeconds      = 30
+	MCPCatalogObserverPollSeconds            = 5
+	MCPCatalogObserverLeaseSeconds           = 45
+	MCPCatalogObserverConcurrency            = 4
+	MCPCatalogObserverMaxBackoffSeconds      = 600
+	MCPCatalogObserverMaxFailures            = 16
+	MCPCatalogObserverMaxEndpointBytes       = 512
+)
+
+// OAuth refresh work shares the managed observer lease and bounded transport.
+const (
+	MCPCatalogOAuthMaxClientIDBytes   = 512
+	MCPCatalogOAuthMaxTokenBytes      = 16384
+	MCPCatalogOAuthMaxResponseBytes   = 65536
+	MCPCatalogOAuthRefreshSkewSeconds = 60
+	MCPCatalogOAuthMaxExpirySeconds   = 31536000
+)
+
+const (
+	MCPCatalogOAuthFlowSeconds   = 300
+	MCPCatalogOAuthMaxScopes     = 16
+	MCPCatalogOAuthMaxScopeBytes = 128
+)
+
+const (
+	MCPCatalogOAuthMaxCallbackPort = 65535
+	MCPCatalogOAuthMaxChecks       = 8
+)
+
+const (
+	MCPCatalogOAuthMaxLifecycleHistory         = 64
+	MCPCatalogOAuthRevocationMaxAttempts       = 8
+	MCPCatalogOAuthRevocationMaxBackoffSeconds = 3600
+	MCPCatalogOAuthReminderSeconds             = 900
+)
+
+const (
+	MCPOAuthRetirementMaxOutstanding      = 64
+	MCPOAuthRetirementRetentionSeconds    = 7 * 24 * 3600
+	MCPOAuthRetirementMetadataSeconds     = 30 * 24 * 3600
+	MCPOAuthRetirementPageSize            = 50
+	MCPOAuthRetirementMaxOffset           = 10000
+	MCPOAuthRetirementHistoryLimit        = 32
+	MCPOAuthRetirementInstallGraceSeconds = 10
+	MCPOAuthRetirementHeldPollSeconds     = 60
+)
+
+const (
+	MCPConnectionHealthSourceLimit        = 4096
+	MCPConnectionHealthPageSize           = 50
+	MCPConnectionHealthMaxOffset          = 10000
+	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
+)

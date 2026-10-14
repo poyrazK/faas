@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -754,6 +755,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
+		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log)
 		go srv.realtime.RunManagedRealtimeEndpointReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.realtime.RunManagedRealtimeOwnerReaper(ctx)

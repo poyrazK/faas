@@ -176,6 +176,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "edge_rule_id",
       "enabled",
       "event_subscription_id",
       "failure_source",
@@ -2701,6 +2702,7 @@
   {
     "table": "edge_rule_change_log",
     "columns": [
+      "account_ids",
       "app_id",
       "created_at",
       "id",
@@ -4369,6 +4371,18 @@
     "kind": "operational"
   },
   {
+    "table": "invocation_queue_lease_receipts",
+    "columns": [
+      "attempt",
+      "invocation_id",
+      "issued_at",
+      "lease_expires_at",
+      "replay_generation",
+      "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "invocation_work_cancellations",
     "columns": [
       "app_id",
@@ -6009,6 +6023,30 @@
       "ready",
       "status_code",
       "worker"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_catalog_monitors",
+    "columns": [
+      "account_id",
+      "app_id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_oauth_retirements",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_sha256",
+      "created_at",
+      "id",
+      "next_attempt_at",
+      "payload",
+      "retain_until",
+      "state"
     ],
     "kind": "operational"
   },
