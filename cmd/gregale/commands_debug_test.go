@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -421,5 +422,25 @@ func TestRequestLine(t *testing.T) {
 		if got := requestLine(tc.method, tc.route); got != tc.want {
 			t.Errorf("requestLine(%q, %q) = %q, want %q", tc.method, tc.route, got, tc.want)
 		}
+	}
+}
+
+// TestRenderDebugRunningPrintsTheRouteLabelOnce covers H10-45: request
+// telemetry routes already carry their method ("GET /"), so prefixing the
+// method again printed "GET GET /" on production-us.
+func TestRenderDebugRunningPrintsTheRouteLabelOnce(t *testing.T) {
+	var out bytes.Buffer
+	renderDebugRunning(&out, "my-app", api.DebugRunningResponse{
+		CurrentObservedAt: "2026-10-14T14:16:02Z",
+		Current: []api.DebugRunningCause{{
+			Code: "request_activity", InstanceCount: 1,
+			Request: &api.DebugRunningRequestAttribution{TelemetryID: "tel-1", Method: "GET", Route: "GET /", MatchDeltaMS: 54473, Count: 1},
+		}},
+	})
+	if !strings.Contains(out.String(), "representative telemetry: GET / tel-1 (matched within 54473ms; count=1)") {
+		t.Fatalf("running output:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "GET GET") {
+		t.Fatalf("method printed twice:\n%s", out.String())
 	}
 }
