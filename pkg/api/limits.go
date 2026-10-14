@@ -6383,6 +6383,11 @@ const (
 	AutomationSimulationMaxSteps               = 128
 	AutomationSimulationMaxTraceEntries        = 1024
 	AutomationDefinitionMaxBytes         int64 = 1 << 20
+	AutomationTestSuiteMaxBytes          int64 = AutomationSimulationRequestMaxBytes + AutomationPublishCheckMaxBytes
+	AutomationTestSuiteRequestMaxBytes   int64 = AutomationTestSuiteMaxBytes + 4096
+	AutomationTestReportMaxBytes         int64 = AutomationPublishCheckMaxBytes
+	AutomationTestCaseNameMaxBytes             = 128
+	AutomationTestStepResultsMax               = AutomationSimulationMaxTraceEntries
 	// Browser forms can percent-encode each definition, sample, and check byte.
 	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes) + 4096
 	AutomationNameMaxBytes                            = 128

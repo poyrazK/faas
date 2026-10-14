@@ -57,7 +57,7 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
 	switch operation.Kind {
-	case "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
+	case "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -101,6 +101,10 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodPost, root + ":simulate", h.server.simulateAutomation
 	case "save":
 		return http.MethodPut, named, h.server.saveAutomationDraft
+	case "save-tests":
+		return http.MethodPut, named + "/tests", h.server.saveAutomationTestSuite
+	case "run-tests":
+		return http.MethodPost, named + "/tests/run", h.server.runAutomationTests
 	case "check":
 		return http.MethodPost, named + "/publish-check", h.server.checkAutomationPublication
 	case "publish":

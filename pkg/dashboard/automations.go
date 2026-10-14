@@ -22,6 +22,8 @@ type AutomationConsoleData struct {
 	Validation                                               *api.ValidateAutomationResponse
 	Simulation                                               *api.SimulateAutomationResponse
 	CheckEvidence                                            *api.AutomationCheckEvidence
+	TestSuiteSaved, TestReportFresh                          bool
+	TestReport                                               *api.AutomationTestReport
 	Health                                                   *api.AutomationHealthResponse
 	Runs                                                     []AutomationConsoleRun
 	Run                                                      *AutomationConsoleRun

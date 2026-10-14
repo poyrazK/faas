@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/automationchecks"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 )
 
@@ -37,7 +38,7 @@ func (s *Service) edit(w http.ResponseWriter, r *http.Request, scope Scope, data
 		return
 	}
 	if action == "save" {
-		s.afterWrite(w, r, scope, data, response, "Draft saved. Your sample data and checks are ready for review.")
+		s.afterWrite(w, r, scope, data, response, "Draft saved. Save test data separately to keep its sample and checks.")
 		return
 	}
 	if action == "validate" {
@@ -67,7 +68,7 @@ func (s *Service) savedDraft(r *http.Request, scope Scope, data dashboard.Automa
 	spec, err := definition(data)
 	expected, expectedErr := canonicalDefinition(spec)
 	actual, actualErr := canonicalDefinition(saved.Draft)
-	if err != nil || expectedErr != nil || actualErr != nil || saved.Version != data.Version || !bytes.Equal(expected, actual) {
+	if err != nil || expectedErr != nil || actualErr != nil || saved.Version != data.Version || !automationchecks.EqualJSON(expected, actual) {
 		problem := api.ErrValidation("Save your current definition and reload the draft before checking or publishing.")
 		raw, _ := json.Marshal(problem)
 		response = Response{Status: http.StatusConflict, Body: raw}
@@ -96,6 +97,10 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request, scope Scope, dat
 	saved, failure := s.savedDraft(r, scope, data)
 	if failure != nil {
 		s.fail(w, r, scope, data, *failure)
+		return
+	}
+	if saved.TestSuite != nil && !savedTestInputsMatch(data, saved) {
+		s.invalid(w, r, scope, data, "Save your current sample and test cases before checking or publishing.")
 		return
 	}
 	var scenarios []api.AutomationPublishCheckScenario

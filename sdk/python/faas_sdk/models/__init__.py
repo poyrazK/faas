@@ -396,6 +396,20 @@ from .automation_simulation_mock_attempt_outcome import AutomationSimulationMock
 from .automation_simulation_step import AutomationSimulationStep
 from .automation_simulation_step_kind import AutomationSimulationStepKind
 from .automation_simulation_step_state import AutomationSimulationStepState
+from .automation_test_case import AutomationTestCase
+from .automation_test_case_result import AutomationTestCaseResult
+from .automation_test_case_result_issue import AutomationTestCaseResultIssue
+from .automation_test_inputs import AutomationTestInputs
+from .automation_test_inputs_mock_attempts import AutomationTestInputsMockAttempts
+from .automation_test_inputs_mock_item_attempts import AutomationTestInputsMockItemAttempts
+from .automation_test_inputs_mock_item_attempts_additional_property import (
+    AutomationTestInputsMockItemAttemptsAdditionalProperty,
+)
+from .automation_test_inputs_mock_item_outputs import AutomationTestInputsMockItemOutputs
+from .automation_test_inputs_mock_outputs import AutomationTestInputsMockOutputs
+from .automation_test_report import AutomationTestReport
+from .automation_test_step_result import AutomationTestStepResult
+from .automation_test_suite import AutomationTestSuite
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -3901,6 +3915,7 @@ from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
+from .run_automation_tests_request import RunAutomationTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -3923,6 +3938,7 @@ from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
+from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
@@ -4959,6 +4975,18 @@ __all__ = (
     "AutomationSimulationStep",
     "AutomationSimulationStepKind",
     "AutomationSimulationStepState",
+    "AutomationTestCase",
+    "AutomationTestCaseResult",
+    "AutomationTestCaseResultIssue",
+    "AutomationTestInputs",
+    "AutomationTestInputsMockAttempts",
+    "AutomationTestInputsMockItemAttempts",
+    "AutomationTestInputsMockItemAttemptsAdditionalProperty",
+    "AutomationTestInputsMockItemOutputs",
+    "AutomationTestInputsMockOutputs",
+    "AutomationTestReport",
+    "AutomationTestStepResult",
+    "AutomationTestSuite",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -8206,6 +8234,7 @@ __all__ = (
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",
+    "RunAutomationTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -8228,6 +8257,7 @@ __all__ = (
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
+    "SaveAutomationTestSuiteRequest",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",

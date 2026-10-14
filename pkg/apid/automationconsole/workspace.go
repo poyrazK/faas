@@ -84,6 +84,9 @@ func (s *Service) selectAutomation(r *http.Request, scope Scope, data *dashboard
 		data.Sample = "{\"input\": {}, \"mock_outputs\": {}}"
 		data.Scenarios = "[]"
 	}
+	if automation.TestSuite != nil {
+		data.Sample, data.Scenarios = pretty(automation.TestSuite.Sample), pretty(automation.TestSuite.Cases)
+	}
 	data.Name, data.Version, data.Definition = automation.Name, automation.Version, pretty(automation.Draft)
 	data.Published, data.Enabled, data.FailurePaused = automation.Published != nil, automation.Enabled, automation.FailurePaused
 	s.inspectAutomation(r, scope, data)
@@ -184,6 +187,7 @@ func (s *Service) refreshMetadata(r *http.Request, scope Scope, data *dashboard.
 	data.PublicationObserved = false
 	if read(response, &current) && current.Name == data.Name {
 		data.PublicationObserved = true
+		testMetadata(data, current)
 		data.Published, data.Enabled, data.FailurePaused = current.Published != nil, current.Enabled, current.FailurePaused
 		data.PublishedSchedule = current.Published != nil && current.Published.Trigger != nil && current.Published.Trigger.Type == "schedule"
 	} else if response.Status == http.StatusNotFound {

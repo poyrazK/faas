@@ -168,3 +168,23 @@ func TestUnpublishedDraftDoesNotAppearEnabled(t *testing.T) {
 		t.Fatalf("unpublished draft appeared active: %+v", checks[4])
 	}
 }
+
+func TestReopenedReportPreservesOmittedDefaults(t *testing.T) {
+	data, _ := reportFixture(t)
+	var original api.WorkflowSpec
+	if err := json.Unmarshal([]byte(data.Definition), &original); err != nil {
+		t.Fatal(err)
+	}
+	original.Name = data.Name
+	original.Trigger.Timezone, original.Trigger.Overlap, original.Trigger.CatchUp = "", "", ""
+	data.Version, data.Definition = 3, pretty(original)
+	settings := reportForm(original)
+	form := url.Values{"editor_mode": {"report"}, "report_schedule": {settings.Schedule}, "report_timezone": {settings.Timezone}, "report_collect": {settings.CollectPath}, "report_deliver": {settings.DeliverPath}, "report_overlap": {settings.Overlap}, "report_catch_up": {settings.CatchUp}, "report_window": {settings.CatchUpWindow}}
+	if message := prepareEditor(reportRequest(form), &data); message != "" {
+		t.Fatal(message)
+	}
+	actual, err := definition(data)
+	if err != nil || pretty(actual) != pretty(original) {
+		t.Fatalf("unchanged report settings changed draft: %s", data.Definition)
+	}
+}

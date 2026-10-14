@@ -948,6 +948,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                      "CancelUnstartedWorkflowRuns",
 	"GET /v1/apps/{slug}/automations:publish-policy":                         "GetAutomationPublishPolicy",
 	"PUT /v1/apps/{slug}/automations:publish-policy":                         "SetAutomationPublishPolicy",
+	"PUT /v1/apps/{slug}/automations/{name}/tests":                           "SaveAutomationTestSuite",
+	"POST /v1/apps/{slug}/automations/{name}/tests/run":                      "RunAutomationTests",
 	"POST /v1/apps/{slug}/automations/{name}/publish-check":                  "CheckAutomationPublication",
 	"GET /v1/apps/{slug}/automations/{name}/failure-policy":                  "GetAutomationFailurePolicy",
 	"PUT /v1/apps/{slug}/automations/{name}/failure-policy":                  "SetAutomationFailurePolicy",

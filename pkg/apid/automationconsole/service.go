@@ -114,7 +114,13 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 		s.invalid(w, r, scope, data, message)
 		return
 	}
+	s.authorAction(w, r, scope, data)
+}
+
+func (s *Service) authorAction(w http.ResponseWriter, r *http.Request, scope Scope, data dashboard.AutomationConsoleData) {
 	switch r.PathValue("action") {
+	case "save-tests", "run-tests", "clear-tests":
+		s.tests(w, r, scope, data)
 	case "preview-schedule":
 		s.previewSchedule(w, r, scope, data)
 	case "validate", "simulate", "save":

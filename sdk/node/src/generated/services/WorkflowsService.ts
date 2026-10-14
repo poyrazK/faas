@@ -7,6 +7,7 @@ import type { AutomationHealthResponse } from '../models/AutomationHealthRespons
 import type { AutomationPublishPolicy } from '../models/AutomationPublishPolicy.js';
 import type { AutomationResponse } from '../models/AutomationResponse.js';
 import type { AutomationRevisionResponse } from '../models/AutomationRevisionResponse.js';
+import type { AutomationTestReport } from '../models/AutomationTestReport.js';
 import type { CheckAutomationPublicationRequest } from '../models/CheckAutomationPublicationRequest.js';
 import type { CheckAutomationPublicationResponse } from '../models/CheckAutomationPublicationResponse.js';
 import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflowCallbackResponse.js';
@@ -27,7 +28,9 @@ import type { PublishAutomationRequest } from '../models/PublishAutomationReques
 import type { RestoreAutomationRevisionRequest } from '../models/RestoreAutomationRevisionRequest.js';
 import type { ResumeAutomationFailurePauseRequest } from '../models/ResumeAutomationFailurePauseRequest.js';
 import type { ResumeWorkflowRunRequest } from '../models/ResumeWorkflowRunRequest.js';
+import type { RunAutomationTestsRequest } from '../models/RunAutomationTestsRequest.js';
 import type { SaveAutomationDraftRequest } from '../models/SaveAutomationDraftRequest.js';
+import type { SaveAutomationTestSuiteRequest } from '../models/SaveAutomationTestSuiteRequest.js';
 import type { SetAutomationEnabledRequest } from '../models/SetAutomationEnabledRequest.js';
 import type { SetAutomationFailurePolicyRequest } from '../models/SetAutomationFailurePolicyRequest.js';
 import type { SetAutomationPublishPolicyRequest } from '../models/SetAutomationPublishPolicyRequest.js';
@@ -879,6 +882,98 @@ export class WorkflowsService {
       url: '/v1/apps/{slug}/automations:publish-policy',
       path: {
         'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Save or clear reusable test data using the current draft version.
+   * @returns AutomationResponse Versioned saved test data.
+   * @throws ApiError
+   */
+  public static saveAutomationTestSuite({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose reusable test suite is replaced or cleared.
+     */
+    name: string,
+    requestBody: SaveAutomationTestSuiteRequest,
+  }): CancelablePromise<AutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/automations/{name}/tests',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Simulate all saved cases against the saved draft and retain safe results.
+   * @returns AutomationTestReport Case and assertion summaries without payloads or publishing authority.
+   * @throws ApiError
+   */
+  public static runAutomationTests({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose saved test cases are simulated.
+     */
+    name: string,
+    requestBody: RunAutomationTestsRequest,
+  }): CancelablePromise<AutomationTestReport> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/tests/run',
+      path: {
+        'slug': slug,
+        'name': name,
       },
       body: requestBody,
       mediaType: 'application/json',

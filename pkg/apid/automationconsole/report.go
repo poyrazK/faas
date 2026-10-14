@@ -57,8 +57,20 @@ func prepareEditor(r *http.Request, data *dashboard.AutomationConsoleData) strin
 		return "Report settings require the scheduled collect → deliver graph. Use the JSON editor for this definition."
 	}
 	spec.Name = data.Name
-	spec.Trigger.Schedule, spec.Trigger.Timezone = form.Schedule, form.Timezone
-	spec.Trigger.Overlap, spec.Trigger.CatchUp, spec.Trigger.CatchUpWindow = form.Overlap, form.CatchUp, form.CatchUpWindow
+	previous := reportForm(spec)
+	spec.Trigger.Schedule = form.Schedule
+	// Rendering an omitted default must not turn an unchanged form submission
+	// into a different draft, which would reject running saved cases on reopening.
+	if form.Timezone != previous.Timezone {
+		spec.Trigger.Timezone = form.Timezone
+	}
+	if form.Overlap != previous.Overlap {
+		spec.Trigger.Overlap = form.Overlap
+	}
+	if form.CatchUp != previous.CatchUp {
+		spec.Trigger.CatchUp = form.CatchUp
+	}
+	spec.Trigger.CatchUpWindow = form.CatchUpWindow
 	spec.Steps[0].Path, spec.Steps[1].Path = form.CollectPath, form.DeliverPath
 	if data.Version == 0 {
 		enabled := false

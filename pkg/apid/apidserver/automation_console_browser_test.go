@@ -2,6 +2,7 @@
 // adr: 1286
 // adr: 1287
 // adr: 1288
+// adr: 1289
 package apidserver_test
 
 import (
@@ -54,6 +55,14 @@ func TestAutomationConsoleBrowserWebhookJourney(t *testing.T) {
 	endpoint := consoleWebhookEndpoint(t, e, app.Slug)
 	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "webhook", map[string]string{
 		"webhook_url": endpoint.EndpointURL, "webhook_secret": consoleWebhookSecret})
+}
+
+func TestAutomationConsoleBrowserSavedCasesJourney(t *testing.T) {
+	if os.Getenv("GREGALE_AUTOMATION_BROWSER_ACCEPTANCE") != "1" {
+		t.Skip("set GREGALE_AUTOMATION_BROWSER_ACCEPTANCE=1 with Playwright and Chromium installed")
+	}
+	e, app, cookie := consoleFixture(t)
+	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "cases")
 }
 
 func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string, extra ...map[string]string) {

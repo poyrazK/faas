@@ -14,8 +14,52 @@ const { chromium } = require('playwright');
     page.on('pageerror', error => errors.push(error.message));
     async function submit(label, marker) {
       await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: label, exact: true }).click()]);
-      assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label);
+      assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label + '; alerts: ' + (await page.locator('[role=alert]').allTextContents()).join('; '));
       assert.equal(await page.locator('[role=alert]').count(), 0, 'action returned an error for ' + label);
+    }
+    if (fixture.mode === 'cases') {
+      const initial = await page.goto(fixture.url + '?template=scheduled-report');
+      assert.equal(initial.status(), 200);
+      await page.locator('input[name=editor_mode][value=json]').check();
+      await page.getByText('Advanced definition (JSON)', { exact: true }).click();
+      const definition = JSON.parse(await page.locator('#automation-definition').inputValue());
+      definition.name = 'browser-saved-cases';
+      await page.locator('#automation-name').fill(definition.name);
+      await page.locator('#automation-definition').fill(JSON.stringify(definition, null, 2));
+      await submit('Save draft', 'Draft saved.');
+      const sample = await page.locator('#automation-sample').inputValue();
+      const cases = JSON.parse(await page.locator('#automation-scenarios').inputValue());
+      cases.push(JSON.parse(JSON.stringify(cases[0])));
+      cases[0].name = 'passing report';
+      cases[1].name = 'delivery output mismatch';
+      cases[1].expectations[0].output = { unexpected: true };
+      await page.locator('#automation-scenarios').fill(JSON.stringify(cases, null, 2));
+      await submit('Save test data', 'Test data saved.');
+      await page.goto(fixture.url + '?name=' + definition.name);
+      assert.deepEqual(JSON.parse(await page.locator('#automation-sample').inputValue()), JSON.parse(sample));
+      assert.deepEqual(JSON.parse(await page.locator('#automation-scenarios').inputValue()), cases);
+      await submit('Run saved test cases', 'Some saved cases failed.');
+      assert.ok(await page.getByRole('heading', { name: 'passing report: passed', exact: true }).count());
+      assert.ok(await page.getByRole('heading', { name: 'delivery output mismatch: failed', exact: true }).count());
+      assert.ok(await page.getByText('Results are current', { exact: false }).count());
+      if (process.env.GREGALE_AUTOMATION_CASES_SCREENSHOT) {
+        await page.locator('#automation-test-report').screenshot({ path: process.env.GREGALE_AUTOMATION_CASES_SCREENSHOT });
+      }
+      cases[1].expectations = cases[0].expectations;
+      await page.locator('#automation-scenarios').fill(JSON.stringify(cases, null, 2));
+      assert.ok((await page.locator('#automation-test-freshness').innerText()).includes('Results are outdated.'));
+      await submit('Save test data', 'Results are outdated.');
+      await submit('Run saved test cases', 'All saved cases passed.');
+      await submit('Check and publish', 'Checks passed and the draft was published.');
+      assert.ok(await page.getByText('Results are current', { exact: false }).count());
+      await page.goto(fixture.url + '?name=' + definition.name);
+      assert.ok(await page.getByText('All saved cases passed.', { exact: false }).count());
+      await page.getByText('Remove saved test data', { exact: true }).click();
+      await page.locator('input[name=confirm_clear_tests]').check();
+      await submit('Clear saved test data', 'Saved test data and results removed.');
+      assert.equal(await page.locator('#automation-test-report').count(), 0);
+      assert.equal(errors.length, 0);
+      return;
     }
     if (fixture.mode === 'recovery') {
       const initial = await page.goto(fixture.url);

@@ -207,6 +207,12 @@ export type { AutomationRevisionResponse } from './models/AutomationRevisionResp
 export type { AutomationSimulationAttempt } from './models/AutomationSimulationAttempt.js';
 export type { AutomationSimulationMockAttempt } from './models/AutomationSimulationMockAttempt.js';
 export type { AutomationSimulationStep } from './models/AutomationSimulationStep.js';
+export type { AutomationTestCase } from './models/AutomationTestCase.js';
+export type { AutomationTestCaseResult } from './models/AutomationTestCaseResult.js';
+export type { AutomationTestInputs } from './models/AutomationTestInputs.js';
+export type { AutomationTestReport } from './models/AutomationTestReport.js';
+export type { AutomationTestStepResult } from './models/AutomationTestStepResult.js';
+export type { AutomationTestSuite } from './models/AutomationTestSuite.js';
 export type { BeforeCheckpointHook } from './models/BeforeCheckpointHook.js';
 export type { BillingCancelResponse } from './models/BillingCancelResponse.js';
 export type { BillingCatalogEntry } from './models/BillingCatalogEntry.js';
@@ -2039,6 +2045,7 @@ export type { RouteRequirementsReport } from './models/RouteRequirementsReport.j
 export type { RouteRequirementsResult } from './models/RouteRequirementsResult.js';
 export type { RouteRow } from './models/RouteRow.js';
 export type { RouteThrottleRequirement } from './models/RouteThrottleRequirement.js';
+export type { RunAutomationTestsRequest } from './models/RunAutomationTestsRequest.js';
 export type { RuntimeConfigRestartStatusResponse } from './models/RuntimeConfigRestartStatusResponse.js';
 export type { RuntimePolicyComponentStatus } from './models/RuntimePolicyComponentStatus.js';
 export type { RuntimePolicyNodeStatus } from './models/RuntimePolicyNodeStatus.js';
@@ -2047,6 +2054,7 @@ export type { RuntimePolicyStatusResponse } from './models/RuntimePolicyStatusRe
 export type { RuntimeReleaseResponse } from './models/RuntimeReleaseResponse.js';
 export type { RuntimeUpgradePreviewResponse } from './models/RuntimeUpgradePreviewResponse.js';
 export type { SaveAutomationDraftRequest } from './models/SaveAutomationDraftRequest.js';
+export type { SaveAutomationTestSuiteRequest } from './models/SaveAutomationTestSuiteRequest.js';
 export type { SavedRouteRequirements } from './models/SavedRouteRequirements.js';
 export type { SaveProfileDeploymentPolicyRequest } from './models/SaveProfileDeploymentPolicyRequest.js';
 export type { SaveProfileInvestigationRequest } from './models/SaveProfileInvestigationRequest.js';

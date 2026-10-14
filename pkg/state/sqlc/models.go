@@ -9096,6 +9096,8 @@ type WorkflowAutomationDefinition struct {
 	PublishedVersion int64
 	Enabled          bool
 	UpdatedAt        pgtype.Timestamptz
+	TestSuite        []byte
+	TestReport       []byte
 }
 
 type WorkflowAutomationFailureGuard struct {

@@ -24,9 +24,9 @@ integrations or event sources separately.
    the configured definition before saving.
 2. Review the sample input and mock outcomes, then simulate. The trace shows step
    decisions without calling handlers or connected services.
-3. Save the draft. The browser preserves your sample and check text through the
-   current save/check/publish flow. These samples are not stored with the draft;
-   reopening a custom automation requires supplying its samples again.
+3. Save the draft, then choose **Save test data** to retain the sample, mock
+   outcomes, and named test cases. Reopening the automation restores that saved
+   data, including for custom names. Draft saves alone keep test edits in the editor.
 4. Review the scenario JSON and choose **Check and publish**. The server checks
    the saved draft and issues the receipt required by the app's publishing policy.
    Unsaved changes, stale revisions, failing scenarios or missing required
@@ -47,6 +47,42 @@ starts** is selected. Manual runs remain distinct from that setting. The console
 cannot enable a disabled workflow runtime, satisfy tenant admission requirements,
 configure outbound worker flags, or establish native KVM qualification. The
 existing permissions, publication policies and execution gates still apply.
+
+### Save and rerun reusable test cases
+
+Edit **Sample and mocks** and the named **Check scenarios**, then choose **Save
+test data**. Use synthetic data: the sample, mock outcomes, and expected values
+are explicitly stored with the draft and are readable by authorized app readers.
+Credentials belong in managed integrations. Real run or webhook payloads are
+never automatically copied into saved tests.
+
+**Run saved test cases** simulates every saved case against the current saved
+draft. It reports each case and assertion, including the observed step state,
+and continues after failed cases. Unknown or removed step assertions are reported
+as `invalid_expectations`. Saved result summaries exclude inputs, outputs and raw
+errors. They survive reopening and are marked outdated when the displayed
+definition, sample, mocks, or expectations change. Publishing and pausing starts
+alone do not make unchanged results outdated. Results describe mock simulations;
+they do not prove deployed handlers, integrations or provider responses work.
+
+Save changed definitions first, then save changed test data before running saved
+tests or publishing. Suite saves advance the draft revision, reject stale writes,
+and invalidate older publishing receipts. Runs store observations without
+advancing the revision, changing schedule cursors or starting real actions.
+**Check and publish** still executes fresh server checks and obtains a new receipt;
+a retained report never grants publication authority.
+
+**Clear saved test data** requires confirmation and removes the saved sample,
+cases and report. The current editor retains its unsaved text until navigation.
+
+The API exposes `PUT /v1/apps/{slug}/automations/{name}/tests` with
+`{expected_version, suite: {sample, cases}}`; `suite: null` clears saved data.
+`POST /v1/apps/{slug}/automations/{name}/tests/run` takes `{expected_version}`.
+Automation reads return optional `test_suite` and `test_report` fields. Test
+inputs omit definitions; runs bind the authoritative saved draft. The suite is
+bounded to 32 uniquely named cases, 3 MiB per sample/simulation, 24 MiB for the
+combined cases, and 27 MiB overall. Each case accepts up to 4,096 assertions;
+reports retain up to 1,024 step summaries per case and indicate truncation.
 
 ### Configure and preview a scheduled report
 

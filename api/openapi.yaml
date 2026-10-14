@@ -26001,6 +26001,100 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SetAutomationPublishPolicyRequest'
+  /v1/apps/{slug}/automations/{name}/tests:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose reusable test suite is replaced or cleared.
+    put:
+      tags:
+      - workflows
+      operationId: saveAutomationTestSuite
+      summary: Save or clear reusable test data using the current draft version.
+      responses:
+        '200':
+          description: Versioned saved test data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveAutomationTestSuiteRequest'
+  /v1/apps/{slug}/automations/{name}/tests/run:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose saved test cases are simulated.
+    post:
+      tags:
+      - workflows
+      operationId: runAutomationTests
+      summary: Simulate all saved cases against the saved draft and retain safe results.
+      responses:
+        '200':
+          description: Case and assertion summaries without payloads or publishing authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationTestReport'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunAutomationTestsRequest'
   /v1/apps/{slug}/automations/{name}/publish-check:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -68631,6 +68725,10 @@ components:
       - draft
       - enabled
       properties:
+        test_suite:
+          $ref: '#/components/schemas/AutomationTestSuite'
+        test_report:
+          $ref: '#/components/schemas/AutomationTestReport'
         failure_paused:
           type: boolean
           description: Runtime failure guard blocks automatic admissions independently of configured enabled intent.
@@ -68881,6 +68979,183 @@ components:
           maxItems: 25
       description: Requires at least one assertion. Loop item assertions use step <loop>/action, loop
         name and canonical zero-based item index.
+    AutomationTestInputs:
+      description: Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft.
+      type: object
+      additionalProperties: false
+      properties:
+        input:
+          description: Saved test data — Workflow input as any JSON value; omission is equivalent to null.
+        mock_outputs:
+          description: Saved test data — Successful action outputs keyed by root step name; explicit null is a supplied result.
+          type: object
+          additionalProperties: {}
+        mock_item_outputs:
+          description: Saved test data — Ordered successful output prefix keyed by for_each root name; waits and controls cannot be mocked.
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 128
+            items: {}
+        mock_item_attempts:
+          description: Saved test data — Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for failed items when continuing.
+          type: object
+          additionalProperties:
+            type: object
+            minProperties: 1
+            maxProperties: 128
+            additionalProperties:
+              type: array
+              minItems: 1
+              maxItems: 25
+              items:
+                $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+        mock_attempts:
+          description: Saved test data — Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
+          type: object
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 25
+            items:
+              $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+    AutomationTestCase:
+      description: A uniquely named set of definition-free mocks and expected step results.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - simulation
+      - expectations
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        simulation:
+          $ref: '#/components/schemas/AutomationTestInputs'
+        expectations:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: '#/components/schemas/AutomationCheckExpectation'
+    AutomationTestSuite:
+      type: object
+      additionalProperties: false
+      required:
+      - sample
+      - cases
+      properties:
+        sample:
+          $ref: '#/components/schemas/AutomationTestInputs'
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationTestCase'
+      description: At most 32 uniquely named cases; sample up to 3 MiB, cases up to 24 MiB combined, suite up to 27 MiB. Data is explicitly persisted, never captured from real runs.
+    SaveAutomationTestSuiteRequest:
+      description: Versioned suite replacement; explicitly sending null removes saved data and results.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - suite
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        suite:
+          anyOf:
+          - $ref: '#/components/schemas/AutomationTestSuite'
+          - type: 'null'
+          description: Null clears saved tests and the retained report. Saving advances the automation version and invalidates earlier publishing receipts.
+    RunAutomationTestsRequest:
+      description: Expected current draft version for simulating its saved test cases.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+    AutomationTestReport:
+      type: object
+      additionalProperties: false
+      required:
+      - checked_version
+      - checked_at
+      - inputs_hash
+      - passed
+      - cases
+      properties:
+        checked_version:
+          type: integer
+          format: int64
+          minimum: 1
+        checked_at:
+          type: string
+          format: date-time
+        inputs_hash:
+          type: string
+        passed:
+          type: boolean
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationTestCaseResult'
+      description: Retained observation, not a publishing receipt. Freshness compares definition and suite content; running does not advance the draft version or perform real actions.
+    AutomationTestCaseResult:
+      description: Safe overall case result and bounded per-step assertion summaries.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - passed
+      - steps
+      properties:
+        name:
+          type: string
+        passed:
+          type: boolean
+        issue:
+          type: string
+          enum:
+          - invalid_expectations
+          - simulation_rejected
+          - definition_invalid
+          - simulation_incomplete
+          - assertion_failed
+        steps_truncated:
+          type: boolean
+        steps:
+          type: array
+          maxItems: 1024
+          items:
+            $ref: '#/components/schemas/AutomationTestStepResult'
+    AutomationTestStepResult:
+      description: One assertion result and observed state, excluding input, output and error data.
+      type: object
+      additionalProperties: false
+      required:
+      - step
+      - passed
+      properties:
+        step:
+          type: string
+        loop:
+          type: string
+        item_index:
+          type: integer
+          minimum: 0
+        state:
+          type: string
+        passed:
+          type: boolean
     AutomationPublishCheckScenario:
       description: Named simulation and assertions to evaluate against a saved automation draft.
       type: object
