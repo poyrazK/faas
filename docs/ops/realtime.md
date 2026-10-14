@@ -3597,6 +3597,11 @@ available, and pause or drain stops dispatch. Deleting the trigger unbinds the
 group and keeps its messages. Delivery metrics use `schedd_esm_*` with
 `source="realtime"`; group status reports `trigger_id`.
 
+A message inserted on a bound channel notifies `trigger_ready` at commit, so
+dispatch starts immediately instead of on the next 1 s tick. The group's
+waiting work (unassigned plus ready) is reported as broker lag, so an app with a
+`queue_lag` scaling target scales out ahead of a realtime backlog.
+
 Rollback: delete realtime triggers before running the migration's Down step,
 which refuses while any exist.
 

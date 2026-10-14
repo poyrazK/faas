@@ -59767,3 +59767,16 @@ ALTER TABLE managed_realtime_consumer_groups
     ADD COLUMN trigger_id uuid REFERENCES triggers(id) ON DELETE SET NULL;
 CREATE UNIQUE INDEX managed_realtime_consumer_groups_trigger
     ON managed_realtime_consumer_groups(trigger_id) WHERE trigger_id IS NOT NULL;
+-- +goose StatementBegin
+CREATE FUNCTION notify_realtime_trigger_ready() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE bound uuid;
+BEGIN
+ FOR bound IN SELECT trigger_id FROM managed_realtime_consumer_groups
+   WHERE endpoint_id=NEW.endpoint_id AND channel=NEW.channel AND trigger_id IS NOT NULL LOOP
+  PERFORM pg_notify('trigger_ready', json_build_object('trigger_id', bound, 'source', 'realtime')::text);
+ END LOOP;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+CREATE TRIGGER managed_realtime_trigger_ready AFTER INSERT ON managed_realtime_channel_messages
+    FOR EACH ROW EXECUTE FUNCTION notify_realtime_trigger_ready();

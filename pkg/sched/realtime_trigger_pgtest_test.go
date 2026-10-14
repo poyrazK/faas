@@ -2,13 +2,16 @@
 package sched
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -221,5 +224,53 @@ func TestBindRealtimeConsumerGroupTriggerRules(t *testing.T) {
 	dispatch := state.WithRealtimeTriggerDispatch(ctx, second.ID.String())
 	if _, err := f.store.ClaimRealtimeConsumerGroupBatch(dispatch, f.cfg.EndpointID, "orders", "billing", "trigger", 1); !errors.Is(err, state.ErrRealtimeConsumerGroupBoundToTrigger) {
 		t.Fatalf("claim by unbound trigger err = %v", err)
+	}
+}
+
+func TestRealtimeTriggerPublishWakesDispatcherAndReportsBacklog(t *testing.T) {
+	f := seedRealtimeTrigger(t, 0, api.RealtimeTriggerMinLeaseSeconds)
+	ctx := t.Context()
+	if err := f.store.BindRealtimeConsumerGroupTrigger(ctx, f.account.ID, f.trigger.ID.String(), f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := f.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "LISTEN trigger_ready"); err != nil {
+		t.Fatal(err)
+	}
+	waitNotify := func(timeout time.Duration) (string, bool) {
+		waitCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		n, err := conn.Conn().WaitForNotification(waitCtx)
+		if err != nil {
+			return "", false
+		}
+		return n.Payload, true
+	}
+	// A channel without a bound trigger stays quiet.
+	if _, err := f.store.AppendManagedRealtimeChannelMessage(ctx, f.cfg.EndpointID, "unbound", []byte("x"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if payload, ok := waitNotify(300 * time.Millisecond); ok {
+		t.Fatalf("unbound channel notified: %s", payload)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := f.store.AppendManagedRealtimeChannelMessage(ctx, f.cfg.EndpointID, "orders", []byte("order"), false, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload, ok := waitNotify(5 * time.Second)
+	if !ok || !strings.Contains(payload, f.trigger.ID.String()) || !strings.Contains(payload, `"source" : "realtime"`) {
+		t.Fatalf("publish notification = %q (received %v)", payload, ok)
+	}
+	poller, err := newRealtimePoller(f.store, f.trigger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats := poller.BrokerStats(ctx, f.trigger); !stats.Available || stats.Lag != 2 {
+		t.Fatalf("backlog = %+v, want 2 waiting messages", stats)
 	}
 }

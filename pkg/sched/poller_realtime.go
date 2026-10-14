@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 type realtimeGroupStore interface {
 	ClaimRealtimeConsumerGroupBatch(ctx context.Context, ep, ch, name, worker string, limit int) (state.RealtimeConsumerGroupBatch, error)
 	SettleRealtimeConsumerGroup(ctx context.Context, ep, ch, name string, req state.RealtimeConsumerGroupSettlement) (state.RealtimeConsumerGroupSettlementResult, error)
+	ListRealtimeConsumerGroups(ctx context.Context, ep, ch string) ([]state.RealtimeConsumerGroup, error)
 	state.TriggerRecordSuperseder
 }
 
@@ -195,6 +197,24 @@ func realtimeFailureCode(code string) string {
 		}
 	}
 	return string(out)
+}
+
+// BrokerStats reports the group's waiting work, unassigned plus ready, so a
+// queue_lag scaling target scales the app out ahead of a realtime backlog.
+func (p *realtimePoller) BrokerStats(ctx context.Context, _ sqlc.Trigger) BrokerStats {
+	groups, err := p.store.ListRealtimeConsumerGroups(ctx, p.cfg.EndpointID, p.cfg.Channel)
+	if err != nil {
+		return BrokerStats{}
+	}
+	for _, g := range groups {
+		if g.Name != p.cfg.Group {
+			continue
+		}
+		unassigned, _ := strconv.ParseInt(g.Unassigned, 10, 64)
+		waiting := unassigned + int64(g.Ready)
+		return BrokerStats{Lag: waiting, Depth: waiting, Available: true}
+	}
+	return BrokerStats{}
 }
 
 func (p *realtimePoller) Close() error { return nil }

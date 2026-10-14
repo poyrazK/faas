@@ -70,7 +70,7 @@ While a group is bound, claim and settle requests from worker credentials and th
 
 - The kind requires the retained-realtime preview (`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) and is available to Hobby, Pro and Scale, like the in-platform `queue` kind. It counts against the existing per-app trigger caps.
 - Invocations bill like any other: plan RAM + 8 MB per running second (§4.7). There is no per-message fee, so the financial model is unchanged. Metering realtime usage itself remains a separate gap.
-- A parked app wakes through the normal path. The first message after idle pays the restore or cold-boot cost; v1 does not pre-warm on backlog.
+- A parked app wakes through the normal path. The first message after idle pays the restore or cold-boot cost. Publishing on a bound channel notifies `trigger_ready` from a database trigger, so dispatch starts at commit rather than on the next 1 s tick.
 
 ### Ownership
 
@@ -86,7 +86,7 @@ apid writes the trigger and the binding (customer intent). schedd claims and set
 
 ### Observability
 
-`schedd_esm_*` metrics with `source="realtime"`. The poller implements `BrokerStats` from the group backlog (unassigned plus ready), so the existing lag signals and autoscaling see realtime backlog. The realtime inspector shows the bound trigger on the group.
+`schedd_esm_*` metrics with `source="realtime"`. The poller implements `BrokerStats` from the group backlog (unassigned plus ready), so a `queue_lag` scaling target scales the app out ahead of a realtime backlog. The realtime inspector shows the bound trigger on the group.
 
 ## Rejected alternatives
 

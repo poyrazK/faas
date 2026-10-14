@@ -11,6 +11,25 @@ ALTER TABLE managed_realtime_consumer_groups
 CREATE UNIQUE INDEX IF NOT EXISTS managed_realtime_consumer_groups_trigger
     ON managed_realtime_consumer_groups(trigger_id) WHERE trigger_id IS NOT NULL;
 
+-- Wake schedd's trigger tick when a message lands on a channel whose group a
+-- realtime trigger consumes, instead of waiting for the next 1 s tick. The
+-- notification is delivered at commit; identical payloads in one
+-- transaction collapse, so a batch publish wakes each trigger once.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION notify_realtime_trigger_ready() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE bound uuid;
+BEGIN
+ FOR bound IN SELECT trigger_id FROM managed_realtime_consumer_groups
+   WHERE endpoint_id=NEW.endpoint_id AND channel=NEW.channel AND trigger_id IS NOT NULL LOOP
+  PERFORM pg_notify('trigger_ready', json_build_object('trigger_id', bound, 'source', 'realtime')::text);
+ END LOOP;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
+DROP TRIGGER IF EXISTS managed_realtime_trigger_ready ON managed_realtime_channel_messages;
+CREATE TRIGGER managed_realtime_trigger_ready AFTER INSERT ON managed_realtime_channel_messages
+    FOR EACH ROW EXECUTE FUNCTION notify_realtime_trigger_ready();
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN
@@ -19,6 +38,8 @@ DO $$ BEGIN
  END IF;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS managed_realtime_trigger_ready ON managed_realtime_channel_messages;
+DROP FUNCTION IF EXISTS notify_realtime_trigger_ready();
 DROP INDEX IF EXISTS managed_realtime_consumer_groups_trigger;
 ALTER TABLE managed_realtime_consumer_groups DROP COLUMN IF EXISTS trigger_id;
 ALTER TABLE triggers DROP CONSTRAINT IF EXISTS triggers_kind_check;
