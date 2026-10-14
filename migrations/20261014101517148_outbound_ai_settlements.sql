@@ -1,4 +1,4 @@
--- filename: 20261014103000000_outbound_ai_settlements.sql
+-- filename: 20261014101517148_outbound_ai_settlements.sql
 -- ADR-1120: AI gateway settlement keys. A call's settlement inserts its
 -- admission lease ID, so a retried settlement whose first attempt committed
 -- changes nothing. outboundd prunes keys older than an hour. Additive and
