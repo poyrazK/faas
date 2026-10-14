@@ -26,6 +26,11 @@
   - Major Postgres upgrades use logical blue/green.
   - Order: single-region HA first; the regional branch lands dark in
     parallel; multi-region is activated after launch.
+
+  **Revised 2026-10-14:** the public release moves to OVH bare metal in
+  about a month. It launches with one OVH control node, two compute nodes
+  and a GCP warm standby with manual failover (§8). The three-zone cell
+  follows after launch.
 - **Why:** owner goal for public release (2026-10-13): partition tolerance,
   zero downtime and acceptable scaling across regions and zones, with
   Postgres run by us. Today a single host (fsn-1) holds every
@@ -490,6 +495,48 @@ Required mechanisms:
 
 **Beyond a cell**, add cells. A cell is the unit of scale and blast radius.
 
+### 8. Launch topology (owner decision 2026-10-14)
+
+The public release moves from the GCP beta to OVH bare metal about one month
+after this decision. The three-node cell in §2 and §3 does not fit that
+window, so the cell launches with one control node and a warm standby on a
+second provider. Tracking: epic #4700.
+
+- **OVH, one cell:**
+  - one control node on a small bare-metal machine. It runs Postgres, apid,
+    schedd, meterd, imaged, Prometheus and the guaranteed builder VM, so it
+    needs KVM, NVMe and at least 32 GB of RAM;
+  - two compute nodes (OVH Rise S), on the same vRack private network as
+    the control node.
+- **GCP, warm standby outside the cell:**
+  - a Postgres async streaming replica of the OVH primary over an
+    encrypted link, plus the second pgBackRest repository;
+  - the control-plane daemons installed but stopped;
+  - it is not in the manifest's `control_plane` group, so the singleton
+    leases stay off (§4) and it never serves traffic while the OVH node is
+    up.
+- **Failover is manual**, by runbook: promote the replica, start the
+  daemons, point the Cloudflare origin and the compute nodes at GCP.
+  Targets: RPO of seconds (replication lag) and RTO of about 15–30 minutes.
+  The runbook is drilled before launch.
+- **Why not two control nodes (OVH + GCP)?**
+  - etcd and Patroni need three members to survive losing one. With two,
+    losing either stops automatic failover, and a cut between the
+    providers can leave both sides acting as primary.
+  - Synchronous replication would put the cross-provider round trip on
+    every commit; asynchronous replication with automatic failover can
+    lose writes.
+  - apid on GCP would reach the OVH database across the internet for every
+    query.
+  - The manifest rejects two control nodes (one, or an odd number of at
+    least three).
+- **Next step to automatic failover** (after launch): two OVH control
+  nodes running Postgres plus an etcd-only witness on GCP as the third
+  vote. Then the full §2/§3 cell.
+- **Capacity check before ordering:** the RAM admission ceiling (47,600 MB
+  per node, `pkg/api/limits.go`) assumes a 64 GB compute node. A Rise S
+  with less RAM needs its own per-node budget.
+
 ## Phases and exit criteria
 
 | Phase | Scope | Exit criterion (recorded under `docs/ops/evidence/`) |
@@ -509,9 +556,12 @@ Required mechanisms:
   drifting further.
 - P6 activates multi-region after launch.
 
-**Public-release gate:**
-- P0, P1 and P2, plus P4's lossless drain, in US East, with off-region
-  backups in a second US region and a passed region-rebuild drill.
+**Public-release gate** (revised 2026-10-14 for the OVH launch, §8):
+- P1, the §8 launch topology with a passed manual-failover drill to the
+  GCP standby, a passed restore from the off-site pgBackRest repository,
+  and as much of P4's lossless drain as is ready.
+- P2's multi-node code merges dark before launch (singleton leases are off
+  on a one-node cell, §4); the three-node cell follows after launch.
 - P3 must land before jobs, cron, services or realtime are marketed as
   generally available.
 
@@ -605,3 +655,15 @@ Required mechanisms:
 
 **To confirm:** which second US region holds the backups. This is a
 storage location only; no machines run there.
+
+### Revised 2026-10-14
+
+| Question | Decision |
+|---|---|
+| Provider | Public release on OVH bare metal, about one month out. The GCP deployment stays the beta until then. |
+| Launch topology | §8: one OVH control node and two OVH Rise S compute nodes in one cell, plus a GCP warm standby outside the cell. |
+| Region loss | Replaces "off-region backups only": the GCP standby holds an async Postgres replica and the second pgBackRest repository, with manual failover (RPO of seconds, RTO about 15–30 min). |
+| Regions | The first cell is the OVH launch location (to confirm). US East applied while production ran on GCP. |
+
+**To confirm:** the OVH datacenter, and the RAM of the Rise S and the
+control-node machine.
