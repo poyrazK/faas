@@ -20039,6 +20039,56 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 	return out, rows.Err()
 }
 
+// listCustomerEventsHead and listCustomerEventsTail frame both shapes of the
+// account-wide ListCustomerEvents query; only the kind-prefix predicate
+// differs. $1 account, $2 include anonymous, $3 kind prefix, $4 since,
+// $5 app id, $6 limit.
+const listCustomerEventsHead = `
+		SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+		  FROM events e
+		 WHERE (
+		       e.subject = $1::uuid
+		       OR ($2::bool AND e.subject IS NULL AND (
+		           EXISTS (SELECT 1 FROM apps a
+		                    WHERE a.account_id = $1::uuid AND a.id::text = e.data->>'app_id')
+		           OR EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+		                      WHERE a.account_id = $1::uuid AND d.id::text = e.data->>'deployment_id')
+		           OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+		                      WHERE a.account_id = $1::uuid AND b.id::text = e.data->>'build_id')
+		           OR EXISTS (SELECT 1 FROM instances i JOIN apps a ON a.id = i.app_id
+		                      WHERE a.account_id = $1::uuid AND i.id::text IN (e.data->>'instance_id', e.data->>'instance'))
+		       ))
+		   )`
+
+const listCustomerEventsTail = `
+		   AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
+		   AND ($5::text = '' OR (
+		       e.data->>'app_id' = $5::text
+		       OR EXISTS (SELECT 1 FROM deployments d WHERE d.id::text = e.data->>'deployment_id' AND d.app_id::text = $5::text)
+		       OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id
+		                  WHERE b.id::text = e.data->>'build_id' AND d.app_id::text = $5::text)
+		       OR EXISTS (SELECT 1 FROM instances i WHERE i.id::text IN (e.data->>'instance_id', e.data->>'instance') AND i.app_id::text = $5::text)
+		   ))
+		 ORDER BY e.at DESC, e.id DESC
+		 LIMIT $6`
+
+// listCustomerEventsSQL serves requests without a kind prefix.
+const listCustomerEventsSQL = listCustomerEventsHead + `
+		   AND ($3::text = '' OR left(e.kind, length($3::text)) = $3::text)` + listCustomerEventsTail
+
+// listCustomerEventsByKindPrefixSQL serves requests with a kind prefix. The
+// byte-order range lets events_subject_kind_c_at_id_idx find the matching
+// kinds directly. The left() check alone cannot use an index, so a
+// selective prefix used to read every event the account owns: 73k rows and
+// ~750 ms warm on production-us, past the request deadline cold (H10-43).
+// Under COLLATE "C" (byte order) the range holds every kind that starts with
+// the prefix, unless U+10FFFF follows it (kinds are ASCII); left() keeps the
+// result exact.
+const listCustomerEventsByKindPrefixSQL = listCustomerEventsHead + `
+		   AND e.kind COLLATE "C" >= $3::text COLLATE "C"
+		   AND e.kind COLLATE "C" < ($3::text || chr(1114111)) COLLATE "C"
+		   AND left(e.kind, length($3::text)) = $3::text` + listCustomerEventsTail
+
 // ListCustomerEvents applies tenant ownership and all public filters in one
 // bounded PostgreSQL query. Anonymous rows with no resolvable customer object
 // remain operator-only.
@@ -20055,33 +20105,11 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 	if !filter.Since.IsZero() {
 		since = filter.Since
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-		  FROM events e
-		 WHERE (
-		       e.subject = $1::uuid
-		       OR ($2::bool AND e.subject IS NULL AND (
-		           EXISTS (SELECT 1 FROM apps a
-		                    WHERE a.account_id = $1::uuid AND a.id::text = e.data->>'app_id')
-		           OR EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
-		                      WHERE a.account_id = $1::uuid AND d.id::text = e.data->>'deployment_id')
-		           OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
-		                      WHERE a.account_id = $1::uuid AND b.id::text = e.data->>'build_id')
-		           OR EXISTS (SELECT 1 FROM instances i JOIN apps a ON a.id = i.app_id
-		                      WHERE a.account_id = $1::uuid AND i.id::text IN (e.data->>'instance_id', e.data->>'instance'))
-		       ))
-		   )
-		   AND ($3::text = '' OR left(e.kind, length($3::text)) = $3::text)
-		   AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
-		   AND ($5::text = '' OR (
-		       e.data->>'app_id' = $5::text
-		       OR EXISTS (SELECT 1 FROM deployments d WHERE d.id::text = e.data->>'deployment_id' AND d.app_id::text = $5::text)
-		       OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id
-		                  WHERE b.id::text = e.data->>'build_id' AND d.app_id::text = $5::text)
-		       OR EXISTS (SELECT 1 FROM instances i WHERE i.id::text IN (e.data->>'instance_id', e.data->>'instance') AND i.app_id::text = $5::text)
-		   ))
-		 ORDER BY e.at DESC, e.id DESC
-		 LIMIT $6`, filter.AccountID, filter.IncludeAnonymous, filter.KindPrefix, since, filter.AppID, filter.Limit)
+	query := listCustomerEventsSQL
+	if filter.KindPrefix != "" {
+		query = listCustomerEventsByKindPrefixSQL
+	}
+	rows, err := s.pool.Query(ctx, query, filter.AccountID, filter.IncludeAnonymous, filter.KindPrefix, since, filter.AppID, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
