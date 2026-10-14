@@ -505,7 +505,8 @@ jobs:
           if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(fakeregistry|testdata/helloserver/)|scripts/test-environment-gitops-native|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
-          go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=180s
+          # TestMain prepares the shared daemons before the HTTP case starts.
+          go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
           go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
           rm -f "$RUNNER_TEMP/gitops-native.test"
       # -race on every tested package: races are the failures hardest to

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ type nativeGitOpsJourney struct {
 	pullEntered                  <-chan struct{}
 	releasePull                  func()
 	bindingID                    string
+	trafficFailures              <-chan error
 }
 
 func (j *nativeGitOpsJourney) run(t *testing.T) {
@@ -47,6 +49,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 	baseline := j.waitApplied(t, j.source.ApprovedRevisionID, j.source.Generation)
 	stopTraffic := j.startTraffic(t)
 	defer stopTraffic()
+	j.waitHTTPInFlight(t)
 
 	t.Log("GitOps native resilience: source outage and apid restart")
 	j.provider.setUnavailable(true)
@@ -55,6 +58,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 	})
 	j.assertAuthority(t, j.source.ApprovedRevisionID, j.source.Generation)
 	j.waitQueue(t, j.sendQueue(t, 0), false)
+	j.waitHTTPInFlight(t)
 	if err := j.h.RestartAPID(); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +73,8 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 	pending := j.approve(t, strings.Repeat("b", 40))
 	select {
 	case <-j.pullEntered:
+	case err := <-j.trafficFailures:
+		t.Fatalf("customer traffic failed during preparation: %v", err)
 	case <-time.After(3 * time.Minute):
 		t.Fatal("pending revision never reached its held image pull")
 	case <-t.Context().Done():
@@ -78,6 +84,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 		return s.WorkloadEvidence != nil && s.WorkloadEvidence.RevisionID == pending.Revision.ID &&
 			s.WorkloadEvidence.GraphPhase == "preparing" && !s.WorkloadEvidence.Activated
 	})
+	j.waitHTTPInFlight(t)
 	if err := j.h.RestartAPID(); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +103,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 	t.Log("GitOps native resilience: scheduler crash after activation with a delivery in flight")
 	inFlight := j.sendQueue(t, 10000)
 	j.waitQueue(t, inFlight, true)
+	j.waitHTTPInFlight(t)
 	if err := j.h.KillSchedd(); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +125,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 	t.Log("GitOps native resilience: reviewed rollback with accepted queue work")
 	rollbackDelivery := j.sendQueue(t, 10000)
 	j.waitQueue(t, rollbackDelivery, true)
+	j.waitHTTPInFlight(t)
 	rolledBack := j.approve(t, strings.Repeat("a", 40))
 	if rolledBack.Revision.ID != j.source.ApprovedRevisionID || rolledBack.Source.Generation <= changed.Source.Generation {
 		t.Fatal("rollback did not reapprove the original immutable revision at a new generation")
@@ -179,6 +188,7 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 	defer ticker.Stop()
 	var last api.EnvironmentGitOpsStatusResponse
 	for {
+		j.checkTraffic(t)
 		var err error
 		last, err = j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
 		if err != nil {
@@ -241,6 +251,7 @@ func (j *nativeGitOpsJourney) waitQueue(t *testing.T, accepted api.QueueSendResp
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		j.checkTraffic(t)
 		invocation, err := j.store.InvocationByID(ctx, accepted.ID)
 		if err != nil || invocation.AppID != j.worker.ID || invocation.Source != state.InvocationQueue ||
 			invocation.EnvironmentID != j.source.EnvironmentID || invocation.DeploymentScope != "production" ||
@@ -295,6 +306,46 @@ func (j *nativeGitOpsJourney) assertGatewayBody(t *testing.T, expected string) {
 	}
 }
 
+func (j *nativeGitOpsJourney) waitHTTPInFlight(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	client := &http.Client{Timeout: 5 * time.Second}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	prefix := fmt.Sprintf("gateway_app_inflight_requests{app=%q} ", j.app.ID)
+	for {
+		j.checkTraffic(t)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, j.h.GatewayControlURL+"/metrics/gateway-requests", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatalf("observe customer requests at fault boundary: %v", err)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("read gateway demand: status=%d read=%v close=%v", response.StatusCode, readErr, closeErr)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				inFlight, err := strconv.ParseFloat(strings.TrimPrefix(line, prefix), 64)
+				if err == nil && inFlight >= 1 {
+					t.Log("GitOps native resilience: observed customer HTTP demand before fault")
+					return
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("fault boundary had no observed customer HTTP request in flight")
+		case <-ticker.C:
+		}
+	}
+}
+
 func (j *nativeGitOpsJourney) assertNoSupersededServing(t *testing.T, generation int64) {
 	t.Helper()
 	var count int
@@ -332,6 +383,7 @@ func (j *nativeGitOpsJourney) startTraffic(t *testing.T) func() {
 	ctx, cancel := context.WithCancel(t.Context())
 	var completed atomic.Int64
 	failed := make(chan error, 1)
+	j.trafficFailures = failed
 	var workers sync.WaitGroup
 	for range 2 {
 		workers.Go(func() {
@@ -380,5 +432,14 @@ func (j *nativeGitOpsJourney) startTraffic(t *testing.T) func() {
 			t.Error("resilience journey produced no sustained customer traffic")
 		}
 		t.Logf("GitOps native resilience: %d successful customer requests", completed.Load())
+	}
+}
+
+func (j *nativeGitOpsJourney) checkTraffic(t *testing.T) {
+	t.Helper()
+	select {
+	case err := <-j.trafficFailures:
+		t.Fatalf("customer HTTP traffic failed during reconciliation: %v", err)
+	default:
 	}
 }

@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -18,6 +19,9 @@ import (
 func TestE2E_GitOpsSourceRevisionReviewAndRollback(t *testing.T) {
 	if os.Getenv("GREGALE_GITOPS_ACCEPTANCE") != "1" {
 		t.Skip("isolated GitOps PostgreSQL acceptance only")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("real apid capability admission requires Linux /proc")
 	}
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
