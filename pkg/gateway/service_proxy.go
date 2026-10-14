@@ -1711,6 +1711,12 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
 		forwardReq, buffer.onResponse = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
 		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
+		if signal.frozen.Load() {
+			// A frozen target (ADR-1151) is withdrawn, not benched, so the
+			// breaker would let this call pick it again. Drop it here: the
+			// next attempt re-routes and the wake thaws it.
+			endpoints = withoutServiceEndpoint(endpoints, endpoint.InstanceID)
+		}
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
 		}
@@ -1997,6 +2003,17 @@ func (p *ServiceProxy) rerouteAfterStale(w http.ResponseWriter, ctx context.Cont
 		return nil, false, false
 	}
 	return endpoints, true, true
+}
+
+// withoutServiceEndpoint returns endpoints without instanceID, as a new slice.
+func withoutServiceEndpoint(endpoints []ServiceEndpoint, instanceID string) []ServiceEndpoint {
+	kept := make([]ServiceEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.InstanceID != instanceID {
+			kept = append(kept, endpoint)
+		}
+	}
+	return kept
 }
 
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
