@@ -38,6 +38,8 @@ type DatabaseScheduler interface {
 	Usage(ctx context.Context, id string, from, to time.Time) (dbsched.Usage, error)
 	RecordEgress(ctx context.Context, id string, bytes int64) error
 	Resize(ctx context.Context, id string, shape dbsched.Shape) (dbsched.VM, error)
+	Import(ctx context.Context, id string, spec dbsched.ImportSpec) (dbguest.ImportStatus, error)
+	ImportStatus(ctx context.Context, id string) (dbguest.ImportStatus, error)
 }
 
 // WithDatabases enables the database RPCs.
@@ -293,4 +295,49 @@ func (s *Server) databaseStatus(op string, err error) error {
 		return status.Errorf(codes.Internal, "database %s failed", op)
 	}
 	return status.Errorf(code, "database %s: %v", op, err)
+}
+
+// ImportDatabase starts copying another PostgreSQL database into one of
+// ours (ADR-1027 migration off Neon). The request carries the source's
+// password; it is never logged.
+func (s *Server) ImportDatabase(ctx context.Context, req *scheddpb.ImportDatabaseRequest) (*scheddpb.DatabaseImportProgress, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	spec := dbsched.ImportSpec{Host: req.GetHost(), Port: int(req.GetPort()), Source: dbguest.ImportSource{
+		Database: req.GetSourceDatabase(), User: req.GetUser(), Password: req.GetPassword(),
+		TargetDatabase: req.GetTargetDatabase(), Owner: req.GetOwner(), SkipExtensions: req.GetSkipExtensions(),
+	}}
+	if err := spec.Validate(); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid import source")
+	}
+	progress, err := d.Import(ctx, req.GetDatabaseId(), spec)
+	if err != nil {
+		return nil, s.databaseStatus("import", err)
+	}
+	return importProgress(progress), nil
+}
+
+func (s *Server) DatabaseImportStatus(ctx context.Context, req *scheddpb.DatabaseRef) (*scheddpb.DatabaseImportProgress, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	progress, err := d.ImportStatus(ctx, req.GetDatabaseId())
+	if err != nil {
+		return nil, s.databaseStatus("import status", err)
+	}
+	return importProgress(progress), nil
+}
+
+func importProgress(in dbguest.ImportStatus) *scheddpb.DatabaseImportProgress {
+	out := &scheddpb.DatabaseImportProgress{State: string(in.State), ErrorCode: in.Error, SourceMajor: int32(in.SourceMajor)} //nolint:gosec // a PostgreSQL major
+	if !in.StartedAt.IsZero() {
+		out.StartedAt = timestamppb.New(in.StartedAt)
+	}
+	if !in.FinishedAt.IsZero() {
+		out.FinishedAt = timestamppb.New(in.FinishedAt)
+	}
+	return out
 }

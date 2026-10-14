@@ -67,6 +67,8 @@ func newMetalNode(t *testing.T, workdir string, bases map[int]string, name strin
 		KernelPath: "/srv/fc/kernel/1.7.0", Bases: bases, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: leases,
 		ArchiveSocket: filepath.Join(dir, "a.sock"),
+		// Import tests trust their own source CA on loopback.
+		ImportRoots: metalImportRoots, ImportAllowPrivate: metalImportRoots != nil,
 	})
 	if err != nil {
 		t.Fatal(err)

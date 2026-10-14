@@ -58,6 +58,9 @@ type VMM interface {
 	Replication(ctx context.Context, node Node, id string, mode dbguest.ReplicationMode, standbyNode string) (dbguest.ReplicationStatus, error)
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
+	// Import starts a running database's import of another PostgreSQL
+	// database (import.go).
+	Import(ctx context.Context, node Node, id string, spec ImportSpec) (dbguest.ImportStatus, error)
 }
 
 // Stable last_error codes.
@@ -847,6 +850,10 @@ func (s *Scheduler) ParkIdle(ctx context.Context) (int, error) {
 		if vm.AlwaysOn || vm.LastActiveAt.After(cutoff) {
 			continue
 		}
+		if s.importing(ctx, vm) {
+			_ = s.store.Touch(ctx, vm.DatabaseID, s.now())
+			continue
+		}
 		if err := s.Park(ctx, vm.DatabaseID); err != nil {
 			s.log.Warn("dbsched: idle park failed", "database_id", vm.DatabaseID, "err", err)
 			continue
@@ -1094,7 +1101,7 @@ func (s *Scheduler) evictIdle(ctx context.Context, nodeID, except string) bool {
 	}
 	slices.SortFunc(running, func(a, b VM) int { return a.LastActiveAt.Compare(b.LastActiveAt) })
 	for _, candidate := range running {
-		if !idle(candidate) {
+		if !idle(candidate) || s.importing(ctx, candidate) {
 			continue
 		}
 		unlock, ok := s.tryLock(candidate.DatabaseID)

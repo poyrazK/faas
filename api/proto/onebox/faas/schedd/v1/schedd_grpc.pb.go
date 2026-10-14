@@ -53,6 +53,8 @@ const (
 	Schedd_RestoreDatabase_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
 	Schedd_DatabaseUsage_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
 	Schedd_ResizeDatabase_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/ResizeDatabase"
+	Schedd_ImportDatabase_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/ImportDatabase"
+	Schedd_DatabaseImportStatus_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/DatabaseImportStatus"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -366,6 +368,13 @@ type ScheddClient interface {
 	// (never shrinks it). A running database restarts on the new shape.
 	// Repeating the request resumes an interrupted resize. apid only.
 	ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// ImportDatabase starts copying another PostgreSQL database into an
+	// empty database of this one (ADR-1027 migration off Neon), waking it.
+	// A running or finished import is reported, not restarted. apid only.
+	ImportDatabase(ctx context.Context, in *ImportDatabaseRequest, opts ...grpc.CallOption) (*DatabaseImportProgress, error)
+	// DatabaseImportStatus reports the import; a database that stopped
+	// since has none. apid only.
+	DatabaseImportStatus(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseImportProgress, error)
 }
 
 type scheddClient struct {
@@ -641,6 +650,26 @@ func (c *scheddClient) ResizeDatabase(ctx context.Context, in *ResizeDatabaseReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DatabaseRuntime)
 	err := c.cc.Invoke(ctx, Schedd_ResizeDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ImportDatabase(ctx context.Context, in *ImportDatabaseRequest, opts ...grpc.CallOption) (*DatabaseImportProgress, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseImportProgress)
+	err := c.cc.Invoke(ctx, Schedd_ImportDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DatabaseImportStatus(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseImportProgress, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseImportProgress)
+	err := c.cc.Invoke(ctx, Schedd_DatabaseImportStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -958,6 +987,13 @@ type ScheddServer interface {
 	// (never shrinks it). A running database restarts on the new shape.
 	// Repeating the request resumes an interrupted resize. apid only.
 	ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error)
+	// ImportDatabase starts copying another PostgreSQL database into an
+	// empty database of this one (ADR-1027 migration off Neon), waking it.
+	// A running or finished import is reported, not restarted. apid only.
+	ImportDatabase(context.Context, *ImportDatabaseRequest) (*DatabaseImportProgress, error)
+	// DatabaseImportStatus reports the import; a database that stopped
+	// since has none. apid only.
+	DatabaseImportStatus(context.Context, *DatabaseRef) (*DatabaseImportProgress, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -1042,6 +1078,12 @@ func (UnimplementedScheddServer) DatabaseUsage(context.Context, *DatabaseUsageRe
 }
 func (UnimplementedScheddServer) ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResizeDatabase not implemented")
+}
+func (UnimplementedScheddServer) ImportDatabase(context.Context, *ImportDatabaseRequest) (*DatabaseImportProgress, error) {
+	return nil, status.Error(codes.Unimplemented, "method ImportDatabase not implemented")
+}
+func (UnimplementedScheddServer) DatabaseImportStatus(context.Context, *DatabaseRef) (*DatabaseImportProgress, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseImportStatus not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1489,6 +1531,42 @@ func _Schedd_ResizeDatabase_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_ImportDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ImportDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ImportDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ImportDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ImportDatabase(ctx, req.(*ImportDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_DatabaseImportStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DatabaseImportStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DatabaseImportStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DatabaseImportStatus(ctx, req.(*DatabaseRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1583,6 +1661,14 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResizeDatabase",
 			Handler:    _Schedd_ResizeDatabase_Handler,
+		},
+		{
+			MethodName: "ImportDatabase",
+			Handler:    _Schedd_ImportDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseImportStatus",
+			Handler:    _Schedd_DatabaseImportStatus_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

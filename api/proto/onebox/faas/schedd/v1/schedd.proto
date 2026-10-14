@@ -339,6 +339,13 @@ service Schedd {
   // (never shrinks it). A running database restarts on the new shape.
   // Repeating the request resumes an interrupted resize. apid only.
   rpc ResizeDatabase(ResizeDatabaseRequest) returns (DatabaseRuntime);
+  // ImportDatabase starts copying another PostgreSQL database into an
+  // empty database of this one (ADR-1027 migration off Neon), waking it.
+  // A running or finished import is reported, not restarted. apid only.
+  rpc ImportDatabase(ImportDatabaseRequest) returns (DatabaseImportProgress);
+  // DatabaseImportStatus reports the import; a database that stopped
+  // since has none. apid only.
+  rpc DatabaseImportStatus(DatabaseRef) returns (DatabaseImportProgress);
 }
 
 message LivenessFailedReport {
@@ -1222,6 +1229,30 @@ message DatabaseRuntime {
   bool replicated = 17;
   string standby_node_id = 18;
   bool standby_synced = 19;
+}
+
+// ImportDatabaseRequest names the source: its endpoint (a public address
+// serving TLS for host), login and database, and the target database and
+// owner role here. Sensitive (password): never logged.
+message ImportDatabaseRequest {
+  string database_id = 1;
+  string host = 2;
+  int32 port = 3;
+  string source_database = 4;
+  string user = 5;
+  string password = 6;
+  string target_database = 7;
+  string owner = 8;
+  repeated string skip_extensions = 9;
+}
+
+message DatabaseImportProgress {
+  // none, running, done or failed.
+  string state = 1;
+  string error_code = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int32 source_major = 5;
 }
 
 message ResizeDatabaseRequest {

@@ -65,12 +65,14 @@ type fakeVMM struct {
 	unsynced   map[string]bool
 	promoted   map[string]string
 	standbyErr error
+	// imports is each database's import, as its guest reports it.
+	imports map[string]dbguest.ImportStatus
 }
 
 func newFakeVMM() *fakeVMM {
 	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
-		unsynced: map[string]bool{}, promoted: map[string]string{}}
+		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}}
 }
 
 func (f *fakeVMM) record(call string) {
@@ -231,6 +233,12 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 		f.record("admin_sql")
 		f.lastAdminSQL = req.SQL
 		return f.adminResp, nil
+	case dbguest.OpImportStatus:
+		status, ok := f.imports[id]
+		if !ok {
+			status = noImport
+		}
+		return dbguest.Response{State: dbguest.StateReady, Import: &status}, nil
 	case dbguest.OpFlushWAL:
 		if !f.archive {
 			return dbguest.Response{State: dbguest.StateReady, Error: dbguest.ErrCodeArchiveOff}, nil
@@ -563,4 +571,25 @@ func (f *fakeVMM) replicationOf(id string) (dbguest.ReplicationMode, string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.replMode[id], f.standbyOn[id]
+}
+
+func (f *fakeVMM) Import(_ context.Context, node Node, id string, spec ImportSpec) (dbguest.ImportStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.running[id] || f.primaryOn[id] != node.ID {
+		return noImport, ErrVMNotRunning
+	}
+	f.onNode = append(f.onNode, fmt.Sprintf("import:%s:%d@%s", spec.Host, spec.Port, node.ID))
+	if status, ok := f.imports[id]; ok && status.State != dbguest.ImportFailed {
+		return status, nil
+	}
+	f.imports[id] = dbguest.ImportStatus{State: dbguest.ImportRunning}
+	return f.imports[id], nil
+}
+
+// setImport sets what the fake guest reports for a database's import.
+func (f *fakeVMM) setImport(id string, state dbguest.ImportState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.imports[id] = dbguest.ImportStatus{State: state}
 }

@@ -128,6 +128,14 @@ func (unavailableScheduler) ResizeDatabase(context.Context, *scheddpb.ResizeData
 	return nil, errDescribeOnly
 }
 
+func (unavailableScheduler) ImportDatabase(context.Context, *scheddpb.ImportDatabaseRequest, ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
+	return nil, errDescribeOnly
+}
+
+func (unavailableScheduler) DatabaseImportStatus(context.Context, *scheddpb.DatabaseRef, ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
+	return nil, errDescribeOnly
+}
+
 // unavailableVerifiers refuses every write.
 type unavailableVerifiers struct{}
 

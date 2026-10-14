@@ -8,6 +8,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -45,6 +46,29 @@ type fakeScheduler struct {
 	provisionErr error
 	deleteErr    error
 	failVM       bool
+	// imports are the import requests; importState is what they report.
+	imports     []*scheddpb.ImportDatabaseRequest
+	importState string
+}
+
+func (f *fakeScheduler) ImportDatabase(_ context.Context, in *scheddpb.ImportDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.vms[in.GetDatabaseId()]; !ok {
+		return nil, status.Error(codes.NotFound, "no database")
+	}
+	f.imports = append(f.imports, in)
+	f.importState = "running"
+	return &scheddpb.DatabaseImportProgress{State: f.importState}, nil
+}
+
+func (f *fakeScheduler) DatabaseImportStatus(_ context.Context, in *scheddpb.DatabaseRef, _ ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.vms[in.GetDatabaseId()]; !ok {
+		return nil, status.Error(codes.NotFound, "no database")
+	}
+	return &scheddpb.DatabaseImportProgress{State: f.importState, SourceMajor: 16}, nil
 }
 
 func newFakeScheduler() *fakeScheduler {
@@ -940,5 +964,38 @@ func TestProductionClassIsReplicated(t *testing.T) {
 	}
 	if !slices.Contains(p.Capabilities().ServiceClasses, managedpostgres.ClassProduction) {
 		t.Fatal("capabilities omit the production class")
+	}
+}
+
+// An import copies into the configured customer database as the schema
+// owner, so the usual credentials reach it; the source travels to schedd
+// and is never printed.
+func TestImportCopiesIntoTheCustomerDatabaseAsItsOwner(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: devSpec()}); err != nil {
+		t.Fatal(err)
+	}
+	src := managedpostgres.ImportSource{Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, Database: "gregale", User: "gregale_mig_ab",
+		Password: "never-printed", SkipExtensions: []string{"neon"}}
+	got, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, Source: src})
+	if err != nil || got.State != managedpostgres.ImportRunning {
+		t.Fatalf("import = %+v, %v", got, err)
+	}
+	req := sched.imports[0]
+	if req.GetTargetDatabase() != "gregale" || req.GetOwner() != schemaOwner || req.GetHost() != src.Host || req.GetPassword() != src.Password {
+		t.Fatalf("schedd got %v", req)
+	}
+	if printed := fmt.Sprintf("%v %+v %#v", src, src, src); strings.Contains(printed, "never-printed") {
+		t.Fatalf("source printed its password: %s", printed)
+	}
+	if got, err := p.ImportStatus(ctx, testDatabaseID); err != nil || got.State != managedpostgres.ImportRunning || got.SourceMajor != 16 {
+		t.Fatalf("status = %+v, %v", got, err)
+	}
+	if _, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, Source: managedpostgres.ImportSource{Host: "h", Port: 0}}); !errors.Is(err, managedpostgres.ErrInvalid) {
+		t.Fatalf("no port = %v, want ErrInvalid", err)
+	}
+	if _, err := p.ImportStatus(ctx, "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("unknown database = %v, want ErrNotFound", err)
 	}
 }

@@ -247,7 +247,49 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if resp.GetRecoveredTo() != nil {
 		out.RecoveredTo = resp.GetRecoveredTo().AsTime()
 	}
+	if resp.GetImport() != nil {
+		status := importStatus(resp.GetImport())
+		out.Import = &status
+	}
 	return out, nil
+}
+
+// Import starts the database's import through its node's vmmd, which keeps
+// the endpoint and forwards the login to the guest.
+func (g *GRPCVMM) Import(ctx context.Context, node Node, id string, spec ImportSpec) (dbguest.ImportStatus, error) {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return noImport, err
+	}
+	src := spec.Source
+	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(dbguest.OpImport), Import: &vmmdpb.DatabaseImport{
+		Host: spec.Host, Port: int32(spec.Port), Database: src.Database, User: src.User, Password: src.Password, //nolint:gosec // port validated
+		TargetDatabase: src.TargetDatabase, Owner: src.Owner, SkipExtensions: src.SkipExtensions,
+	}})
+	if status.Code(err) == codes.FailedPrecondition {
+		return noImport, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
+	}
+	if err != nil {
+		return noImport, err
+	}
+	if resp.GetErrorCode() != "" {
+		return noImport, fmt.Errorf("guest error %s", resp.GetErrorCode())
+	}
+	return importStatus(resp.GetImport()), nil
+}
+
+func importStatus(in *vmmdpb.DatabaseImportStatus) dbguest.ImportStatus {
+	if in == nil {
+		return noImport
+	}
+	out := dbguest.ImportStatus{State: dbguest.ImportState(in.GetState()), Error: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor())}
+	if in.GetStartedAt() != nil {
+		out.StartedAt = in.GetStartedAt().AsTime()
+	}
+	if in.GetFinishedAt() != nil {
+		out.FinishedAt = in.GetFinishedAt().AsTime()
+	}
+	return out
 }
 
 // CopyVolume relays one node's volume export into another's import. The

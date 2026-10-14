@@ -966,6 +966,70 @@ Not yet done:
   reclaimed by another replica only after 15 minutes, since that replica
   may still be seeding it.
 
+### Import from another PostgreSQL (migration off Neon, step 1)
+
+A native database can copy another PostgreSQL database into itself: the
+data path of a migration off Neon. The copy runs on the database node, in
+the target's own VM, with binaries of its major. Bulk data never crosses
+the control plane.
+
+- **Guest.** `OpImport` starts a background copy into an empty database:
+  1. Check that the source major is at most the target's.
+  2. Check that every source extension, less the skipped ones, is
+     available and *trusted*, which is what the schema owner can create
+     anyway. `pg_stat_statements`, for example, is refused until skipped.
+  3. Check that the target holds no user objects.
+  4. `pg_dump -Fc --no-owner --no-privileges --no-publications
+     --no-subscriptions` of the source.
+  5. `pg_restore --single-transaction --role=<schema owner>` of a TOC with
+     plpgsql and the skipped extensions removed, then `ANALYZE`.
+
+  Everything restored belongs to the schema owner, so native credentials
+  reach it like anything a migration created. `OpImportStatus` reports
+  none/running/done/failed with a stable code (`source_unreachable`,
+  `source_newer`, `extension_unavailable`, `target_not_empty`,
+  `import_failed`). The source password reaches the tools only through
+  `PGPASSWORD`.
+- **The guest never reaches the network.** Its tools connect to a socket
+  guest-init relays to host vsock port 5436. vmmd's import relay (dbvm)
+  dials only the endpoint the control plane named. It resolves the name
+  once and accepts only public addresses (no private, loopback,
+  link-local, overlay `100.64/10`, service `198.18/15` or other
+  special-purpose ranges). It asks for TLS with PostgreSQL's SSLRequest,
+  verifies the certificate for the host name against the host's roots,
+  and then splices. A source without TLS or with the wrong certificate is
+  refused. The guest needs no CA store and never learns the endpoint.
+- **schedd and the driver.** `ImportDatabase` / `DatabaseImportStatus`
+  (apid only) wake the database and forward to vmmd, which keeps the
+  endpoint and passes the login to the guest. Idle parking and eviction
+  leave a database alone while its guest reports an import running. A VM
+  that stops mid-import loses the import, and the target is empty again
+  (one transaction), so the import simply starts over.
+  `managedpostgres.Importer` (`Import`, `ImportStatus`) is the portable
+  surface; the native driver copies into its customer database as
+  `gregale_schema_owner`.
+- **Metal.** A source VM behind a TLS-terminating shim (dbvm) was copied
+  with 20,000 rows, a function, a view, a second schema, a table comment
+  and the sequence position, all owned by the schema owner, in 0.6 s. The
+  untrusted extension failed the import until it was skipped. Through
+  schedd and vmmd's gRPC handlers, 50,000 rows took 0.6 s.
+
+Not yet done:
+
+- **The migration itself.** Provision a native target for a Neon
+  database, issue a Neon migration credential, import, then move the
+  app's bindings. The binding move is the restore cutover's activation
+  (ADR-464..469: credential staging, verification and the admission, task
+  and boot fences exist; writer draining and binding publication do not),
+  which both restores and migrations need.
+- **Writes during the copy are not captured.** A consistent copy needs the
+  app's writers drained first (the same cutover fence), or accepts the
+  dump's snapshot. There is no logical-replication catch-up.
+- **Space.** The dump lands on the target volume, so the volume needs room
+  for the compressed dump beside the data.
+- **Grants.** Objects outside schema `public` get no runtime grants, as for
+  any native schema.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives
@@ -1013,7 +1077,8 @@ Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
 5. Operations: volume moves, node evacuation, node-loss restore, majors 14–18.
 6. Qualification: security review, `QualifyProvider` pass, the production
    class (synchronous standby on a second node, done), then default for
-   new databases and a migration path off Neon.
+   new databases and a migration path off Neon (the import is done; the
+   binding cutover is not).
 
 Development may use a nested-virtualization VM; acceptance runs only on
 native x86_64 KVM database nodes.

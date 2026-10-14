@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
@@ -37,6 +38,16 @@ type fakeDatabases struct {
 	egressErr   error
 	touchErr    error
 	shape       dbsched.Shape
+	importSpec  dbsched.ImportSpec
+	importState dbguest.ImportStatus
+}
+
+func (f *fakeDatabases) Import(_ context.Context, _ string, spec dbsched.ImportSpec) (dbguest.ImportStatus, error) {
+	f.importSpec = spec
+	return f.importState, f.err
+}
+func (f *fakeDatabases) ImportStatus(context.Context, string) (dbguest.ImportStatus, error) {
+	return f.importState, f.err
 }
 
 func (f *fakeDatabases) Provision(_ context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error) {
@@ -272,5 +283,34 @@ func TestResizeDatabaseRelaysTheShape(t *testing.T) {
 	f.err = dbsched.ErrNoCapacity
 	if _, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 1024, VolumeBytes: 4 << 30}); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("no capacity = %v", err)
+	}
+}
+
+// The import RPC is apid's only, validates the source, and maps it; the
+// password reaches the scheduler and nothing else.
+func TestImportDatabaseValidatesAndMaps(t *testing.T) {
+	started := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	f := &fakeDatabases{importState: dbguest.ImportStatus{State: dbguest.ImportRunning, StartedAt: started}}
+	s := New(nil, nil, nil).WithDatabases(f)
+	req := &scheddpb.ImportDatabaseRequest{DatabaseId: testDBID, Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, SourceDatabase: "gregale",
+		User: "gregale_mig_ab", Password: "secret", TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: []string{"neon"}}
+	if _, err := s.ImportDatabase(asCaller(callerPgproxy), req); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("pgproxyd import = %v, want PermissionDenied", err)
+	}
+	got, err := s.ImportDatabase(asCaller(callerAPID), req)
+	if err != nil || got.GetState() != "running" || !got.GetStartedAt().AsTime().Equal(started) {
+		t.Fatalf("import = %+v, %v", got, err)
+	}
+	if spec := f.importSpec; spec.Host != req.Host || spec.Port != 5432 || spec.Source.Password != "secret" || spec.Source.Owner != "gregale_schema_owner" ||
+		spec.Source.Database != "gregale" || len(spec.Source.SkipExtensions) != 1 {
+		t.Fatalf("scheduler got %+v", spec)
+	}
+	bad := proto.Clone(req).(*scheddpb.ImportDatabaseRequest)
+	bad.User = "Robert'); DROP"
+	if _, err := s.ImportDatabase(asCaller(callerAPID), bad); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("invalid user = %v, want InvalidArgument", err)
+	}
+	if got, err := s.DatabaseImportStatus(asCaller(callerAPID), &scheddpb.DatabaseRef{DatabaseId: testDBID}); err != nil || got.GetState() != "running" {
+		t.Fatalf("status = %+v, %v", got, err)
 	}
 }

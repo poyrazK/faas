@@ -209,6 +209,58 @@ type RestoreRequest struct {
 	IdempotencyKey   string
 }
 
+// ImportSource is a PostgreSQL database on another backend to copy into a
+// new one (ADR-1027 migration off Neon): reachable at Host:Port over TLS
+// with a certificate for Host, as User, who can read everything in
+// Database. SkipExtensions are extensions the source provider installs for
+// itself. Password is sensitive and never printed.
+type ImportSource struct {
+	Host           string
+	Port           int
+	Database       string
+	User           string
+	Password       string
+	SkipExtensions []string
+}
+
+func (ImportSource) String() string   { return "[REDACTED]" }
+func (ImportSource) GoString() string { return "managedpostgres.ImportSource{[REDACTED]}" }
+
+// ImportRequest copies Source into the provider's empty database
+// ResourceID.
+type ImportRequest struct {
+	ResourceID string
+	Source     ImportSource
+}
+
+// ImportState is an import's progress.
+type ImportState string
+
+const (
+	ImportNone    ImportState = "none"
+	ImportRunning ImportState = "running"
+	ImportDone    ImportState = "done"
+	ImportFailed  ImportState = "failed"
+)
+
+// ImportStatus reports an import; ErrorCode is a stable code.
+type ImportStatus struct {
+	State       ImportState
+	ErrorCode   string
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	SourceMajor int
+}
+
+// Importer is a provider that copies a database from another backend into
+// one of its own. Import starts the copy, or reports one already running or
+// done; ImportStatus reports it. An import interrupted before it finished
+// leaves the target empty and can be started again.
+type Importer interface {
+	Import(ctx context.Context, req ImportRequest) (ImportStatus, error)
+	ImportStatus(ctx context.Context, resourceID string) (ImportStatus, error)
+}
+
 // RestoreInspector verifies an existing target against its pinned source and
 // point. Providers whose metadata expresses historical positions instead of
 // timestamps can resolve that mapping independently. This inspection must not
