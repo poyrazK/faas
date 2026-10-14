@@ -11542,6 +11542,59 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 `gregale auth status <name>`
 
+### auth admin-key
+
+Manage owner keys for the dashboard&#39;s users and organizations screens and imports
+
+#### auth admin-key create
+
+Create a key; it is shown once and only its hash is stored
+
+`gregale auth admin-key create [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth admin-key list
+
+List admin key IDs
+
+`gregale auth admin-key list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth admin-key revoke
+
+Revoke an admin key
+
+`gregale auth admin-key revoke [--scope <SCOPE>] <name> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+### auth import
+
+Import users with their password hashes from a JSON or JSON Lines file
+
+`gregale auth import --file <FILE> [--dry-run] [--admin-key-stdin] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <FILE>` | JSON array or JSON Lines file of users | required |
+| `--dry-run` | validate the file without importing |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+Examples:
+
+```sh
+gregale auth import shop-auth --file users.jsonl --dry-run
+printf '%s' "$ADMIN_KEY" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin
+```
+
 
 ## data-api
 

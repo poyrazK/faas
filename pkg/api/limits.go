@@ -10260,6 +10260,8 @@ const (
 	// the most users one import request creates.
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
+	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
+	AuthImportFileMaxBytes = 256 << 20
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

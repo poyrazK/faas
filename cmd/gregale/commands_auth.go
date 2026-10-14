@@ -32,7 +32,7 @@ const (
 
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth <create|status>", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth <create|status|admin-key|import>", "auth")
 		return 1
 	}
 	switch args[0] {
@@ -40,12 +40,16 @@ func cmdAuth(args []string) int {
 		return cmdAuthCreate(args[1:])
 	case "status":
 		return cmdAuthStatus(args[1:])
+	case "admin-key":
+		return cmdAuthAdminKey(args[1:])
+	case "import":
+		return cmdAuthImport(args[1:])
 	case "login", "logout", "whoami", "token":
 		// `gregale auth` manages an application's own users, not the
 		// Gregale account; other CLIs use the same verbs for account login.
 		return printErr("Not an account command", errors.New("`gregale auth` manages application Auth; use `gregale "+args[0]+"` for your Gregale account"))
 	default:
-		return printErr("Unknown auth command", errors.New("use create or status"))
+		return printErr("Unknown auth command", errors.New("use create, status, admin-key or import"))
 	}
 }
 
