@@ -25,10 +25,6 @@ class DebugRegressionItem:
 
     deployment_id: UUID
     route: str
-    kind: DebugRegressionItemKind
-    """Which signal regressed: latency (p95 at least 1.2x baseline across at least 100 slower requests), errors
-    (the share of HTTP 5xx responses rose at least 5 percentage points and 2x, with at least 10 failed and 50 total
-    requests on each side), or both."""
     p95_ms: int
     p95_base_ms: int
     affected_count: int
@@ -39,6 +35,10 @@ class DebugRegressionItem:
     first_detected_at: datetime.datetime
     last_detected_at: datetime.datetime
     state: DebugRegressionItemState
+    kind: DebugRegressionItemKind | Unset = UNSET
+    """Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at
+    least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least
+    5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both."""
     error_rate_pct: float | Unset = UNSET
     """Share of HTTP 5xx responses on the regressed deployment's route."""
     error_rate_base_pct: float | Unset = UNSET
@@ -60,8 +60,6 @@ class DebugRegressionItem:
 
         route = self.route
 
-        kind: str = self.kind
-
         p95_ms = self.p95_ms
 
         p95_base_ms = self.p95_base_ms
@@ -75,6 +73,10 @@ class DebugRegressionItem:
         last_detected_at = self.last_detected_at.isoformat()
 
         state: str = self.state
+
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind
 
         error_rate_pct = self.error_rate_pct
 
@@ -104,7 +106,6 @@ class DebugRegressionItem:
             {
                 "deployment_id": deployment_id,
                 "route": route,
-                "kind": kind,
                 "p95_ms": p95_ms,
                 "p95_base_ms": p95_base_ms,
                 "affected_count": affected_count,
@@ -114,6 +115,8 @@ class DebugRegressionItem:
                 "state": state,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if error_rate_pct is not UNSET:
             field_dict["error_rate_pct"] = error_rate_pct
         if error_rate_base_pct is not UNSET:
@@ -140,8 +143,6 @@ class DebugRegressionItem:
 
         route = d.pop("route")
 
-        kind = check_debug_regression_item_kind(d.pop("kind"))
-
         p95_ms = d.pop("p95_ms")
 
         p95_base_ms = d.pop("p95_base_ms")
@@ -155,6 +156,13 @@ class DebugRegressionItem:
         last_detected_at = datetime.datetime.fromisoformat(d.pop("last_detected_at"))
 
         state = check_debug_regression_item_state(d.pop("state"))
+
+        _kind = d.pop("kind", UNSET)
+        kind: DebugRegressionItemKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = check_debug_regression_item_kind(_kind)
 
         error_rate_pct = d.pop("error_rate_pct", UNSET)
 
@@ -193,7 +201,6 @@ class DebugRegressionItem:
         debug_regression_item = cls(
             deployment_id=deployment_id,
             route=route,
-            kind=kind,
             p95_ms=p95_ms,
             p95_base_ms=p95_base_ms,
             affected_count=affected_count,
@@ -201,6 +208,7 @@ class DebugRegressionItem:
             first_detected_at=first_detected_at,
             last_detected_at=last_detected_at,
             state=state,
+            kind=kind,
             error_rate_pct=error_rate_pct,
             error_rate_base_pct=error_rate_base_pct,
             error_count=error_count,

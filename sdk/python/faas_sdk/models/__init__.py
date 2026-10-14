@@ -755,7 +755,6 @@ from .debug_evidence_explanation_generated_by import DebugEvidenceExplanationGen
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
 from .debug_evidence_finding import DebugEvidenceFinding
 from .debug_evidence_finding_confidence import DebugEvidenceFindingConfidence
-from .debug_evidence_log_line import DebugEvidenceLogLine
 from .debug_evidence_recommendation import DebugEvidenceRecommendation
 from .debug_evidence_ref import DebugEvidenceRef
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
@@ -4829,7 +4828,6 @@ __all__ = (
     "DebugEvidenceExplanationStatus",
     "DebugEvidenceFinding",
     "DebugEvidenceFindingConfidence",
-    "DebugEvidenceLogLine",
     "DebugEvidenceRecommendation",
     "DebugEvidenceRef",
     "DebugGuestExecutionEvidence",

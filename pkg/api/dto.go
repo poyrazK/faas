@@ -11459,23 +11459,8 @@ type DebugRequestEvidenceResponse struct {
 	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
 	Spans                []DebugTelemetrySpan                 `json:"spans"`
 	SpansTruncated       bool                                 `json:"spans_truncated"`
-	// Logs are the lines the request emitted, matched by its trace ID, in
-	// chronological order; at most 20, the request's last lines when it
-	// logged more (LogsTruncated).
-	Logs          []DebugEvidenceLogLine   `json:"logs"`
-	LogsTruncated bool                     `json:"logs_truncated"`
-	Explanation   DebugEvidenceExplanation `json:"explanation"`
-	GeneratedAt   string                   `json:"generated_at"`
-}
-
-// DebugEvidenceLogLine is one log line attached to request evidence. The
-// message is bounded to 512 bytes; structured log fields are not included.
-type DebugEvidenceLogLine struct {
-	OccurredAt string `json:"occurred_at"`
-	Source     string `json:"source"`
-	Level      string `json:"level,omitempty"`
-	Stream     string `json:"stream,omitempty"`
-	Message    string `json:"message"`
+	Explanation          DebugEvidenceExplanation             `json:"explanation"`
+	GeneratedAt          string                               `json:"generated_at"`
 }
 
 // RequestAnalyticsRoute is one aggregated route/method row returned by

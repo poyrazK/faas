@@ -2383,6 +2383,9 @@ BEGIN
     ELSIF NEW.state = 'active' AND OLD.state <> 'active' THEN
         event_name := 'debug.regression.detected';
         transition_id := NEW.first_detected_at;
+    ELSIF NEW.state = 'active' AND OLD.kind = 'latency' AND NEW.kind <> 'latency' THEN
+        event_name := 'debug.regression.detected';
+        transition_id := NEW.first_detected_at;
     ELSIF NEW.state = 'resolved' AND OLD.state <> 'resolved' THEN
         event_name := 'debug.regression.resolved';
         transition_id := NEW.resolved_at;
@@ -47013,6 +47016,13 @@ CREATE TRIGGER dead_letter_events_environment_ownership BEFORE INSERT OR UPDATE 
 --
 
 CREATE TRIGGER debug_regression_observations_webhooks_insert AFTER INSERT ON public.debug_regression_observations FOR EACH ROW EXECUTE FUNCTION public.enqueue_debug_regression_webhooks();
+
+
+--
+-- Name: debug_regression_observations debug_regression_observations_webhooks_kind; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER debug_regression_observations_webhooks_kind AFTER UPDATE OF kind ON public.debug_regression_observations FOR EACH ROW WHEN (((old.kind = 'latency'::text) AND (new.kind <> 'latency'::text) AND (old.state = 'active'::text) AND (new.state = 'active'::text))) EXECUTE FUNCTION public.enqueue_debug_regression_webhooks();
 
 
 --

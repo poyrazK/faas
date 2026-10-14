@@ -17,7 +17,6 @@ const synthesisVersion = "rules-v1"
 // debugger evidence. The rules intentionally report observations and safe
 // next actions; they do not infer a causal chain when a stage is missing.
 func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExplanation {
-	evidence.Logs = synthesisLogs(evidence.Logs)
 	out := evidence.Explanation
 	if out.Status == "" {
 		out.Status = "unobserved"
@@ -172,13 +171,6 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (new queries, missing indexes, extra round trips) before rolling back.")
 	}
 
-	if errorLines := countErrorLogLines(evidence.Logs); errorLines > 0 {
-		logRef := addRef("logs", "Request log lines", "logs")
-		addFinding("error_logs", "The request logged errors",
-			fmt.Sprintf("The request emitted %d error-level log line(s); they are attached to this evidence.", errorLines), "medium", logRef)
-		addRecommendation("inspect_request_logs", "Read the request's error log lines alongside the failing span or stage.")
-	}
-
 	if len(evidence.Spans) > 0 {
 		spanRef := addRef("span", "Slowest retained span", "span:0")
 		primary := evidence.Spans[0]
@@ -227,7 +219,16 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	} else if evidence.Request.Guest != nil && evidence.Request.Guest.Outcome != "" && evidence.Request.Guest.Outcome != "ok" {
 		out.Diagnosis = "request_failure"
 		out.Confidence = "high"
-	} else if dependencyRegression != nil {
+	} else if failureRegression != nil && evidence.Regression != nil && RegressionHasErrors(evidence.Regression.Kind) {
+		// The route regressed on errors: a dependency that started failing
+		// explains it better than one that slowed down, matching the
+		// detector's choice of suspect.
+		out.Diagnosis = "dependency_failure"
+		out.Confidence = "high"
+	} else if dependencyRegression != nil && (evidence.Regression == nil || RegressionHasLatency(evidence.Regression.Kind)) {
+		// A slower dependency explains a latency regression, not a route
+		// that only started failing; that case falls through to
+		// error_regression, with the dependency still listed as a finding.
 		out.Diagnosis = "dependency_regression"
 		out.Confidence = "high"
 	} else if failureRegression != nil {
@@ -309,16 +310,6 @@ func dependencyLabel(item api.DebugDependencyLatencyItem) string {
 		return fmt.Sprintf("%q", item.Name)
 	}
 	return fmt.Sprintf("%s %q", kind, item.Name)
-}
-
-func countErrorLogLines(lines []api.DebugEvidenceLogLine) int {
-	count := 0
-	for _, line := range lines {
-		if errorLogLevel(line.Level) {
-			count++
-		}
-	}
-	return count
 }
 
 // spanDependencyLabel renders one classified span for prose, preferring its

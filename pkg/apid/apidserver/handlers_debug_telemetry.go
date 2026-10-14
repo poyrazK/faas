@@ -1407,44 +1407,40 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
 	// accepts up to one minute of future skew, so its matching window must too.
 	receivedUntil := now.Add(time.Minute)
-	if journalStore, ok := s.store.(state.RequestIDJournalReader); ok {
-		journal, journalErr := journalStore.FindRequestIDJournalByAppAndIdentifier(
-			r.Context(), acct.ID, app.ID, identifier, receivedFrom, receivedUntil, now,
-		)
-		if journalErr == nil {
-			if journal.TraceID != "" {
-				row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-					AppID:         stringToPgUUID(app.ID),
-					Identifier:    journal.TraceID,
-					ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-					ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-				})
-				if telemetryErr == nil {
-					item := debugTelemetryGetRowToItem(row)
-					item.RequestID = identifier
-					writeJSON(w, http.StatusOK, item)
-					return
-				}
-				if !errors.Is(telemetryErr, pgx.ErrNoRows) {
-					api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
-					return
-				}
+	journal, found, journalErr := s.findDebugRequestJournal(r.Context(), acct.ID, app.ID, identifier, receivedFrom, now)
+	if journalErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
+		return
+	}
+	if found {
+		if journal.TraceID != "" {
+			row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+				AppID:         stringToPgUUID(app.ID),
+				Identifier:    journal.TraceID,
+				ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+				ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
+			})
+			if telemetryErr == nil {
+				item := debugTelemetryGetRowToItem(row)
+				item.RequestID = identifier
+				writeJSON(w, http.StatusOK, item)
+				return
 			}
-			item := api.DebugTelemetryRequestItem{
-				RequestID: identifier, EvidenceStatus: "request_id_only",
-				ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+			if !errors.Is(telemetryErr, pgx.ErrNoRows) {
+				api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
+				return
 			}
-			if journal.TraceID != "" {
-				traceID := journal.TraceID
-				item.TraceID = &traceID
-			}
-			writeJSON(w, http.StatusOK, item)
-			return
 		}
-		if !errors.Is(journalErr, pgx.ErrNoRows) {
-			api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
-			return
+		item := api.DebugTelemetryRequestItem{
+			RequestID: identifier, EvidenceStatus: "request_id_only",
+			ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
 		}
+		if journal.TraceID != "" {
+			traceID := journal.TraceID
+			item.TraceID = &traceID
+		}
+		writeJSON(w, http.StatusOK, item)
+		return
 	}
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
@@ -1488,12 +1484,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    s.resolveDebugRequestTraceIdentifier(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now),
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-	})
+	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now, now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
 		return
@@ -1551,7 +1542,6 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		explanation = buildDebugEvidenceDegradedExplanation(spans)
 	}
 
-	logs, logsTruncated := s.debugEvidenceLogs(r.Context(), acct.ID, app.ID, request)
 	response := api.DebugRequestEvidenceResponse{
 		Request:                    request,
 		Regression:                 regression,
@@ -1563,8 +1553,6 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		DependencyComparison:       s.debugEvidenceDependencyComparison(r, app, acct, request, now.Add(-retention), now),
 		Spans:                      spans,
 		SpansTruncated:             truncated,
-		Logs:                       logs,
-		LogsTruncated:              logsTruncated,
 		Explanation:                explanation,
 		GeneratedAt:                now.Format(time.RFC3339Nano),
 	}

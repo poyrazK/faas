@@ -2641,18 +2641,6 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
-	// Logs are the request's own log lines, matched by trace ID.
-	Logs          []DebugLogLineView
-	LogsTruncated bool
-}
-
-// DebugLogLineView is one bounded log line attached to request evidence.
-type DebugLogLineView struct {
-	OccurredAt string
-	Source     string
-	Level      string
-	Stream     string
-	Message    string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

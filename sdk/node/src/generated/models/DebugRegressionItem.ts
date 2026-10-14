@@ -10,9 +10,9 @@ export type DebugRegressionItem = {
   deployment_id: string;
   route: string;
   /**
-   * Which signal regressed: latency (p95 at least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least 5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both.
+   * Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least 5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both.
    */
-  kind: 'latency' | 'errors' | 'latency_and_errors';
+  kind?: 'latency' | 'errors' | 'latency_and_errors';
   p95_ms: number;
   p95_base_ms: number;
   /**

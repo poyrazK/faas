@@ -3,9 +3,7 @@ package debugger
 // adr: 127 — error-rate route regressions (amendment): thresholds and kinds.
 
 import (
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -114,65 +112,44 @@ func TestSynthesizeLegacyRegressionIsLatency(t *testing.T) {
 	}
 }
 
-func TestEvidenceLogsKeepsLastLinesInOrder(t *testing.T) {
-	base := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
-	var events []EvidenceLogInput
-	// The store returns newest first; 25 lines, two with sub-second times.
-	for i := 24; i >= 0; i-- {
-		events = append(events, EvidenceLogInput{OccurredAt: base.Add(time.Duration(i) * 100 * time.Millisecond), Source: "runtime", Level: "INFO", Message: "line " + string(rune('a'+i)) + "\n"})
-	}
-	got := EvidenceLogs(events)
-	if len(got) != EvidenceLogMaxLines {
-		t.Fatalf("lines = %d, want %d", len(got), EvidenceLogMaxLines)
-	}
-	if got[0].Message != "line f" || got[len(got)-1].Message != "line y" {
-		t.Fatalf("kept %q..%q, want the last 20 lines in order", got[0].Message, got[len(got)-1].Message)
-	}
-	for i := 1; i < len(got); i++ {
-		prev, _ := time.Parse(time.RFC3339Nano, got[i-1].OccurredAt)
-		cur, _ := time.Parse(time.RFC3339Nano, got[i].OccurredAt)
-		if cur.Before(prev) {
-			t.Fatalf("lines out of order at %d: %s before %s", i, got[i].OccurredAt, got[i-1].OccurredAt)
-		}
-	}
-	if got[0].Level != "info" {
-		t.Fatalf("level = %q, want lower-cased", got[0].Level)
-	}
-}
-
-func TestEvidenceLogsBoundsMessages(t *testing.T) {
-	got := EvidenceLogs([]EvidenceLogInput{{OccurredAt: time.Now(), Source: "runtime", Message: strings.Repeat("x", 4096)}})
-	if len(got) != 1 || len(got[0].Message) > EvidenceLogMaxMessageBytes {
-		t.Fatalf("message length = %d, want ≤ %d", len(got[0].Message), EvidenceLogMaxMessageBytes)
-	}
-	if empty := EvidenceLogs(nil); empty == nil || len(empty) != 0 {
-		t.Fatalf("no events must encode as an empty array, got %#v", empty)
-	}
-}
-
-func TestSynthesizeReportsErrorLogs(t *testing.T) {
-	evidence := api.DebugRequestEvidenceResponse{
-		Request: api.DebugTelemetryRequestItem{Status: 200},
-		Logs: []api.DebugEvidenceLogLine{
-			{Level: "info", Message: "starting"},
-			{Level: "error", Message: "payment declined"},
-			{Level: "FATAL", Message: "giving up"},
+// For a route that regressed on errors, a failing dependency outranks a slow
+// one, matching the detector's suspect.
+func TestSynthesizeErrorRegressionPrefersFailingDependency(t *testing.T) {
+	comparison := &api.DebugDependencyDeploymentComparison{
+		PreviousDeploymentTag: "v80",
+		Dependencies: []api.DebugDependencyLatencyItem{
+			{Type: AppDependencyType, Kind: "postgresql", Name: "SELECT orders", BaselineP95MS: 82, CurrentP95MS: 191, RegressionFactor: 2.33, Regression: true},
+			{Type: AppDependencyType, Kind: "http", Name: "api.stripe.com", BaselineErrorRatePct: 0, CurrentErrorRatePct: 12.5, FailureRegression: true},
 		},
 	}
-	got := Synthesize(evidence)
-	var detail string
-	for _, finding := range got.Findings {
-		if finding.Code == "error_logs" {
-			detail = finding.Detail
-		}
+	errorsRoute := Synthesize(api.DebugRequestEvidenceResponse{
+		Request:              api.DebugTelemetryRequestItem{Status: 200},
+		Regression:           &api.DebugRegressionItem{Route: "POST /pay", Kind: RegressionKindErrors, Factor: "1.00", ErrorRatePct: 12.5},
+		DependencyComparison: comparison,
+	})
+	if errorsRoute.Diagnosis != "dependency_failure" || errorsRoute.Confidence != "high" {
+		t.Fatalf("errors route diagnosis = %q/%q, want dependency_failure/high", errorsRoute.Diagnosis, errorsRoute.Confidence)
 	}
-	if !strings.Contains(detail, "2 error-level") {
-		t.Fatalf("error_logs finding = %q, want 2 error-level lines", detail)
+	latencyRoute := Synthesize(api.DebugRequestEvidenceResponse{
+		Request:              api.DebugTelemetryRequestItem{Status: 200},
+		Regression:           &api.DebugRegressionItem{Route: "POST /pay", Kind: RegressionKindLatency, Factor: "2.10"},
+		DependencyComparison: comparison,
+	})
+	if latencyRoute.Diagnosis != "dependency_regression" {
+		t.Fatalf("latency route diagnosis = %q, want dependency_regression", latencyRoute.Diagnosis)
 	}
-	if strings.Contains(detail, "payment declined") {
-		t.Fatalf("finding prose must not quote log messages: %q", detail)
-	}
-	if hasFinding(Synthesize(api.DebugRequestEvidenceResponse{Logs: []api.DebugEvidenceLogLine{{Level: "warn"}}}), "error_logs") {
-		t.Fatal("warnings are not error lines")
+}
+
+// A route that only started failing is not explained by a slower dependency.
+func TestSynthesizeErrorsOnlyRouteIgnoresSlowDependencyAsDiagnosis(t *testing.T) {
+	got := Synthesize(api.DebugRequestEvidenceResponse{
+		Request:    api.DebugTelemetryRequestItem{Status: 200},
+		Regression: &api.DebugRegressionItem{Route: "POST /pay", Kind: RegressionKindErrors, Factor: "1.00", ErrorRatePct: 12.5, ErrorRateBasePct: 0.4},
+		DependencyComparison: &api.DebugDependencyDeploymentComparison{Dependencies: []api.DebugDependencyLatencyItem{
+			{Type: AppDependencyType, Kind: "postgresql", Name: "SELECT orders", BaselineP95MS: 82, CurrentP95MS: 191, RegressionFactor: 2.33, Regression: true},
+		}},
+	})
+	if got.Diagnosis != "error_regression" || !hasFinding(got, "dependency_regression") {
+		t.Fatalf("diagnosis = %q findings %+v, want error_regression with the slow dependency still listed", got.Diagnosis, got.Findings)
 	}
 }

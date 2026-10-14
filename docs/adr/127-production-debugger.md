@@ -216,7 +216,7 @@ or raw span attribute is passed to the synthesis layer. A future prose model
 can consume this same redacted envelope without changing the customer-facing
 contract.
 
-### 7.2 Amendment (2026-10-13): error-rate regressions and request logs
+### 7.2 Amendment (2026-10-13): error-rate regressions and request-ID links
 
 **Error-rate regressions.** The detector originally opened observations only
 on p95 latency, so a deployment that made a route fail without slowing it
@@ -225,34 +225,44 @@ responses in the same two 30-minute windows (`RequestTelemetryErrorsByRoute`,
 weighted by the collapsed-row count). A route regresses on errors when both
 windows have at least 50 requests, the current window has at least 10 failed
 requests, and the error share rose by at least 5 percentage points and at
-least 2x.
+least 2x. Platform-caused 5xx responses (wake failures, queue timeouts) count
+toward the deployment that served them, as cold boots already do for latency.
 
 Each observation records `kind` (`latency`, `errors`, `latency_and_errors`)
 plus `error_rate_pct`, `error_rate_base_pct` and `error_count`, all CHECKed.
 The (app, deployment, route) key is unchanged, so acknowledge, dismiss and
 resolve still act on one lifecycle per route; `kind` reflects the latest pass.
+When an observation that held only the latency signal gains the error signal
+it reopens: state returns to `active` with a new `first_detected_at`, any
+acknowledgement or dismissal is cleared, and a fresh `debug.regression.detected`
+is enqueued, because a route that starts failing is a new incident even when
+its slowness was already triaged. A pass that cannot read the error rates
+skips the app, and one that cannot read the latency drilldown skips the
+route, so a transient read failure never rewrites an observation with only
+the other signal.
+
 `regression_factor` stays the latency inflation and stores 1.00 for an
 error-only observation whose p95 did not rise, which satisfies its ≥ 1.0
-CHECK. The suspected dependency for an error-only regression prefers a
-dependency whose error rate regressed (ADR-958 §5). The synthesis reports
-`error_regression` (failures outrank slowness when both regressed). The
-regressions API, event stream, `debug.regression.*` webhooks, CLI and
-dashboard carry the kind and rates. The latency drilldown is now read once per
-app pass instead of once per regressed route.
+CHECK; observations that include the error signal sort first. The suspected
+dependency for an error-only regression prefers a dependency whose error rate
+regressed (ADR-958 §5), and the synthesis reports `error_regression`, ranking
+a failing dependency above a slow one for such routes. The regressions API,
+event stream, `debug.regression.*` webhooks, CLI and dashboard carry the kind
+and rates. The latency drilldown is now read once per app pass instead of
+once per regressed route.
 
-**Request logs in evidence.** Request evidence carries up to 20 log lines the
-request emitted, matched by its trace ID within a bounded window around the
-request (its last lines when it logged more). Messages pass through the
-ADR-096 redactor (`pkg/redact`, the one that guards app-error samples)
-and are bounded to 512 bytes; structured fields are omitted. §7.1 still holds:
-the synthesis layer receives log levels only, never log text, and reports
-`error_logs` when the request logged error-level lines.
+**Request IDs open evidence.** The request lookup, the evidence endpoint and
+the dashboard request view share one lookup: the identifier is first matched
+as a telemetry row or trace ID, then resolved through the request-ID journal.
+App errors return the public `x-faas-request-id` as a dashed UUID while the
+gateway issues it as 32 hex characters; both spellings resolve, so each
+app-error request links straight to its evidence.
 
-**Request IDs open evidence.** The evidence endpoint and the dashboard request
-view resolve a public `x-faas-request-id` through the request-ID journal, as
-the request lookup endpoint already did, so the request IDs app errors record
-link straight to the request's evidence. App errors return the ID as a dashed
-UUID while the gateway issues it as 32 hex characters; both spellings resolve.
+**Request logs are not attached to evidence.** `log_events` holds only the
+HTTP access projection of request telemetry; runtime output is not projected
+with trace IDs. Trace-matched lines would repeat the request itself (and its
+5xx access line would read as an application error), so log lines are left
+out of evidence until runtime logs carry trace IDs.
 
 ## Why now
 

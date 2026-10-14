@@ -36,7 +36,10 @@ END $$;
 -- +goose StatementEnd
 
 -- Same fan-out as 20261009183654862, with the regression kind and error
--- rates added to the payload. Delivery idempotency keys are unchanged.
+-- rates added to the payload. Delivery idempotency keys are unchanged. An
+-- active latency observation that gains the error signal is reopened by the
+-- detector with a new first_detected_at, so it enqueues a fresh detected
+-- event under a new transition id.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enqueue_debug_regression_webhooks()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -52,6 +55,9 @@ BEGIN
         event_name := 'debug.regression.detected';
         transition_id := NEW.first_detected_at;
     ELSIF NEW.state = 'active' AND OLD.state <> 'active' THEN
+        event_name := 'debug.regression.detected';
+        transition_id := NEW.first_detected_at;
+    ELSIF NEW.state = 'active' AND OLD.kind = 'latency' AND NEW.kind <> 'latency' THEN
         event_name := 'debug.regression.detected';
         transition_id := NEW.first_detected_at;
     ELSIF NEW.state = 'resolved' AND OLD.state <> 'resolved' THEN
@@ -96,6 +102,15 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+
+-- The state trigger covers reopening an acknowledged, dismissed or resolved
+-- observation; this one covers an observation that was already active.
+DROP TRIGGER IF EXISTS debug_regression_observations_webhooks_kind ON debug_regression_observations;
+CREATE TRIGGER debug_regression_observations_webhooks_kind
+AFTER UPDATE OF kind ON debug_regression_observations
+FOR EACH ROW
+WHEN (OLD.kind = 'latency' AND NEW.kind <> 'latency' AND OLD.state = 'active' AND NEW.state = 'active')
+EXECUTE FUNCTION enqueue_debug_regression_webhooks();
 
 -- +goose Down
 -- +goose StatementBegin

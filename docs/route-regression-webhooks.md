@@ -64,10 +64,12 @@ The event payload is metadata-only:
   `affected_count` are the failed requests, and `regression_factor` is 1.00
   unless the p95 also rose.
 
-Each deployment and route has one observation, so a route that later regresses
-on the other signal too changes `kind` without sending another `detected`
-event. Payloads sent before error-rate detection have no `kind`; they are
-latency regressions.
+Each deployment and route has one observation. When a latency regression later
+starts failing too, the observation reopens as a new incident: it becomes
+`active` again even if you had acknowledged or dismissed it, gets a new
+`transition_id`, and sends another `debug.regression.detected` with `kind`
+`latency_and_errors`. Payloads sent before error-rate detection have no
+`kind`; they are latency regressions.
 
 `suspected_dependency` names the database, cache, HTTP, RPC or messaging
 dependency most likely behind the regression on that route. It is present when

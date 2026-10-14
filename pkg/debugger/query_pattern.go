@@ -13,8 +13,11 @@ const DebugQueryPatternMaxBytes = 256
 
 var (
 	// sanitizeDebugDBStatement turns "$1" into "$?"; numbered and named
-	// placeholders mean the same as a literal.
-	queryNumberedPlaceholder = regexp.MustCompile(`\$\?|\$\d+|\B:[A-Za-z_][A-Za-z0-9_]*`)
+	// placeholders mean the same as a literal. A named placeholder is a
+	// colon not preceded by a word character or another colon, so a
+	// Postgres cast such as "id::uuid" is left alone.
+	queryNumberedPlaceholder = regexp.MustCompile(`\$\?|\$\d+`)
+	queryNamedPlaceholder    = regexp.MustCompile(`(^|[^:\w]):[A-Za-z_][A-Za-z0-9_]*`)
 	queryInList              = regexp.MustCompile(`(?i)\bIN\s*\(\s*\?(?:\s*,\s*\?)*\s*\)`)
 	queryValuesRow           = `\(\s*\?(?:\s*,\s*\?)*\s*\)`
 	queryValuesRows          = regexp.MustCompile(`(?i)\bVALUES\s*(` + queryValuesRow + `)(?:\s*,\s*` + queryValuesRow + `)+`)
@@ -31,6 +34,7 @@ func QueryPattern(statement string) string {
 		return ""
 	}
 	statement = queryNumberedPlaceholder.ReplaceAllString(statement, "?")
+	statement = queryNamedPlaceholder.ReplaceAllString(statement, "${1}?")
 	statement = queryInList.ReplaceAllString(statement, "IN (?)")
 	statement = queryValuesRows.ReplaceAllString(statement, "VALUES $1")
 	statement = strings.Join(strings.Fields(statement), " ")

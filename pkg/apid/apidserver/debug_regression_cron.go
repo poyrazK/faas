@@ -269,10 +269,17 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 	for _, row := range current {
 		currentP95ByRoute[row.Route] = row.P95Ms
 	}
-	// The error-rate signal is additive: when its read fails the pass still
-	// detects latency regressions.
-	baselineErrors := s.regressionErrorsByRoute(ctx, log, appID, prev.DeploymentID, prevStart, prevEnd)
-	currentErrors := s.regressionErrorsByRoute(ctx, log, appID, cur.DeploymentID, curStart, curEnd)
+	// Like the p95 reads, a failed error-rate read skips the app for this
+	// pass: recording latency alone would rewrite an observation's kind and
+	// zero its stored error rates.
+	baselineErrors, err := s.regressionErrorsByRoute(ctx, appID, prev.DeploymentID, prevStart, prevEnd)
+	if err != nil {
+		return fmt.Errorf("baseline error rates: %w", err)
+	}
+	currentErrors, err := s.regressionErrorsByRoute(ctx, appID, cur.DeploymentID, curStart, curEnd)
+	if err != nil {
+		return fmt.Errorf("current error rates: %w", err)
+	}
 
 	pass := &debugRegressionPass{
 		server: s, log: log, appID: appID, cur: cur, prev: prev,
@@ -307,10 +314,14 @@ func (p *debugRegressionPass) evaluateRoute(ctx context.Context, route string, b
 	if baseP95 > 0 {
 		threshold := int32(float64(baseP95) * debugRegressionFactor)
 		if curP95 > threshold {
-			if rows, ok := p.latencyDrilldown(ctx); ok {
-				affected = countAffectedRequests(rows, route, threshold)
-				latency = affected >= debugRegressionMinAffected
+			rows, ok := p.latencyDrilldown(ctx)
+			if !ok {
+				// Without the drilldown the latency signal is unknown; skip
+				// the route rather than record errors alone over it.
+				return
 			}
+			affected = countAffectedRequests(rows, route, threshold)
+			latency = affected >= debugRegressionMinAffected
 		}
 	}
 	errorsRegressed := debugger.ErrorRateRegressed(baseErrors, curErrors)
@@ -427,8 +438,8 @@ func (s *server) recordRegressionObservation(ctx context.Context, log *slog.Logg
 }
 
 // regressionErrorsByRoute reads per-route request and 5xx counts for one
-// deployment window; nil on failure.
-func (s *server) regressionErrorsByRoute(ctx context.Context, log *slog.Logger, appID, deploymentID pgtype.UUID, from, until time.Time) map[string]debugger.RouteErrors {
+// deployment window.
+func (s *server) regressionErrorsByRoute(ctx context.Context, appID, deploymentID pgtype.UUID, from, until time.Time) (map[string]debugger.RouteErrors, error) {
 	rows, err := s.store.RequestTelemetryErrorsByRoute(ctx, sqlc.RequestTelemetryErrorsByRouteParams{
 		AppID:        appID,
 		DeploymentID: deploymentID,
@@ -436,14 +447,13 @@ func (s *server) regressionErrorsByRoute(ctx context.Context, log *slog.Logger, 
 		ReceivedAt_2: pgtype.Timestamptz{Time: until, Valid: true},
 	})
 	if err != nil {
-		log.Warn("regression_cron: error rates unavailable", "app", appID.String(), "deployment", deploymentID.String(), "err", err)
-		return nil
+		return nil, err
 	}
 	out := make(map[string]debugger.RouteErrors, len(rows))
 	for _, row := range rows {
 		out[row.Route] = debugger.RouteErrors{Requests: row.Requests, Errors: row.ErrorRequests}
 	}
-	return out
+	return out, nil
 }
 
 // debugRegressionCandidateRoutes returns the current routes that have a

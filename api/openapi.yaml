@@ -81597,8 +81597,8 @@ components:
 
     DebugRequestEvidenceResponse:
       type: object
-      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, the request's own log lines, matching regression, and explanation."
-      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, logs, logs_truncated, explanation, generated_at]
+      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
+      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -81622,25 +81622,8 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/DebugTelemetrySpan' }
         spans_truncated: { type: boolean }
-        logs:
-          type: array
-          maxItems: 20
-          description: "Log lines the request emitted, matched by its trace ID, in chronological order. Empty without a trace ID."
-          items: { $ref: '#/components/schemas/DebugEvidenceLogLine' }
-        logs_truncated: { type: boolean, description: "True when the request logged more than 20 lines; logs then holds its last 20." }
         explanation: { $ref: '#/components/schemas/DebugEvidenceExplanation' }
         generated_at: { type: string, format: date-time }
-
-    DebugEvidenceLogLine:
-      type: object
-      description: "One log line attached to request evidence. The message is bounded to 512 bytes; structured log fields are not included."
-      required: [occurred_at, source, message]
-      properties:
-        occurred_at: { type: string, format: date-time }
-        source: { type: string, maxLength: 32 }
-        level: { type: string, maxLength: 16 }
-        stream: { type: string, maxLength: 16 }
-        message: { type: string, maxLength: 512 }
 
     DebugRegressionsResponse:
       type: object
@@ -81657,11 +81640,11 @@ components:
     DebugRegressionItem:
       type: object
       description: "One regression observation row."
-      required: [deployment_id, route, kind, p95_ms, p95_base_ms, affected_count, regression_factor, first_detected_at, last_detected_at, state]
+      required: [deployment_id, route, p95_ms, p95_base_ms, affected_count, regression_factor, first_detected_at, last_detected_at, state]
       properties:
         deployment_id: { type: string, format: uuid }
         route: { type: string }
-        kind: { type: string, enum: [latency, errors, latency_and_errors], description: "Which signal regressed: latency (p95 at least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least 5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both." }
+        kind: { type: string, enum: [latency, errors, latency_and_errors], description: "Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least 5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both." }
         p95_ms: { type: integer, minimum: 0 }
         p95_base_ms: { type: integer, minimum: 0 }
         affected_count: { type: integer, minimum: 0, description: "Requests slower than the latency threshold; for an errors-only observation, the failed requests." }

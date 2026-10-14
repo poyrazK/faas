@@ -69,7 +69,7 @@ func TestDebugRegressionCandidateRoutes(t *testing.T) {
 	if want := []string{"GET /a", "POST /pay"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
 	}
-	// A failed error-rate read (nil maps) still walks the latency routes.
+	// Without error-rate rows (no traffic counted in a window) the latency routes are still walked.
 	if got := apidserver.DebugRegressionCandidateRoutes(baselineP95, currentP95, nil, nil); !reflect.DeepEqual(got, []string{"GET /a"}) {
 		t.Fatalf("latency-only routes = %v", got)
 	}

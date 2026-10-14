@@ -51,6 +51,13 @@ func TestQueryPatternKeepsDistinctQueriesApart(t *testing.T) {
 	if a == b || a == "" {
 		t.Fatalf("patterns %q and %q must differ", a, b)
 	}
+	// Postgres casts are not placeholders.
+	if got := QueryPattern("SELECT id::text FROM t WHERE id = :id"); got != "SELECT id::text FROM t WHERE id = ?" {
+		t.Fatalf("cast pattern = %q", got)
+	}
+	if QueryPattern("SELECT id::text FROM t") == QueryPattern("SELECT id::int FROM t") {
+		t.Fatal("different casts merged into one pattern")
+	}
 	if strings.Contains(QueryPattern("SELECT * FROM users WHERE email = 'alice@example.com'"), "alice") {
 		t.Fatal("pattern leaked a literal")
 	}
