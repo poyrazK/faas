@@ -1644,6 +1644,11 @@ from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
 from .issue_symbolication_result import IssueSymbolicationResult
 from .issue_team import IssueTeam
+from .issue_tracker_auto_sync import IssueTrackerAutoSync
+from .issue_tracker_auto_sync_outcome import IssueTrackerAutoSyncOutcome
+from .issue_tracker_auto_sync_pending_state import IssueTrackerAutoSyncPendingState
+from .issue_tracker_auto_sync_provider_state import IssueTrackerAutoSyncProviderState
+from .issue_tracker_auto_sync_source_state import IssueTrackerAutoSyncSourceState
 from .issue_tracker_link import IssueTrackerLink
 from .issue_tracker_link_provider import IssueTrackerLinkProvider
 from .issue_tracker_provider_status import IssueTrackerProviderStatus
@@ -3842,6 +3847,10 @@ from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
+from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+from .update_issue_tracker_auto_sync_request_expected_issue_state import (
+    UpdateIssueTrackerAutoSyncRequestExpectedIssueState,
+)
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
@@ -5711,6 +5720,11 @@ __all__ = (
     "IssueState",
     "IssueSymbolicationResult",
     "IssueTeam",
+    "IssueTrackerAutoSync",
+    "IssueTrackerAutoSyncOutcome",
+    "IssueTrackerAutoSyncPendingState",
+    "IssueTrackerAutoSyncProviderState",
+    "IssueTrackerAutoSyncSourceState",
     "IssueTrackerLink",
     "IssueTrackerLinkProvider",
     "IssueTrackerProviderStatus",
@@ -7745,6 +7759,8 @@ __all__ = (
     "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
     "UpdateIssueImpactAlertPolicyRequest",
+    "UpdateIssueTrackerAutoSyncRequest",
+    "UpdateIssueTrackerAutoSyncRequestExpectedIssueState",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",

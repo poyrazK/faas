@@ -31,3 +31,17 @@ test('native creation keeps the stable request identity and recovery URL',async(
  const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
  const result=await AppsService.createNativeIssueTicket({slug:'payments',issueId:issue,requestBody:body});assert.equal(result.state,'linked');assert.equal(result.request_id,body.request_id);
 });
+
+test('automatic sync uses a known policy revision and aligned native snapshot',async(t)=>{
+ const issue='33333333-3333-4333-8333-333333333333',link='55555555-5555-4555-8555-555555555555';
+ const status:NativeIssueTrackerStatus={issue_id:issue,link_id:link,installation_id:42,repository:'owner/repo',repository_id:100,status:{provider:'github',url:'https://github.com/owner/repo/issues/42',id:'42',state:'open'}};
+ const body={enabled:true,expected_revision:7,expected_status:status,expected_issue_state:'open' as const};
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.url,`/v1/apps/payments/issues/${issue}/tracker-links/${link}/auto-sync`);
+  if(req.method==='PUT'){const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),body);}else{assert.equal(req.method,'GET');}
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({link_id:link,enabled:req.method==='PUT',revision:8,source_issue_id:issue,outcome:'matched'}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ await AppsService.getIssueTrackerAutoSync({slug:'payments',issueId:issue,linkId:link});
+ const out=await AppsService.updateIssueTrackerAutoSync({slug:'payments',issueId:issue,linkId:link,requestBody:body});assert.equal(out.enabled,true);assert.equal(out.revision,8);
+});

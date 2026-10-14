@@ -70,6 +70,7 @@ import type { IssueSplitRule } from '../models/IssueSplitRule.js';
 import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequest.js';
 import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
 import type { IssueTeam } from '../models/IssueTeam.js';
+import type { IssueTrackerAutoSync } from '../models/IssueTrackerAutoSync.js';
 import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
@@ -151,6 +152,7 @@ import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatu
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
+import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTrackerAutoSyncRequest.js';
 import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
@@ -2870,6 +2872,105 @@ export class AppsService {
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
         409: `Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket.`,
         502: `GitHub rejected creation or connected credentials are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an automatic native GitHub lifecycle policy.
+   * Requires app read access and Issues entitlement. Unconfigured references return disabled with revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables an aligned policy.
+   * @returns IssueTrackerAutoSync Opt-in policy and latest durable reconciliation outcome.
+   * @throws ApiError
+   */
+  public static getIssueTrackerAutoSync({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the automatic sync reference.
+     */
+    issueId: string,
+    /**
+     * Stored GitHub reference whose automatic push policy is inspected or configured.
+     */
+    linkId: string,
+  }): CancelablePromise<IssueTrackerAutoSync> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Enable or disable future Gregale-to-GitHub lifecycle pushes.
+   * Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences competing policy changes. Enabling requires expected_status from a fresh native read and expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned repository binding. The background worker preserves uncertain pending writes and pauses on provider edits or unsupported states or changed groups/connections. Disabling does not require live GitHub access. A provider write already dispatched during disable cannot be recalled.
+   * @returns IssueTrackerAutoSync Persisted automatic push policy with its new configuration revision.
+   * @throws ApiError
+   */
+  public static updateIssueTrackerAutoSync({
+    slug,
+    issueId,
+    linkId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Gregale issue identity whose current group contains the automatic sync reference.
+     */
+    issueId: string,
+    /**
+     * Stored GitHub reference whose automatic push policy is inspected or configured.
+     */
+    linkId: string,
+    /**
+     * Explicit delegation decision and observed policy/native snapshot for automatic push.
+     */
+    requestBody: UpdateIssueTrackerAutoSyncRequest,
+  }): CancelablePromise<IssueTrackerAutoSync> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Policy or native snapshot changed or lifecycle alignment is required before delegation.`,
+        502: `Native provider snapshot could not be confirmed.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

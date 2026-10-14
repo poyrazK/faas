@@ -10468,3 +10468,10 @@ const (
 	IssueTrackerResponseMaxBytes      = 1 << 20
 	IssueTrackerRequestTimeoutSeconds = 15
 )
+
+// Automatic native tracker reconciliation is bounded independently of issue ingestion.
+const (
+	IssueTrackerAutoSyncBatch         = 5
+	IssueTrackerAutoSyncCheckInterval = 5 * time.Minute
+	IssueTrackerAutoSyncLease         = 2 * IssueTrackerRequestTimeoutSeconds * time.Second
+)

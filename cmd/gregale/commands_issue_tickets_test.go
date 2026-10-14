@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -135,5 +136,67 @@ func TestIssueTicketNativeCLIUsesServerReceiptWithoutProviderCredential(t *testi
 	}
 	if runIssueTickets(append(args, "--token-env", "LOCAL_TOKEN"), provider) == 0 || calls != 2 {
 		t.Fatal("native create allowed provider credential")
+	}
+}
+
+func TestIssueTicketAutoSyncCLIRequiresAlignmentAndPreservesPolicyRevision(t *testing.T) {
+	issueID := "33333333-3333-4333-8333-333333333333"
+	linkID := "55555555-5555-4555-8555-555555555555"
+	snapshot := api.NativeIssueTrackerStatus{IssueID: issueID, LinkID: linkID, InstallationID: 42, Repository: "owner/repo", RepositoryID: 100, Status: api.IssueTrackerProviderStatus{Provider: "github", URL: "https://github.com/owner/repo/issues/42", ID: "42", State: "open"}}
+	policy := api.IssueTrackerAutoSync{LinkID: linkID, SourceIssueID: issueID, Outcome: "disabled"}
+	writes := 0
+	source := "open"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/apps/payments/issues/"+issueID {
+			_ = json.NewEncoder(w).Encode(api.IssueDetail{Issue: api.Issue{ID: issueID, State: source}})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/native-status") {
+			_ = json.NewEncoder(w).Encode(snapshot)
+			return
+		}
+		if r.URL.Path != "/v1/apps/payments/issues/"+issueID+"/tracker-links/"+linkID+"/auto-sync" {
+			t.Error("wrong policy route")
+		}
+		if r.Method == "PUT" {
+			writes++
+			var in api.UpdateIssueTrackerAutoSyncRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedRevision != policy.Revision {
+				t.Error("policy revision lost", in, err)
+			}
+			if in.Enabled && (in.ExpectedStatus == nil || *in.ExpectedStatus != snapshot || in.ExpectedIssueState != "open") {
+				t.Error("aligned snapshot lost")
+			}
+			policy.Enabled = in.Enabled
+			policy.Revision++
+			policy.Outcome = "disabled"
+			if in.Enabled {
+				policy.Outcome = "matched"
+			}
+		}
+		_ = json.NewEncoder(w).Encode(policy)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_GITHUB_TOKEN", "")
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	args := []string{"auto-sync", "--app", "payments", "--issue", issueID, "--link", linkID}
+	if cmdIssueTickets(append(args, "--enable")) != 0 || writes != 1 {
+		t.Fatal("native policy enable failed")
+	}
+	if cmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 {
+		t.Fatal("native policy disable failed")
+	}
+	source = "resolved"
+	if cmdIssueTickets(append(args, "--enable")) == 0 || writes != 2 {
+		t.Fatal("unaligned policy enabled")
+	}
+	if cmdIssueTickets(append(args, "--enable", "--disable")) == 0 || writes != 2 {
+		t.Fatal("ambiguous mode reached provider")
 	}
 }

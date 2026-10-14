@@ -826,6 +826,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		startProfileDeploymentChecks(ctx, srv, log)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
+		srv.startIssueTrackerAutoSync(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
 		// side (DELETE /v1/account, POST /v1/account/restore) is here

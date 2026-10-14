@@ -36,13 +36,57 @@ def test_native_creation_retains_request_identity_and_recovery_url():
     from faas_sdk.models.native_issue_ticket_result import NativeIssueTicketResult
 
     issue, request_id, link = uuid4(), uuid4(), uuid4()
-    payload = {"request_id": str(request_id), "repository": "owner/repo", "title": "Fix", "recovery_url": "https://github.com/owner/repo/issues/42"}
+    payload = {
+        "request_id": str(request_id),
+        "repository": "owner/repo",
+        "title": "Fix",
+        "recovery_url": "https://github.com/owner/repo/issues/42",
+    }
     body = CreateNativeIssueTicketRequest.from_dict(payload)
     kwargs = create_native_issue_ticket._get_kwargs("payments", issue, body=body)
     assert kwargs["method"] == "post"
     assert kwargs["url"] == f"/v1/apps/payments/issues/{issue}/native-tickets"
     assert kwargs["json"] == payload
-    result = NativeIssueTicketResult.from_dict({"request_id": str(request_id), "state": "linked", "ticket_url": payload["recovery_url"], "link_id": str(link)})
+    result = NativeIssueTicketResult.from_dict(
+        {"request_id": str(request_id), "state": "linked", "ticket_url": payload["recovery_url"], "link_id": str(link)}
+    )
     assert result.request_id == request_id
     assert result.link_id == link
     assert result.state == "linked"
+
+
+def test_auto_sync_routes_keep_revision_and_aligned_native_snapshot():
+    from faas_sdk.api.apps import get_issue_tracker_auto_sync, update_issue_tracker_auto_sync
+    from faas_sdk.models.issue_tracker_auto_sync import IssueTrackerAutoSync
+    from faas_sdk.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+
+    issue, link = uuid4(), uuid4()
+    status = {
+        "issue_id": str(issue),
+        "link_id": str(link),
+        "installation_id": 42,
+        "repository": "owner/repo",
+        "repository_id": 100,
+        "status": {"provider": "github", "url": "https://github.com/owner/repo/issues/42", "id": "42", "state": "open"},
+    }
+    payload = {"enabled": True, "expected_revision": 7, "expected_status": status, "expected_issue_state": "open"}
+    body = UpdateIssueTrackerAutoSyncRequest.from_dict(payload)
+    route = f"/v1/apps/payments/issues/{issue}/tracker-links/{link}/auto-sync"
+    assert get_issue_tracker_auto_sync._get_kwargs("payments", issue, link)["url"] == route
+    update = update_issue_tracker_auto_sync._get_kwargs("payments", issue, link, body=body)
+    assert update["method"] == "put"
+    assert update["url"] == route
+    assert update["json"] == payload
+    policy = IssueTrackerAutoSync.from_dict(
+        {
+            "link_id": str(link),
+            "enabled": True,
+            "revision": 8,
+            "source_issue_id": str(issue),
+            "outcome": "conflict",
+            "reason": "provider_changed",
+        }
+    )
+    assert policy.revision == 8
+    assert policy.outcome == "conflict"
+    assert policy.reason == "provider_changed"

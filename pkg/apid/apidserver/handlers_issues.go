@@ -27,6 +27,8 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueSavedView))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueSavedView))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/native-tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createNativeIssueTicket))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueTrackerAutoSync)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateIssueTrackerAutoSync))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getNativeIssueTrackerStatus)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateNativeIssueTrackerStatus))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}/tracker-links", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueTrackerLinks)))

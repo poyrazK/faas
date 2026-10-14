@@ -58298,3 +58298,81 @@ CREATE TABLE public.issue_tracker_links (
  UNIQUE(issue_id,provider,external_key)
 );
 CREATE INDEX issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id,created_at DESC,id DESC);
+
+--
+-- Name: issue_tracker_auto_sync; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_auto_sync (
+    link_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_issue_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    binding_fingerprint text NOT NULL,
+    baseline jsonb NOT NULL,
+    source_state text NOT NULL,
+    pending_state text DEFAULT ''::text NOT NULL,
+    outcome text DEFAULT 'matched'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    claim_id uuid,
+    claim_until timestamp with time zone,
+    last_checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_tracker_auto_sync_baseline_check CHECK ((jsonb_typeof(baseline) = 'object'::text)),
+    CONSTRAINT issue_tracker_auto_sync_binding_fingerprint_check CHECK ((binding_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_tracker_auto_sync_outcome_check CHECK ((outcome = ANY (ARRAY['disabled'::text, 'matched'::text, 'pending'::text, 'applied'::text, 'error'::text, 'conflict'::text, 'blocked'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_pending_state_check CHECK ((pending_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_reason_check CHECK ((octet_length(reason) <= 128)),
+    CONSTRAINT issue_tracker_auto_sync_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_auto_sync_source_state_check CHECK ((source_state = ANY (ARRAY['open'::text, 'resolved'::text])))
+);
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_pkey PRIMARY KEY (link_id);
+
+
+--
+-- Name: issue_tracker_auto_sync_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_auto_sync_due_idx ON public.issue_tracker_auto_sync USING btree (next_check_at, link_id) WHERE (enabled AND (outcome = ANY (ARRAY['matched'::text, 'pending'::text, 'applied'::text, 'error'::text])));
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_source_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_source_issue_id_fkey FOREIGN KEY (source_issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;

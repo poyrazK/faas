@@ -16,9 +16,10 @@ type Connection struct {
 	InstallationID, RepositoryID, OwnerID int64
 }
 type Prepared struct {
-	Issue      api.Issue
-	Link       api.IssueTrackerLink
-	Connection Connection
+	GroupFingerprint string
+	Issue            api.Issue
+	Link             api.IssueTrackerLink
+	Connection       Connection
 }
 type Host interface {
 	Prepare(context.Context) (Prepared, error)
@@ -51,7 +52,7 @@ func valid(p Prepared) error {
 	return nil
 }
 func same(a, b Prepared) bool {
-	return a.Issue.ID == b.Issue.ID && a.Issue.AppID == b.Issue.AppID && a.Issue.State == b.Issue.State && a.Link.ID == b.Link.ID && a.Link.URL == b.Link.URL && a.Link.Provider == b.Link.Provider && a.Connection == b.Connection
+	return a.Issue.ID == b.Issue.ID && a.Issue.AppID == b.Issue.AppID && a.Issue.State == b.Issue.State && a.Link.ID == b.Link.ID && a.Link.URL == b.Link.URL && a.Link.Provider == b.Link.Provider && a.Connection == b.Connection && a.GroupFingerprint == b.GroupFingerprint
 }
 func fromStatus(s issuetracker.Status) api.IssueTrackerProviderStatus {
 	return api.IssueTrackerProviderStatus{Provider: s.Provider, URL: s.URL, ID: s.ID, State: s.State, TeamID: s.TeamID, StateID: s.StateID}

@@ -66,3 +66,33 @@ func TestIssueNativeCreationSDKRetainsRequestIdentity(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestIssueNativeAutoSyncSDKKeepsRevisionAndDelegationSnapshot(t *testing.T) {
+	snapshot := faas.NativeIssueTrackerStatus{IssueID: "issue", LinkID: "link", Repository: "owner/repo", RepositoryID: 100, InstallationID: 42, Status: faas.IssueTrackerProviderStatus{Provider: "github", URL: "https://github.com/owner/repo/issues/42", ID: "42", State: "open"}}
+	input := faas.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedRevision: 7, ExpectedStatus: &snapshot, ExpectedIssueState: "open"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/apps/payments/issues/issue/tracker-links/link/auto-sync" {
+			t.Error("wrong policy route")
+		}
+		if r.Method == "PUT" {
+			var in faas.UpdateIssueTrackerAutoSyncRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || !in.Enabled || in.ExpectedRevision != 7 || in.ExpectedStatus == nil || *in.ExpectedStatus != snapshot || in.ExpectedIssueState != "open" {
+				t.Error("delegation snapshot lost", err)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(faas.IssueTrackerAutoSync{LinkID: "link", Enabled: r.Method == "PUT", Revision: 8, SourceIssueID: "issue", Outcome: "matched"})
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetIssueTrackerAutoSync(t.Context(), "payments", "issue", "link"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.UpdateIssueTrackerAutoSync(t.Context(), "payments", "issue", "link", input)
+	if err != nil || !out.Enabled || out.Revision != 8 {
+		t.Fatal(out, err)
+	}
+}

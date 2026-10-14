@@ -35,7 +35,7 @@ func (h nativeIssueTrackerHost) Prepare(ctx context.Context) (issuetrackers.Prep
 	if err != nil {
 		return issuetrackers.Prepared{}, err
 	}
-	p := issuetrackers.Prepared{Issue: detail.Issue}
+	p := issuetrackers.Prepared{Issue: detail.Issue, GroupFingerprint: issuetrackers.GroupScopeFingerprint(detail)}
 	cursor := state.IssueCursor{}
 	for h.linkID != "" {
 		page, e := links.ListIssueTrackerLinks(ctx, h.app.ID, h.app.AccountID, p.Issue.ID, cursor)
@@ -109,12 +109,16 @@ func (s *server) nativeIssueTrackerService(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("link_id must be a nonzero UUID"))
 		return issuetrackers.Service{}, false
 	}
+	return s.issueTrackerServiceFor(app, acct, r.PathValue("issue_id"), id.String()), true
+}
+func (s *server) issueTrackerServiceFor(app state.App, acct state.Account, issue, link string) issuetrackers.Service {
 	provider := s.nativeTrackerProvider
 	if provider == nil {
 		provider = issuetracker.NewClient(nil)
 	}
-	return issuetrackers.Service{Host: nativeIssueTrackerHost{server: s, app: app, account: acct, issueID: r.PathValue("issue_id"), linkID: id.String()}, Provider: provider}, true
+	return issuetrackers.Service{Host: nativeIssueTrackerHost{server: s, app: app, account: acct, issueID: issue, linkID: link}, Provider: provider}
 }
+
 func (s *server) getNativeIssueTrackerStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	service, ok := s.nativeIssueTrackerService(w, r, acct)
 	if !ok {

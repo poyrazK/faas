@@ -978,7 +978,7 @@ Connect GitHub and bind the app repository through the existing app connection s
 
 `GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status` returns the canonical issue/reference IDs, installation/repository identity and observed status. POST to the same route accepts `desired_state` and `expected` provider status, and pushes only the current Gregale open/resolved state. Reads require app read permission and Issues entitlement; pushes require deploy-write and normal session MFA. Typed Go, Node and Python clients expose both operations. Tokens stay server-side through the existing githubd credential lifecycle, and errors omit provider credentials and bodies.
 
-Native mode cannot be combined with `--token-env` or `--linear-state`; there is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. Native GitHub ticket creation is described below. Linear native OAuth, provider callbacks and continuous reconciliation remain separate work.
+Native mode cannot be combined with `--token-env` or `--linear-state`; there is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. Native GitHub ticket creation is described below. Linear native OAuth and provider callbacks remain separate work; automatic GitHub push is described below.
 
 ## Native GitHub ticket creation
 
@@ -996,4 +996,28 @@ If the provider outcome is unconfirmed, the server refuses another create. After
 
 A `created` result means GitHub accepted the ticket but Gregale attachment needs retry; the CLI exits unsuccessfully and prints the confirmed URL. Repeat identical inputs to resume attachment. A `linked` receipt is retained even if the link is subsequently removed, so retrying never creates another ticket. Existing link quota, group lookup and audit rules apply; a full group may leave the external ticket awaiting attachment.
 
-The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear connection and automatic reconciliation remain future work. See [ADR-1212](adr/1212-native-github-ticket-creation.md).
+The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear connection remains future work; automatic GitHub push is described below. See [ADR-1212](adr/1212-native-github-ticket-creation.md).
+
+## Automatic native GitHub lifecycle sync
+
+Enable automatic pushes for one stored GitHub reference after its lifecycle is aligned with Gregale:
+
+```sh
+gregale issues tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID
+# Explicitly delegate future lifecycle pushes:
+gregale issues tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID --enable
+# Stop future automatic pushes:
+gregale issues tickets auto-sync --app my-api --issue ISSUE_UUID --link LINK_UUID --disable
+```
+
+Policies are disabled by default. Configuration requires the app owner, Issues entitlement and deploy-write; session callers also need MFA. Inspection requires app read access. Enable uses a fresh native GitHub snapshot and policy revision; if the provider and Gregale states differ, use explicit `issues tickets sync --native` to align them first. No local GitHub credential is used.
+
+Gregale drives this automatic mode. Verified resolution in a fixing deployment closes the linked GitHub ticket; reopening or regression reopens it. The worker never creates tickets or pulls GitHub closures into Gregale. Manual pull still requires fixing-deployment evidence. GitHub Issues write permission must remain available on the connected installation.
+
+The worker polls every minute, takes at most five due references per batch, and normally checks each policy every five minutes. Backlogs can extend that delay. The policy reports `revision`, `source_issue_id`, last confirmed `source_state`/`provider_state`, any `pending_state`, `outcome`, `reason`, `last_checked_at` and `next_check_at`. Use `--json` for structured output. Transient provider errors retain evidence and retry; an uncertain write is confirmed by a later observation before repeating a push.
+
+Unexpected provider edits, a changed source group or connection, ignored/unsupported states, and owner/entitlement loss pause the policy. Outcomes `conflict` and `blocked` require manual triage and an explicit aligned `--enable`; they do not silently resume. `enabled: true` means the delegation remains configured, while the outcome tells you whether the worker is paused. The connection and canonical source are pinned; merges/splits require review before re-enabling. Removing a tracker reference removes its policy.
+
+Disabling remains available when repository access is revoked and invalidates the worker claim. A GitHub write already dispatched during disable cannot be recalled. The provider and Gregale do not share an atomic transaction; see [ADR-1213](adr/1213-automatic-native-github-lifecycle.md) for the recovery and concurrency limits.
+
+The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear connections, provider callbacks and automatic inbound resolution remain separate work.

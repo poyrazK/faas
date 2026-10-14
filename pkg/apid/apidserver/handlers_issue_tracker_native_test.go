@@ -240,3 +240,172 @@ func TestNativeIssueTicketCreationPersistsRetryEvidenceAndScopesConnection(t *te
 		t.Fatal("revoked repository created", w.Code)
 	}
 }
+
+// adr: 1213
+func TestNativeIssueTrackerAutoSyncScopesClaimsPushesAndPauses(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "native-auto")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	fixed := apidserver.IssueSeedDeployment(t, e, app, 2)
+	ingest := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	reporter := map[string]string{"Authorization": "Bearer " + ingest.Token}
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "AutoError", Message: "failed"}, reporter), 202)
+	issuePath := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, nil), 200)
+	path := issuePath + "/tracker-links/" + link.ID + "/auto-sync"
+	native := issuePath + "/tracker-links/" + link.ID + "/native-status"
+	for _, method := range []string{"GET", "PUT"} {
+		if w := e.Do(t, method, path, api.UpdateIssueTrackerAutoSyncRequest{}, reporter); w.Code != 401 && w.Code != 403 {
+			t.Fatal("reporter accessed policy", method, w.Code)
+		}
+	}
+	original := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path, nil, nil), 200)
+	if original.Enabled || original.Revision != 0 || original.Outcome != "disabled" {
+		t.Fatal("policy enabled by default", original)
+	}
+	store := apidserver.IssueNativeStore(e)
+	acct := apidserver.IssueNativeAccount(e)
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{AccountID: acct.ID, InstallationID: 42, DefaultBranch: "main", AuditGithubLogin: "owner", SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: app.ID, AccountID: acct.ID, BindingID: uuid.NewString(), InstallID: 42, RepoFullName: "Owner/Repo", OwnerID: 10, RepoID: 100, ProductionBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	gh := &nativeGitHubFake{repoID: 100}
+	provider := &nativeStatusFake{status: issuetracker.Status{Provider: "github", URL: link.URL, ID: "42", State: "open"}}
+	apidserver.IssueNativeSetClients(e, gh, provider)
+	snapshot := apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", native, nil, nil), 200)
+	in := api.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedStatus: &snapshot, ExpectedIssueState: "open"}
+	enabled := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path, in, nil), 200)
+	if !enabled.Enabled || enabled.Revision != 1 || enabled.Outcome != "matched" || provider.writes != 0 {
+		t.Fatal("opt-in policy invalid", enabled)
+	}
+	if w := e.Do(t, "PUT", path, in, nil); w.Code != 409 {
+		t.Fatal("stale policy revision accepted", w.Code, w.Body.String())
+	}
+	policies := store.(state.IssueTrackerAutoSyncStore)
+	var wg sync.WaitGroup
+	claims := make(chan state.IssueTrackerAutoSyncRecord, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := policies.ClaimIssueTrackerAutoSync(t.Context())
+			if err == nil {
+				claims <- r
+			} else if !errors.Is(err, state.ErrNoIssueTrackerAutoSyncWork) {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(claims)
+	if len(claims) != 1 {
+		t.Fatal("multiple workers claimed one reference", len(claims))
+	}
+	claim := <-claims
+	if _, err := policies.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", issuePath+"/actions", api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID}, nil), 200)
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	applied := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path, nil, nil), 200)
+	if applied.Outcome != "applied" || applied.ProviderState != "resolved" || provider.writes != 1 || provider.status.State != "resolved" || applied.PendingState != "" {
+		t.Fatal("background resolution failed", applied)
+	}
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := policies.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path, api.UpdateIssueTrackerAutoSyncRequest{ExpectedRevision: 1}, nil), 200)
+	if disabled.Enabled || disabled.Revision != 2 {
+		t.Fatal(disabled)
+	}
+	if err := policies.CheckIssueTrackerAutoSyncClaim(t.Context(), claim); !errors.Is(err, state.ErrIssueTrackerAutoSyncClaimLost) {
+		t.Fatal("disable retained claim", err)
+	}
+	if _, err := policies.FinishIssueTrackerAutoSync(t.Context(), claim); !errors.Is(err, state.ErrIssueTrackerAutoSyncClaimLost) {
+		t.Fatal("stale worker resurrected disabled policy", err)
+	}
+	snapshot = apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", native, nil, nil), 200)
+	in.ExpectedRevision = 2
+	in.ExpectedIssueState = "resolved"
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path, in, nil), 200)
+	provider.status.State = "open"
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	paused := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path, nil, nil), 200)
+	if paused.Outcome != "conflict" || paused.Reason != "provider_changed" || provider.writes != 1 || paused.NextCheckAt != nil {
+		t.Fatal("remote edit overwritten", paused)
+	}
+	reads := provider.reads
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	if provider.reads != reads {
+		t.Fatal("paused policy automatically resumed")
+	}
+	provider.status.State = "resolved"
+	snapshot = apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", native, nil, nil), 200)
+	in.ExpectedRevision = 3
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path, in, nil), 200)
+	other := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "OtherAutoError", Message: "another"}, reporter), 202)
+	apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", base+"/issues/"+other.IssueID+"/actions", api.IssueActionRequest{Action: "merge", TargetIssueID: accepted.IssueID}, nil), 200)
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	regrouped := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path, nil, nil), 200)
+	if regrouped.Outcome != "conflict" || provider.writes != 1 {
+		t.Fatal("regrouped source retained authority", regrouped)
+	}
+	foreign := apidserver.SeedPGApp(t, e, "native-auto-foreign")
+	if w := e.Do(t, "GET", "/v1/apps/"+foreign.Slug+"/issues/"+other.IssueID+"/tracker-links/"+link.ID+"/auto-sync", nil, nil); w.Code != 404 {
+		t.Fatal("cross-app policy exposed", w.Code)
+	}
+	// Disabling remains available after installation visibility is revoked.
+	gh.repoID = 200
+	if w := e.Do(t, "PUT", path, api.UpdateIssueTrackerAutoSyncRequest{ExpectedRevision: 4}, nil); w.Code != 200 {
+		t.Fatal("revoked connection could not disable", w.Code, w.Body.String())
+	}
+	// A legacy tombstone may have status=deleted without DeletedAt. It must not dispatch.
+	gh.repoID = 100
+	snapshot = apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", native, nil, nil), 200)
+	in.ExpectedRevision = 5
+	in.ExpectedIssueState = snapshot.Status.State
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path, in, nil), 200)
+	pgStore := store.(*state.PgStore)
+	current, err := store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := pgStore.CompareAndSetAppStatus(t.Context(), app.ID, current.Status, state.AppDeleted); err != nil || !ok {
+		t.Fatal(err)
+	}
+	mints := gh.mints
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	tombstoned, err := policies.GetIssueTrackerAutoSync(t.Context(), app.ID, acct.ID, accepted.IssueID, link.ID)
+	if err != nil || tombstoned.Policy.Outcome != "blocked" || gh.mints != mints {
+		t.Fatal("deleted app used GitHub credentials", tombstoned.Policy, err)
+	}
+	// Restoring the app does not silently resume; an owner reviews and re-enables.
+	if ok, err := pgStore.CompareAndSetAppStatus(t.Context(), app.ID, state.AppDeleted, current.Status); err != nil || !ok {
+		t.Fatal(err)
+	}
+	in.ExpectedRevision = 6
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path, in, nil), 200)
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	mints = gh.mints
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	downgraded, err := policies.GetIssueTrackerAutoSync(t.Context(), app.ID, acct.ID, accepted.IssueID, link.ID)
+	if err != nil || downgraded.Policy.Outcome != "blocked" || gh.mints != mints {
+		t.Fatal("downgrade used GitHub credentials", downgraded.Policy, err)
+	}
+
+}

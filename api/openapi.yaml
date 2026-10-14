@@ -13656,6 +13656,64 @@ paths:
         '502': { description: GitHub rejected creation or connected credentials are unavailable. }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Gregale issue identity whose current group contains the automatic sync reference.
+        schema: { type: string, format: uuid }
+      - name: link_id
+        in: path
+        required: true
+        description: Stored GitHub reference whose automatic push policy is inspected or configured.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getIssueTrackerAutoSync
+      summary: Read an automatic native GitHub lifecycle policy.
+      description: Requires app read access and Issues entitlement. Unconfigured references return disabled with revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables an aligned policy.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Opt-in policy and latest durable reconciliation outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerAutoSync' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: updateIssueTrackerAutoSync
+      summary: Enable or disable future Gregale-to-GitHub lifecycle pushes.
+      description: Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences competing policy changes. Enabling requires expected_status from a fresh native read and expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned repository binding. The background worker preserves uncertain pending writes and pauses on provider edits or unsupported states or changed groups/connections. Disabling does not require live GitHub access. A provider write already dispatched during disable cannot be recalled.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit delegation decision and observed policy/native snapshot for automatic push.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueTrackerAutoSyncRequest' }
+      responses:
+        '200':
+          description: Persisted automatic push policy with its new configuration revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerAutoSync' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Policy or native snapshot changed or lifecycle alignment is required before delegation. }
+        '502': { description: Native provider snapshot could not be confirmed. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82296,6 +82354,33 @@ components:
         state: { type: string, enum: [created, linked] }
         ticket_url: { type: string, format: uri }
         link_id: { type: string, format: uuid }
+
+    IssueTrackerAutoSync:
+      type: object
+      description: Opt-in automatic Gregale-to-GitHub policy and latest durable worker outcome for a tracker reference.
+      required: [link_id, enabled, revision, source_issue_id, outcome]
+      properties:
+        link_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64, minimum: 0 }
+        source_issue_id: { type: string, format: uuid }
+        source_state: { type: string, enum: [open, resolved] }
+        provider_state: { type: string, enum: [open, resolved] }
+        pending_state: { type: string, enum: [open, resolved] }
+        outcome: { type: string, enum: [disabled, matched, pending, applied, error, conflict, blocked] }
+        reason: { type: string }
+        last_checked_at: { type: string, format: date-time }
+        next_check_at: { type: string, format: date-time }
+    UpdateIssueTrackerAutoSyncRequest:
+      type: object
+      description: Explicit automatic push delegation against a known policy revision and aligned native/source lifecycle snapshot.
+      additionalProperties: false
+      required: [enabled, expected_revision]
+      properties:
+        enabled: { type: boolean }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        expected_status: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
+        expected_issue_state: { type: string, enum: [open, resolved] }
 
     IssueTrackerProviderStatus:
       description: Observed lifecycle and identity of an external tracker issue.

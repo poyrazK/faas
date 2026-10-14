@@ -262,3 +262,14 @@ func (c *Client) CreateNativeIssueTicket(ctx context.Context, slug, issueID stri
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/issues/"+url.PathEscape(issueID)+"/native-tickets", in, &out)
 	return out, err
 }
+
+func (c *Client) GetIssueTrackerAutoSync(ctx context.Context, slug, issue, link string) (IssueTrackerAutoSync, error) {
+	var out IssueTrackerAutoSync
+	err := c.do(ctx, "GET", issueTrackerLinksPath(slug, issue)+"/"+url.PathEscape(link)+"/auto-sync", nil, &out)
+	return out, err
+}
+func (c *Client) UpdateIssueTrackerAutoSync(ctx context.Context, slug, issue, link string, in UpdateIssueTrackerAutoSyncRequest) (IssueTrackerAutoSync, error) {
+	var out IssueTrackerAutoSync
+	err := c.do(ctx, "PUT", issueTrackerLinksPath(slug, issue)+"/"+url.PathEscape(link)+"/auto-sync", in, &out)
+	return out, err
+}

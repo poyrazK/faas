@@ -1298,3 +1298,11 @@ func IssueNativeAccount(e pgHandlerEnv) state.Account { return e.acct }
 func IssueNativeSetTicketProvider(e pgHandlerEnv, p issuetracker.Provider) {
 	e.s.nativeTicketProvider = p
 }
+
+func IssueNativeRunAutoSyncBatch(e pgHandlerEnv, ctx context.Context) {
+	e.s.runIssueTrackerAutoSyncBatch(ctx)
+}
+func IssueNativeAutoSyncDue(e pgHandlerEnv, ctx context.Context, link string) error {
+	_, err := e.pool.Exec(ctx, "UPDATE issue_tracker_auto_sync SET next_check_at=now(),claim_until=now()-interval '1 second' WHERE link_id=$1", link)
+	return err
+}

@@ -557,3 +557,6 @@ type UpdateNativeIssueTrackerStatusRequest = api.UpdateNativeIssueTrackerStatusR
 
 type CreateNativeIssueTicketRequest = api.CreateNativeIssueTicketRequest
 type NativeIssueTicketResult = api.NativeIssueTicketResult
+
+type IssueTrackerAutoSync = api.IssueTrackerAutoSync
+type UpdateIssueTrackerAutoSyncRequest = api.UpdateIssueTrackerAutoSyncRequest

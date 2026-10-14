@@ -814,6 +814,7 @@ export type { IssueSplitRuleUndoRequest } from './models/IssueSplitRuleUndoReque
 export type { IssueSplitRuleUpdate } from './models/IssueSplitRuleUpdate.js';
 export type { IssueSymbolicationResult } from './models/IssueSymbolicationResult.js';
 export type { IssueTeam } from './models/IssueTeam.js';
+export type { IssueTrackerAutoSync } from './models/IssueTrackerAutoSync.js';
 export type { IssueTrackerLink } from './models/IssueTrackerLink.js';
 export type { IssueTrackerProviderStatus } from './models/IssueTrackerProviderStatus.js';
 export type { JobArtifactDownloadResponse } from './models/JobArtifactDownloadResponse.js';
@@ -1996,6 +1997,7 @@ export type { UpdateFeatureFlagsRequest } from './models/UpdateFeatureFlagsReque
 export type { UpdateFinancialBudgetRequest } from './models/UpdateFinancialBudgetRequest.js';
 export type { UpdateInboundWebhookEndpointRequest } from './models/UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateIssueImpactAlertPolicyRequest } from './models/UpdateIssueImpactAlertPolicyRequest.js';
+export type { UpdateIssueTrackerAutoSyncRequest } from './models/UpdateIssueTrackerAutoSyncRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';

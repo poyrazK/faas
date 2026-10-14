@@ -15,11 +15,14 @@ import (
 
 func cmdIssueTickets(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "usage: gregale issues tickets <create|sync> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: gregale issues tickets <create|sync|auto-sync> [flags]")
 		if len(args) == 0 {
 			return 1
 		}
 		return 0
+	}
+	if args[0] == "auto-sync" {
+		return cmdIssueAutoSync(args[1:])
 	}
 	if len(args) > 0 && args[0] == "sync" {
 		return runIssueTicketSync(args[1:], issuetracker.NewClient(nil))
