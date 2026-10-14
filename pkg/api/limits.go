@@ -402,6 +402,10 @@ const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
 const EnvironmentGitOpsReportRunsMaxPerSource = 1000
 
+// Bounded, value-free customer notification payloads and durable deduplication.
+const EnvironmentGitOpsNotificationDetailsMax = 100
+const EnvironmentGitOpsNotificationStateBytes = 2048
+
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute

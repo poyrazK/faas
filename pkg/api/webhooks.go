@@ -113,6 +113,7 @@ var AllowedAppWebhookEvents = []string{
 // wildcard. Their filter is a non-empty subset of these release events.
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+	"environment.gitops.changed",
 }
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live

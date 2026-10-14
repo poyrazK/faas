@@ -25439,6 +25439,43 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitPlan
+      summary: Preview field changes for an immutable commit without approval or writes.
+      requestBody:
+        required: true
+        description: Preview field changes for an immutable commit without approval or writes. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRevisionRequest'
+      responses:
+        '200':
+          description: Preview field changes for an immutable commit without approval or writes. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitPlanResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview:
     parameters:
     - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
@@ -48187,6 +48224,50 @@ components:
       required:
       - commit_sha
       additionalProperties: false
+    EnvironmentGitOpsChangedWebhookPayload:
+      type: object
+      description: Value-free account webhook emitted atomically with a current GitOps report or completed source poll. Unchanged status is silent; first failures and later recoveries are delivered to explicit environment.gitops.changed subscribers. The drift and source axes remain independent.
+      required: [version, transition_id, source_id, project, environment, axis, previous_status, status, generation, observed_version, observed_at, dashboard_path, changes, blocking_reasons, details_truncated]
+      properties:
+        version: { type: integer, enum: [1] }
+        transition_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        project: { type: string }
+        environment: { type: string }
+        axis: { type: string, enum: [drift, source] }
+        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified] }
+        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified] }
+        generation: { type: integer, format: int64, minimum: 0 }
+        observed_version: { type: integer, format: int64, minimum: 0 }
+        approved_revision_id: { type: string, format: uuid }
+        commit_sha: { type: string, pattern: '^[a-f0-9]{40}$' }
+        run_id: { type: string, format: uuid }
+        error_code: { type: string }
+        observed_at: { type: string, format: date-time }
+        dashboard_path: { type: string }
+        changes:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EnvironmentGitOpsChange' }
+        blocking_reasons:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        details_truncated: { type: boolean }
+    PreviewEnvironmentGitPlanResponse:
+      type: object
+      description: Read-only candidate plan pinned to a source generation and observed intent version. Values are omitted. The plan cannot authorize approval, adoption, deployment or runtime readiness. Re-run after source or environment changes.
+      required: [source_id, provider, project, environment, observed_at, read_only, values_redacted, plan]
+      properties:
+        source_id: { type: string, format: uuid }
+        provider: { type: string, enum: [github, gitlab] }
+        project: { type: string }
+        environment: { type: string }
+        observed_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        values_redacted: { type: boolean, enum: [true] }
+        plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
     PreviewEnvironmentGitRevisionResponse:
       type: object
       description: Verified Git bytes with the digest and source generation needed for approval.
@@ -80217,7 +80298,7 @@ components:
 
     CreateAccountReleaseWebhookRequest:
       type: object
-      description: Subscribe a target to release events emitted by every app owned by the active account.
+      description: Subscribe to account release outcomes and environment GitOps status transitions.
       required: [target_url, webhook_secret, event_filter]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -80225,9 +80306,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 4
+          maxItems: 5
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -80302,9 +80383,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 4
+          maxItems: 5
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed"] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }

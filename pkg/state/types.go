@@ -3720,6 +3720,7 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
+	AppWebhookEventEnvironmentGitOpsChanged         AppWebhookEvent = "environment.gitops.changed"
 	AppWebhookEventRealtimeSchedulePublished        AppWebhookEvent = "realtime.schedule.published"
 	AppWebhookEventRealtimeScheduleFailed           AppWebhookEvent = "realtime.schedule.failed"
 	AppWebhookEventRealtimeScheduleSkipped          AppWebhookEvent = "realtime.schedule.skipped"
@@ -3848,6 +3849,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueImpactThresholdReached,
 	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
