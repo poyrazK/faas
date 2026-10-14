@@ -2293,7 +2293,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--failure-source <SOURCE>] --webhook-url <URL> [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--failure-source <SOURCE>] --webhook-url <URL> [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2304,6 +2304,7 @@ Add an alert rule
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
 | `--event-subscription-id <UUID>` | Subscription UUID for event consumer metrics |  |
+| `--edge-rule-id <ID>` | edge rule for edge_rule_hits / edge_rule_log_hits (empty = all rules) |  |
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--webhook-url <URL>` | https webhook URL | required |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
@@ -5528,10 +5529,11 @@ gregale jobs artifacts nightly-report latest 0
 
 Read unsuccessful-task logs by default, or select one task
 
-`gregale jobs logs [--failed-only] [--unsuccessful-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
+`gregale jobs logs [--follow] [--failed-only] [--unsuccessful-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--follow` | stream the task&#39;s output live until it finishes (-f; ADR-1163) |  |
 | `--failed-only` | scan task pages and read current logs for failed, timeout, and oom tasks |  |
 | `--unsuccessful-only` | scan task pages and read current logs for failed, timeout, oom, and cancelled tasks |  |
 | `--task <N>` | task index shortcut; omitted Job uses saved defaults, omitted run uses latest |  |
@@ -5543,6 +5545,7 @@ Examples:
 
 ```sh
 gregale jobs logs
+gregale jobs logs nightly-report latest 0 --follow
 gregale jobs logs nightly-report
 gregale jobs logs --failed-only
 gregale jobs logs --task 0
@@ -8613,7 +8616,7 @@ Add an edge rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` |
-| `--match-host <HOST>` | host to match | required |
+| `--match-host <HOST>` | host to match; @app covers every host the app serves | required |
 | `--match-path <PATH>` | path glob to match (default / covers only the root; /** covers every path) |  |
 | `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
 | `--match-header <Name=Value>` | exact request header selector (repeat) |  |
@@ -8737,7 +8740,7 @@ Update one edge rule
 
 | Flag | Meaning | |
 |---|---|---|
-| `--match-host <HOST>` | new host to match |  |
+| `--match-host <HOST>` | new host to match; @app covers every host the app serves |  |
 | `--match-path <PATH>` | new path to match |  |
 | `--match-method <METHOD>` | replacement HTTP method (repeatable) |  |
 | `--match-header <NAME=VALUE>` | replacement exact request header selector (repeatable) |  |
@@ -8866,6 +8869,30 @@ List recorded versions of an app&#39;s edge-rule set (--version N shows its rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--version <N>` | show the rules recorded in this version |  |
+
+### edge-rules recipes
+
+List protection recipes: ready-made rules that start in log mode
+
+### edge-rules recipe
+
+Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
+
+`gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] <recipe>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | restrict the rule to one hostname (default: every host the app serves) |  |
+| `--set <NAME=VALUE>` | recipe parameter name=value (repeat) |  |
+| `--enforce` | enforce immediately instead of starting in log mode |  |
+
+Examples:
+
+```sh
+gregale edge-rules recipe block-unverified-bots --app my-api
+gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24
+```
 
 ### edge-rules stats
 
@@ -9963,7 +9990,7 @@ Run untrusted code in an isolated disposable microVM, or one command from an OCI
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
-| `--detach` | with --image, queue the run and print its id without waiting (-d) |  |
+| `--detach` | with --image, queue the run and print its id without waiting (-d); otherwise output streams live |  |
 | `--workflow-id <ID>` | caller-generated workflow grouping id |  |
 | `--step-label <LABEL>` | short label for this step within --workflow-id |  |
 | `--profile <P>` | preinstalled dependencies (data requires python313) | one of `standard` · `python-data-v1` |

@@ -1,4 +1,4 @@
--- filename: 20261014090000001_mcp_access_policy_promotion_fence.sql
+-- filename: 20261014140500001_mcp_access_policy_promotion_fence.sql
 -- Serialize every account's edge-rule commits with guarded MCP promotions.
 -- Deferred firing covers API, manifest, rollback and direct transactional writes.
 -- +goose Up

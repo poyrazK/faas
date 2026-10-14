@@ -184,7 +184,7 @@ func TestCredentialGenerationLegacyBackfillPostgres(t *testing.T) {
 	if err = store.SaveMCPCatalogObserverOAuth(ctx, job, status); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../../migrations/20261014090000014_mcp_oauth_credential_generation.sql")
+	migration, err := os.ReadFile("../../../migrations/20261014140500014_mcp_oauth_credential_generation.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

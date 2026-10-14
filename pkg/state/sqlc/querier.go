@@ -1665,6 +1665,9 @@ type Querier interface {
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)
 	IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg IssueUpsertImpactAlertPolicyParams) error
 	JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error)
+	// ADR-1163: the job task a live log stream follows, scoped to the account
+	// and job name, with the node of its current instance (if any).
+	JobTaskLogTarget(ctx context.Context, db DBTX, arg JobTaskLogTargetParams) (JobTaskLogTargetRow, error)
 	KeyedReplayAdvanceLane(ctx context.Context, db DBTX, arg KeyedReplayAdvanceLaneParams) error
 	KeyedReplayChild(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
 	KeyedReplayChildID(ctx context.Context, db DBTX, parentInvocationID pgtype.UUID) (pgtype.UUID, error)

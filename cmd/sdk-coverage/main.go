@@ -939,6 +939,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download": "DownloadJobArtifact",
 	"POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry":                        "RetryJobTask",
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs":                          "GetJobTaskLogs",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream":                   "StreamJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
