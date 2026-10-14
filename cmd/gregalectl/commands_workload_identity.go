@@ -74,17 +74,17 @@ func cmdWorkloadIdentityWrite(sub string, args []string, stdout, stderr io.Write
 	fs, out := workloadIdentityFlags("workload-identity " + sub)
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *out == "" {
-		fmt.Fprintf(stderr, "usage: gregalectl workload-identity %s --out DIR\n", sub)
+		_, _ = fmt.Fprintf(stderr, "usage: gregalectl workload-identity %s --out DIR\n", sub)
 		return 1
 	}
 	kid, kept, err := writeWorkloadIdentity(*out, sub == subRotate)
 	if err != nil {
-		fmt.Fprintf(stderr, "gregalectl workload-identity %s: %v\n", sub, err)
+		_, _ = fmt.Fprintf(stderr, "gregalectl workload-identity %s: %v\n", sub, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "workload identity key id: %s\n", kid)
+	_, _ = fmt.Fprintf(stdout, "workload identity key id: %s\n", kid)
 	if kept != "" {
-		fmt.Fprintf(stdout, "kept previous key id in the JWKS: %s (install the JWKS on the control plane before the key on compute nodes)\n", kept)
+		_, _ = fmt.Fprintf(stdout, "kept previous key id in the JWKS: %s (install the JWKS on the control plane before the key on compute nodes)\n", kept)
 	}
 	return 0
 }
@@ -161,13 +161,13 @@ func writeWorkloadIdentityFile(path string, data []byte, mode os.FileMode) error
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -180,22 +180,22 @@ func cmdWorkloadIdentityStatus(args []string, stdout, stderr io.Writer) int {
 	fs, out := workloadIdentityFlags("workload-identity status")
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *out == "" {
-		fmt.Fprintln(stderr, "usage: gregalectl workload-identity status --out DIR")
+		_, _ = fmt.Fprintln(stderr, "usage: gregalectl workload-identity status --out DIR")
 		return 1
 	}
 	raw, err := os.ReadFile(filepath.Join(*out, workloadIdentityKeyFile))
 	if err != nil {
-		fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
 		return 1
 	}
 	key, err := workloadidentity.ParseRSAPrivateKeyPEM(raw)
 	if err != nil {
-		fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
 		return 1
 	}
 	jwk, err := workloadidentity.PublicJWK(&key.PublicKey)
 	if err != nil {
-		fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
 		return 1
 	}
 	kidFile, _ := os.ReadFile(filepath.Join(*out, workloadIdentityKIDFile))
@@ -206,10 +206,10 @@ func cmdWorkloadIdentityStatus(args []string, stdout, stderr io.Writer) int {
 	for _, k := range set.Keys {
 		ids = append(ids, k.KeyID)
 	}
-	fmt.Fprintf(stdout, "key id: %s (RSA %d)\nkid file: %s\njwks key ids: %s\n",
+	_, _ = fmt.Fprintf(stdout, "key id: %s (RSA %d)\nkid file: %s\njwks key ids: %s\n",
 		jwk.KeyID, key.N.BitLen(), strings.TrimSpace(string(kidFile)), strings.Join(ids, ", "))
 	if strings.TrimSpace(string(kidFile)) != jwk.KeyID || len(set.Keys) == 0 || set.Keys[0].KeyID != jwk.KeyID {
-		fmt.Fprintln(stderr, "gregalectl workload-identity status: the kid file or JWKS does not match the key")
+		_, _ = fmt.Fprintln(stderr, "gregalectl workload-identity status: the kid file or JWKS does not match the key")
 		return 1
 	}
 	return 0
