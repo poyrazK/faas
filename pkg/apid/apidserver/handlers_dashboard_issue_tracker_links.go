@@ -37,6 +37,9 @@ func (s *server) populateDashboardTrackerLinks(w http.ResponseWriter, r *http.Re
 		}
 		view.NextURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/issues?" + query.Encode()
 	}
+	if !s.populateDashboardTrackerSync(w, r, app, data.CurrentAccountID, view) {
+		return false
+	}
 	data.TrackerLinks = view
 	return true
 }

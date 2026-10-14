@@ -7,7 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -804,5 +808,131 @@ func TestNativeIssueLinearAutoSyncPersistsMappingsAndRecoversUncertainWrites(t *
 	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path+"/auto-sync", api.UpdateIssueTrackerAutoSyncRequest{ExpectedRevision: policy.Revision}, nil), 200)
 	if policy.Enabled || policy.Outcome != "disabled" || policy.Revision != 2 {
 		t.Fatal("offline disable failed", policy)
+	}
+}
+
+func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "dashboard-tracker-sync")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "DashboardSync", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	issuePath := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://linear.app/acme/issue/PAY-42"}, nil), 200)
+	identity, _ := age.GenerateX25519Identity()
+	oldRecipient, oldIDs := *apidserver.SetSecretRecipient, *apidserver.MfaIdentities
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	*apidserver.MfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = oldRecipient; *apidserver.MfaIdentities = oldIDs })
+	apidserver.IssueNativeSetLinearVerifier(e, &nativeLinearFake{})
+	team := uuid.NewString()
+	provider := &nativeLinearLifecycleFake{status: issuetracker.Status{Provider: "linear", URL: link.URL, ID: uuid.NewString(), TeamID: team, StateID: uuid.NewString(), State: "resolved"}}
+	apidserver.IssueNativeSetClients(e, nil, provider)
+	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + accepted.IssueID
+	get := httptest.NewRequest("GET", page, nil)
+	e.AddAdminSession(t, get)
+	response := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(response, get)
+	if response.Code != 200 || provider.reads != 0 || !strings.Contains(response.Body.String(), "Review tracker sync") {
+		t.Fatal("page load fetched provider or omitted controls", response.Code, response.Body.String())
+	}
+	var csrf *http.Cookie
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == apidserver.DashboardIssueCookie {
+			csrf = cookie
+		}
+	}
+	if csrf == nil {
+		t.Fatal("missing CSRF")
+	}
+	formPath := "/dashboard/apps/" + app.Slug + "/issues/" + accepted.IssueID
+	post := func(suffix string, values url.Values, validCSRF bool) *httptest.ResponseRecorder {
+		if validCSRF {
+			values.Set("csrf_token", csrf.Value)
+		}
+		req := httptest.NewRequest("POST", formPath+suffix, strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, cookie := range get.Cookies() {
+			req.AddCookie(cookie)
+		}
+		req.AddCookie(csrf)
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	previewForm := func() url.Values {
+		return url.Values{"action": {"preview"}, "link_id": {link.ID}, "provider": {"linear"}}
+	}
+	if out := post("/tracker-sync", previewForm(), false); out.Code != 400 || provider.reads != 0 {
+		t.Fatal("CSRF bypass", out.Code)
+	}
+	connection := url.Values{"action": {"connect"}, "expected_revision": {"0"}, "team_id": {team}, "api_key": {"lin_api_secret"}}
+	out := post("/linear-connection", connection, true)
+	if out.Code != 303 || strings.Contains(out.Body.String(), "lin_api_secret") || strings.Contains(out.Header().Get("Location"), "secret") {
+		t.Fatal("connection failed or key leaked", out.Code, out.Body.String())
+	}
+	if out := post("/linear-connection", connection, true); out.Code != 409 {
+		t.Fatal("stale connection form accepted", out.Code)
+	}
+	preview := post("/tracker-sync", previewForm(), true)
+	if preview.Code != 200 || !strings.Contains(preview.Body.String(), "Push Gregale open") || strings.Contains(preview.Body.String(), `name="action" value="enable"`) {
+		t.Fatal("unaligned review invalid", preview.Code, preview.Body.String())
+	}
+	expected := func(out *httptest.ResponseRecorder) string {
+		match := regexp.MustCompile(`name="expected" value="([^"]*)"`).FindStringSubmatch(out.Body.String())
+		if len(match) != 2 {
+			t.Fatal("missing preview snapshot", out.Body.String())
+		}
+		return html.UnescapeString(match[1])
+	}
+	open := uuid.NewString()
+	resolved := uuid.NewString()
+	push := url.Values{"action": {"push"}, "provider": {"linear"}, "link_id": {link.ID}, "source_state": {"open"}, "expected_revision": {"0"}, "expected": {expected(preview)}, "linear_state_id": {open}}
+	if out := post("/tracker-sync", push, true); out.Code != 303 || provider.writes != 1 || provider.status.StateID != open {
+		t.Fatal("manual alignment failed", out.Code, out.Body.String())
+	}
+	preview = post("/tracker-sync", previewForm(), true)
+	enable := url.Values{"action": {"enable"}, "provider": {"linear"}, "link_id": {link.ID}, "source_state": {"open"}, "expected_revision": {"0"}, "expected": {expected(preview)}, "linear_open_state_id": {open}, "linear_resolved_state_id": {resolved}}
+	if out := post("/tracker-sync", enable, true); out.Code != 303 || provider.writes != 1 {
+		t.Fatal("delegation failed", out.Code, out.Body.String())
+	}
+	if out := post("/tracker-sync", enable, true); out.Code != 409 {
+		t.Fatal("stale policy form accepted", out.Code)
+	}
+	push.Set("expected_revision", "1")
+	if out := post("/tracker-sync", push, true); out.Code != 409 || provider.writes != 1 {
+		t.Fatal("manual push while delegated allowed", out.Code)
+	}
+	enable.Set("expected_revision", "1")
+	provider.status.StateID = uuid.NewString()
+	if out := post("/tracker-sync", enable, true); out.Code != 409 {
+		t.Fatal("stale provider preview accepted", out.Code)
+	}
+	disconnected := post("/linear-connection", url.Values{"action": {"disconnect"}, "expected_revision": {"1"}}, true)
+	if disconnected.Code != 303 {
+		t.Fatal("disconnect failed", disconnected.Code, disconnected.Body.String())
+	}
+	reads := provider.reads
+	disabled := post("/tracker-sync", url.Values{"action": {"disable"}, "link_id": {link.ID}, "expected_revision": {"1"}}, true)
+	if disabled.Code != 303 || provider.reads != reads {
+		t.Fatal("disable needs provider access", disabled.Code, disabled.Body.String())
+	}
+	policy := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", issuePath+"/tracker-links/"+link.ID+"/auto-sync", nil, nil), 200)
+	if policy.Enabled || policy.Revision != 2 {
+		t.Fatal(policy)
+	}
+	// A reference from another app cannot be used in this app's review.
+	other := apidserver.SeedPGApp(t, e, "dashboard-sync-other")
+	req := httptest.NewRequest("POST", "/dashboard/apps/"+other.Slug+"/issues/"+accepted.IssueID+"/tracker-sync", strings.NewReader(url.Values{"action": {"preview"}, "link_id": {link.ID}, "provider": {"linear"}, "csrf_token": {csrf.Value}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, cookie := range get.Cookies() {
+		req.AddCookie(cookie)
+	}
+	req.AddCookie(csrf)
+	denied := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(denied, req)
+	if denied.Code != 404 {
+		t.Fatal("cross-app reference exposed", denied.Code)
 	}
 }

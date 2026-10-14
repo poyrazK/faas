@@ -1174,3 +1174,34 @@ Enabling Linear supplies `enabled`, `expected_revision`, `expected_issue_state`,
 and `linear_resolved_state_id`. Omit the GitHub `expected_status` field. Disabling
 needs only `enabled: false` and the current `expected_revision`.
 See [ADR-1218](adr/1218-automatic-native-linear-lifecycle.md).
+
+## Manage tracker sync in the dashboard
+
+Open an issue and use **Linked tracker issues** to inspect each stored automatic
+policy: enabled/disabled status, latest outcome, confirmed lifecycles, pending
+write, last check and next check. Viewing the page does not contact a provider.
+App members can read these outcomes; provider-management controls require the
+app owner, deploy-write and session MFA.
+
+Owners can expand **Linear connection** to connect a team using its UUID and a
+personal API key, replace the connection, or disconnect. The key is never shown
+again. Replacing a connection pauses existing Linear delegation until a fresh
+review and explicit re-enable.
+
+Choose **Review tracker sync** to fetch a native provider preview. If the
+lifecycles match, explicitly enable or re-enable future Gregale-to-provider
+pushes. For Linear, enter distinct open and completed workflow UUIDs from the
+connected team; Gregale verifies both. There is currently no named workflow
+picker. A changed connection, provider snapshot, group or policy requires a new
+review.
+
+If lifecycles differ, disable automatic sync first, review again and use **Push
+Gregale … to linked ticket** to align the provider. Linear alignment requires an
+explicit workflow UUID for the desired state. For inbound resolution, use explicit
+CLI sync with a fixing deployment. Inspect unconfirmed writes before manually
+aligning or re-enabling: disabling cannot recall a dispatched provider mutation.
+
+**Disable automatic sync** uses the stored revision and works after provider
+access is revoked or disconnected. Successful changes return to the issue page;
+failed or stale forms report the existing API problem so you can reload and
+review again. See [ADR-1219](adr/1219-dashboard-tracker-sync-controls.md).
