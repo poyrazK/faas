@@ -25,6 +25,8 @@ type Scope struct {
 }
 type Operation struct {
 	Kind, Name, RunID, Key, Step string
+	EndpointID, EventID          string
+	Version                      int64
 	Body                         any
 }
 type Response struct {
@@ -94,6 +96,10 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 	}
 	data := dashboard.AutomationConsoleData{Slug: scope.Slug, Name: r.PostFormValue("name"),
 		Definition: r.PostFormValue("definition"), Sample: r.PostFormValue("sample"), Scenarios: r.PostFormValue("scenarios")}
+	if action := r.PathValue("action"); action == "bind-webhook" || action == "unbind-webhook" {
+		s.webhookAction(w, r, scope, data)
+		return
+	}
 	if action := r.PathValue("action"); action == "resume" || action == "cancel" {
 		s.control(w, r, scope, data)
 		return
@@ -127,6 +133,9 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, data dashboard.AutomationConsoleData, status int) {
 	s.refreshMetadata(r, scope, &data)
 	s.setup(r, scope, &data)
+	if failure := s.inspectIngress(r, scope, &data); failure != nil {
+		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this automation."
+	}
 	data.BaseURL = "/dashboard/apps/" + url.PathEscape(scope.Slug) + "/automations"
 	data.CSRFToken = s.Host.IssueCSRF(w, scope)
 	data.ActionKey = uuid.NewString()

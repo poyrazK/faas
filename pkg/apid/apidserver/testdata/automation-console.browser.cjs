@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
+const { createHmac } = require('node:crypto');
 const { chromium } = require('playwright');
 
 (async () => {
@@ -41,6 +42,52 @@ const { chromium } = require('playwright');
       for (const secret of ['PRIVATE-RECOVERY-INPUT', 'PRIVATE-RECOVERY-OUTPUT', 'PRIVATE-RECOVERY-ERROR']) {
         assert.equal(text.includes(secret), false, 'inspector exposed a private value');
       }
+      assert.equal(errors.length, 0, 'browser reported a script error');
+      return;
+    }
+    if (fixture.mode === 'webhook') {
+      const initial = await page.goto(fixture.url + '?template=webhook-enrichment');
+      assert.equal(initial.status(), 200);
+      assert.equal(await page.locator('input[name=editor_mode][value=webhook]').isChecked(), true);
+      await page.locator('#automation-name').fill('browser-orders');
+      await page.locator('#webhook-source').fill('external.orders');
+      await page.locator('#webhook-event-type').fill('order.created');
+      await page.locator('#webhook-lookup').fill('/orders/lookup');
+      await page.locator('#webhook-enrich').fill('/orders/record');
+      await submit('Validate definition', 'Definition is valid.');
+      await submit('Simulate steps', 'Simulation completed.');
+      await submit('Save draft', 'Draft saved.');
+      await submit('Check and publish', 'Checks passed and the draft was published.');
+      assert.ok(await page.getByRole('button', { name: 'Enable automatic starts', exact: true }).count());
+      await page.getByRole('link', { name: 'signed-orders', exact: true }).click();
+      assert.equal(await page.locator('#binding-event-type').count(), 1, 'binding form missing at ' + page.url() + '; ' + (await page.locator('[role=alert]').allTextContents()).join('; '));
+      await page.locator('#binding-event-type').fill('order.created');
+      await page.locator('input[name="confirm_bind-webhook"]').check();
+      await submit('Save webhook binding', 'Bound automation: browser-orders');
+      await submit('Enable automatic starts', 'Automatic starts: enabled');
+      await page.getByRole('link', { name: 'signed-orders', exact: true }).click();
+      const body = JSON.stringify({ customer_id: 'cus_1', order_id: 'order_1', private: 'PRIVATE-BROWSER-WEBHOOK-BODY' });
+      const stamp = String(Math.floor(Date.now() / 1000));
+      const signature = createHmac('sha256', fixture.webhook_secret).update(stamp + '\nbrowser-event\norder.created\n' + body).digest('hex');
+      const headers = { 'Content-Type': 'application/json', 'X-Gregale-Event-ID': 'browser-event', 'X-Gregale-Event-Type': 'order.created', 'X-Gregale-Timestamp': stamp, 'X-Gregale-Signature': 'sha256=' + signature };
+      const ingress = new URL(new URL(fixture.webhook_url).pathname, fixture.url).href;
+      const accepted = await context.request.post(ingress, { data: body, headers });
+      assert.equal(accepted.status(), 202);
+      const duplicate = await context.request.post(ingress, { data: body, headers });
+      assert.equal(duplicate.status(), 202);
+      assert.equal((await duplicate.json()).duplicate, true);
+      await page.locator('#webhook-event-id').fill('browser-event');
+      await submit('Inspect webhook receipt', 'Webhook receipt');
+      assert.ok(await page.getByRole('link', { name: 'Inspect webhook run', exact: true }).count());
+      const text = await page.locator('body').innerText();
+      for (const privateValue of [fixture.webhook_secret, fixture.webhook_url, 'PRIVATE-BROWSER-WEBHOOK-BODY']) {
+        assert.equal(text.includes(privateValue), false, 'webhook view exposed private data');
+      }
+      if (process.env.GREGALE_AUTOMATION_WEBHOOK_SCREENSHOT) {
+        await page.locator('#webhook-setup').screenshot({ path: process.env.GREGALE_AUTOMATION_WEBHOOK_SCREENSHOT });
+      }
+      await page.getByRole('link', { name: 'Inspect webhook run', exact: true }).click();
+      assert.ok(await page.getByRole('heading', { name: 'Selected run', exact: true }).count());
       assert.equal(errors.length, 0, 'browser reported a script error');
       return;
     }

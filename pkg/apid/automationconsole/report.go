@@ -41,8 +41,11 @@ func prepareEditor(r *http.Request, data *dashboard.AutomationConsoleData) strin
 	if data.EditorMode == "json" {
 		return ""
 	}
+	if data.EditorMode == "webhook" {
+		return prepareWebhook(r, data)
+	}
 	if data.EditorMode != "report" {
-		return "Choose report settings or the JSON editor."
+		return "Choose starter settings or the JSON editor."
 	}
 	form := &dashboard.AutomationReportForm{
 		Schedule: strings.TrimSpace(r.PostFormValue("report_schedule")), Timezone: strings.TrimSpace(r.PostFormValue("report_timezone")),

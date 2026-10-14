@@ -21,6 +21,12 @@ func (s *Service) setup(r *http.Request, scope Scope, data *dashboard.Automation
 			data.EditorMode = "report"
 		}
 	}
+	if err == nil && webhookShape(spec) && data.Webhook == nil {
+		data.Webhook = webhookForm(spec)
+		if data.EditorMode == "" {
+			data.EditorMode = "webhook"
+		}
+	}
 	data.SetupChecks = setupChecks(*data)
 	if !data.PublishedSchedule {
 		return
@@ -41,7 +47,7 @@ func setupChecks(data dashboard.AutomationConsoleData) []dashboard.AutomationSet
 		{Name: "Execution prerequisites", Status: "Unverified", Detail: "App eligibility and its live default deployment could not be confirmed."},
 		{Name: "Handler routes", Status: "Unverified", Detail: "Deploy and test the routes in your definition. Validation and mocked scenarios do not call handlers or verify credentials."},
 		{Name: "Publication", Status: "Draft only", Detail: "Save the definition, run its checks and publish the saved revision."},
-		{Name: "Automatic starts", Status: "Paused", Detail: "New scheduled reports stay paused after publishing. Enable automatic starts explicitly when ready."},
+		{Name: "Automatic starts", Status: "Paused", Detail: "New guided report and webhook starters stay paused after publishing. Enable automatic starts explicitly when ready."},
 	}
 	if data.RuntimeObserved {
 		checks[0].Status, checks[0].Detail = "Disabled", "The workflow runtime is disabled. Draft preparation and simulation are still available."
@@ -63,7 +69,7 @@ func setupChecks(data dashboard.AutomationConsoleData) []dashboard.AutomationSet
 		checks[4].Status, checks[4].Detail = "Enabled", "Automatic starts are enabled for the published definition, subject to runtime admission."
 	}
 	if !data.Published {
-		checks[4].Status, checks[4].Detail = "Not published", "This draft has no automatic starts. New scheduled reports stay paused when first published."
+		checks[4].Status, checks[4].Detail = "Not published", "This draft has no automatic starts. New guided report and webhook starters stay paused when first published."
 	}
 	if !data.PublicationObserved {
 		checks[3].Status, checks[3].Detail = "Unavailable", "Current publication metadata could not be read. Reload before publishing or changing automatic starts."

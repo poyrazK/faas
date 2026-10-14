@@ -39,6 +39,28 @@ type AutomationConsoleData struct {
 	DraftSchedule, PublishedSchedulePreview                  *api.WorkflowSchedulePreviewResponse
 	PublishedScheduleError                                   string
 	ScheduleConfigured                                       bool
+	Webhook                                                  *AutomationWebhookForm
+	Ingress                                                  *AutomationWebhookSetup
+}
+
+type AutomationWebhookForm struct{ Source, EventType, Filter, LookupPath, EnrichPath string }
+
+// AutomationInboundEndpoint omits routing tokens and signing-secret material.
+type AutomationInboundEndpoint struct {
+	ID, Name, Provider, DeliveryPath, URL string
+	Enabled                               bool
+}
+
+type AutomationWebhookSetup struct {
+	EndpointID, EventID, Pattern, Filter, ActionKey string
+	Endpoints                                       []AutomationInboundEndpoint
+	Endpoint                                        *AutomationInboundEndpoint
+	Binding                                         *api.WebhookAutomationBindingResponse
+	BindingVersion                                  int64
+	BindingObserved, Submitted, ControlsDisabled    bool
+	EndpointsError, BindingError, ReceiptError      string
+	Receipt                                         *api.WebhookAutomationReceiptResponse
+	RunURL                                          string
 }
 
 type AutomationReportForm struct {

@@ -1,6 +1,7 @@
 // adr: 1285
 // adr: 1286
 // adr: 1287
+// adr: 1288
 package apidserver_test
 
 import (
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
@@ -42,15 +45,43 @@ func TestAutomationConsoleBrowserReportJourney(t *testing.T) {
 	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "report")
 }
 
-func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string) {
+func TestAutomationConsoleBrowserWebhookJourney(t *testing.T) {
+	if os.Getenv("GREGALE_AUTOMATION_BROWSER_ACCEPTANCE") != "1" {
+		t.Skip("set GREGALE_AUTOMATION_BROWSER_ACCEPTANCE=1 with Playwright and Chromium installed")
+	}
+	t.Cleanup(apidserver.WithTestRecipient(t))
+	e, app, cookie := consoleFixture(t)
+	endpoint := consoleWebhookEndpoint(t, e, app.Slug)
+	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "webhook", map[string]string{
+		"webhook_url": endpoint.EndpointURL, "webhook_secret": consoleWebhookSecret})
+}
+
+func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string, extra ...map[string]string) {
 	t.Helper()
-	server := httptest.NewServer(*e.H())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		(*e.H()).ServeHTTP(w, r)
+		if mode == "webhook" && r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/hooks/") {
+			// Advance fixture fanout after verified ingress, without executing guests.
+			work, err := (*e.Store()).ClaimDuePublishedEvent(t.Context(), time.Now().UTC())
+			if err == nil && len(work.RecipientSnapshot) == 1 {
+				if _, err := (*e.Store()).AdmitEventWorkflow(t.Context(), work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID); err != nil {
+					t.Errorf("admit browser webhook fixture: %v", err)
+				}
+			}
+		}
+	}))
 	defer server.Close()
 	script, err := filepath.Abs("testdata/automation-console.browser.cjs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture, err := json.Marshal(map[string]string{"url": server.URL + path, "mode": mode, "cookie_name": cookie.Name, "cookie_value": cookie.Value})
+	fields := map[string]string{"url": server.URL + path, "mode": mode, "cookie_name": cookie.Name, "cookie_value": cookie.Value}
+	for _, values := range extra {
+		for name, value := range values {
+			fields[name] = value
+		}
+	}
+	fixture, err := json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
 	}

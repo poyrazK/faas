@@ -80,6 +80,52 @@ page: mocked scenarios do not exercise a deployed handler. Test those routes
 before explicitly enabling automatic starts. Save and checked publication still
 require the submitted revision and definition to match the current saved draft.
 
+### Configure a verified webhook automation
+
+Choose **webhook-enrichment** to configure platform event source/type, event-filter
+JSON and lookup/record handler paths through form fields. The editor preserves
+advanced inputs and retries. New guided event starters publish with starts paused;
+JSON authoring retains its existing activation semantics. Saving can retain an
+incomplete draft; validation and publication checks still reject invalid execution
+definitions. Select the JSON editor for different graphs or input mappings.
+
+After publication, use **Connect a verified webhook** to select an existing Stripe
+or generic signed inbound endpoint on the same app. Endpoint metadata never exposes
+the one-time public routing token or signing secret. Create and enable endpoints
+through the existing inbound webhook API or CLI; this page does not create them,
+rotate secrets, change their enabled state or send a test event.
+
+Review the displayed binding target and revision. Set its verified-webhook event
+pattern/filter, confirm routing takeover, then choose **Save webhook binding**.
+This replaces ordinary app delivery or the displayed automation binding for future
+acceptance. A stale binding revision conflicts; repeated identical submitted binds
+reuse their result through API idempotency. Failed actions require reloading and
+confirming again. Callback/trigger ownership conflicts remain enforced by the API.
+
+The platform event trigger and verified webhook binding are separate routes.
+Verified ingress uses its endpoint's reserved event source and its binding's
+pattern/filter, independent of the authored platform trigger. Input data is the
+signed JSON body for generic endpoints, or the full Stripe event for Stripe
+endpoints, wrapped in a CloudEvents envelope. Review mappings for the chosen
+provider: a generic order ID might be `{{input.data.order_id}}`, while a Stripe
+object ID might be `{{input.data.data.object.id}}`.
+
+Enable automatic starts explicitly when ready. An enabled endpoint bound to an
+enabled automation can perform real actions immediately on matching deliveries.
+Pausing the automation makes future verified events receive ignored receipts.
+**Remove webhook binding** has its own confirmation and revision check, restores
+ordinary delivery for future events, and does not cancel accepted work. Bindings
+target a published automation name, so later publications affect future events;
+already accepted definitions and filters remain captured.
+
+Enter a **Provider event ID** to inspect acceptance, ignored reason and routing
+status. A resulting run link appears only after verifying its app and automation
+identity. Receipts from another automation are not shown. Read failures are reported
+as unavailable or not found, rather than as successful acceptance. Provider retries
+reuse the original receipt and accepted work; receipt lookup does not retain retry
+counts or delivery history. Real payloads and signing material stay out of this view.
+Native execution qualification remains separate from this dashboard acceptance.
+
 ### Diagnose and recover a dashboard run
 
 Open a run from **Recent runs** to see its observed queue/wait reason, next wake,

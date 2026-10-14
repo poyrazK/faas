@@ -65,8 +65,8 @@ func (s *Service) savedDraft(r *http.Request, scope Scope, data dashboard.Automa
 		return saved, &response
 	}
 	spec, err := definition(data)
-	expected, expectedErr := json.Marshal(spec)
-	actual, actualErr := json.Marshal(saved.Draft)
+	expected, expectedErr := canonicalDefinition(spec)
+	actual, actualErr := canonicalDefinition(saved.Draft)
 	if err != nil || expectedErr != nil || actualErr != nil || saved.Version != data.Version || !bytes.Equal(expected, actual) {
 		problem := api.ErrValidation("Save your current definition and reload the draft before checking or publishing.")
 		raw, _ := json.Marshal(problem)
@@ -74,6 +74,22 @@ func (s *Service) savedDraft(r *http.Request, scope Scope, data dashboard.Automa
 		return saved, &response
 	}
 	return saved, nil
+}
+
+// JSONB storage can reorder nested input/filter keys. Compare their values
+// without converting large JSON numbers to float64 or changing array order.
+func canonicalDefinition(spec api.WorkflowSpec) ([]byte, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
 }
 
 func (s *Service) check(w http.ResponseWriter, r *http.Request, scope Scope, data dashboard.AutomationConsoleData) {

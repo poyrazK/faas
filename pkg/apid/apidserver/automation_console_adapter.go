@@ -3,6 +3,7 @@ package apidserver
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
@@ -52,14 +53,11 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	if operation.Key != "" {
 		request.Header.Set("Idempotency-Key", operation.Key)
 	}
-	request.SetPathValue("slug", scope.Slug)
-	request.SetPathValue("name", operation.Name)
-	request.SetPathValue("id", operation.RunID)
-	request.SetPathValue("step", operation.Step)
+	setAutomationConsolePaths(request, scope.Slug, operation)
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
 	switch operation.Kind {
-	case "save", "publish", "check", "enabled", "run", "resume", "cancel":
+	case "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -68,10 +66,23 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 		func(w http.ResponseWriter, forwarded *http.Request, account state.Account) {
 			if operation.Kind == "runs" {
 				forwarded.URL.RawQuery = url.Values{"workflow_name": {operation.Name}, "limit": {"20"}}.Encode()
+			} else if operation.Kind == "unbind-webhook" {
+				forwarded.URL.RawQuery = url.Values{"expected_version": {strconv.FormatInt(operation.Version, 10)}}.Encode()
 			}
 			authenticated(w, forwarded)
 		})
 	return automationconsole.Response{Status: response.Code, Body: response.Body.Bytes()}
+}
+
+func setAutomationConsolePaths(r *http.Request, slug string, operation automationconsole.Operation) {
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("name", operation.Name)
+	r.SetPathValue("id", operation.RunID)
+	r.SetPathValue("step", operation.Step)
+	if operation.EndpointID != "" {
+		r.SetPathValue("id", operation.EndpointID)
+	}
+	r.SetPathValue("event_id", operation.EventID)
 }
 
 func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operation) (string, string, dashboardJSONHandler) {
@@ -105,7 +116,31 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 	case "run":
 		return http.MethodPost, "/v1/apps/" + url.PathEscape(slug) + "/workflows/" + url.PathEscape(op.Name) + "/runs", h.server.createWorkflowRun
 	default:
+		if method, path, handler := h.webhookEndpoint(slug, op); handler != nil {
+			return method, path, handler
+		}
 		return h.runEndpoint(op)
+	}
+}
+
+func (h automationConsoleHost) webhookEndpoint(slug string, op automationconsole.Operation) (string, string, dashboardJSONHandler) {
+	root := "/v1/apps/" + url.PathEscape(slug) + "/inbound-webhooks"
+	named := root + "/" + url.PathEscape(op.EndpointID)
+	switch op.Kind {
+	case "endpoints":
+		return http.MethodGet, root, h.server.listInboundWebhookEndpoints
+	case "endpoint":
+		return http.MethodGet, named, h.server.getInboundWebhookEndpoint
+	case "webhook-binding":
+		return http.MethodGet, named + "/automation-binding", h.server.getWebhookAutomationBinding
+	case "bind-webhook":
+		return http.MethodPut, named + "/automation-binding", dashboardJSONHandler(h.server.idempotent(h.server.putWebhookAutomationBinding))
+	case "unbind-webhook":
+		return http.MethodDelete, named + "/automation-binding", h.server.deleteWebhookAutomationBinding
+	case "webhook-receipt":
+		return http.MethodGet, named + "/automation-receipts/" + url.PathEscape(op.EventID), h.server.getWebhookAutomationReceipt
+	default:
+		return "", "", nil
 	}
 }
 

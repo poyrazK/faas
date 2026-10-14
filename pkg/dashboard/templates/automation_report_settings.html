@@ -14,7 +14,7 @@
 <div><label for="report-catch-up">Missed starts</label><select id="report-catch-up" name="report_catch_up"><option value="skip" {{if eq .CatchUp "skip"}}selected{{end}}>Skip missed occurrences</option><option value="latest" {{if eq .CatchUp "latest"}}selected{{end}}>Recover only the latest within a window</option></select></div>
 <div><label for="report-window">Recovery window</label><input id="report-window" type="text" name="report_window" value="{{.CatchUpWindow}}"><p class="muted">For latest recovery only: leave empty for 1h, or enter 1m through 24h. Leave empty when skipping missed starts.</p></div>
 </div>{{end}}
-{{else}}<input type="hidden" name="editor_mode" value="json">{{end}}
+{{else if .Data.Webhook}}{{template "automation-webhook-settings" .}}{{else}}<input type="hidden" name="editor_mode" value="json">{{end}}
 {{end}}
 
 {{define "automation-schedule-panel"}}
