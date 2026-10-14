@@ -1,4 +1,4 @@
-# ADR-1239: Account-scoped MCP policy convergence
+# ADR-1258: Account-scoped MCP policy convergence
 
 ## Status
 
