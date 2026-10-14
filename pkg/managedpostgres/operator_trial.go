@@ -51,7 +51,7 @@ func (a *OperatorTestApproval) valid(registry *Registry, accounts []string, now 
 	if a == nil || registry == nil || a.Version != 1 || a.Purpose != "operator_test" || len(accounts) == 0 || len(a.CanaryAccounts) == 0 || validateCanaryAccounts(a.CanaryAccounts) != nil || !sameCanaryAccounts(accounts, a.CanaryAccounts) {
 		return false
 	}
-	if a.StartedAt.IsZero() || a.StartedAt.After(now) || !a.ExpiresAt.After(now) || !a.ExpiresAt.After(a.StartedAt) || a.ExpiresAt.Sub(a.StartedAt) > 2*time.Hour {
+	if a.StartedAt.IsZero() || a.StartedAt.After(now) || !a.ExpiresAt.After(now) || !a.ExpiresAt.After(a.StartedAt) || a.ExpiresAt.Sub(a.StartedAt) > 3*time.Hour {
 		return false
 	}
 	if len(registry.Regions()) != 1 {

@@ -16,9 +16,10 @@ func TestOperatorTestGateRequiresPrivateBoundedExactApproval(t *testing.T) {
 		want   bool
 	}{
 		{name: "operator test", want: true},
+		{name: "three-hour boundary", mutate: func(a *OperatorTestApproval) { a.ExpiresAt = a.StartedAt.Add(3 * time.Hour) }, want: true},
 		{name: "expired", mutate: func(a *OperatorTestApproval) { a.ExpiresAt = a.StartedAt.Add(time.Minute) }},
 		{name: "future", mutate: func(a *OperatorTestApproval) { a.StartedAt = a.StartedAt.Add(time.Hour) }},
-		{name: "too long", mutate: func(a *OperatorTestApproval) { a.ExpiresAt = a.StartedAt.Add(2*time.Hour + time.Second) }},
+		{name: "too long", mutate: func(a *OperatorTestApproval) { a.ExpiresAt = a.StartedAt.Add(3*time.Hour + time.Second) }},
 		{name: "purpose", mutate: func(a *OperatorTestApproval) { a.Purpose = "qualified" }},
 		{name: "version", mutate: func(a *OperatorTestApproval) { a.Version = 8 }},
 		{name: "backend", mutate: func(a *OperatorTestApproval) { a.BackendID = "other" }},

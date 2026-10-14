@@ -10,7 +10,7 @@ const ProductionCanaryEnv = "FAAS_MANAGED_POSTGRES_PRODUCTION_CANARY"
 
 // NewProvisioningGate preserves staging admission and adds an explicitly
 // enabled production test canary. A production canary requires a complete v8
-// artifact or a separate two-hour operator test approval, an exact nonempty
+// artifact or a separate three-hour operator test approval, an exact nonempty
 // account allowlist, and metering and prices. A qualified approval lasts at
 // most 24 hours. Environment-only approval never authorizes production.
 func NewProvisioningGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {

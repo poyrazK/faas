@@ -67,7 +67,7 @@ missing prices/ceilings, and preservation of staging account behavior.
 
 An explicitly requested immediate test may use a separate private
 `OperatorTestApproval` with purpose `operator_test`, exact placement and account
-binding, and a lifetime of at most two hours. Set
+binding, and a lifetime of at most three hours. Set
 `FAAS_MANAGED_POSTGRES_OPERATOR_TEST_PATH` alongside the explicit production
 canary flag and nonempty allowlist. The file must be regular and not writable
 by group or others. It is authoritative when configured: missing, malformed,
@@ -92,7 +92,7 @@ remain mandatory; repeated tests must account for provider settlement delays.
 An operator test approval may explicitly set `allow_pending_final_corrections`
 to continue a bounded test when the only accounting blocker is final correction
 settlement. This applies only to the exact approved production accounts, backend
-and two-hour lifetime. Retired resources must have confirmed shutdown, complete
+and three-hour lifetime. Retired resources must have confirmed shutdown, complete
 contiguous coverage and fresh, nonfuture observations. Unknown identity, missing
 coverage, stale active usage and all observed usage/cost ceilings remain blocking.
 The ledger, final correction deadline, diagnostics and collector are unchanged;

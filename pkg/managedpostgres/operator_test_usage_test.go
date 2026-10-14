@@ -43,7 +43,7 @@ func TestOperatorTestUsageDeferralRequiresExactLiveApproval(t *testing.T) {
 		{name: "wrong placement", change: func(a *OperatorTestApproval, _ map[string]string, _ *time.Time) { a.BackendFingerprint = "other" }},
 		{name: "empty allowlist", change: func(_ *OperatorTestApproval, e map[string]string, _ *time.Time) { e[CanaryAccountsEnv] = "" }},
 		{name: "too long", change: func(a *OperatorTestApproval, _ map[string]string, _ *time.Time) {
-			a.ExpiresAt = a.StartedAt.Add(2*time.Hour + time.Second)
+			a.ExpiresAt = a.StartedAt.Add(3*time.Hour + time.Second)
 		}},
 		{name: "expired", change: func(a *OperatorTestApproval, _ map[string]string, n *time.Time) { *n = a.ExpiresAt }},
 	} {
