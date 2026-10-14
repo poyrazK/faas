@@ -200,6 +200,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // GitHub activity recovery form; session-cookie + CSRF-only
 	"GET /dashboard/apps/{slug}/data-api":                        true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/auth":                            true, // ADR-1190 session-auth owner page; the browser calls the Auth app
 	"GET /dashboard/apps/{slug}/data-api/types/{id}":             true, // ADR-968 session-auth type download
 	"POST /dashboard/apps/{slug}/data-api/refresh":               true, // ADR-968 session + CSRF contract refresh adapter
 	"POST /dashboard/apps/{slug}/data-api/{operation}":           true, // ADR-968 session + CSRF schema/type task adapter

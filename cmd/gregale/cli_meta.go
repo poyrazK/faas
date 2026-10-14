@@ -487,6 +487,7 @@ var templateNames13 = []string{
 	"customer-operation-workflow-export",
 	"data-api",
 	"data-api-starter",
+	"auth",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -545,7 +546,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
@@ -2911,6 +2912,7 @@ var cliCommands = []cliCommand{
 				{Name: "geo-deny", Short: "kind=geo: deny ISO country code (repeat)", Value: "CC"},
 				{Name: "jwt-issuer", Short: "kind=jwt: token issuer", Value: "ISSUER"},
 				{Name: "jwt-jwks-url", Short: "kind=jwt: JWKS URL (https)", Value: "URL"},
+				{Name: "jwt-auth", Short: "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)", Value: "AUTH_APP"},
 				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -4077,6 +4079,36 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
+		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Deploy a managed GoTrue Auth server bound to your database", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
+				{Name: "site-url", Value: "URL", Req: true, Short: "application URL users return to after sign-in"},
+				{Name: "redirect-urls", Value: "URLS", Short: "comma-separated additional allowed redirect URLs"},
+				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				{Name: "autoconfirm", Short: "sign users in without email confirmation (development only)"},
+				{Name: "disable-signup", Short: "allow only invited or administrator-created users"},
+				{Name: "authz", Value: "FILE", Short: "JSON file declaring custom roles and policies (applied on deploy)"},
+				{Name: "email-provider", Value: "PROVIDER", Short: "HTTPS email provider", ClosedSet: []string{"resend", "postmark"}},
+				{Name: "email-from", Value: "SENDER", Short: "sender address, or a display name with the address in angle brackets"},
+				{Name: "email-api-key-stdin", Short: "read the email provider API key from stdin (prompted on a terminal)"},
+				{Name: "workflows", Short: "let authorized users start workflows (mints an events:publish key sealed in the app)"},
+				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
+			}, Examples: []string{"gregale auth create shop-auth --database shop-db --site-url https://shop.example.com", "gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --authz authz.json"}},
+			{Name: "status", Short: "Show the issuer, JWKS URL and readiness of an Auth app", Positionals: []string{"<name>"}},
+			{Name: "admin-key", Short: "Manage owner keys for the dashboard's users and organizations screens and imports", Subcommands: []cliSub{
+				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "revoke", Short: "Revoke an admin key", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+			}},
+			{Name: "import", Short: "Import users with their password hashes from a JSON or JSON Lines file", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "file", Value: "FILE", Req: true, Short: "JSON array or JSON Lines file of users"},
+				{Name: "dry-run", Short: "validate the file without importing"},
+				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+			}, Examples: []string{"gregale auth import shop-auth --file users.jsonl --dry-run", "printf '%s' \"$ADMIN_KEY\" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin"}},
+		},
+	},
+	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
 			{Name: "install", Short: "Install or restore a verified Data API SDK bundle", Flags: []cliFlag{
@@ -4107,9 +4139,10 @@ var cliCommands = []cliCommand{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
 				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
-				{Name: "issuer", Value: "HTTPS_URL", Req: true, Short: "application JWT issuer"},
-				{Name: "jwks-url", Value: "HTTPS_URL", Req: true, Short: "application JWKS URL"},
-				{Name: "audience", Value: "AUDIENCE", Req: true, Short: "application JWT audience"},
+				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)"},
+				{Name: "issuer", Value: "HTTPS_URL", Short: "application JWT issuer"},
+				{Name: "jwks-url", Value: "HTTPS_URL", Short: "application JWKS URL"},
+				{Name: "audience", Value: "AUDIENCE", Short: "application JWT audience"},
 				{Name: "origins", Value: "ORIGINS", Short: "comma-separated browser origins"},
 				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
 			}},
@@ -4228,7 +4261,7 @@ var cliCommands = []cliCommand{
 					{Name: "app", Short: "app ID", Req: true, Value: "APP_ID"},
 					{Name: "scope", Short: "environment scope", Req: true, Value: "SCOPE"},
 					{Name: "environment-key", Short: "environment variable name", Req: true, Value: "KEY"},
-					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
+					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 				}},
 				{Name: "get", Short: "Show one binding", Positionals: []string{"<id>"}},
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
@@ -4241,7 +4274,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Positionals: []string{"<database>", "<app>"}, Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 			}, Examples: []string{"gregale postgres attach orders my-api --env DATABASE_URL --access read_write"}},
 		},
 	},
@@ -4382,6 +4415,7 @@ var cliCommands = []cliCommand{
 				{Name: "auth-token", Short: "client static bearer token (prefer --auth-token-stdin)", Value: "TOKEN"},
 				{Name: "auth-issuer", Short: "OIDC issuer URL", Value: "URL"},
 				{Name: "auth-jwks-url", Short: "OIDC JWKS URL", Value: "URL"},
+				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP"},
 				{Name: "auth-audience", Short: "OIDC audience (repeatable)", Value: "AUDIENCE", Repeatable: true},
 				{Name: "auth-algorithm", Short: "OIDC signing algorithm (repeatable)", Value: "ALG", Repeatable: true},
 				{Name: "auth-claim", Short: "required OIDC claim as KEY=VALUE (repeatable)", Value: "KEY=VALUE", Repeatable: true},

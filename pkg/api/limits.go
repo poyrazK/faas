@@ -10355,6 +10355,57 @@ const (
 	DataAPIDiagnosticsMaxRecords = 100000
 )
 
+// Application Auth bounds (ADR-1190). AuthStatementTimeoutMS is the auth
+// login's default statement timeout; release-task migrations may raise it
+// for their own session. It is a runaway-query guard, not a plan quota.
+// The auth template's config.mjs mirrors the runtime values;
+// TestAuthTemplateRuntimeBounds keeps them aligned.
+const (
+	AuthStatementTimeoutMS = 30000
+	// AuthAccessTokenTTLSeconds bounds how long a signed-out or banned
+	// session's access token still passes edge-only JWT checks.
+	AuthAccessTokenTTLSeconds = 600
+	// AuthMaxPoolConnections caps GoTrue's direct (unpooled) connections
+	// per instance.
+	AuthMaxPoolConnections = 4
+	// AuthMaxRequestBytes bounds request bodies the front proxies to GoTrue.
+	AuthMaxRequestBytes = 1 << 20
+	// AuthMaxRedirectURLs bounds GOTRUE_URI_ALLOW_LIST entries.
+	AuthMaxRedirectURLs = 50
+	// AuthMigrationStatementTimeoutMS replaces the login default for the
+	// release task's GoTrue migrations, which may rewrite large user tables.
+	AuthMigrationStatementTimeoutMS = 600000
+	// AuthFrontPoolConnections caps the front's /authz/v1 connections.
+	AuthFrontPoolConnections = 2
+	// AuthAuthzBodyBytes bounds /authz/v1 request bodies; AuthAuthzConfigBytes
+	// bounds the declarative AUTH_AUTHZ roles and policies document.
+	AuthAuthzBodyBytes   = 64 << 10
+	AuthAuthzConfigBytes = 64 << 10
+	// AuthInvitationTTLSeconds is the default invitation lifetime;
+	// gregale_auth.invite accepts 300 s to AuthMaxInvitationTTLSeconds.
+	AuthInvitationTTLSeconds    = 7 * 24 * 3600
+	AuthMaxInvitationTTLSeconds = 14 * 24 * 3600
+	// AuthMaxOrganizationsPerUser and AuthMaxPendingInvitationsPerOrg bound
+	// what one end user can create in the customer's database.
+	AuthMaxOrganizationsPerUser     = 100
+	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
+	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
+	// bounds the sealed provider key.
+	AuthEmailTimeoutMs      = 10000
+	AuthHookBodyBytes       = 256 << 10
+	AuthEmailAPIKeyMaxBytes = 512
+	// AuthStorageURLSeconds is the lifetime of an object URL the Auth app
+	// signs after authorize() allows the read or write.
+	AuthStorageURLSeconds = 60
+	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
+	// the most users one import request creates.
+	AuthAdminBodyBytes = 1 << 20
+	AuthImportBatch    = 100
+	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
+	AuthImportFileMaxBytes = 256 << 20
+)
+
 // A compatibility receipt is short-lived authorization for captured declarations.
 const RouteLifecycleApprovalTTL = time.Hour
 

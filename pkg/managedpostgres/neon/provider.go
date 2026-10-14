@@ -164,6 +164,9 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	if p.dataAPIEnabled {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}
+	if p.authEnabled {
+		access = append(access, managedpostgres.CredentialAuth)
+	}
 	return managedpostgres.Capabilities{
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},

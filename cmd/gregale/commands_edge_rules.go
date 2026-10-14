@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -274,6 +275,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
 	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtAuth := fs.String("jwt-auth", "", "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)")
 
 	// ip
 	var ipAllow, ipDeny multiFlag
@@ -423,6 +425,23 @@ func cmdEdgeRulesCreate(args []string) int {
 	matchHeaderMap, err := parseEdgeRuleMatchHeaders(matchHeaders)
 	if err != nil {
 		return printErr("Invalid --match-header", err)
+	}
+	if *jwtAuth != "" {
+		if *kind != "jwt" || *jwtIssuer != "" || *jwtJWKS != "" || len(jwtAudience) > 0 {
+			return printErr("Invalid flags", errors.New("--jwt-auth requires --kind=jwt and replaces --jwt-issuer, --jwt-jwks-url and --jwt-audience"))
+		}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		resolved, err := resolveAuthIssuer(context.Background(), client, *jwtAuth)
+		if err != nil {
+			return printErr("Could not resolve the Auth app", err)
+		}
+		*jwtIssuer, *jwtJWKS, jwtAudience, *jwtRequireExp = resolved.Issuer, resolved.JWKSURL, multiFlag{resolved.Audience}, true
+		if len(jwtAlgorithms) == 0 {
+			jwtAlgorithms = multiFlag{"ES256"}
+		}
 	}
 	actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
 		RouteTarget:                       *routeTarget,
