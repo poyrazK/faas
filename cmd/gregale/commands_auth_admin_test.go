@@ -170,3 +170,28 @@ func TestAuthImportValidatesBatchesAndMapsRecords(t *testing.T) {
 		t.Fatal("an invalid record was sent")
 	}
 }
+
+func TestAuthAdminKeyListJSON(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/shop-auth/secrets" {
+			return false
+		}
+		writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "AUTH_ADMIN_KEY_0A1B2C3D", CreatedAt: "2026-10-14T00:00:00Z"}, {Key: "AUTH_JWT_SECRET"}}})
+		return true
+	})
+	out := captureAuthStdout(t)
+	jsonOutput = true
+	if code := cmdAuth([]string{"admin-key", "list", "shop-auth"}); code != 0 {
+		t.Fatalf("list = %d", code)
+	}
+	var body struct {
+		AdminKeys []struct {
+			ID        string `json:"id"`
+			CreatedAt string `json:"created_at"`
+		} `json:"admin_keys"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil || len(body.AdminKeys) != 1 || body.AdminKeys[0].ID != "0A1B2C3D" {
+		t.Fatalf("json = %s (%v)", out.String(), err)
+	}
+}
