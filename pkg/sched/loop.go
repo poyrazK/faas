@@ -3758,6 +3758,12 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 		"headers":            headers,
 		"body_b64":           base64.StdEncoding.EncodeToString(inv.Payload),
 	}
+	if inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationReplay {
+		dispatch["invocation_attempt"] = inv.Attempts
+		dispatch["invocation_replay_generation"] = inv.ReplayGeneration
+		dispatch["invocation_replayed_from"] = inv.ReplayedFromInvocationID
+		dispatch["invocation_replay_root"] = inv.ReplayRootInvocationID
+	}
 	if inv.Source == state.InvocationExclusiveOperation {
 		if inv.ExclusiveClaim == nil {
 			return inv, 0, errors.New("sched: exclusive operation dispatch has no ownership claim")

@@ -17,9 +17,11 @@ export async function migrationFiles(directory) {
   }))
 }
 
-export async function migrate(connectionString, directory = new URL('./sql/', import.meta.url)) {
+export async function migrate(connectionString, directory = new URL('./sql/', import.meta.url), { through } = {}) {
   if (!connectionString) throw new Error('MIGRATION_DATABASE_URL is required')
-  const files = await migrationFiles(directory)
+  const allFiles = await migrationFiles(directory)
+  if (through !== undefined && (!Number.isInteger(through) || !allFiles.some(file => file.version === through))) throw new Error('Selected migration version does not exist')
+  const files = through === undefined ? allFiles : allFiles.filter(file => file.version <= through)
   const { default: pg } = await import('pg')
   const client = new pg.Client({ connectionString, connectionTimeoutMillis: 5000 })
   try {

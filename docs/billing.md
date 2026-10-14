@@ -35,7 +35,10 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed.
+- queued job tasks wait in the queue; they are not failed;
+- object storage, which is billed once the month closes, is billed only up
+  to what the cap still allows after the month's compute and egress overage.
+  Object storage keeps serving within its plan limits.
 
 Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during

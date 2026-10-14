@@ -31,6 +31,9 @@ func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageS
 func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
 	periodStart = ObjectStoragePeriod(periodStart)
 	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()]}
+	if acct, ok := m.accounts[account]; ok {
+		out.PlanLimits = objectStoragePlanLimits(acct.Plan)
+	}
 	for _, b := range m.objectBuckets {
 		if b.AccountID == account {
 			u := m.objectUsage[b.ID]

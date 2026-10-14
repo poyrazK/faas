@@ -391,6 +391,9 @@ func TestIsComputeOwnedGatewayPath(t *testing.T) {
 		{path: "/v1/apps/dev-api-0123/debug", want: true},
 		{path: "/v1/apps/dev-api-0123/debug/x", want: false},
 		{path: "/v1/apps/dev-api-0123/debugger", want: false},
+		// ADR-1163 live job task output; the stored copy stays on apid.
+		{path: "/v1/jobs/nightly/runs/5f0c/tasks/0/logs/stream", want: true},
+		{path: "/v1/jobs/nightly/runs/5f0c/tasks/0/logs", want: false},
 	} {
 		if got := isComputeOwnedGatewayPath(tc.path); got != tc.want {
 			t.Errorf("isComputeOwnedGatewayPath(%q) = %v, want %v", tc.path, got, tc.want)

@@ -36,7 +36,7 @@ func (s *server) admitManagedPostgresResize(ctx context.Context, account state.A
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(account.Plan)
 	if !ok || limits.DatabasesMax == 0 || !managedPostgresPlanAllows(limits, managedpostgres.Spec{Class: managedpostgres.ServiceClass(request.ServiceClass)}) {
-		return managedpostgres.ErrQuotaExceeded
+		return managedpostgres.ErrNotInPlan
 	}
 	return nil
 }

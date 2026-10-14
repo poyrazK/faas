@@ -1,5 +1,27 @@
 import { createDataClient, cursorPage as sdkCursorPage, cursorFrom, type DataClientOptions } from '@gregale/data'
 import type { Database } from './database.types.js'
+import * as contract from './database.types.js'
+
+// --validators is opt-in; plain generated type files remain supported.
+const inputValidators = ('inputValidators' in contract ? contract.inputValidators : undefined) as
+  { api: { notes: { insert(input: unknown): Database['api']['Tables']['notes']['Insert']; update(input: unknown): Database['api']['Tables']['notes']['Update'] } } } | undefined
+
+const InputError = ('DataAPIInputError' in contract ? contract.DataAPIInputError : undefined) as
+  (new (...args: never[]) => Error & { readonly issues: readonly { code: string; path: readonly (string | number)[] }[] }) | undefined
+
+export function noteInputFeedback(error: unknown): Partial<Record<'body' | 'tags', string>> | undefined {
+  if (!InputError || !(error instanceof InputError)) return undefined
+  const issue = error.issues?.[0]
+  if (!issue || issue.path[0] !== 'body') return undefined
+  const messages: Record<string, string> = {
+    required: 'Enter a note body.',
+    null_not_allowed: 'Enter a note body.',
+    invalid_type: 'Enter the note body as text.',
+    invalid_enum: 'Choose an allowed note body.',
+    too_long: 'This note is too long.',
+  }
+  return { body: messages[issue.code] ?? 'The note does not match the database input rules.' }
+}
 
 type NoteBatchItem = Pick<Database['api']['Tables']['notes']['Insert'], 'body' | 'priority'>
 type DetailBatchItem = Pick<Database['api']['Tables']['note_details']['Insert'], 'note_id' | 'summary'>
@@ -67,10 +89,16 @@ export function notesClient(options: DataClientOptions & { subject: string }) {
       if (!rows.length) throw new RangeError('Batch upsert requires at least one row')
       return db.from('note_details').upsert(rows.map(row => ({ ...row, subject: options.subject })), { onConflict: 'subject,note_id' }).select().retry(false)
     },
+    validateDraft: (body: string) => {
+      inputValidators?.api.notes.insert({ subject: options.subject, body })
+    },
     create: (body: string, priority = 0) => db.from('notes').insert({ subject: options.subject, body, priority }).select().single(),
-    update: async (id: number, expectedVersion: number, patch: { body?: string; priority?: number }) => {
+    validateEdit: (patch: unknown) => inputValidators?.api.notes.update(patch),
+    update: async (id: number, expectedVersion: number, patch: { body?: string; priority?: number }, signal?: AbortSignal) => {
       if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || expectedVersion > 2147483647) throw new RangeError('Expected version must be a positive PostgreSQL integer')
-      const result = await db.from('notes').update(patch).eq('id', id).eq('version', expectedVersion).select().maybeSingle().retry(false)
+      let query = db.from('notes').update(patch).eq('id', id).eq('version', expectedVersion).select().retry(false)
+      if (signal) query = query.abortSignal(signal)
+      const result = await query.maybeSingle()
       if (result.error || result.data) return result
       return { ...result, status: 409, statusText: 'Conflict', data: null, error: { code: 'update_conflict', message: 'Note changed or is unavailable; reload before saving', details: '', hint: '' } }
     },

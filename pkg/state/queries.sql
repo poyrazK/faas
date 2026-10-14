@@ -2969,7 +2969,8 @@ INSERT INTO request_telemetry (
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
-    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
+    content_outcome
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -2988,7 +2989,8 @@ INSERT INTO request_telemetry (
     sqlc.arg('guest_cpu_time_ms')::int,
     sqlc.arg('guest_peak_rss_mb')::int,
     sqlc.arg('guest_resource_usage_available')::bool,
-    COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb)
+    COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb),
+    sqlc.arg('content_outcome')::text
 );
 
 -- name: ListRequestTelemetryByPlatformTenant :many
@@ -4938,6 +4940,9 @@ ORDER BY node_id, is_origin DESC;
 
 -- name: ObjectUsageLockAccount :one
 SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
+
+-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -17194,6 +17199,23 @@ WHERE managed_postgres_creation_receipts.account_id=EXCLUDED.account_id
 -- name: ReadManagedPostgresCreationReceipt :one
 SELECT * FROM managed_postgres_creation_receipts WHERE kind=$1 AND backend_id=$2 AND resource_id=$3;
 
+-- ADR-1259: append-once; a replay must describe the same verified lineage.
+-- name: RecordManagedPostgresRestoreVerification :one
+INSERT INTO managed_postgres_restore_verifications(database_id,account_id,backend_id,backend_fingerprint,generation,
+    provider_resource_id,source_resource_id,point_in_time,evidence)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (database_id) DO UPDATE SET database_id=EXCLUDED.database_id
+WHERE managed_postgres_restore_verifications.account_id=EXCLUDED.account_id
+    AND managed_postgres_restore_verifications.backend_id=EXCLUDED.backend_id
+    AND managed_postgres_restore_verifications.backend_fingerprint=EXCLUDED.backend_fingerprint
+    AND managed_postgres_restore_verifications.provider_resource_id=EXCLUDED.provider_resource_id
+    AND managed_postgres_restore_verifications.source_resource_id=EXCLUDED.source_resource_id
+    AND managed_postgres_restore_verifications.point_in_time=EXCLUDED.point_in_time
+    AND managed_postgres_restore_verifications.evidence=EXCLUDED.evidence RETURNING *;
+
+-- name: ReadManagedPostgresRestoreVerification :one
+SELECT * FROM managed_postgres_restore_verifications WHERE account_id=$1 AND database_id=$2;
+
 -- name: ValidateManagedPostgresSnapshotCreationIntent :one
 SELECT o.account_id FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
 WHERE ('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)=sqlc.arg(resource_id)::text
@@ -21421,6 +21443,21 @@ SELECT EXISTS (
       )
     )
 ) AS managed;
+
+-- name: WriteEnvironmentGitNotificationState :exec
+UPDATE environment_git_sources SET notification_state = sqlc.arg(notification_state)::jsonb
+WHERE id = sqlc.arg(source_id)::uuid AND NOT detached;
+
+-- name: EnqueueEnvironmentGitNotification :exec
+INSERT INTO app_webhook_deliveries
+    (source_event_id, webhook_id, account_id, event, payload, created_at, updated_at, next_attempt_at)
+SELECT sqlc.arg(event_id)::uuid, h.id, h.account_id, 'environment.gitops.changed',
+       sqlc.arg(payload)::jsonb, sqlc.arg(now_at)::timestamptz, sqlc.arg(now_at)::timestamptz, sqlc.arg(now_at)::timestamptz
+FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
+WHERE h.account_id = sqlc.arg(account_id)::uuid AND h.scope = 'account' AND h.enabled
+  AND 'environment.gitops.changed' = ANY(h.event_filter)
+  AND a.status = 'active' AND a.abuse_hold_at IS NULL
+ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING;
 
 -- name: InstanceLogsOwnedByApp :one
 -- Archived runtime logs are keyed by instance only. The instance row proves

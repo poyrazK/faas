@@ -80,12 +80,23 @@ func (p *qualificationLineageProvider) Restore(ctx context.Context, r RestoreReq
 		if p.restore > 1 {
 			o.RestoreLineage = nil
 		}
+	case "drifting":
+		// Like Neon (ADR-1259): only the creation proves the lineage; later
+		// observations must confirm that verification instead of remapping.
+		if p.restore == 1 {
+			o.RestoreVerification = &RestoreVerification{ProviderResourceID: o.ProviderResourceID, SourceResourceID: r.SourceResourceID, PointInTime: r.PointInTime, Evidence: "creation-evidence"}
+		} else if r.Verification == nil || r.Verification.Evidence != "creation-evidence" {
+			return ObservedDatabase{}, ErrLineageUnproven
+		}
 	}
 	return o, e
 }
 func (p *qualificationLineageProvider) InspectRestore(ctx context.Context, id string, r RestoreRequest) (ObservedDatabase, error) {
 	if r.SourceResourceID != p.resourceID+"/data" || !r.PointInTime.Equal(p.pointInTime) {
 		return ObservedDatabase{}, ErrConflict
+	}
+	if p.fault == "drifting" && (r.Verification == nil || r.Verification.Evidence != "creation-evidence") {
+		return ObservedDatabase{}, ErrLineageUnproven
 	}
 	o, e := p.qualificationProvider.Inspect(ctx, id)
 	switch p.fault {
@@ -98,11 +109,11 @@ func (p *qualificationLineageProvider) InspectRestore(ctx context.Context, id st
 }
 
 func TestQualificationRejectsLineageFailuresDespiteSuccessfulDataProbe(t *testing.T) {
-	for _, fault := range []string{"valid", "creation_missing", "creation_point", "ready_missing", "ready_source", "replay_identity", "replay_lineage"} {
+	for _, fault := range []string{"valid", "drifting", "creation_missing", "creation_point", "ready_missing", "ready_source", "replay_identity", "replay_lineage"} {
 		t.Run(fault, func(t *testing.T) {
 			p := &qualificationLineageProvider{qualificationProvider: qualificationProvider{capabilities: testCapabilities()}, fault: fault}
 			report, err := QualifyProvider(t.Context(), p, QualificationOptions{ProviderName: "fake", ResourceID: "lineage-qualification", Spec: testSpec(), Mutating: true})
-			if fault == "valid" {
+			if fault == "valid" || fault == "drifting" {
 				if err != nil {
 					t.Fatalf("valid qualification: %+v %v", report, err)
 				}

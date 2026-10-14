@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -513,9 +514,16 @@ func cmdPostgresBindingsRotate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	before, beforeErr := client.GetManagedPostgresBinding(context.Background(), id)
 	result, err := client.RotateManagedPostgresBinding(context.Background(), id)
 	if err != nil {
-		return printErr("Could not rotate PostgreSQL binding", err)
+		adopted, ok := adoptRotationAfterUncertainError(context.Background(), client, err, id, before, beforeErr)
+		if !ok {
+			return printErr("Could not rotate PostgreSQL binding", err)
+		}
+		result = adopted
+	} else if beforeErr == nil && before.RotationPending && result.CredentialGeneration == before.CredentialGeneration {
+		PrintWarn(osStderr, "A rotation was already in progress (generation %d); this call joined it instead of starting another.", result.CredentialGeneration)
 	}
 	timedOut := false
 	if waitOptions.Wait {
@@ -682,4 +690,24 @@ func formatPostgresDuration(seconds int64) string {
 		return strconv.FormatInt(seconds/day, 10) + "d"
 	}
 	return strconv.FormatInt(seconds, 10) + "s"
+}
+
+// adoptRotationAfterUncertainError recovers a rotation whose response was
+// lost. On production-us `bindings rotate --wait` failed with "Could not reach
+// Gregale" after 26.6 s while the rotation had committed and the running app
+// had already switched to the new role (live test 2026-10-14). Only a
+// server-side or transport failure is uncertain; a generation past the one
+// read before the call is this rotation.
+func adoptRotationAfterUncertainError(ctx context.Context, client interface {
+	GetManagedPostgresBinding(context.Context, string) (api.ManagedPostgresBinding, error)
+}, err error, id string, before api.ManagedPostgresBinding, beforeErr error) (api.ManagedPostgresBinding, bool) {
+	var apiErr *APIError
+	if beforeErr != nil || errors.As(err, &apiErr) && apiErr.Problem.Status < 500 {
+		return api.ManagedPostgresBinding{}, false
+	}
+	now, getErr := client.GetManagedPostgresBinding(ctx, id)
+	if getErr != nil || now.CredentialGeneration <= before.CredentialGeneration {
+		return api.ManagedPostgresBinding{}, false
+	}
+	return now, true
 }
