@@ -46,8 +46,8 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 				ExpiresAt: time.Now().Add(time.Minute), RulesInstalled: len(request.Rules), Generation: generation,
 			})
 		case http.MethodDelete:
-			if clock == nil || clock.phaseAt(time.Now()) != 2 {
-				t.Errorf("clear observed phase %d; want the recovery phase boundary before the API mutation", clock.phaseAt(time.Now()))
+			if clock == nil || clock.phaseAt(time.Now()) != 1 {
+				t.Errorf("clear observed phase %d; want the fault phase until the API clears it", clock.phaseAt(time.Now()))
 			}
 			events = append(events, "clear")
 			w.WriteHeader(http.StatusNoContent)

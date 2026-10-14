@@ -65,10 +65,12 @@ const (
 	ApplicationStandardRuntimeAdmissionReplayLimit = 10000
 	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
 	// Instance admission takes its runtime fences without waiting, so peer
-	// transitions of one app or deployment report busy. These bound the
-	// replay of that rolled-back instance transaction (about 100 ms in all).
-	ApplicationStandardRuntimeLockAttempts = 6
-	ApplicationStandardRuntimeLockRetry    = 5 * time.Millisecond
+	// transitions of one app or deployment report busy. These bound the replay
+	// of that rolled-back transaction: exponential from LockRetry, capped at
+	// LockMaxBackoff, under a second in all.
+	ApplicationStandardRuntimeLockAttempts   = 10
+	ApplicationStandardRuntimeLockRetry      = 5 * time.Millisecond
+	ApplicationStandardRuntimeLockMaxBackoff = 160 * time.Millisecond
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30

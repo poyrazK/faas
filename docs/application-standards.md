@@ -685,10 +685,11 @@ application's instances captures its runtime inputs under per-application and
 per-artifact fences taken without waiting, so concurrent transitions of one
 application collide briefly. The store replays the rolled-back instance insert,
 runtime publication or native grant issuance up to
-`ApplicationStandardRuntimeLockAttempts` times with a short jittered backoff
-(`ApplicationStandardRuntimeLockRetry`, about 100 ms in all) before reporting
-HTTP 409 `application_standards_pending`. A standards change that holds the
-fences longer still refuses admission.
+`ApplicationStandardRuntimeLockAttempts` times with jittered exponential backoff
+from `ApplicationStandardRuntimeLockRetry`, capped at
+`ApplicationStandardRuntimeLockMaxBackoff` (under a second in all), before
+reporting HTTP 409 `application_standards_pending`. A standards change that
+holds the fences longer still refuses admission.
 
 Applications without an organization are not enrolled. Instances created before
 runtime capture existed never receive a fabricated capture: like the instance

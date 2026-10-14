@@ -34,7 +34,8 @@ func retryRuntimeAdmissionBusy[T any](ctx context.Context, attempt func() (T, er
 			return out, err
 		}
 		retry := api.ApplicationStandardRuntimeLockRetry
-		timer := time.NewTimer(time.Duration(n)*retry + rand.N(retry))
+		backoff := min(retry<<(n-1), api.ApplicationStandardRuntimeLockMaxBackoff)
+		timer := time.NewTimer(backoff + rand.N(retry))
 		select {
 		case <-ctx.Done():
 			timer.Stop()

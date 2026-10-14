@@ -72,14 +72,15 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 			if active != nil && len(phase.Rules) > 0 {
 				return result, fmt.Errorf("fault phase %q must be followed by a no-rule phase before phase %q", phases[activeIndex].Name, phase.Name)
 			}
-			// Requests can continue while the control API applies the next plan.
-			// Start the measurement window first so they are attributed to the phase
-			// whose state they observe, not the phase that just ended.
-			clock.transition(i, time.Now())
+			// Without a correlation gate, requests continue while the control API
+			// applies the next plan. Attribute that transition to the fault: a
+			// recovery window starts only after the clear, while a fault window
+			// starts before its install.
 			if active != nil {
 				if clearErr := client.ClearScenarioTestChaos(ctx, runID); clearErr != nil {
 					return result, fmt.Errorf("clear chaos before phase %q: %w", phase.Name, clearErr)
 				}
+				clock.transition(i, time.Now())
 				release()
 				activeCaptured = true
 				captureErr := captureTestChaosMatches(ctx, client, runID, active)
@@ -88,6 +89,8 @@ func runTestChaosSchedule(ctx context.Context, client *Client, runID string, pha
 					return result, fmt.Errorf("chaos phase %q: %w", phases[activeIndex].Name, captureErr)
 				}
 				active, activeIndex, activeCaptured = nil, -1, false
+			} else {
+				clock.transition(i, time.Now())
 			}
 			if len(phase.Rules) > 0 {
 				plan, planErr := (&testChaosSpec{Duration: totalDuration.String(), Rules: phase.Rules}).plan()
