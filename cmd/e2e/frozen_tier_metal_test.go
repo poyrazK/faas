@@ -59,11 +59,8 @@ func TestFrozenTierMetal(t *testing.T) {
 	img, _ := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
 	falsy := false
-	// A function app (only functions are eligible) deployed from a
-	// prebuilt image, so the test needs no builder VM.
-	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "frozen", Type: "function",
-		Runtime: api.FunctionRuntimeBinary, RequireAuthn: &falsy}); got != http.StatusCreated {
-		t.Fatalf("create function app: status=%d", got)
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "frozen", Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
+		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "frozen")
 	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/frozen/deployments", api.CreateDeploymentRequest{Image: ref})
@@ -76,6 +73,14 @@ func TestFrozenTierMetal(t *testing.T) {
 	}
 	if _, err := e2etest.WaitForDeploymentLive(context.Background(), t, pool, dep.ID, 90*time.Second); err != nil {
 		t.Fatalf("deployment did not go live: %v", err)
+	}
+	// Only function apps are frozen. A function deploy needs a function
+	// runner image built in a builder VM; this test deploys the prebuilt
+	// hello image as an app and then marks the app a function, which is all
+	// the frozen tier reads.
+	if _, err := pool.Exec(context.Background(),
+		`update apps set type = 'function', runtime = 'binary' where id = $1`, appID); err != nil {
+		t.Fatalf("mark app a function: %v", err)
 	}
 	setAppIdleTimeout(t, h, key, "frozen", api.IdleTimeoutFloorSeconds)
 
