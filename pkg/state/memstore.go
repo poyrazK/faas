@@ -17236,6 +17236,11 @@ func (m *MemStore) ListEventsPage(_ context.Context, subject string, beforeAt ti
 // helper that does NOT re-lock. Standalone callers (handlers,
 // tests) go through this method and pay the lock normally.
 func (m *MemStore) InsertAuditLog(_ context.Context, entry AuditLog) error {
+	data, err := auditLogDataWithTrace(entry)
+	if err != nil {
+		return err
+	}
+	entry.Data = data
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appendAuditLogLocked(entry)
@@ -17247,6 +17252,11 @@ func (m *MemStore) InsertAuditLog(_ context.Context, entry AuditLog) error {
 // directly so it can stay inside its own critical section without
 // deadlocking on a re-entry.
 func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
+	var traceCopy *string
+	if entry.TraceID != nil {
+		value := *entry.TraceID
+		traceCopy = &value
+	}
 	var dataCopy json.RawMessage
 	if len(entry.Data) > 0 {
 		dataCopy = append(json.RawMessage(nil), entry.Data...)
@@ -17259,6 +17269,7 @@ func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
 		Actor:        entry.Actor,
 		ReceivedAt:   entry.ReceivedAt,
 		Data:         dataCopy,
+		TraceID:      traceCopy,
 	})
 }
 

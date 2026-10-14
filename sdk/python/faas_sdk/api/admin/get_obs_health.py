@@ -70,9 +70,10 @@ def sync_detailed(
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -117,9 +118,10 @@ def sync(
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -160,9 +162,10 @@ async def asyncio_detailed(
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -205,9 +208,10 @@ async def asyncio(
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
