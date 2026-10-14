@@ -1903,9 +1903,11 @@ func (q *Queries) OperatorPostCaptureSnapshot(ctx context.Context, db DBTX, inst
 }
 
 const operatorQueuedBuildsCount = `-- name: OperatorQueuedBuildsCount :one
-SELECT count(*)::bigint FROM builds WHERE status = 'queued'
+SELECT count(*)::bigint FROM builds
+WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now())
 `
 
+// Deferred builds that are not due yet (ADR-20261021221906) are not backlog.
 func (q *Queries) OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error) {
 	row := db.QueryRow(ctx, operatorQueuedBuildsCount)
 	var column_1 int64
@@ -1915,8 +1917,8 @@ func (q *Queries) OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64
 
 const operatorQueuedBuildsSnapshot = `-- name: OperatorQueuedBuildsSnapshot :one
 SELECT count(*)::bigint AS queued,
-       min(enqueued_at)::timestamptz AS oldest_enqueued_at
-FROM builds WHERE status = 'queued'
+       min(coalesce(not_before, enqueued_at))::timestamptz AS oldest_enqueued_at
+FROM builds WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now())
 `
 
 type OperatorQueuedBuildsSnapshotRow struct {

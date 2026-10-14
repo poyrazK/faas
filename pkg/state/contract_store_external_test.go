@@ -23,6 +23,7 @@ type contractTestStore interface {
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeUsageBatcher
+	state.DeferredBuildStore
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
 	state.DeploymentHostingReceiptStore

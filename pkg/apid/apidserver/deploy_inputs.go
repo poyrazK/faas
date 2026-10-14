@@ -20,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
@@ -366,7 +367,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			ann.PRNumber = value
-		case "dev_source_base", "dev_source_target", "dev_source_deleted":
+		case "dev_source_base", "dev_source_target", "dev_source_deleted", "dev_source_build_now":
 			if !developerSource {
 				_, _ = io.Copy(io.Discard, part)
 				break
@@ -568,7 +569,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// legacy hardcoded "image" diverged from Kind for tarball /
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
+		// ADR-20261021221906: a sync about to reach the running instance as a live
+		// patch holds its build back; a later sync supersedes it.
+		buildNotBefore := devloop.BuildNotBefore(time.Now(), devPatch.preview, devPatchDeliveryEnabled(), devSource.buildNow, devloop.CoalesceWindow(os.Getenv))
 		res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+			BuildNotBefore:            buildNotBefore,
 			OperationDefinitions:      sourceOperationSpecs(manifest),
 			OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 			Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
@@ -632,7 +637,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if developerSource {
-			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
+			s.cancelSupersededDevBuilds(r.Context(), acct, app, d.ID)
+			published := s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
+			s.settleDeferredDevBuild(r.Context(), app, d.ID, buildNotBefore, published, devPatch.preview)
 		}
 		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
 			api.WriteProblem(w, prob)

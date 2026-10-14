@@ -849,6 +849,10 @@ type DevPatchPreview struct {
 	// Generation is set when this sync published a live patch; poll
 	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
 	Generation int64 `json:"generation,omitempty"`
+	// BuildDeferredUntil is set when the sync's convergence build waits
+	// for the developer to stop saving (ADR-20261021221906): the live patch is the
+	// sync, and a later sync supersedes this build before it starts.
+	BuildDeferredUntil *time.Time `json:"build_deferred_until,omitempty"`
 }
 
 // DevPatchStatusResponse reports whether a published live patch reached the

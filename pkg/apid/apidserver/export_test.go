@@ -1203,8 +1203,17 @@ func (r *server) PurgeAppCache(p0 http.ResponseWriter, p1 *http.Request, p2 stat
 func (r *server) RealtimedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.realtimedMetricsDiscovery(p0, p1)
 }
-func (r *server) RecordDevPatchSource(p0 context.Context, p1 state.App, p2 string, p3 string, p4 string, p5 devPatchPlan) {
-	r.recordDevPatchSource(p0, p1, p2, p3, p4, p5)
+func (r *server) RecordDevPatchSource(p0 context.Context, p1 state.App, p2 string, p3 string, p4 string, p5 devPatchPlan) bool {
+	return r.recordDevPatchSource(p0, p1, p2, p3, p4, p5)
+}
+func (r *server) SettleDeferredDevBuild(p0 context.Context, p1 state.App, p2 string, p3 time.Time, p4 bool, p5 *api.DevPatchPreview) {
+	r.settleDeferredDevBuild(p0, p1, p2, p3, p4, p5)
+}
+func (r *server) CancelSupersededDevBuilds(p0 context.Context, p1 state.Account, p2 state.App, p3 string) {
+	r.cancelSupersededDevBuilds(p0, p1, p2, p3)
+}
+func (r *server) StartDeferredDevBuilds(p0 context.Context, p1 state.App) {
+	r.startDeferredDevBuilds(p0, p1)
 }
 func (r *server) RedirectToGitHubAuthorization(p0 http.ResponseWriter, p1 *http.Request, p2 int64) bool {
 	return r.redirectToGitHubAuthorization(p0, p1, p2)

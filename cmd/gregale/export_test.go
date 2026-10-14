@@ -2002,6 +2002,7 @@ var WakeRecommendationTier = wakeRecommendationTier
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
+var FinishDeferredDevSync = finishDeferredDevSync
 var WithBindingProgress = withBindingProgress
 var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot

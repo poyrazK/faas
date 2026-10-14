@@ -24566,6 +24566,9 @@ paths:
                 dev_source_deleted:
                   type: string
                   description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dev_source_build_now:
+                  type: string
+                  description: "Set to true to build this sync at once even when it reaches the running instance as a live patch (ADR-20261021221906). Without it, such a sync's build waits until the developer stops saving and a later sync replaces it."
                 dockerfile:
                   type: boolean
                 runtime:
@@ -88165,7 +88168,7 @@ components:
           description: Optional placement region; omitted uses the platform default.
 
     DevPatchPreview:
-      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a measurement only; the normal developer build always runs.
+      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time (ADR-740) and, when it was published as one, whether its build waits for the developer to stop saving (ADR-20261021221906).
       type: object
       required:
         - eligible
@@ -88204,6 +88207,10 @@ components:
           format: int64
           minimum: 1
           description: Set when this sync published a live patch; poll getDevPatchStatus with it.
+        build_deferred_until:
+          type: string
+          format: date-time
+          description: Set when this sync's build waits behind its live patch (ADR-20261021221906). The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
     DevPatchStatusResponse:
       description: Delivery state of one developer live patch (ADR-740).
       type: object

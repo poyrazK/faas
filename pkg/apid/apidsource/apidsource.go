@@ -226,6 +226,11 @@ type EnqueueParams struct {
 	// The activity is a prevalidated customer-safe projection; Enqueue fills
 	// its deployment identifiers before crossing the store boundary.
 	Activity *state.OrgActivity
+	// BuildNotBefore, when set, queues the build so no claim takes it before
+	// then (ADR-20261021221906): the convergence build of a developer sync that
+	// already reached the running instance as a live patch. A store without
+	// state.DeferredBuildStore builds at once.
+	BuildNotBefore time.Time
 	// Annotation fields (issue #977 / ADR-116). Optional;
 	// empty/zero values mean "no annotation" and the pgstore
 	// collapses them to NULL on the row. PRNumber=0 → NULL via
@@ -737,29 +742,35 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// pipeline at build time.
 	var build state.Build
 	var activityOutboxID int64
+	var activity *state.OrgActivity
 	if p.Activity != nil {
-		activity := *p.Activity
+		prepared := *p.Activity
 		deploymentID, parseErr := uuid.Parse(d.ID)
 		if parseErr != nil {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity deployment id: %w", parseErr)
 		}
-		activity.DeploymentID = &deploymentID
-		activity.SourceType = "deployment.requested"
-		activity.SourceID = d.ID
-		if activity.AppID == nil {
+		prepared.DeploymentID = &deploymentID
+		prepared.SourceType = "deployment.requested"
+		prepared.SourceID = d.ID
+		if prepared.AppID == nil {
 			appID, parseErr := uuid.Parse(d.AppID)
 			if parseErr != nil {
 				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity app id: %w", parseErr)
 			}
-			activity.AppID = &appID
+			prepared.AppID = &appID
 		}
-		if activityStore, ok := store.(state.OrgActivityDeploymentMutationStore); ok {
-			build, activityOutboxID, err = activityStore.CreateBuildWithIDAndActivity(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"), activity)
-		} else {
-			build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
-		}
-	} else {
-		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+		activity = &prepared
+	}
+	logPath := filepath.Join(logDir, "build.log")
+	deferredStore, canDefer := store.(state.DeferredBuildStore)
+	activityStore, hasActivity := store.(state.OrgActivityDeploymentMutationStore)
+	switch {
+	case !p.BuildNotBefore.IsZero() && canDefer:
+		build, activityOutboxID, err = deferredStore.CreateDeferredBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, logPath, p.BuildNotBefore, activity)
+	case activity != nil && hasActivity:
+		build, activityOutboxID, err = activityStore.CreateBuildWithIDAndActivity(ctx, buildID, d.ID, p.Kind, p.SourceBytes, logPath, *activity)
+	default:
+		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, logPath)
 	}
 	if err != nil {
 		if replayable && errors.Is(err, state.ErrConflict) {
@@ -808,17 +819,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// Step 6: NotifyBuildQueued. Best-effort. builderd's poll-
 	// recovery (state.Store.ClaimNextQueuedBuild, FOR UPDATE SKIP
 	// LOCKED) files missing notifies.
-	queuedPayload, _ := json.Marshal(map[string]any{
-		"build":      build.ID,
-		"deployment": d.ID,
-		"app":        p.AppID,
-		"kind":       string(p.Kind),
-		"source":     source,
-	})
-	if err := notif.Notify(ctx, db.NotifyBuildQueued, string(queuedPayload)); err != nil {
-		p.Log.Warn("apidsource.Enqueue: notify build_queued (durable recovery will pick it up)",
-			"build", build.ID, "deployment", d.ID, "app", p.AppID, "err", err)
-	}
+	NotifyBuildQueued(ctx, notif, p.Log, build, p.AppID, source)
 
 	// Step 7: notify only when CreateDeployment actually superseded the
 	// predecessor. Stable redeploys deliberately keep a live predecessor
@@ -895,4 +896,25 @@ func workflowScope(scope string) string {
 		return api.DefaultEnvScope
 	}
 	return scope
+}
+
+// NotifyBuildQueued tells builderd a build is claimable. Best-effort:
+// builderd's polling claim (state.Store.ClaimNextQueuedBuild) files missing
+// notifications. apid calls it again when it starts a deferred build early
+// (ADR-20261021221906).
+func NotifyBuildQueued(ctx context.Context, notif Notifier, log *slog.Logger, build state.Build, appID, source string) {
+	if source == "" {
+		source = string(build.Kind)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"build":      build.ID,
+		"deployment": build.DeploymentID,
+		"app":        appID,
+		"kind":       string(build.Kind),
+		"source":     source,
+	})
+	if err := notif.Notify(ctx, db.NotifyBuildQueued, string(payload)); err != nil && log != nil {
+		log.Warn("apidsource: notify build_queued (durable recovery will pick it up)",
+			"build", build.ID, "deployment", build.DeploymentID, "app", appID, "err", err)
+	}
 }
