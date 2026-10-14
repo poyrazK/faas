@@ -1416,20 +1416,46 @@ var FullRootfsAllowAutoDefault = map[Plan]bool{
 
 // RealtimeLimits describes the managed realtime allowance for a plan. It is
 // kept separate from Limits so the opt-in realtime surface does not change the
-// long-lived Limits struct consumed by every daemon. Usage metering and the
-// connection and message limits proposed in ADR-1238 belong here.
+// long-lived Limits struct consumed by every daemon.
+//
+// Realtime is free (ADR-1238): Gregale sells compute, and realtime features are
+// software. Limits exist only where realtime holds a real resource. An open
+// connection holds about 52 KB of realtimed memory (measured idle, 2026-10-14),
+// so ConnectionsPerAccount caps the concurrent connections an account holds
+// across the fleet: Hobby 200 (~10 MB), Pro 1,000 (~50 MB), Scale 5,000
+// (~260 MB, half a node). Retained history is already bounded per endpoint, and
+// fan-out bandwidth is not billed, like application egress.
 type RealtimeLimits struct {
-	Plan                Plan
-	EndpointsPerApp     int
-	EndpointsPerAccount int
+	Plan                  Plan
+	EndpointsPerApp       int
+	EndpointsPerAccount   int
+	ConnectionsPerAccount int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000},
 }
+
+// Platform side of realtime fair use (ADR-1238). realtimed runs with
+// MemoryMax=512M; at ~52 KB per idle connection, RealtimeNodeConnectionsDefault
+// leaves room for queued frames and subscription pumps. One account may hold at
+// most RealtimeAccountNodeSharePercent of a node's connections, so a single
+// account cannot fill a node even within its plan allowance.
+//
+// Each realtimed process reports its per-account connection counts to apid
+// every RealtimeConnectionSyncInterval and learns the other nodes' counts in
+// return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
+// node whose own sync is that stale enforces its local count only.
+const (
+	RealtimeNodeConnectionsDefault    = 6_000
+	RealtimeAccountNodeSharePercent   = 50
+	RealtimeConnectionSyncInterval    = 5 * time.Second
+	RealtimeConnectionSyncStaleAfter  = 30 * time.Second
+	RealtimeConnectionSyncMaxAccounts = 10_000
+)
 
 func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 	l, ok := realtimeLimits[p]

@@ -7851,6 +7851,17 @@ type QueueBinding struct {
 	EnvironmentID   pgtype.UUID
 }
 
+type RealtimeNodeConnection struct {
+	NodeName    string
+	AccountID   pgtype.UUID
+	Connections int32
+}
+
+type RealtimeNodeConnectionSync struct {
+	NodeName string
+	SyncedAt pgtype.Timestamptz
+}
+
 type RealtimeUsageHour struct {
 	EndpointID            pgtype.UUID
 	Hour                  pgtype.Timestamptz

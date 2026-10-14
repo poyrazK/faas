@@ -28805,6 +28805,29 @@ CREATE TABLE public.queue_bindings (
 
 
 --
+-- Name: realtime_node_connection_syncs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_connection_syncs (
+    node_name text NOT NULL,
+    synced_at timestamp with time zone NOT NULL,
+    CONSTRAINT realtime_node_connection_syncs_node_name_check CHECK (((length(node_name) >= 1) AND (length(node_name) <= 253)))
+);
+
+
+--
+-- Name: realtime_node_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_node_connections (
+    node_name text NOT NULL,
+    account_id uuid NOT NULL,
+    connections integer NOT NULL,
+    CONSTRAINT realtime_node_connections_connections_check CHECK ((connections > 0))
+);
+
+
+--
 -- Name: realtime_usage_hours; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37693,6 +37716,22 @@ ALTER TABLE ONLY public.queue_bindings
 
 
 --
+-- Name: realtime_node_connection_syncs realtime_node_connection_syncs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_connection_syncs
+    ADD CONSTRAINT realtime_node_connection_syncs_pkey PRIMARY KEY (node_name);
+
+
+--
+-- Name: realtime_node_connections realtime_node_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_connections
+    ADD CONSTRAINT realtime_node_connections_pkey PRIMARY KEY (node_name, account_id);
+
+
+--
 -- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44431,6 +44470,13 @@ CREATE UNIQUE INDEX queue_bindings_app_queue_name_uniq ON public.queue_bindings 
 --
 
 CREATE INDEX queue_bindings_enabled_idx ON public.queue_bindings USING btree (app_id, enabled) WHERE enabled;
+
+
+--
+-- Name: realtime_node_connections_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_node_connections_account ON public.realtime_node_connections USING btree (account_id);
 
 
 --
@@ -57496,6 +57542,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.queue_bindings
     ADD CONSTRAINT queue_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: realtime_node_connections realtime_node_connections_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_node_connections
+    ADD CONSTRAINT realtime_node_connections_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.realtime_node_connection_syncs(node_name) ON DELETE CASCADE;
 
 
 --

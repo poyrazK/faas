@@ -74,6 +74,20 @@ func (q *Queries) AuthorizeBatchSettlementActions(ctx context.Context, db DBTX, 
 	return column_1, err
 }
 
+const clearNodeConnectionsExcept = `-- name: ClearNodeConnectionsExcept :exec
+DELETE FROM realtime_node_connections WHERE node_name=$1::text AND NOT (account_id=ANY($2::uuid[]))
+`
+
+type ClearNodeConnectionsExceptParams struct {
+	NodeName   string
+	AccountIds []pgtype.UUID
+}
+
+func (q *Queries) ClearNodeConnectionsExcept(ctx context.Context, db DBTX, arg ClearNodeConnectionsExceptParams) error {
+	_, err := db.Exec(ctx, clearNodeConnectionsExcept, arg.NodeName, arg.AccountIds)
+	return err
+}
+
 const completeMeasuredMessage = `-- name: CompleteMeasuredMessage :one
 WITH removed AS (
  DELETE FROM managed_realtime_consumer_group_messages WHERE group_id=$1::text::uuid AND sequence=$2::bigint
@@ -347,6 +361,15 @@ func (q *Queries) ExpireWorkerHeartbeats(ctx context.Context, db DBTX, arg Expir
 	return err
 }
 
+const forgetSilentConnectionNodes = `-- name: ForgetSilentConnectionNodes :exec
+DELETE FROM realtime_node_connection_syncs WHERE synced_at<clock_timestamp()-make_interval(secs=>$1::double precision)
+`
+
+func (q *Queries) ForgetSilentConnectionNodes(ctx context.Context, db DBTX, silentSeconds float64) error {
+	_, err := db.Exec(ctx, forgetSilentConnectionNodes, silentSeconds)
+	return err
+}
+
 const freezeDeadline = `-- name: FreezeDeadline :exec
 UPDATE managed_realtime_consumer_group_messages SET delivery_deadline=$1::timestamptz,deadline_invalid=$2::boolean WHERE group_id=$3::text::uuid AND sequence=$4::bigint
 `
@@ -530,6 +553,16 @@ func (q *Queries) LockWorkerHealthGroup(ctx context.Context, db DBTX, groupID st
 	var plan string
 	err := row.Scan(&plan)
 	return plan, err
+}
+
+const markNodeConnectionSync = `-- name: MarkNodeConnectionSync :exec
+INSERT INTO realtime_node_connection_syncs (node_name,synced_at) VALUES ($1::text,clock_timestamp())
+ON CONFLICT (node_name) DO UPDATE SET synced_at=excluded.synced_at
+`
+
+func (q *Queries) MarkNodeConnectionSync(ctx context.Context, db DBTX, nodeName string) error {
+	_, err := db.Exec(ctx, markNodeConnectionSync, nodeName)
+	return err
 }
 
 const markReviewedReplayStarted = `-- name: MarkReviewedReplayStarted :exec
@@ -1212,6 +1245,47 @@ func (q *Queries) ReadRealtimeUsageHours(ctx context.Context, db DBTX, arg ReadR
 	return items, nil
 }
 
+const readRemoteNodeConnections = `-- name: ReadRemoteNodeConnections :many
+SELECT c.account_id::text AS account_id,sum(c.connections)::bigint AS connections
+FROM realtime_node_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.node_name<>$1::text
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>$2::double precision)
+GROUP BY c.account_id ORDER BY sum(c.connections) DESC,c.account_id
+LIMIT $3::integer
+`
+
+type ReadRemoteNodeConnectionsParams struct {
+	NodeName     string
+	StaleSeconds float64
+	RowLimit     int32
+}
+
+type ReadRemoteNodeConnectionsRow struct {
+	AccountID   string
+	Connections int64
+}
+
+// Other nodes' fresh counts, largest accounts first.
+func (q *Queries) ReadRemoteNodeConnections(ctx context.Context, db DBTX, arg ReadRemoteNodeConnectionsParams) ([]ReadRemoteNodeConnectionsRow, error) {
+	rows, err := db.Query(ctx, readRemoteNodeConnections, arg.NodeName, arg.StaleSeconds, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRemoteNodeConnectionsRow{}
+	for rows.Next() {
+		var i ReadRemoteNodeConnectionsRow
+		if err := rows.Scan(&i.AccountID, &i.Connections); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readReplayJob = `-- name: ReadReplayJob :one
 SELECT id, group_id, state, rate, selection, outcomes, error_count, last_error, position, created_at, next_at, updated_at, dry_run, reviewed_job_id, started_job_id FROM managed_realtime_replay_jobs WHERE group_id=$1::uuid AND id=$2::uuid FOR UPDATE
 `
@@ -1687,6 +1761,26 @@ func (q *Queries) UpdateReplayJob(ctx context.Context, db DBTX, arg UpdateReplay
 		&i.StartedJobID,
 	)
 	return i, err
+}
+
+const upsertNodeConnections = `-- name: UpsertNodeConnections :exec
+INSERT INTO realtime_node_connections AS t (node_name,account_id,connections)
+SELECT $1::text,($2::uuid[])[g.i],($3::integer[])[g.i]
+FROM generate_subscripts($2::uuid[],1) AS g(i)
+ON CONFLICT (node_name,account_id) DO UPDATE SET connections=excluded.connections
+WHERE t.connections<>excluded.connections
+`
+
+type UpsertNodeConnectionsParams struct {
+	NodeName   string
+	AccountIds []pgtype.UUID
+	Counts     []int32
+}
+
+// Writes only the counts that changed since the node's previous sync.
+func (q *Queries) UpsertNodeConnections(ctx context.Context, db DBTX, arg UpsertNodeConnectionsParams) error {
+	_, err := db.Exec(ctx, upsertNodeConnections, arg.NodeName, arg.AccountIds, arg.Counts)
+	return err
 }
 
 const writeWorkerHeartbeat = `-- name: WriteWorkerHeartbeat :one

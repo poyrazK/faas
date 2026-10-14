@@ -306,3 +306,30 @@ FROM selected s JOIN peaks p ON p.endpoint_id=s.endpoint_id AND p.hour=s.hour
 GROUP BY s.endpoint_id,s.hour,p.peak_connections
 ORDER BY s.hour,s.endpoint_id
 LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: MarkNodeConnectionSync :exec
+INSERT INTO realtime_node_connection_syncs (node_name,synced_at) VALUES (sqlc.arg(node_name)::text,clock_timestamp())
+ON CONFLICT (node_name) DO UPDATE SET synced_at=excluded.synced_at;
+
+-- name: ForgetSilentConnectionNodes :exec
+DELETE FROM realtime_node_connection_syncs WHERE synced_at<clock_timestamp()-make_interval(secs=>sqlc.arg(silent_seconds)::double precision);
+
+-- name: ClearNodeConnectionsExcept :exec
+DELETE FROM realtime_node_connections WHERE node_name=sqlc.arg(node_name)::text AND NOT (account_id=ANY(sqlc.arg(account_ids)::uuid[]));
+
+-- name: UpsertNodeConnections :exec
+-- Writes only the counts that changed since the node's previous sync.
+INSERT INTO realtime_node_connections AS t (node_name,account_id,connections)
+SELECT sqlc.arg(node_name)::text,(sqlc.arg(account_ids)::uuid[])[g.i],(sqlc.arg(counts)::integer[])[g.i]
+FROM generate_subscripts(sqlc.arg(account_ids)::uuid[],1) AS g(i)
+ON CONFLICT (node_name,account_id) DO UPDATE SET connections=excluded.connections
+WHERE t.connections<>excluded.connections;
+
+-- name: ReadRemoteNodeConnections :many
+-- Other nodes' fresh counts, largest accounts first.
+SELECT c.account_id::text AS account_id,sum(c.connections)::bigint AS connections
+FROM realtime_node_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.node_name<>sqlc.arg(node_name)::text
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision)
+GROUP BY c.account_id ORDER BY sum(c.connections) DESC,c.account_id
+LIMIT sqlc.arg(row_limit)::integer;
