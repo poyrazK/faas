@@ -22,12 +22,6 @@ type realtimeGroupStore interface {
 	state.TriggerRecordSuperseder
 }
 
-// codedNacker returns failed deliveries together with the gateway's stable
-// per-record code, so the source can apply its own retry policy.
-type codedNacker interface {
-	NackWithCodes(ctx context.Context, t sqlc.Trigger, codes map[string]string) error
-}
-
 // realtimePoller delivers a bound consumer group's messages (ADR-1237). The
 // group owns attempts, ordering, retries and dead letters; this poller maps
 // dispatch outcomes onto group settlements. Each claim is one delivery with

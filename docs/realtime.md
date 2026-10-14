@@ -32,3 +32,19 @@ Access-control capacity is bounded. If the endpoint reaches its limit, review
 existing deny entries before adding more. See the
 [access-control operations guide](ops/realtime.md#principal-access-controls-preview)
 for the request contract and recovery procedure.
+
+## Function triggers
+
+A realtime trigger runs one of your functions for each message on a channel, so
+you do not operate always-on workers (ADR-1237). It consumes an existing consumer
+group: create the group with `lease_seconds` of at least 120, then create a
+trigger with `kind: realtime` and `{"endpoint_id", "channel", "group"}` config.
+The group's ordering, filters, retry policy and dead-letter queue apply, and a
+parked app wakes for the first message.
+
+Each message is one invocation. A 2xx response completes it; a failed or
+timed-out handler retries under the group's retry policy; a platform failure
+returns the message without spending an attempt. While a trigger consumes a group,
+direct claims return 409 `realtime_group_bound_to_trigger`; deleting the trigger
+returns the group to your workers. See the
+[function-trigger operations guide](ops/realtime.md#realtime-function-triggers).

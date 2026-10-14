@@ -3544,6 +3544,62 @@ requests continue to use the existing `failure_code` field.
 Migration `20261012102700479_realtime_consumer_group_dead_letter_webhooks.sql`
 and runtime/UI verification remain pending. See ADR-1033.
 
+## Realtime function triggers
+
+ADR-1237 delivers a consumer group's messages to a function instead of a
+customer-run worker. It requires the retained-realtime preview
+(`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) on apid, migration
+`20261013210513485_realtime_function_triggers.sql`, and a schedd that
+registers the `realtime` poller. Hobby, Pro and Scale may create the kind; it
+counts against the per-app trigger caps.
+
+```http
+POST /v1/triggers
+Authorization: Bearer <backend-account-api-key>
+Content-Type: application/json
+
+{"app_id":"<app>","kind":"realtime","slug":"orders",
+ "config":{"endpoint_id":"<endpoint>","channel":"orders","group":"billing","max_concurrency":4}}
+```
+
+Creation checks that the account owns the endpoint, that the group exists with
+`lease_seconds` of at least `RealtimeTriggerMinLeaseSeconds` (120, a 30 s
+invocation plus wake), and that no other trigger consumes it. The trigger is
+created disabled, bound, then enabled; a failed binding deletes it again.
+`batch_window_ms`, `max_attempts`, `retry_policy`, `broker_poison_strategy`
+and `filter_criteria` are rejected (configure them on the group), and
+`batch_size_max` may only be 1. The binding is immutable; PATCH may change only
+`max_concurrency`.
+
+Each message is one invocation with a JSON body carrying `endpoint_id`,
+`channel`, `group`, `sequence`, `message_id`, `event`, `version`, `deleted`,
+`data_base64`, `binary`, `metadata`, `created_at`, `attempt` and
+`fencing_token`. Handlers return an empty or JSON body.
+
+| Dispatch result | Group settlement |
+| --- | --- |
+| succeeded | `complete` |
+| `function_failed`, `function_state_<state>`, `invoke_timeout`, `response_malformed` | `retry` with that `failure_code` |
+| `invoke_error`, `batch_timeout`, wake rate limit, transport or claim failure | `release`; the attempt is returned |
+
+Permanent failure codes in the group's retry policy (for example
+`function_failed`) dead-letter on the first failure. Dead letters, export and
+replay jobs stay on the group; realtime triggers write no `trigger_dead_letter`
+rows. Each delivery has its own trigger ledger record, which ends `succeeded`
+or `superseded`.
+
+Lanes run up to `min(max_concurrency, plan MaxConcurrency, 32)` messages in
+parallel and share the push-queue dispatch pool. The group serializes messages
+that share an ordering key. While bound, worker and account claims or
+settlements on the group return 409 `realtime_group_bound_to_trigger`; status,
+metrics, dead letters, replay, export, pause, drain and resume remain
+available, and pause or drain stops dispatch. Deleting the trigger unbinds the
+group and keeps its messages. Delivery metrics use `schedd_esm_*` with
+`source="realtime"`; group status reports `trigger_id`.
+
+Rollback: delete realtime triggers before running the migration's Down step,
+which refuses while any exist.
+
 ## Batch claims and concurrent workers
 
 Account and scoped-worker group APIs expose `POST .../claims/batch`. Supply a
