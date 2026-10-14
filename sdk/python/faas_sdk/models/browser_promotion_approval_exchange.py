@@ -11,6 +11,8 @@ T = TypeVar("T", bound="BrowserPromotionApprovalExchange")
 
 @_attrs_define
 class BrowserPromotionApprovalExchange:
+    """One-use exchange of a browser-authorized promotion ticket."""
+
     ticket: str
     exchange_code: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -22,6 +22,8 @@ T = TypeVar("T", bound="EnvironmentRouteBudgets")
 
 @_attrs_define
 class EnvironmentRouteBudgets:
+    """Effective advisory route budgets for one immutable app environment."""
+
     app_id: UUID
     scope: str
     budget_source: EnvironmentRouteBudgetsBudgetSource

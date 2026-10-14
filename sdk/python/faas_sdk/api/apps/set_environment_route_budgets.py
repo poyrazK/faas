@@ -133,7 +133,8 @@ def sync_detailed(
         slug (str):
         scope (SetEnvironmentRouteBudgetsScope | Unset):
         environment (str | Unset):
-        body (SetEnvironmentRouteBudgetsRequest):
+        body (SetEnvironmentRouteBudgetsRequest): Compare-and-swap update of the selected
+            environment route-budget override.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,7 +179,8 @@ def sync(
         slug (str):
         scope (SetEnvironmentRouteBudgetsScope | Unset):
         environment (str | Unset):
-        body (SetEnvironmentRouteBudgetsRequest):
+        body (SetEnvironmentRouteBudgetsRequest): Compare-and-swap update of the selected
+            environment route-budget override.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -218,7 +220,8 @@ async def asyncio_detailed(
         slug (str):
         scope (SetEnvironmentRouteBudgetsScope | Unset):
         environment (str | Unset):
-        body (SetEnvironmentRouteBudgetsRequest):
+        body (SetEnvironmentRouteBudgetsRequest): Compare-and-swap update of the selected
+            environment route-budget override.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -261,7 +264,8 @@ async def asyncio(
         slug (str):
         scope (SetEnvironmentRouteBudgetsScope | Unset):
         environment (str | Unset):
-        body (SetEnvironmentRouteBudgetsRequest):
+        body (SetEnvironmentRouteBudgetsRequest): Compare-and-swap update of the selected
+            environment route-budget override.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

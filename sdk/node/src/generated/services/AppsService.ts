@@ -1351,6 +1351,9 @@ export class AppsService {
     slug,
     environment,
   }: {
+    /**
+     * Application slug for release review.
+     */
     slug: string,
     /**
      * Registered named environment in the app's project; omit for default.
@@ -1397,7 +1400,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Registered named environment in the app's project; omit for default.
+     * Registered app environment whose serving health is observed; omit for its default environment.
      */
     environment?: string,
   }): CancelablePromise<AppHealthResponse> {
@@ -4465,6 +4468,9 @@ export class AppsService {
     slug,
     requestBody,
   }: {
+    /**
+     * Application slug for Git source resolution.
+     */
     slug: string,
     requestBody: SourceReviewRequest,
   }): CancelablePromise<SourceReviewResponse> {
@@ -4877,11 +4883,11 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Registered named environment; mutually exclusive with scope.
+     * Environment whose passive operational summary is requested; omit for the default scope.
      */
     environment?: string,
     /**
-     * Explicit default scope. Omitting both selectors retains legacy aggregation.
+     * Choose default-scope operational evidence; do not combine with an environment selector.
      */
     scope?: 'default',
   }): CancelablePromise<AppOperationalSummary> {

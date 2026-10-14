@@ -51,6 +51,7 @@ class CreateDeploymentRequest:
     environment and omitted traffic_percent. Services switch through readiness, routing acknowledgement and drain
     barriers. Workers activate the newest live generation; this is not zero-traffic staging."""
     expected_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     image: str | Unset = UNSET
     """registry.gregale.dev/...@sha256:... — digest-pinned OCI reference."""
     overrides: CreateDeploymentOverrides | None | Unset = UNSET

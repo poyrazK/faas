@@ -15995,6 +15995,7 @@ paths:
       tags: [apps]
       parameters:
         - name: slug
+          description: Application slug for release review.
           in: path
           required: true
           schema: { type: string }
@@ -16017,7 +16018,7 @@ paths:
       - name: environment
         in: query
         required: false
-        description: Registered named environment in the app's project; omit for default.
+        description: Registered app environment whose serving health is observed; omit for its default environment.
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,32}$' }
     get:
       tags: [apps]
@@ -18721,6 +18722,7 @@ paths:
   /v1/apps/{slug}/source-review:
     parameters:
       - name: slug
+        description: Application slug for Git source resolution.
         in: path
         required: true
         schema: { type: string }
@@ -19600,17 +19602,19 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
+          description: Application slug for worker rollout observation.
           in: path
           required: true
           schema: { type: string }
         - name: id
+          description: Exact deployment ID for worker rollout observation.
           in: path
           required: true
           schema: { type: string, format: uuid }
         - name: environment
           in: query
           schema: { type: string }
-          description: Registered named environment; mutually exclusive with scope.
+          description: Selected environment for passive worker generation observations; omit for the default scope.
         - name: scope
           in: query
           schema: { type: string, enum: [default] }
@@ -19628,11 +19632,11 @@ paths:
       - name: environment
         in: query
         schema: { type: string }
-        description: Registered named environment; mutually exclusive with scope.
+        description: Environment whose passive operational summary is requested; omit for the default scope.
       - name: scope
         in: query
         schema: { type: string, enum: [default] }
-        description: Explicit default scope. Omitting both selectors retains legacy aggregation.
+        description: Choose default-scope operational evidence; do not combine with an environment selector.
       - $ref: '#/components/parameters/Slug'
     get:
       tags: [apps]
@@ -29773,10 +29777,12 @@ paths:
   /v1/projects/{slug}/environments/{environment}/approval-requests:
     parameters:
       - name: slug
+        description: Project slug for promotion browser approval request.
         in: path
         required: true
         schema: { type: string }
       - name: environment
+        description: Target registered environment slug for promotion browser approval request.
         in: path
         required: true
         schema: { type: string }
@@ -29806,10 +29812,12 @@ paths:
   /v1/projects/{slug}/environments/{environment}/approval-requests/exchange:
     parameters:
       - name: slug
+        description: Project slug for authorized promotion ticket exchange.
         in: path
         required: true
         schema: { type: string }
       - name: environment
+        description: Target registered environment slug for authorized promotion ticket exchange.
         in: path
         required: true
         schema: { type: string }
@@ -29824,7 +29832,7 @@ paths:
             schema: { $ref: '#/components/schemas/BrowserPromotionApprovalExchange' }
       responses:
         '200':
-          description: Private bridge response; credentials must never be returned to an agent.
+          description: Existing promotion approval bound to the reviewed plan, after human authorization.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectEnvironmentApprovalResponse' }
@@ -55785,6 +55793,7 @@ components:
         configuration_sha256: { type: string }
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
     WorkerRolloutObservation:
+      description: Passive deployment-attributed observations of the selected worker generation.
       type: object
       required: [app_id, deployment_id, scope, checked_at, basis, running, starting, draining, other_residents, retired_residents, generation_converged, queue_processing_confirmed]
       properties:
@@ -55821,6 +55830,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AppOperationalRecommendation' }
     EnvironmentRouteBudgets:
+      description: Effective advisory route budgets for one immutable app environment.
       type: object
       required: [app_id, scope, budget_source, revision, app_revision, config]
       properties:
@@ -55833,6 +55843,7 @@ components:
         app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         config: { $ref: '#/components/schemas/RouteMonitorConfig' }
     SetEnvironmentRouteBudgetsRequest:
+      description: Compare-and-swap update of the selected environment route-budget override.
       type: object
       additionalProperties: false
       required: [app_id, request_id, expected_revision, expected_app_revision, inherit, enabled, routes]
@@ -72805,6 +72816,7 @@ components:
         duplicate: { type: boolean }
 
     AppReleaseReview:
+      description: Atomic app configuration and serving-deployment identities used to fence release admission.
       type: object
       required: [app_id, configuration_hash, latest_deployment_id, serving_deployment_ids]
       properties:
@@ -75844,6 +75856,7 @@ components:
           description: Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
 
     BrowserPromotionApprovalRequest:
+      description: Exact reviewed environment promotion submitted for human browser authorization.
       type: object
       required: [promotion_token, reason]
       properties:
@@ -75861,6 +75874,7 @@ components:
         expires_at: { type: string, format: date-time }
 
     BrowserPromotionApprovalExchange:
+      description: One-use exchange of a browser-authorized promotion ticket.
       type: object
       required: [ticket, exchange_code]
       properties:
@@ -76152,6 +76166,7 @@ components:
           default: false
 
     SourceReviewRequest:
+      description: Git repository and revision selectors to resolve without creating a deployment.
       type: object
       required: [repo, ref]
       properties:
@@ -76160,6 +76175,7 @@ components:
         environment: { type: string, description: Registered target environment; omitted selects default. }
 
     SourceReviewResponse:
+      description: Resolved repository identity and immutable commit bound to a release review.
       type: object
       required: [app_id, repo, commit_sha, installation_id, repository_id, source_root, release_review]
       properties:

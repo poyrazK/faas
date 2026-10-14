@@ -16743,6 +16743,7 @@ WITH scoped_apps AS (
  SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=sqlc.arg(environment)::text
 )
 SELECT
+ (SELECT count(*) FROM app_environment_route_budgets p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS app_environment_route_budgets,
  (SELECT count(*) FROM app_environment_secret_ref_suppressions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS app_environment_secret_ref_suppressions,
  (SELECT count(*) FROM app_environment_secret_refs p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS app_environment_secret_refs,
  (SELECT count(*) FROM app_environment_workload_intents p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS app_environment_workload_intents,

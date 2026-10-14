@@ -50,6 +50,7 @@ class SourceRefDeployRequest:
     """Reviewed native service handoff or worker generation activation. Requires expected_source, omitted traffic,
     an unprotected target and matching workload mode."""
     expected_source: SourceReviewResponse | Unset = UNSET
+    """Resolved repository identity and immutable commit bound to a release review."""
     healthcheck: DeploymentHealthcheck | Unset = UNSET
     """Startup healthcheck shape on the deploy-time override object (issue #460 /
     ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health

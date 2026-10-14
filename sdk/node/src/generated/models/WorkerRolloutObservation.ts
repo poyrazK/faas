@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Passive deployment-attributed observations of the selected worker generation.
+ */
 export type WorkerRolloutObservation = {
   app_id: string;
   deployment_id: string;

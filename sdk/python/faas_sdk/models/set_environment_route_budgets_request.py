@@ -17,6 +17,8 @@ T = TypeVar("T", bound="SetEnvironmentRouteBudgetsRequest")
 
 @_attrs_define
 class SetEnvironmentRouteBudgetsRequest:
+    """Compare-and-swap update of the selected environment route-budget override."""
+
     app_id: UUID
     request_id: UUID
     expected_revision: int

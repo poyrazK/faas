@@ -175,7 +175,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	// success from the customer's perspective. The CLI never set a
 	// cookie; the key is the credential that follows.
 	h.srv.audit.Emit(r.Context(), "auth.login", &accountID, map[string]any{
-		"method": label,
+		"method": browserAuthAuditMethod(req.Code),
 	})
 
 	acct, err := h.srv.store.AccountByID(r.Context(), accountID)

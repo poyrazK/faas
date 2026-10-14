@@ -11,6 +11,8 @@ T = TypeVar("T", bound="BrowserPromotionApprovalRequest")
 
 @_attrs_define
 class BrowserPromotionApprovalRequest:
+    """Exact reviewed environment promotion submitted for human browser authorization."""
+
     promotion_token: str
     reason: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

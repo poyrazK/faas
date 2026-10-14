@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Atomic app configuration and serving-deployment identities used to fence release admission.
+ */
 export type AppReleaseReview = {
   scope?: string;
   project_id?: string;

@@ -29,6 +29,7 @@ class RecoverRolloutRequest:
     """The recovery action. `advance` requires the rollout to be stuck (>30 min in the same canary step); `promote`
     short-circuits the rollout to 100% / complete; `abort` flips rollout_state='aborted'."""
     expected_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     reason: str | Unset = UNSET
     """Operator-supplied reason (≤1024 chars). Lands verbatim in the deployment_audit row's data payload under the
     `reason` key."""

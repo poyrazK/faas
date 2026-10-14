@@ -13,6 +13,8 @@ T = TypeVar("T", bound="SourceReviewRequest")
 
 @_attrs_define
 class SourceReviewRequest:
+    """Git repository and revision selectors to resolve without creating a deployment."""
+
     repo: str
     ref: str
     """GitHub branch or full lowercase commit SHA; use the commit SHA for tags."""

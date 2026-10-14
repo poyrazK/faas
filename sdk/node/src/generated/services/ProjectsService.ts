@@ -2002,7 +2002,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Project slug for promotion browser approval request.
+     */
     slug: string,
+    /**
+     * Target registered environment slug for promotion browser approval request.
+     */
     environment: string,
     requestBody: BrowserPromotionApprovalRequest,
   }): CancelablePromise<BrowserPromotionApprovalResponse> {
@@ -2032,7 +2038,7 @@ export class ProjectsService {
   }
   /**
    * Privately poll a browser-approved promotion; retry returns the same unconsumed credential.
-   * @returns ProjectEnvironmentApprovalResponse Private bridge response; credentials must never be returned to an agent.
+   * @returns ProjectEnvironmentApprovalResponse Existing promotion approval bound to the reviewed plan, after human authorization.
    * @throws ApiError
    */
   public static exchangeBrowserPromotionApproval({
@@ -2040,7 +2046,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Project slug for authorized promotion ticket exchange.
+     */
     slug: string,
+    /**
+     * Target registered environment slug for authorized promotion ticket exchange.
+     */
     environment: string,
     requestBody: BrowserPromotionApprovalExchange,
   }): CancelablePromise<ProjectEnvironmentApprovalResponse> {

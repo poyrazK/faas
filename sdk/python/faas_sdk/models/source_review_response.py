@@ -16,6 +16,8 @@ T = TypeVar("T", bound="SourceReviewResponse")
 
 @_attrs_define
 class SourceReviewResponse:
+    """Resolved repository identity and immutable commit bound to a release review."""
+
     app_id: UUID
     repo: str
     commit_sha: str
@@ -23,6 +25,7 @@ class SourceReviewResponse:
     repository_id: int
     source_root: str
     release_review: AppReleaseReview
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

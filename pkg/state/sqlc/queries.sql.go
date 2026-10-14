@@ -60431,6 +60431,7 @@ WITH scoped_apps AS (
  SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$2::text
 )
 SELECT
+ (SELECT count(*) FROM app_environment_route_budgets p WHERE p.environment_id=$1::uuid) AS app_environment_route_budgets,
  (SELECT count(*) FROM app_environment_secret_ref_suppressions p WHERE p.environment_id=$1::uuid) AS app_environment_secret_ref_suppressions,
  (SELECT count(*) FROM app_environment_secret_refs p WHERE p.environment_id=$1::uuid) AS app_environment_secret_refs,
  (SELECT count(*) FROM app_environment_workload_intents p WHERE p.environment_id=$1::uuid) AS app_environment_workload_intents,
@@ -60464,6 +60465,7 @@ type ReadCloneEnvironmentMetadataBorrowersParams struct {
 }
 
 type ReadCloneEnvironmentMetadataBorrowersRow struct {
+	AppEnvironmentRouteBudgets           int64
 	AppEnvironmentSecretRefSuppressions  int64
 	AppEnvironmentSecretRefs             int64
 	AppEnvironmentWorkloadIntents        int64
@@ -60500,6 +60502,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 	)
 	var i ReadCloneEnvironmentMetadataBorrowersRow
 	err := row.Scan(
+		&i.AppEnvironmentRouteBudgets,
 		&i.AppEnvironmentSecretRefSuppressions,
 		&i.AppEnvironmentSecretRefs,
 		&i.AppEnvironmentWorkloadIntents,

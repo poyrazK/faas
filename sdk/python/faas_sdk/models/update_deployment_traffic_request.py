@@ -25,6 +25,7 @@ class UpdateDeploymentTrafficRequest:
     traffic_percent: int
     """Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."""
     expected_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     expected_serving_deployment_id: str | Unset = UNSET
     """Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive
     traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the

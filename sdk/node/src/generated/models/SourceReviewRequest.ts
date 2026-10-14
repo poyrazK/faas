@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Git repository and revision selectors to resolve without creating a deployment.
+ */
 export type SourceReviewRequest = {
   repo: string;
   /**

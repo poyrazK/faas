@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteMonitorRoute } from './RouteMonitorRoute.js';
+/**
+ * Compare-and-swap update of the selected environment route-budget override.
+ */
 export type SetEnvironmentRouteBudgetsRequest = {
   app_id: string;
   project_id?: string;

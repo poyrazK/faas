@@ -55,3 +55,11 @@ func browserAuthCredential(raw string) (string, []string, time.Duration) {
 	}
 	return "mcp-login", scopes, 8 * time.Hour
 }
+
+// Preserve the existing CLI audit contract while distinguishing MCP consent.
+func browserAuthAuditMethod(raw string) string {
+	if isMCPAuthCode(raw) {
+		return "mcp-login"
+	}
+	return "cli_code"
+}

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppReleaseReview } from './AppReleaseReview.js';
+/**
+ * Resolved repository identity and immutable commit bound to a release review.
+ */
 export type SourceReviewResponse = {
   app_id: string;
   repo: string;

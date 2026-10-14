@@ -13,6 +13,8 @@ T = TypeVar("T", bound="AppReleaseReview")
 
 @_attrs_define
 class AppReleaseReview:
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
+
     app_id: str
     configuration_hash: str
     latest_deployment_id: str

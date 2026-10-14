@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteMonitorConfig } from './RouteMonitorConfig.js';
+/**
+ * Effective advisory route budgets for one immutable app environment.
+ */
 export type EnvironmentRouteBudgets = {
   app_id: string;
   scope: string;

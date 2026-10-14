@@ -689,10 +689,16 @@ export class DeploymentsService {
     environment,
     scope,
   }: {
+    /**
+     * Application slug for worker rollout observation.
+     */
     slug: string,
+    /**
+     * Exact deployment ID for worker rollout observation.
+     */
     id: string,
     /**
-     * Registered named environment; mutually exclusive with scope.
+     * Selected environment for passive worker generation observations; omit for the default scope.
      */
     environment?: string,
     /**

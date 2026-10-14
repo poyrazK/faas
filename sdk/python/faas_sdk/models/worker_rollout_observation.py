@@ -18,6 +18,8 @@ T = TypeVar("T", bound="WorkerRolloutObservation")
 
 @_attrs_define
 class WorkerRolloutObservation:
+    """Passive deployment-attributed observations of the selected worker generation."""
+
     app_id: str
     deployment_id: str
     scope: str

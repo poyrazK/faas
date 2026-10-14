@@ -89,6 +89,7 @@ class DeploymentResponse:
     status: str
     created_at: datetime.datetime
     staged_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
     """Worker instance shutdown progress from the deployment audit timeline. Counts are instances, not application
     tasks. Overdue spans passed their deadline without a recorded outcome."""
