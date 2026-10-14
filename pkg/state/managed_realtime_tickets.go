@@ -10,11 +10,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type RealtimeSubscriptionTicket struct {
+	// ID identifies the ticket for revocation; the bearer token is never
+	// stored and cannot be derived from it.
+	ID        string    `json:"id,omitempty"`
 	Principal string    `json:"principal"`
 	Channels  []string  `json:"channels"`
 	IssuedAt  time.Time `json:"issued_at"`
@@ -23,6 +27,23 @@ type RealtimeSubscriptionTicket struct {
 type RealtimeSubscriptionTicketStore interface {
 	IssueRealtimeSubscriptionTicket(context.Context, string, string, []string, int) (string, RealtimeSubscriptionTicket, error)
 	ReadRealtimeSubscriptionTicket(context.Context, string, string) (RealtimeSubscriptionTicket, error)
+}
+
+// RealtimeSubscriptionTicketRevoker ends tickets before they expire. Live
+// sockets and SSE streams re-read their ticket every second, so a revoked
+// ticket's connections close within about a second.
+type RealtimeSubscriptionTicketRevoker interface {
+	// RevokeRealtimeSubscriptionTicket returns ErrNotFound when the endpoint
+	// has no live ticket with that ID.
+	RevokeRealtimeSubscriptionTicket(ctx context.Context, ep, id string) error
+	// RevokeRealtimeSubscriptionTicketsForPrincipal returns how many live
+	// tickets it revoked.
+	RevokeRealtimeSubscriptionTicketsForPrincipal(ctx context.Context, ep, principal string) (int, error)
+}
+
+func validTicketID(id string) bool {
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed.String() == id
 }
 
 func ticketHash(token string) ([]byte, error) {
@@ -108,7 +129,7 @@ func (s *PgStore) IssueRealtimeSubscriptionTicket(ctx context.Context, ep, princ
 	}
 	encoded, _ := json.Marshal(channels)
 	err = tx.QueryRow(ctx, `insert into managed_realtime_subscription_tickets(token_hash,endpoint_id,principal,channels,issued_at,expires_at)
- select $1,$2,$3,$4::jsonb,t,t+make_interval(secs=>$5::integer) from (select clock_timestamp() as t) stamp returning issued_at,expires_at`, hash, ep, principal, encoded, ttl).Scan(&ticket.IssuedAt, &ticket.ExpiresAt)
+ select $1,$2,$3,$4::jsonb,t,t+make_interval(secs=>$5::integer) from (select clock_timestamp() as t) stamp returning id::text,issued_at,expires_at`, hash, ep, principal, encoded, ttl).Scan(&ticket.ID, &ticket.IssuedAt, &ticket.ExpiresAt)
 	if err != nil {
 		return "", ticket, err
 	}
@@ -123,7 +144,7 @@ func (s *PgStore) ReadRealtimeSubscriptionTicket(ctx context.Context, ep, token 
 		return ticket, err
 	}
 	var encoded []byte
-	err = s.pool.QueryRow(ctx, `select t.principal,t.channels,t.issued_at,t.expires_at from managed_realtime_subscription_tickets t join managed_realtime_endpoints e on e.id=t.endpoint_id where t.token_hash=$1 and t.endpoint_id=$2 and e.enabled and t.expires_at>clock_timestamp()`, hash, ep).Scan(&ticket.Principal, &encoded, &ticket.IssuedAt, &ticket.ExpiresAt)
+	err = s.pool.QueryRow(ctx, `select t.id::text,t.principal,t.channels,t.issued_at,t.expires_at from managed_realtime_subscription_tickets t join managed_realtime_endpoints e on e.id=t.endpoint_id where t.token_hash=$1 and t.endpoint_id=$2 and e.enabled and t.expires_at>clock_timestamp()`, hash, ep).Scan(&ticket.ID, &ticket.Principal, &encoded, &ticket.IssuedAt, &ticket.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ticket, ErrNotFound
 	}
@@ -138,6 +159,30 @@ func (s *PgStore) ReadRealtimeSubscriptionTicket(ctx context.Context, ep, token 
 		return ticket, err
 	}
 	return filterTicket(ticket, access)
+}
+
+func (s *PgStore) RevokeRealtimeSubscriptionTicket(ctx context.Context, ep, id string) error {
+	if !validTicketID(id) {
+		return ErrInvalidArgument
+	}
+	tag, err := s.pool.Exec(ctx, `delete from managed_realtime_subscription_tickets where endpoint_id=$1 and id=$2 and expires_at>clock_timestamp()`, ep, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+func (s *PgStore) RevokeRealtimeSubscriptionTicketsForPrincipal(ctx context.Context, ep, principal string) (int, error) {
+	if api.ValidateRealtimePrincipal(principal) != nil {
+		return 0, ErrInvalidArgument
+	}
+	tag, err := s.pool.Exec(ctx, `delete from managed_realtime_subscription_tickets where endpoint_id=$1 and principal=$2 and expires_at>clock_timestamp()`, ep, principal)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 type storedRealtimeTicket struct {
@@ -176,7 +221,7 @@ func (m *MemStore) IssueRealtimeSubscriptionTicket(_ context.Context, ep, princi
 	if count >= api.RealtimeTicketMaxPerEndpoint {
 		return "", ticket, ErrManagedRealtimeHistoryLimit
 	}
-	ticket = RealtimeSubscriptionTicket{Principal: principal, Channels: append([]string(nil), channels...), IssuedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}
+	ticket = RealtimeSubscriptionTicket{ID: uuid.NewString(), Principal: principal, Channels: append([]string(nil), channels...), IssuedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}
 	if m.realtimeTickets == nil {
 		m.realtimeTickets = map[string]storedRealtimeTicket{}
 	}
@@ -196,4 +241,34 @@ func (m *MemStore) ReadRealtimeSubscriptionTicket(_ context.Context, ep, token s
 		return RealtimeSubscriptionTicket{}, ErrNotFound
 	}
 	return filterTicket(row.Ticket, m.managedRealtimeAccess[ep][row.Ticket.Principal])
+}
+func (m *MemStore) RevokeRealtimeSubscriptionTicket(_ context.Context, ep, id string) error {
+	if !validTicketID(id) {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for key, row := range m.realtimeTickets {
+		if row.EndpointID == ep && row.Ticket.ID == id && now.Before(row.Ticket.ExpiresAt) {
+			delete(m.realtimeTickets, key)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+func (m *MemStore) RevokeRealtimeSubscriptionTicketsForPrincipal(_ context.Context, ep, principal string) (int, error) {
+	if api.ValidateRealtimePrincipal(principal) != nil {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now, revoked := time.Now(), 0
+	for key, row := range m.realtimeTickets {
+		if row.EndpointID == ep && row.Ticket.Principal == principal && now.Before(row.Ticket.ExpiresAt) {
+			delete(m.realtimeTickets, key)
+			revoked++
+		}
+	}
+	return revoked, nil
 }

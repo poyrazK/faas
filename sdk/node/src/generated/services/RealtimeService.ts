@@ -73,6 +73,7 @@ import type { RealtimeReplayJob } from '../models/RealtimeReplayJob.js';
 import type { RealtimeReplayJobRequest } from '../models/RealtimeReplayJobRequest.js';
 import type { RealtimeTicketRequest } from '../models/RealtimeTicketRequest.js';
 import type { RealtimeTicketResponse } from '../models/RealtimeTicketResponse.js';
+import type { RealtimeTicketsRevokeResponse } from '../models/RealtimeTicketsRevokeResponse.js';
 import type { RealtimeWorkerBatchClaimRequest } from '../models/RealtimeWorkerBatchClaimRequest.js';
 import type { RealtimeWorkerClaimRequest } from '../models/RealtimeWorkerClaimRequest.js';
 import type { RealtimeWorkerCredential } from '../models/RealtimeWorkerCredential.js';
@@ -3217,6 +3218,88 @@ export class RealtimeService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke every live subscription ticket of one principal
+   * Operator preview. Backend-only app-scoped write with MFA, for example at logout. Connections using a revoked ticket close within about a second, when they next re-read their ticket. Expired tickets are not counted.
+   * @returns RealtimeTicketsRevokeResponse Number of live tickets revoked.
+   * @throws ApiError
+   */
+  public static revokeRealtimeSubscriptionTickets({
+    slug,
+    id,
+    principal,
+  }: {
+    /**
+     * Application slug owning the endpoint whose principal tickets are revoked.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint whose principal tickets are revoked.
+     */
+    id: string,
+    /**
+     * Principal whose tickets are revoked.
+     */
+    principal: string,
+  }): CancelablePromise<RealtimeTicketsRevokeResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Revoke one subscription ticket
+   * Operator preview. Backend-only app-scoped write with MFA. Uses the ticket_id returned when the ticket was issued, so the backend never needs to keep the bearer token. Connections using the ticket close within about a second.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeRealtimeSubscriptionTicket({
+    slug,
+    id,
+    ticket,
+  }: {
+    /**
+     * Application slug owning the endpoint of the revoked ticket.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint that issued the revoked ticket.
+     */
+    id: string,
+    /**
+     * ticket_id returned when the ticket was issued.
+     */
+    ticket: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'ticket': ticket,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+      },
     });
   }
   /**

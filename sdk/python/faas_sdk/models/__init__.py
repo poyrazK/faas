@@ -3572,6 +3572,7 @@ from .realtime_schedule_completion_webhook_payload import RealtimeScheduleComple
 from .realtime_schedule_completion_webhook_payload_outcome import RealtimeScheduleCompletionWebhookPayloadOutcome
 from .realtime_ticket_request import RealtimeTicketRequest
 from .realtime_ticket_response import RealtimeTicketResponse
+from .realtime_tickets_revoke_response import RealtimeTicketsRevokeResponse
 from .realtime_trigger_config import RealtimeTriggerConfig
 from .realtime_worker_batch_claim_request import RealtimeWorkerBatchClaimRequest
 from .realtime_worker_claim_request import RealtimeWorkerClaimRequest
@@ -7891,6 +7892,7 @@ __all__ = (
     "RealtimeScheduleCompletionWebhookPayloadOutcome",
     "RealtimeTicketRequest",
     "RealtimeTicketResponse",
+    "RealtimeTicketsRevokeResponse",
     "RealtimeTriggerConfig",
     "RealtimeWorkerBatchClaimRequest",
     "RealtimeWorkerClaimRequest",

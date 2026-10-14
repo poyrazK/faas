@@ -33022,6 +33022,82 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RealtimeTicketResponse'
+    delete:
+      operationId: revokeRealtimeSubscriptionTickets
+      tags:
+        - realtime
+      summary: Revoke every live subscription ticket of one principal
+      description: Operator preview. Backend-only app-scoped write with MFA, for example at logout. Connections using a revoked ticket close within about a second, when they next re-read their ticket. Expired tickets are not counted.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug owning the endpoint whose principal tickets are revoked.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Realtime endpoint whose principal tickets are revoked.
+        - name: principal
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Principal whose tickets are revoked.
+      responses:
+        '200':
+          description: Number of live tickets revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeTicketsRevokeResponse'
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}:
+    delete:
+      operationId: revokeRealtimeSubscriptionTicket
+      tags:
+        - realtime
+      summary: Revoke one subscription ticket
+      description: Operator preview. Backend-only app-scoped write with MFA. Uses the ticket_id returned when the ticket was issued, so the backend never needs to keep the bearer token. Connections using the ticket close within about a second.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug owning the endpoint of the revoked ticket.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Realtime endpoint that issued the revoked ticket.
+        - name: ticket
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ticket_id returned when the ticket was issued.
+      responses:
+        '204':
+          description: Ticket revoked.
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -51266,15 +51342,30 @@ components:
       type: object
       required:
         - ticket
+        - ticket_id
         - expires_at
       properties:
         ticket:
           type: string
           description: Opaque bearer credential returned once; store only in client memory.
+        ticket_id:
+          type: string
+          format: uuid
+          description: Identifies the ticket for revocation; safe to log and store.
         expires_at:
           type: string
           format: date-time
       description: Realtime Ticket Response.
+    RealtimeTicketsRevokeResponse:
+      type: object
+      required:
+        - revoked
+      properties:
+        revoked:
+          type: integer
+          minimum: 0
+          description: Live tickets revoked.
+      description: Result of revoking a principal's subscription tickets.
     RealtimeChannelWebhookFilter:
       type: object
       additionalProperties: false

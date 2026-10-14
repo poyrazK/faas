@@ -694,6 +694,23 @@ func (c *Client) IssueRealtimeSubscriptionTicket(ctx context.Context, slug strin
 	return out, err
 }
 
+// RevokeRealtimeSubscriptionTickets calls DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets?principal=.
+func (c *Client) RevokeRealtimeSubscriptionTickets(ctx context.Context, slug string, id string, principal string) (RealtimeTicketsRevokeResponse, error) {
+	path := realtimeReleasePath("/v1/apps/{slug}/realtime/endpoints/{id}/tickets", map[string]string{"slug": slug, "id": id}) +
+		"?principal=" + url.QueryEscape(principal)
+	headers := http.Header{}
+	var out RealtimeTicketsRevokeResponse
+	err := c.doRealtimeRelease(ctx, "DELETE", path, nil, &out, headers)
+	return out, err
+}
+
+// RevokeRealtimeSubscriptionTicket calls DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}.
+func (c *Client) RevokeRealtimeSubscriptionTicket(ctx context.Context, slug string, id string, ticket string) error {
+	path := realtimeReleasePath("/v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}", map[string]string{"slug": slug, "id": id, "ticket": ticket})
+	headers := http.Header{}
+	return c.doRealtimeRelease(ctx, "DELETE", path, nil, nil, headers)
+}
+
 // GetManagedRealtimeAccess calls GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access.
 func (c *Client) GetManagedRealtimeAccess(ctx context.Context, slug string, id string, principal string) (ManagedRealtimeAccessResponse, error) {
 	path := realtimeReleasePath("/v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", map[string]string{"slug": slug, "id": id, "principal": principal})

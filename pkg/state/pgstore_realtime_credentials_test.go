@@ -194,3 +194,83 @@ func TestRealtimeSubscriptionTicketHonorsAccessOnNonOIDCEndpoint(t *testing.T) {
 		})
 	}
 }
+
+func TestRealtimeSubscriptionTicketRevocation(t *testing.T) {
+	for _, name := range []string{"memory", "postgres"} {
+		t.Run(name, func(t *testing.T) {
+			var store state.Store
+			if name == "memory" {
+				store = state.NewMemStore()
+			} else {
+				pg, _ := pgStore(t)
+				store = pg
+			}
+			tickets := store.(state.RealtimeSubscriptionTicketStore)
+			revoker := store.(state.RealtimeSubscriptionTicketRevoker)
+			ctx := context.Background()
+			owner, err := store.CreateAccount(ctx, "realtime-revoke-"+uuid.NewString()+"@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "revoke-" + uuid.NewString()[:8]})
+			if err != nil {
+				t.Fatal(err)
+			}
+			endpoint, err := store.(state.ManagedRealtimeEndpointStore).CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(owner.ID, app.ID), 10, 50)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ep := endpoint.ID
+			issue := func(principal string) (string, state.RealtimeSubscriptionTicket) {
+				t.Helper()
+				token, ticket, err := tickets.IssueRealtimeSubscriptionTicket(ctx, ep, principal, []string{"orders"}, 60)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := uuid.Parse(ticket.ID); err != nil {
+					t.Fatalf("ticket id = %q, want a UUID", ticket.ID)
+				}
+				return token, ticket
+			}
+			first, firstTicket := issue("user-1")
+			second, _ := issue("user-1")
+			other, _ := issue("user-2")
+			if read, err := tickets.ReadRealtimeSubscriptionTicket(ctx, ep, first); err != nil || read.ID != firstTicket.ID {
+				t.Fatalf("read = %+v, %v, want the issued ID", read, err)
+			}
+
+			if err := revoker.RevokeRealtimeSubscriptionTicket(ctx, ep, firstTicket.ID); err != nil {
+				t.Fatalf("revoke by id: %v", err)
+			}
+			if _, err := tickets.ReadRealtimeSubscriptionTicket(ctx, ep, first); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("revoked ticket read err = %v, want ErrNotFound", err)
+			}
+			if err := revoker.RevokeRealtimeSubscriptionTicket(ctx, ep, firstTicket.ID); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("second revoke err = %v, want ErrNotFound", err)
+			}
+			if err := revoker.RevokeRealtimeSubscriptionTicket(ctx, uuid.NewString(), firstTicket.ID); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("revoke on another endpoint err = %v, want ErrNotFound", err)
+			}
+			if err := revoker.RevokeRealtimeSubscriptionTicket(ctx, ep, "not-a-uuid"); !errors.Is(err, state.ErrInvalidArgument) {
+				t.Fatalf("malformed id err = %v, want ErrInvalidArgument", err)
+			}
+
+			// Principal-wide revocation ends user-1's remaining ticket only.
+			if n, err := revoker.RevokeRealtimeSubscriptionTicketsForPrincipal(ctx, ep, "user-1"); err != nil || n != 1 {
+				t.Fatalf("revoke user-1 = %d, %v, want 1", n, err)
+			}
+			if _, err := tickets.ReadRealtimeSubscriptionTicket(ctx, ep, second); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("user-1 ticket after principal revoke err = %v", err)
+			}
+			if _, err := tickets.ReadRealtimeSubscriptionTicket(ctx, ep, other); err != nil {
+				t.Fatalf("user-2 ticket was revoked too: %v", err)
+			}
+			if n, err := revoker.RevokeRealtimeSubscriptionTicketsForPrincipal(ctx, ep, "user-1"); err != nil || n != 0 {
+				t.Fatalf("repeat revoke = %d, %v, want 0", n, err)
+			}
+			if _, err := revoker.RevokeRealtimeSubscriptionTicketsForPrincipal(ctx, ep, ""); !errors.Is(err, state.ErrInvalidArgument) {
+				t.Fatalf("empty principal err = %v", err)
+			}
+		})
+	}
+}

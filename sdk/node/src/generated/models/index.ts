@@ -1854,6 +1854,7 @@ export type { RealtimeReplayJobWebhookPayload } from './RealtimeReplayJobWebhook
 export type { RealtimeScheduleCompletionWebhookPayload } from './RealtimeScheduleCompletionWebhookPayload.js';
 export type { RealtimeTicketRequest } from './RealtimeTicketRequest.js';
 export type { RealtimeTicketResponse } from './RealtimeTicketResponse.js';
+export type { RealtimeTicketsRevokeResponse } from './RealtimeTicketsRevokeResponse.js';
 export type { RealtimeTriggerConfig } from './RealtimeTriggerConfig.js';
 export type { RealtimeWorkerBatchClaimRequest } from './RealtimeWorkerBatchClaimRequest.js';
 export type { RealtimeWorkerClaimRequest } from './RealtimeWorkerClaimRequest.js';

@@ -1860,6 +1860,7 @@ export type { RealtimeReplayJobWebhookPayload } from './models/RealtimeReplayJob
 export type { RealtimeScheduleCompletionWebhookPayload } from './models/RealtimeScheduleCompletionWebhookPayload.js';
 export type { RealtimeTicketRequest } from './models/RealtimeTicketRequest.js';
 export type { RealtimeTicketResponse } from './models/RealtimeTicketResponse.js';
+export type { RealtimeTicketsRevokeResponse } from './models/RealtimeTicketsRevokeResponse.js';
 export type { RealtimeTriggerConfig } from './models/RealtimeTriggerConfig.js';
 export type { RealtimeWorkerBatchClaimRequest } from './models/RealtimeWorkerBatchClaimRequest.js';
 export type { RealtimeWorkerClaimRequest } from './models/RealtimeWorkerClaimRequest.js';

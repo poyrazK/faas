@@ -3026,7 +3026,7 @@ Content-Type: application/json
 ```
 
 The API requires normal app ownership, realtime plan eligibility, MFA and write
-scopes. Returns 201 with `{ "ticket": "grt_...", "expires_at": "..." }` and
+scopes. Returns 201 with `{ "ticket": "grt_...", "ticket_id": "...", "expires_at": "..." }` and
 Cache-Control: no-store. TTL is 1-300 seconds, with 1-32 unique exact channels.
 Endpoint must be enabled. At most 1115 unexpired tickets per endpoint; expired
 records are pruned on subsequent issuance and endpoint deletion removes all.
@@ -3069,6 +3069,23 @@ reconnects with a new ticket. WebSocket tickets expire and close active sockets;
 the normal channel consumer reconnects using the factory. Renewal changes neither
 history retention nor resync requirements. A ticket may be reused before expiry;
 it is not a single-use nonce.
+
+Revoke a ticket before it expires with the `ticket_id` returned at issue, so the
+backend never keeps the bearer token, or revoke every live ticket of a principal
+(for example at logout). Migration `20261014223807582_realtime_ticket_ids.sql`
+adds the ID. Both require the same app ownership, MFA and write scopes as
+issuance:
+
+```http
+DELETE /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets/{ticket_id}
+DELETE /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets?principal=customer-42
+```
+
+The first returns 204, or 404 when the ticket is unknown or already expired; the
+second returns `{"revoked": n}`. WebSockets and SSE streams re-read their ticket
+every second, so a revoked ticket's connections close within about a second and
+reconnecting with it returns 401. Revocation does not touch other tickets of the
+same principal unless they are revoked by principal.
 
 Set `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1` on apid to use the existing principal
 access APIs for ticket endpoints, including non-OIDC endpoints. Session revocation

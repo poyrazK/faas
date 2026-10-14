@@ -25583,6 +25583,7 @@ CREATE TABLE public.managed_realtime_subscription_tickets (
     channels jsonb NOT NULL,
     issued_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
     CONSTRAINT managed_realtime_subscription_tickets_channels_check CHECK (((jsonb_typeof(channels) = 'array'::text) AND ((jsonb_array_length(channels) >= 1) AND (jsonb_array_length(channels) <= 32)))),
     CONSTRAINT managed_realtime_subscription_tickets_check CHECK (((expires_at > issued_at) AND (expires_at <= (issued_at + '00:05:00'::interval)))),
     CONSTRAINT managed_realtime_subscription_tickets_principal_check CHECK (((octet_length(principal) >= 1) AND (octet_length(principal) <= 256))),
@@ -45103,6 +45104,20 @@ CREATE INDEX managed_realtime_schedule_group_idx ON public.managed_realtime_sche
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_endpoint_expiry ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, expires_at);
+
+
+--
+-- Name: managed_realtime_subscription_tickets_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_subscription_tickets_id ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, id);
+
+
+--
+-- Name: managed_realtime_subscription_tickets_principal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, principal);
 
 
 --

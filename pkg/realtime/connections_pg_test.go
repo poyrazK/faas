@@ -372,3 +372,53 @@ func TestWebSocketTicketIsReadOnlyAndClosesOnSessionRevoke(t *testing.T) {
 	}
 	_ = response.Body.Close()
 }
+
+func TestTicketRevocationClosesLiveConnections(t *testing.T) {
+	node := startPGConnectionsNode(t)
+	node.publish(t, "updates", "one")
+	token, ticket, err := node.store.IssueRealtimeSubscriptionTicket(t.Context(), node.endpoint, "user-1", []string{"updates"}, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := node.ticket(t, "user-1", 60, "updates")
+	client := dialTicketWebSocket(t, node, token)
+	sendResumeTestFrame(t, client, resumeClientFrame{Type: "subscribe", Channel: "updates"})
+	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" {
+		t.Fatalf("subscribe = %+v", frame)
+	}
+	status, events := node.openSSE(t, token, "updates", "")
+	if status != http.StatusOK {
+		t.Fatalf("SSE status = %d", status)
+	}
+	if ev, _ := nextSSE(t, events, 3*time.Second); ev.Event != "subscribed" {
+		t.Fatalf("SSE first event = %+v", ev)
+	}
+
+	if err := node.store.RevokeRealtimeSubscriptionTicket(t.Context(), node.endpoint, ticket.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		if _, _, err := client.ReadMessage(); err != nil {
+			if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+				t.Fatalf("socket after revoke = %v, want a policy-violation close", err)
+			}
+			break
+		}
+	}
+	deadline := time.After(5 * time.Second)
+	for open := true; open; {
+		select {
+		case _, open = <-events:
+		case <-deadline:
+			t.Fatal("SSE stream stayed open after its ticket was revoked")
+		}
+	}
+	if status, _ := node.openSSE(t, token, "updates", ""); status != http.StatusUnauthorized {
+		t.Fatalf("reconnect with a revoked ticket = %d, want 401", status)
+	}
+	// Another ticket of the same principal is unaffected by a single revoke.
+	if status, _ := node.openSSE(t, other, "updates", ""); status != http.StatusOK {
+		t.Fatalf("sibling ticket status = %d, want 200", status)
+	}
+}

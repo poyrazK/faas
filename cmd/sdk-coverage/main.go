@@ -346,6 +346,8 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/webhooks/{id}/realtime-channel":                                                                "SetRealtimeChannelWebhookFilter",
 	"DELETE /v1/apps/{slug}/webhooks/{id}/realtime-channel":                                                             "DeleteRealtimeChannelWebhookFilter",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets":                                                              "IssueRealtimeSubscriptionTicket",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets":                                                            "RevokeRealtimeSubscriptionTickets",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}":                                                   "RevokeRealtimeSubscriptionTicket",
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access":                                         "GetManagedRealtimeAccess",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access":                                        "ChangeManagedRealtimeAccess",
 	// END managed realtime SDK routes

@@ -5194,6 +5194,7 @@ type ManagedRealtimeSubscriptionTicket struct {
 	Channels   []byte
 	IssuedAt   pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
+	ID         pgtype.UUID
 }
 
 type ManagedRealtimeWorkerCredential struct {

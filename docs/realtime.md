@@ -48,6 +48,16 @@ where realtime holds real capacity on our servers:
 An endpoint's `max_connections` still caps that endpoint; the account limit
 applies on top of it.
 
+## Subscription tickets
+
+A subscription ticket lets your backend hand a browser or app a short-lived
+(up to five minutes) credential for named channels without an OIDC provider.
+Each ticket comes with a `ticket_id`: store that, not the ticket, and revoke the
+ticket early with `DELETE …/tickets/{ticket_id}`, or revoke all of a user's
+tickets at logout with `DELETE …/tickets?principal=…`. Connections using a
+revoked ticket close within about a second. See the
+[ticket operations guide](ops/realtime.md#short-lived-subscription-tickets-operator-preview).
+
 ## Principal access controls preview
 
 When the operator enables the access-control preview, an endpoint can deny a
