@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1248
+// adr: 1270
 func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, s Store) {
 		ctx := WithEventRecoveryActor(context.Background(), "api_key", "history-operator")

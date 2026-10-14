@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// adr: 1250
+// adr: 1272
 func TestWorkflowInitialQueuePreparedEvidence(t *testing.T) {
 	for _, paused := range []bool{false, true} {
 		workflowScheduleStores(t, func(t *testing.T, s Store) {

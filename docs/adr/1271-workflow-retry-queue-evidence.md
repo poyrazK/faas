@@ -1,4 +1,4 @@
-# ADR-1249: Read-only evidence diagnosis in the retry queue
+# ADR-1271: Read-only evidence diagnosis in the retry queue
 
 ## Status
 

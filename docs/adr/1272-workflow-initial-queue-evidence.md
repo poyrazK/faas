@@ -1,4 +1,4 @@
-# ADR-1250: Initial recovery evidence in the automation queue
+# ADR-1272: Initial recovery evidence in the automation queue
 
 ## Status
 

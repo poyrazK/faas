@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1248
+// adr: 1270
 func TestAutomationHistoryCLI(t *testing.T) {
 	eventRecoveryAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" || r.URL.Path != "/v1/apps/consumer/recovery-policy/history" || r.URL.Query().Get("workflow") != "recover" || r.URL.Query().Get("limit") != "25" {

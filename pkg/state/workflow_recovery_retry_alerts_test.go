@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1247
+// adr: 1269
 func TestWorkflowRetryEvidenceNotifications(t *testing.T) {
 	for _, scenario := range []string{"parent", "child", "no_receivers", "unknown"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -183,7 +183,7 @@ func TestWorkflowRetryEvidenceNotifications(t *testing.T) {
 	}
 }
 
-// adr: 1247
+// adr: 1269
 func TestWorkflowRetryEvidenceTransitionSafety(t *testing.T) {
 	e := api.WorkflowRecoveryAutomaticAction{ActionID: uuid.NewString(), Status: "applied", BlockedNotification: &api.WorkflowRecoveryAutomaticBlockedNotification{Reason: "evidence_unknown"}}
 	d := api.WorkflowRetryEvidenceDiagnosis{EvidenceKind: "child", Reason: "completion_time_unverified"}

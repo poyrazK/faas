@@ -1,4 +1,4 @@
-# ADR-1255: Operator attention for manual initial recoveries
+# ADR-1277: Operator attention for manual initial recoveries
 
 Date: 2026-10-13
 

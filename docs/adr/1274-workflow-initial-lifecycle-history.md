@@ -1,4 +1,4 @@
-# ADR-1252: Initial recovery lifecycle in shared history
+# ADR-1274: Initial recovery lifecycle in shared history
 
 ## Status
 

@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1258
+// adr: 1280
 func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 	for _, mode := range []string{"automatic_initial", "automatic_retry"} {
 		t.Run(mode, func(t *testing.T) {

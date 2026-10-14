@@ -177,7 +177,7 @@ func (s *isolatedRecoverySchedulerStore) ProcessNextWorkflowRecoveryAutomaticPol
 	return s.automaticWork, nil
 }
 
-// adr: 1256
+// adr: 1278
 func TestWorkflowRecoverySchedulerIndependentBatches(t *testing.T) {
 	cases := []struct {
 		name                                                   string

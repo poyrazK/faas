@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1255
+// adr: 1277
 func TestWorkflowInitialManualAttention(t *testing.T) {
 	for _, receivers := range []bool{false, true} {
 		t.Run(map[bool]string{false: "late_receiver", true: "subscribed"}[receivers], func(t *testing.T) {

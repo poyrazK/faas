@@ -1,4 +1,4 @@
-# ADR-1261: Retained recovery health overview
+# ADR-1283: Retained recovery health overview
 
 Date: 2026-10-13
 

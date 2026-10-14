@@ -1,10 +1,10 @@
-# ADR-1238: Initial-failure policy dry run
+# ADR-1260: Initial-failure policy dry run
 
 Status: Accepted (2026-10-12)
 
 ## Context
 
-ADR-1237 provides evidence-linked first recovery, but operators cannot evaluate
+ADR-1259 provides evidence-linked first recovery, but operators cannot evaluate
 explicit policy filters before saving a first-recovery plan. Existing durable
 policy reviews require a recovery parent job; initial failures have no parent.
 

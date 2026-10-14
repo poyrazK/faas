@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// adr: 1250
+// adr: 1272
 func TestWorkflowInitialEvidenceRepair(t *testing.T) { testInitialEvidenceRepair(t, false) }
 
-// adr: 1254
+// adr: 1276
 func TestWorkflowInitialManualEvidenceRepair(t *testing.T) { testInitialEvidenceRepair(t, true) }
 
 func testInitialEvidenceRepair(t *testing.T, manual bool) {

@@ -1,4 +1,4 @@
-# ADR-1245: Verified automatic retry evidence repair
+# ADR-1267: Verified automatic retry evidence repair
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted, 2026-10-13.
 
 ## Context
 
-ADR-1244 provides an operator repair path for automatic first recovery. Applied
+ADR-1266 provides an operator repair path for automatic first recovery. Applied
 saved-failure retry actions need the same path without following a newer run or
 replacing first-result-wins evidence.
 

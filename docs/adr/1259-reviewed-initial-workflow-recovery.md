@@ -1,4 +1,4 @@
-# ADR-1237: Reviewed first recovery from captured workflow failures
+# ADR-1259: Reviewed first recovery from captured workflow failures
 
 Accepted, 2026-10-12.
 

@@ -1,4 +1,4 @@
-# ADR-1260: Polling observations in recovery health CLI
+# ADR-1282: Polling observations in recovery health CLI
 
 Date: 2026-10-13
 
