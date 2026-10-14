@@ -12231,6 +12231,132 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 `gregale auth status <name>`
 
+### auth config
+
+Show the running Auth settings, or change them and restart the app
+
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--site-url <URL>` | application URL users return to after sign-in |  |
+| `--redirect-urls <URLS>` | comma-separated additional allowed redirect URLs; replaces the list (none clears it) |  |
+| `--signup <on|off>` | whether anyone may sign up | one of `on` · `off` |
+| `--autoconfirm <on|off>` | sign users in without email confirmation (development only) | one of `on` · `off` |
+| `--password-min-length <N>` | minimum password length (6-72) |  |
+| `--password-require <CLASSES>` | character classes every password needs: lower,upper,digit,symbol, or none |  |
+| `--leaked-password-check <on|off>` | refuse passwords found in known breaches (Have I Been Pwned) | one of `on` · `off` |
+| `--mfa <on|off>` | let users enrol an authenticator app (TOTP); enrolled users keep verifying when off | one of `on` · `off` |
+| `--email-provider <PROVIDER>` | HTTPS email provider, or none to remove it | one of `resend` · `postmark` · `none` |
+| `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
+| `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
+| `--authz <FILE>` | JSON file declaring custom roles and policies (applied on restart) |  |
+| `--scope <SCOPE>` | environment scope |  |
+
+Examples:
+
+```sh
+gregale auth config shop-auth
+gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on
+```
+
+### auth providers
+
+Manage OAuth sign-in providers such as Google or GitHub
+
+#### auth providers list
+
+List the enabled providers
+
+`gregale auth providers list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth providers enable
+
+Enable a provider, replacing its credentials
+
+`gregale auth providers enable --client-id <ID> [--client-secret-stdin] [--url <URL>] [--scope <SCOPE>] <name> <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--client-id <ID>` | OAuth client ID from the provider | required |
+| `--client-secret-stdin` | read the OAuth client secret from stdin (prompted on a terminal) |  |
+| `--url <URL>` | provider server URL (Keycloak, or a self-hosted GitLab, Azure tenant or WorkOS) |  |
+| `--scope <SCOPE>` | environment scope |  |
+
+Examples:
+
+```sh
+gregale auth providers enable shop-auth google --client-id ID --client-secret-stdin
+```
+
+#### auth providers disable
+
+Disable a provider and remove its credentials
+
+`gregale auth providers disable [--scope <SCOPE>] <name> <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+### auth keys
+
+Rotate the ES256 keys that sign the Auth app&#39;s tokens
+
+#### auth keys list
+
+List signing keys and their state
+
+`gregale auth keys list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys rotate
+
+Add a key, wait until it is published, then make it sign
+
+`gregale auth keys rotate [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys create
+
+Add a standby key that verifies but does not sign yet
+
+`gregale auth keys create [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys activate
+
+Make a published key sign; the previous key keeps verifying
+
+`gregale auth keys activate [--scope <SCOPE>] <name> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys revoke
+
+Remove a key that no longer signs; its tokens stop verifying
+
+`gregale auth keys revoke [--scope <SCOPE>] <name> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
 ### auth admin-key
 
 Manage owner keys for the dashboard&#39;s users and organizations screens and imports
