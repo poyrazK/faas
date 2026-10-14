@@ -90,6 +90,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	proxy, err := pgproxy.New(pgproxy.Config{
 		TLS: &tls.Config{Certificates: []tls.Certificate{cert}}, HostSuffix: cfg.HostSuffix, DecoySecret: decoy,
+		PoolMaxServers: cfg.PoolMaxServers, PoolWait: cfg.PoolWait, PoolServerIdle: cfg.PoolServerIdle,
 		Metrics: pgproxy.NewMetrics(reg),
 	}, verifiers, pgproxy.NewScheddWaker(scheddpb.NewScheddClient(scheddConn)), dialer, log)
 	if err != nil {

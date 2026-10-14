@@ -546,8 +546,12 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 		if material.Username != credentialRoleName(testDatabaseID, "binding-1", access) || material.Database != "gregale" || material.TLSMode != "verify-full" {
 			t.Fatalf("%s: material = %+v", access, material)
 		}
-		if ep := material.Endpoints; len(ep) != 1 || ep[0].Host != testDatabaseID+".db.gregale.test" || ep[0].Port != 5432 {
-			t.Fatalf("%s: endpoints = %+v", access, ep)
+		want := []managedpostgres.Endpoint{
+			{Role: managedpostgres.EndpointDirect, Host: testDatabaseID + ".db.gregale.test", Port: 5432},
+			{Role: managedpostgres.EndpointPooled, Host: testDatabaseID + "-pooler.db.gregale.test", Port: 5432},
+		}
+		if !reflect.DeepEqual(material.Endpoints, want) {
+			t.Fatalf("%s: endpoints = %+v", access, material.Endpoints)
 		}
 		batch := sched.lastAdmin()
 		if strings.Contains(batch, material.Password) {

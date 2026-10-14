@@ -40,6 +40,14 @@ type Config struct {
 	VerifierCacheTTL time.Duration `toml:"verifier_cache_ttl"`
 	// OpsAddr serves /healthz, /readyz and /metrics on loopback.
 	OpsAddr string `toml:"ops_addr"`
+	// Transaction pooling on <database-id>-pooler.<host_suffix>:
+	// pool_max_servers caps each database's pooled server connections
+	// (default 10; a native database allows 25), pool_wait bounds a
+	// transaction's wait for one (default 30s), pool_server_idle closes
+	// servers idle that long (default 1m) so idle databases can park.
+	PoolMaxServers int           `toml:"pool_max_servers"`
+	PoolWait       time.Duration `toml:"pool_wait"`
+	PoolServerIdle time.Duration `toml:"pool_server_idle"`
 }
 
 // DefaultOpsAddr is pgproxyd's loopback ops listener.
@@ -72,6 +80,14 @@ func (c *Config) validate() error {
 	}
 	if c.VerifierCacheTTL < 0 || c.VerifierCacheTTL > 5*time.Minute {
 		return errors.New("pgproxyd: verifier_cache_ttl must be between 0 and 5m")
+	}
+	// A pooled server is a PostgreSQL session; native databases allow 25,
+	// three of them the superuser's.
+	if c.PoolMaxServers < 0 || c.PoolMaxServers > 20 {
+		return errors.New("pgproxyd: pool_max_servers must be between 0 (default) and 20")
+	}
+	if c.PoolWait < 0 || c.PoolWait > 5*time.Minute || c.PoolServerIdle < 0 || c.PoolServerIdle > time.Hour {
+		return errors.New("pgproxyd: pool_wait must be at most 5m and pool_server_idle at most 1h")
 	}
 	return nil
 }

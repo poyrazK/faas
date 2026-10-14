@@ -91,7 +91,8 @@ snapshots and send/receive for moves) follows as a second backend.
 authenticates the client with stored SCRAM-SHA-256 verifiers **before**
 requesting a wake (unauthenticated traffic never boots a VM), rate-limits per
 database and per source, and splices the session to the guest over vsock.
-Transaction pooling follows later.
+`<database>-pooler.db.<domain>` is the same database through a transaction
+pool (see "Transaction pooling").
 
 ### Durability, metering and security
 
@@ -212,6 +213,52 @@ pgproxyd caches verifiers briefly. A re-issued password has a new salt, so
 a stale cached verifier cannot be retried within the handshake; the proxy
 drops the cached entry after any failed login and the next attempt reads
 the current verifier.
+
+### Transaction pooling (phase 6)
+
+A native database allows 25 sessions. A FaaS app's instances each keep a
+client pool, so on Neon runtime credentials use its pooled endpoint
+(pgbouncer, transaction mode). Native offers the same:
+
+- `<database-id>-pooler.<suffix>` (covered by the wildcard certificate;
+  `options=endpoint=<id>-pooler` without SNI) authenticates the client
+  exactly as the direct endpoint does, before anything wakes. It then
+  never gives the client a PostgreSQL session of its own.
+- **Pools.** A pool is one role's logins to one database with one verifier
+  (a rotated password starts a new pool). It keeps the ClientKey a client
+  proved, to log further server connections in; the key is forgotten
+  once the pool has neither clients nor servers.
+- **Borrowing.** A client borrows a server from its first message until
+  PostgreSQL reports the session idle (`ReadyForQuery 'I'`) with no answer
+  still owed, so a transaction keeps its server. A client that leaves
+  mid-transaction gets its server closed, which rolls the transaction
+  back, rather than returned.
+- **Prepared statements.** Named protocol-level prepared statements (pgx
+  caches them; psycopg prepares after five uses) are renamed by content
+  (`gregale_<hash>`), prepared again on whichever server runs them, and
+  answered in order through a queue of expected responses, as pgbouncer
+  1.21+ does. A client's Close only forgets its name. A server holding over
+  1000 statements is closed when released.
+- **Limits.** At most `pool_max_servers` (default 10, at most 20) servers
+  per database. A role waiting at the cap reclaims another role's idle
+  server. A transaction waits up to `pool_wait` (30 s), then the client gets
+  53300. Servers idle for `pool_server_idle` (1 min) close, so a database
+  nobody uses can park; open servers touch it and report pooled egress.
+- **Not shared:** session state (`SET`, `LISTEN`, advisory locks, SQL
+  `PREPARE`, unnamed statements across a Sync) and startup parameters
+  other than the role, database and drivers' cosmetic ones (which must
+  match server defaults). Others are refused with a pointer to the direct
+  endpoint. Cancel requests are not supported on either endpoint.
+- The native driver returns both endpoints; credential delivery gives
+  runtime and read-only credentials the pooled one and migrations the
+  direct one, as on Neon. `PooledConnections` is now true.
+- **Tests.** Against PostgreSQL: 30 pgx clients × 20 transactions over at
+  most 3 servers, transactions never moved between servers, rollback on
+  abandon, errors in extended batches, COPY in and out, multi-statement
+  queries, cap sharing and the 53300 timeout, idle closing, refusals.
+  Metal (through vmmd to a VM): 40 pooled clients ran 800 queries in
+  0.4 s, while 28 of 40 direct sessions were refused at the database's
+  limit.
 
 ### App route
 

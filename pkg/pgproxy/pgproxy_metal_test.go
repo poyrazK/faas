@@ -8,6 +8,7 @@ package pgproxy
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -189,4 +191,59 @@ func TestMetalProxyWakesParkedDatabase(t *testing.T) {
 	}
 	t.Logf("parked -> first query through proxy %v; warm connect -> first query %v",
 		coldConnect.Round(time.Millisecond), warmConnect.Round(time.Millisecond))
+
+	// The pooled endpoint: 40 clients connected at once to a database
+	// that allows 25 sessions, sharing the proxy's pool of 10.
+	const clients = 40
+	pooled := make([]*pgx.Conn, 0, clients)
+	for i := 0; i < clients; i++ {
+		c, err := h.connect(ctx, id+pooledSuffix+"."+testSuffix, "app", password, "app", "require", nil)
+		if err != nil {
+			t.Fatalf("pooled client %d: %v", i, err)
+		}
+		pooled = append(pooled, c)
+	}
+	started = time.Now()
+	var wg sync.WaitGroup
+	errs := make(chan error, clients)
+	for _, c := range pooled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := 0; r < 20; r++ {
+				var n int
+				if err := c.QueryRow(ctx, "select v + $1::int from t", r).Scan(&n); err != nil || n != 42+r {
+					errs <- fmt.Errorf("pooled query = %d, %w", n, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	pooledQueries := time.Since(started)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	for _, c := range pooled {
+		_ = c.Close(ctx)
+	}
+	// The same number of direct sessions does not fit.
+	var direct []*pgx.Conn
+	refused := 0
+	for i := 0; i < clients; i++ {
+		c, err := h.connect(ctx, host, "app", password, "app", "require", nil)
+		if err != nil {
+			refused++
+			continue
+		}
+		direct = append(direct, c)
+	}
+	for _, c := range direct {
+		_ = c.Close(ctx)
+	}
+	if refused == 0 {
+		t.Fatalf("%d direct sessions fit a database that allows 25", clients)
+	}
+	t.Logf("%d pooled clients ran %d queries in %v; %d of %d direct sessions were refused", clients, clients*20, pooledQueries.Round(time.Millisecond), refused, clients)
 }

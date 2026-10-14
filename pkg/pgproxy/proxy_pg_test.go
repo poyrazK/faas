@@ -115,6 +115,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil)
+}
+
+// newHarnessWith is newHarness with the proxy's config adjusted.
+func newHarnessWith(t *testing.T, adjust func(*Config)) *harness {
+	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("DATABASE_URL required (pg_hba must use scram-sha-256 for non-superusers)")
@@ -128,8 +134,11 @@ func newHarness(t *testing.T) *harness {
 	cfg := admin.Config()
 	h := &harness{backend: admin, creds: &mapCredentials{verifiers: map[string]pgscram.Verifier{}}, waker: &countingWaker{}, dbName: cfg.Database,
 		metrics: NewMetrics(prometheus.NewRegistry())}
-	p, err := New(Config{TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)), TouchInterval: 50 * time.Millisecond, Metrics: h.metrics},
-		h.creds, h.waker, tcpDialer{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))}, nil)
+	proxyCfg := Config{TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)), TouchInterval: 50 * time.Millisecond, Metrics: h.metrics}
+	if adjust != nil {
+		adjust(&proxyCfg)
+	}
+	p, err := New(proxyCfg, h.creds, h.waker, tcpDialer{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

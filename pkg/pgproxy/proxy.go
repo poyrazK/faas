@@ -86,6 +86,14 @@ type Config struct {
 	MaxConnections         int
 	MaxHandshakes          int
 	MaxHandshakesPerSource int
+	// Transaction pooling (pool.go): PoolMaxServers caps each database's
+	// pooled server connections (default 10, of a native database's 25);
+	// PoolWait bounds a transaction's wait for one (default 30 s);
+	// PoolServerIdle closes servers idle that long (default 60 s), so a
+	// database nobody uses can park.
+	PoolMaxServers int
+	PoolWait       time.Duration
+	PoolServerIdle time.Duration
 	// Metrics records session outcomes; nil records nothing.
 	Metrics *Metrics
 }
@@ -103,6 +111,8 @@ type Proxy struct {
 	open        int
 	handshaking map[string]int // by source address
 	handshakes  int
+
+	pools *poolSet
 }
 
 // New validates cfg and builds a Proxy.
@@ -128,6 +138,15 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	if cfg.TouchInterval <= 0 {
 		cfg.TouchInterval = 30 * time.Second
 	}
+	if cfg.PoolMaxServers <= 0 {
+		cfg.PoolMaxServers = 10
+	}
+	if cfg.PoolWait <= 0 {
+		cfg.PoolWait = 30 * time.Second
+	}
+	if cfg.PoolServerIdle <= 0 {
+		cfg.PoolServerIdle = time.Minute
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -138,11 +157,16 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	// PostgreSQL 17 direct TLS requires the "postgresql" ALPN protocol.
 	tlsCfg.NextProtos = []string{"postgresql"}
 	cfg.HostSuffix = strings.ToLower(strings.TrimPrefix(cfg.HostSuffix, "."))
-	return &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}}, nil
+	proxy := &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}}
+	proxy.pools = newPoolSet(proxy)
+	return proxy, nil
 }
 
 // Serve accepts clients until ln closes.
 func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
+	poolCtx, stopPools := context.WithCancel(ctx)
+	defer stopPools()
+	go p.pools.maintain(poolCtx)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -184,7 +208,7 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	}
 	defer func() { _ = conn.Close() }()
 	client := pgproto3.NewBackend(conn, conn)
-	session, databaseID, err := p.establish(ctx, conn, client)
+	session, pooled, databaseID, err := p.establish(ctx, conn, client)
 	if err != nil {
 		result := "error"
 		var f *fatal
@@ -197,13 +221,17 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 		p.log.Info("pgproxy: session refused", "database_id", databaseID, "err", err)
 		return
 	}
-	defer func() { _ = session.Close() }()
 	authenticated = true
 	p.authenticated(source)
 	p.cfg.Metrics.result("ok")
 	p.cfg.Metrics.sessionStarted()
 	defer p.cfg.Metrics.sessionEnded()
 	_ = conn.SetDeadline(time.Time{})
+	if pooled != nil {
+		p.servePooled(ctx, conn, client, pooled)
+		return
+	}
+	defer func() { _ = session.Close() }()
 	p.splice(ctx, conn, session, databaseID)
 }
 
@@ -263,27 +291,49 @@ type prefixConn struct {
 
 func (c *prefixConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 
-// establish authenticates the client, wakes the database and logs in to
-// it, returning a session ready for splicing.
-func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.Backend) (io.ReadWriteCloser, string, error) {
+// establish authenticates the client, then either wakes the database and
+// logs in to it, returning a session ready for splicing, or, on a pooled
+// endpoint, returns the role's pool with the client logged in to it.
+func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.Backend) (io.ReadWriteCloser, *pool, string, error) {
 	msg, err := client.ReceiveStartupMessage()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	startup, ok := msg.(*pgproto3.StartupMessage)
 	if !ok {
-		return nil, "", &fatal{"08P01", "expected a startup message"}
+		return nil, nil, "", &fatal{"08P01", "expected a startup message"}
 	}
 	user := startup.Parameters["user"]
-	databaseID, err := p.route(conn.ConnectionState().ServerName, startup.Parameters["options"])
+	databaseID, pooled, err := p.route(conn.ConnectionState().ServerName, startup.Parameters["options"])
 	if err != nil {
-		return nil, "", &fatal{"08004", err.Error()}
+		return nil, nil, "", &fatal{"08004", err.Error()}
+	}
+	var poolParams map[string]string
+	if pooled {
+		if poolParams, err = pooledParams(startup.Parameters); err != nil {
+			return nil, nil, databaseID, &fatal{"08P01", fmt.Sprintf("the pooled endpoint does not support startup parameter %v; use the direct endpoint", err)}
+		}
 	}
 	verifier := p.verifier(ctx, databaseID, user)
 	clientKey, serverFinal, err := authenticateClient(client, verifier)
 	if err != nil {
 		p.creds.Forget(databaseID, user)
-		return nil, databaseID, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
+		return nil, nil, databaseID, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
+	}
+	if pooled {
+		pl, err := p.joinPool(ctx, poolKey{databaseID: databaseID, role: user, dbname: poolParams["database"], verifier: verifierKey(verifier)},
+			clientKey, verifier.ServerKey, poolParams)
+		if err != nil {
+			return nil, nil, databaseID, err
+		}
+		pl.mu.Lock()
+		status := pl.status
+		pl.mu.Unlock()
+		if err := greetPooled(client, conn, serverFinal, status); err != nil {
+			pl.leave()
+			return nil, nil, databaseID, err
+		}
+		return nil, pl, databaseID, nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
@@ -291,11 +341,11 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	target, err := p.waker.Wake(wakeCtx, databaseID)
 	p.cfg.Metrics.woke(time.Since(wakeStarted))
 	if err != nil {
-		return nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+		return nil, nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	session, err := p.dialer.Dial(wakeCtx, target, databaseID)
 	if err != nil {
-		return nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+		return nil, nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	backend := pgproto3.NewFrontend(session, session)
 	if err := loginBackend(backend, forwardParams(startup.Parameters), clientKey, verifier.ServerKey); err != nil {
@@ -305,35 +355,71 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 			if f.code == "28P01" {
 				p.creds.Forget(databaseID, user)
 			}
-			return nil, databaseID, f
+			return nil, nil, databaseID, f
 		}
-		return nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+		return nil, nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	client.Send(&pgproto3.AuthenticationSASLFinal{Data: serverFinal})
 	client.Send(&pgproto3.AuthenticationOk{})
 	if err := relayUntilReady(backend, client); err != nil {
 		_ = session.Close()
-		return nil, databaseID, err
+		return nil, nil, databaseID, err
 	}
-	return session, databaseID, nil
+	return session, nil, databaseID, nil
+}
+
+// joinPool counts the client into its role's pool. A new pool logs a first
+// server in, which wakes the database and proves the role may log in, and
+// keeps the server's parameters for its clients.
+func (p *Proxy) joinPool(ctx context.Context, key poolKey, clientKey, serverKey []byte, params map[string]string) (*pool, error) {
+	pl := p.pools.join(key, clientKey, serverKey, params)
+	pl.mu.Lock()
+	ready := pl.status != nil
+	pl.mu.Unlock()
+	if ready {
+		return pl, nil
+	}
+	srv, err := pl.acquire(ctx)
+	if err != nil {
+		pl.leave()
+		var f *fatal
+		if errors.As(err, &f) {
+			if f.code == "28P01" {
+				p.creds.Forget(key.databaseID, key.role)
+			}
+			return nil, f
+		}
+		return nil, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+	}
+	pl.put(srv, true)
+	return pl, nil
 }
 
 // route finds the database id in the SNI name, or in an "endpoint=<id>"
-// startup option for clients that send no SNI.
-func (p *Proxy) route(sni, options string) (string, error) {
-	if id, ok := strings.CutSuffix(strings.ToLower(sni), "."+p.cfg.HostSuffix); ok {
-		if _, err := uuid.Parse(id); err == nil {
-			return id, nil
+// startup option for clients that send no SNI. An id ending in -pooler
+// names the database's pooled endpoint.
+func (p *Proxy) route(sni, options string) (string, bool, error) {
+	parse := func(label string) (string, bool, bool) {
+		label = strings.ToLower(label)
+		id, pooled := strings.CutSuffix(label, pooledSuffix)
+		if _, err := uuid.Parse(id); err != nil || len(id) != 36 {
+			return "", false, false
+		}
+		return id, pooled, true
+	}
+	if label, ok := strings.CutSuffix(strings.ToLower(sni), "."+p.cfg.HostSuffix); ok {
+		if id, pooled, ok := parse(label); ok {
+			return id, pooled, nil
 		}
 	}
 	for _, field := range strings.Fields(options) {
-		if id, ok := strings.CutPrefix(field, "endpoint="); ok {
-			if _, err := uuid.Parse(id); err == nil {
-				return strings.ToLower(id), nil
+		if label, ok := strings.CutPrefix(field, "endpoint="); ok {
+			if id, pooled, ok := parse(label); ok {
+				return id, pooled, nil
 			}
 		}
 	}
-	return "", fmt.Errorf("unknown database endpoint: connect to <database-id>.%s with TLS", p.cfg.HostSuffix)
+	return "", false, fmt.Errorf("unknown database endpoint: connect to <database-id>.%s with TLS", p.cfg.HostSuffix)
 }
 
 // verifier returns the role's verifier, or a decoy that no password

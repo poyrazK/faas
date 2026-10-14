@@ -216,6 +216,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		CredentialAccess:        []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
 		ScaleToZero:             true,
 		ScaleToZeroUpdate:       true,
+		PooledConnections:       true,
 		ClassResize:             len(classes) > 1,
 		StorageResize:           true,
 		MaxStorageBytes:         p.cfg.MaxStorageBytes,
@@ -453,7 +454,13 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 	}
 	material := managedpostgres.CredentialMaterial{
 		ProviderIdentityID: role, Username: role, Password: password, Database: p.cfg.Database, TLSMode: p.cfg.TLSMode,
-		Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: req.ProviderResourceID + "." + p.cfg.HostSuffix, Port: p.cfg.Port}},
+		// The pooled endpoint shares a few server connections among many
+		// clients, transaction by transaction; runtime credentials use it,
+		// migrations the direct one.
+		Endpoints: []managedpostgres.Endpoint{
+			{Role: managedpostgres.EndpointDirect, Host: req.ProviderResourceID + "." + p.cfg.HostSuffix, Port: p.cfg.Port},
+			{Role: managedpostgres.EndpointPooled, Host: req.ProviderResourceID + "-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
+		},
 	}
 	return material, material.Validate()
 }
