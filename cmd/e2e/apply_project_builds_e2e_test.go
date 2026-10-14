@@ -201,7 +201,7 @@ func TestApplyProject_Builds_CustomDockerfileSelection(t *testing.T) {
 	}
 	var deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath string
 	err := pool.QueryRow(context.Background(), `
-		select d.kind, b.kind, d.source_root, a.manifest->>'build_dockerfile', d.inferred_profile->>'dockerfile_path'
+		select d.kind, b.kind, coalesce(d.source_root, ''), a.manifest->>'build_dockerfile', d.inferred_profile->>'dockerfile_path'
 		from deployments d
 		join builds b on b.deployment_id = d.id
 		join apps a on a.id = d.app_id
@@ -209,7 +209,10 @@ func TestApplyProject_Builds_CustomDockerfileSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deploymentKind != "dockerfile" || buildKind != "dockerfile" || sourceRoot != "services/backend" ||
+	// ADR-1288: a Compose-declared service builds from its declared
+	// context, staged as the archive root, so source_root is empty and the
+	// Dockerfile path stays relative to that context.
+	if deploymentKind != "dockerfile" || buildKind != "dockerfile" || sourceRoot != "" ||
 		appDockerfilePath != "deploy/Dockerfile.production" || deploymentDockerfilePath != appDockerfilePath {
 		t.Fatalf("custom Dockerfile round trip = kind %q/%q root %q app path %q deployment path %q", deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath)
 	}
