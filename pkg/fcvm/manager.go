@@ -6578,11 +6578,8 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 
 	// Apply per-instance. A failure on any one surfaces to the
 	// caller; the loop stops (the caller logs + retries on its
-	// next reconcile). Per-instance revert is best-effort: a
-	// revert that itself fails is logged at Warn and the error
-	// from the original patch is returned (the live netns is
-	// then in an undefined state; schedd's watchdog will Park +
-	// ColdBoot it on the next tick).
+	// next reconcile). Each nft step is atomic, so a failed
+	// instance keeps a consistent ruleset and its cached state.
 	newHandles := make(map[string]struct{ v4, v6 uint64 }, len(targets))
 	for _, t := range targets {
 		// Idempotent fast-path: if the prior allowlist is
@@ -6599,8 +6596,20 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 		if err != nil {
 			return err
 		}
+		// Adding the first allowlist entry or clearing the list changes
+		// the chain's shape (the terminal allowlist drop, the accept's
+		// place before the DNS gate), which an in-place patch cannot
+		// reproduce: an appended accept landed after the drops and had no
+		// effect, and a cleared list left the terminal drop blocking all
+		// egress (hunt #10, H10-36). Those instances keep their boot-time
+		// rules, and their cached state, until they next start.
+		if egressAllowlistNeedsRestart(t.prior, allowlist, t.handleV4, t.handleV6) {
+			m.log.Info("fcvm: egress allowlist change applies when the instance next starts",
+				"app_id", appID, "instance", t.instanceID, "prior_entries", len(t.prior), "new_entries", len(allowlist))
+			continue
+		}
 		next := build(t)
-		newH, err := m.applyOneInstancePatch(ctx, t.netns, t.prior, next.v4Argv, next.v6Argv, t.handleV4, t.handleV6)
+		newH, err := m.applyOneInstancePatch(ctx, t.netns, next.v4Argv, next.v6Argv, t.handleV4, t.handleV6)
 		if err != nil {
 			return fmt.Errorf("fcvm: UpdateEgressAllowlist app=%s netns=%s: %w", appID, t.netns, err)
 		}
@@ -7235,110 +7244,121 @@ func (m *Manager) UpdateStaticEgressIP(ctx context.Context, accountID, appID str
 func (m *Manager) applyOneInstancePatch(
 	ctx context.Context,
 	netnsName string,
-	prior []netip.Prefix,
 	v4New, v6New []string,
 	handleV4, handleV6 uint64,
 ) (struct{ v4, v6 uint64 }, error) {
 	var zero struct{ v4, v6 uint64 }
 	// Caller already short-circuited the set-equal case via
-	// samePrefixSet before reaching here, so we always run the
-	// per-family patch sequence. `prior` is still used below on
-	// the failure-path revert (re-render the prior allowlist
-	// into the per-family argv and re-add the failed family).
-	// Build the per-family patch sequence. Track which family
-	// each step belongs to so a mid-sequence failure can revert
-	// only the failed family.
+	// samePrefixSet and routed changes that need a restart away
+	// (egressAllowlistNeedsRestart), so every family here either has a
+	// rule to rewrite or a rule to drop.
 	nx := func(parts ...string) []string {
 		return append([]string{"ip", "netns", "exec", netnsName, "nft"}, parts...)
 	}
 	type familyOp struct {
-		family  string // "v4" or "v6"
-		argv    []string
-		newArgv []string // for revert: the new argv that was just added; on revert we re-add it then the next patch will delete by handle
+		family string // "v4" or "v6"
+		argv   []string
 	}
+	// The accept rule is rewritten in place (`nft replace rule … handle`)
+	// so it keeps its position before the DNS gate, SMTP and terminal
+	// allowlist drops; delete-then-add appended it after them (H10-36).
+	// A family emptied while the other keeps entries is deleted: the
+	// terminal drop then rightly blocks that family.
 	var ops []familyOp
-	if handleV4 > 0 {
-		ops = append(ops, familyOp{
-			family: "v4",
-			argv:   nx("delete", "rule", "ip", "faas", "forward", "handle", fmt.Sprintf("%d", handleV4)),
-		})
+	addFamily := func(family, nftFamily string, handle uint64, next []string) {
+		if handle == 0 {
+			return
+		}
+		h := fmt.Sprintf("%d", handle)
+		if next == nil {
+			ops = append(ops, familyOp{family: family, argv: nx("delete", "rule", nftFamily, "faas", "forward", "handle", h)})
+			return
+		}
+		ops = append(ops, familyOp{family: family, argv: replaceRuleArgv(next, nftFamily, h)})
 	}
-	if v4New != nil {
-		ops = append(ops, familyOp{family: "v4", argv: v4New, newArgv: v4New})
-	}
-	if handleV6 > 0 {
-		ops = append(ops, familyOp{
-			family: "v6",
-			argv:   nx("delete", "rule", "ip6", "faas", "forward", "handle", fmt.Sprintf("%d", handleV6)),
-		})
-	}
-	if v6New != nil {
-		ops = append(ops, familyOp{family: "v6", argv: v6New, newArgv: v6New})
-	}
+	addFamily("v4", "ip", handleV4, v4New)
+	addFamily("v6", "ip6", handleV6, v6New)
 	// Idempotent fast-path: nothing to do.
 	if len(ops) == 0 {
 		return zero, nil
 	}
 
-	// Run per-family patches. A failure on one family reverts
-	// that family (re-adds the prior rule) and returns the
-	// error — the other family is left at its new state.
-	failedFamily := ""
-	patchErr := error(nil)
+	// Run per-family patches. replace and delete are atomic in nft, so a
+	// failed step leaves its family's rule as it was; the error goes to
+	// the caller, which keeps the instance's cached allowlist so the next
+	// update compares against what is live.
 	for _, op := range ops {
 		if err := m.runCommands(ctx, [][]string{op.argv}); err != nil {
-			failedFamily = op.family
-			patchErr = err
-			break
+			return zero, fmt.Errorf("%s allowlist patch: %w", op.family, err)
 		}
-	}
-	if failedFamily != "" {
-		// Per-family revert: re-render the prior allowlist for
-		// the failed family and re-add it. The other family is
-		// untouched (its new ruleset is already live).
-		priorNC := netns.Config{Netns: netnsName, EgressAllowlist: prior}
-		var revertArgv []string
-		if failedFamily == "v4" {
-			revertArgv = priorNC.ForwardAllowlistRule(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
-		} else {
-			revertArgv = priorNC.ForwardAllowlistRule6(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
-		}
-		if revertArgv != nil {
-			if rerr := m.runCommands(ctx, [][]string{revertArgv}); rerr != nil {
-				m.log.Warn("fcvm: UpdateEgressAllowlist revert failed; live netns may be in undefined state",
-					"netns", netnsName, "family", failedFamily,
-					"patch_err", patchErr, "revert_err", rerr)
-			}
-		}
-		return zero, patchErr
 	}
 
-	// Handle capture: the kernel assigns handles on add. We
-	// re-list the chain (when captureRunner is wired) and parse
-	// the new handle so the next patch's delete-by-handle call
-	// targets the rule that was just installed. When the
-	// capture runner is nil (unit tests with a fakeRunner that
-	// doesn't simulate the kernel), the cached handle stays at
-	// the prior value — the metal test exercises the
-	// captureRunner path on the EX44.
+	// Handle capture: re-list the chain (when captureRunner is wired)
+	// so the next patch targets the rule as the kernel now numbers it.
+	// A deleted family has no accept rule left; the last matching line
+	// would then be another `iifname tap0 <family> daddr` rule (the
+	// lateral-movement deny), so its handle is cleared instead. With a
+	// nil capture runner (unit tests), a kept rule's handle stays.
 	cap, err := m.networkCaptureRunner(ctx)
 	if err != nil {
 		return zero, err
 	}
-	newH4, newH6 := handleV4, handleV6
-	if cap != nil {
-		if h, err := listChainHandles(ctx, cap, netnsName, "ip", "faas", "forward"); err == nil {
-			newH4 = h
-		} else if m.nativeVMM() != nil {
-			return zero, err
+	capture := func(family string, handle uint64, next []string) (uint64, error) {
+		if next == nil {
+			return 0, nil
 		}
-		if h, err := listChainHandles(ctx, cap, netnsName, "ip6", "faas", "forward"); err == nil {
-			newH6 = h
-		} else if m.nativeVMM() != nil {
-			return zero, err
+		if cap == nil {
+			return handle, nil
 		}
+		h, err := listChainHandles(ctx, cap, netnsName, family, "faas", "forward")
+		if err != nil {
+			if m.nativeVMM() != nil {
+				return 0, err
+			}
+			return handle, nil
+		}
+		return h, nil
+	}
+	newH4, err := capture("ip", handleV4, v4New)
+	if err != nil {
+		return zero, err
+	}
+	newH6, err := capture("ip6", handleV6, v6New)
+	if err != nil {
+		return zero, err
 	}
 	return struct{ v4, v6 uint64 }{v4: newH4, v6: newH6}, nil
+}
+
+// egressAllowlistNeedsRestart reports a live allowlist change that the
+// in-place patch cannot apply: adding the first entries or clearing the
+// list (the terminal allowlist drop exists only when entries do), or a
+// family gaining entries with no rule of its own to rewrite in place.
+func egressAllowlistNeedsRestart(prior, next []netip.Prefix, handleV4, handleV6 uint64) bool {
+	if (len(prior) == 0) != (len(next) == 0) {
+		return true
+	}
+	for _, p := range next {
+		if p.Addr().Is4() && handleV4 == 0 || !p.Addr().Is4() && handleV6 == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// replaceRuleArgv turns a rendered `… nft add rule <family> faas forward
+// <spec>` argv into `… nft replace rule <family> faas forward handle <h>
+// <spec>`, which swaps the rule atomically at its current position.
+func replaceRuleArgv(addArgv []string, nftFamily, handle string) []string {
+	prefix := []string{"add", "rule", nftFamily, "faas", "forward"}
+	for i := 0; i+len(prefix) <= len(addArgv); i++ {
+		if slices.Equal(addArgv[i:i+len(prefix)], prefix) {
+			out := append([]string{}, addArgv[:i]...)
+			out = append(out, "replace", "rule", nftFamily, "faas", "forward", "handle", handle)
+			return append(out, addArgv[i+len(prefix):]...)
+		}
+	}
+	return addArgv
 }
 
 // samePrefixSet compares two prefix slices for set equality.
