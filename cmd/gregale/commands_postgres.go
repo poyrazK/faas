@@ -72,7 +72,7 @@ func cmdPostgres(args []string) int {
 func cmdPostgresAttach(args []string) int {
 	args = normalizePostgresAttachArgs(args)
 	fs := newFlagSet("postgres attach", flag.ContinueOnError)
-	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
+	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise default)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
 	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
