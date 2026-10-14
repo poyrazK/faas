@@ -677,7 +677,7 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {
 	normalized := normalizeProviderError(providerErr)
-	return s.releaseKnownError(ctx, database, next, providerErrorCode(providerErr), normalized, retryDelay(normalized, database.AttemptCount))
+	return s.releaseKnownError(ctx, database, next, providerErrorCode(providerErr), withLoggableReason(normalized, providerErr), retryDelay(normalized, database.AttemptCount))
 }
 
 func (s *Service) releaseKnownError(ctx context.Context, database Database, next State, code string, operationErr error, delay time.Duration) error {

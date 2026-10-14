@@ -120,13 +120,18 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 			summary.Deferred++
 			// A deferred database retries silently forever; without its
 			// reason a restore stuck in provisioning left no trace in apid
-			// (production-us live test 2026-10-14). Errors are sentinels
-			// with step names, never provider payloads or credentials.
+			// (production-us live test 2026-10-14). Errors are sentinels;
+			// reasons are adapter-authored, never payloads or credentials.
 			if err != nil {
-				r.logger.Info("managed postgres reconciliation deferred", "database", database.ID, "operation", string(operation), "error", err)
+				r.logger.Info("managed postgres reconciliation deferred", "database", database.ID, "operation", string(operation), "error", err, "reason", LoggableReason(err))
 			}
 		case OutcomeContended:
 			summary.Contended++
+			// Ordinary lease contention carries no reason and stays quiet; a
+			// provider conflict such as a restore lineage mismatch does not.
+			if reason := LoggableReason(err); reason != "" {
+				r.logger.Info("managed postgres reconciliation contended", "database", database.ID, "operation", string(operation), "error", err, "reason", reason)
+			}
 		case OutcomeFailed:
 			summary.Failed++
 			sweepErrors = append(sweepErrors, err)
