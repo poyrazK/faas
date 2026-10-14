@@ -5046,6 +5046,22 @@ type MirrorSlotLease struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type NativeIssueTicketReceipt struct {
+	AccountID    pgtype.UUID
+	RequestID    pgtype.UUID
+	AppID        pgtype.UUID
+	IssueID      pgtype.UUID
+	RequestHash  string
+	State        string
+	ClaimID      pgtype.UUID
+	RecoverAfter pgtype.Timestamptz
+	TicketUrl    string
+	ProviderID   string
+	LinkID       pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type NodeJoinJob struct {
 	ID             pgtype.UUID
 	NodeName       string

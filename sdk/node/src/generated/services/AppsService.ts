@@ -31,6 +31,7 @@ import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirem
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
+import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
@@ -79,6 +80,7 @@ import type { ListIssueTrackerLinksResponse } from '../models/ListIssueTrackerLi
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
+import type { NativeIssueTicketResult } from '../models/NativeIssueTicketResult.js';
 import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
@@ -2828,6 +2830,54 @@ export class AppsService {
     });
   }
   /**
+   * Create or recover a GitHub ticket through the owned app connection.
+   * Requires Issues entitlement, deploy-write and session MFA. Pins the owned installation and bound repository identity. Retains a server receipt before dispatch; reusing request_id with different inputs or binding is refused. An unconfirmed dispatch can only recover a marker-verified existing ticket after the 15-second dispatch window. A created result means the ticket exists and attachment must be retried with identical inputs. At most 100 receipts are retained per original issue. Installation Issues write permission is required; credentials remain server-side.
+   * @returns NativeIssueTicketResult Durable ticket evidence and attachment state; created requires retrying attachment.
+   * @throws ApiError
+   */
+  public static createNativeIssueTicket({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original Gregale issue identity retained across creation retries.
+     */
+    issueId: string,
+    /**
+     * Explicit content, target repository and stable request identity for creation or recovery.
+     */
+    requestBody: CreateNativeIssueTicketRequest,
+  }): CancelablePromise<NativeIssueTicketResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/native-tickets',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket.`,
+        502: `GitHub rejected creation or connected credentials are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Read a linked GitHub issue through the app owner's native installation.
    * Requires Issues entitlement and app read access. Verifies the caller-owned installation, pinned bound repository identity, current repository visibility and issue-group reference membership. GitHub installation credentials stay server-side. Linear native connections are unsupported.
    * @returns NativeIssueTrackerStatus Canonical issue, reference, connection and observed provider status.
@@ -2842,7 +2892,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Gregale issue identity whose canonical group owns the tracker reference.
+     */
     issueId: string,
+    /**
+     * Tracker reference identity to read or synchronize through the native connection.
+     */
     linkId: string,
   }): CancelablePromise<NativeIssueTrackerStatus> {
     return __request(OpenAPI, {
@@ -2884,7 +2940,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Gregale issue identity whose canonical group owns the tracker reference.
+     */
     issueId: string,
+    /**
+     * Tracker reference identity to read or synchronize through the native connection.
+     */
     linkId: string,
     requestBody: UpdateNativeIssueTrackerStatusRequest,
   }): CancelablePromise<NativeIssueTrackerStatus> {

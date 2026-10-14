@@ -2414,6 +2414,12 @@ type Querier interface {
 	MarkWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg MarkWorkflowRunStatusFencedParams) (int64, error)
 	MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error)
+	NativeIssueTicketClaim(ctx context.Context, db DBTX, arg NativeIssueTicketClaimParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketCount(ctx context.Context, db DBTX, issueID pgtype.UUID) (int64, error)
+	NativeIssueTicketFinish(ctx context.Context, db DBTX, arg NativeIssueTicketFinishParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketGet(ctx context.Context, db DBTX, arg NativeIssueTicketGetParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketInsert(ctx context.Context, db DBTX, arg NativeIssueTicketInsertParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketLinked(ctx context.Context, db DBTX, arg NativeIssueTicketLinkedParams) (NativeIssueTicketReceipt, error)
 	NextAutomationVersion(ctx context.Context, db DBTX) (int64, error)
 	// Backend row first, operation row second. A current custody lease prevents
 	// another worker claiming a callback wake or parked state early.

@@ -10456,6 +10456,7 @@ const (
 // references are retained even if merging exceeds the new-reference quota.
 const (
 	IssueTrackerLinksMax          = 20
+	IssueTrackerNativeRequestsMax = 100 // retained recovery receipts per original issue
 	IssueTrackerLinkURLMaxBytes   = 512
 	IssueTrackerLinkTitleMaxBytes = 256
 )

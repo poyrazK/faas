@@ -13621,6 +13621,41 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issues/{issue_id}/native-tickets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Original Gregale issue identity retained across creation retries.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: createNativeIssueTicket
+      summary: Create or recover a GitHub ticket through the owned app connection.
+      description: Requires Issues entitlement, deploy-write and session MFA. Pins the owned installation and bound repository identity. Retains a server receipt before dispatch; reusing request_id with different inputs or binding is refused. An unconfirmed dispatch can only recover a marker-verified existing ticket after the 15-second dispatch window. A created result means the ticket exists and attachment must be retried with identical inputs. At most 100 receipts are retained per original issue. Installation Issues write permission is required; credentials remain server-side.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit content, target repository and stable request identity for creation or recovery.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNativeIssueTicketRequest' }
+      responses:
+        '200':
+          description: Durable ticket evidence and attachment state; created requires retrying attachment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTicketResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket. }
+        '502': { description: GitHub rejected creation or connected credentials are unavailable. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82241,6 +82276,27 @@ components:
       properties:
         url: { type: string, format: uri, maxLength: 512, description: Public GitHub issue or Linear issue HTTPS URL; maximum 512 UTF-8 bytes. }
         title: { type: string, maxLength: 256, description: Optional display title; maximum 256 UTF-8 bytes without control characters. }
+    CreateNativeIssueTicketRequest:
+      type: object
+      description: Explicit content and stable operation identity for native GitHub ticket creation or recovery.
+      additionalProperties: false
+      required: [request_id, repository, title]
+      properties:
+        request_id: { type: string, format: uuid }
+        repository: { type: string, maxLength: 256 }
+        title: { type: string, maxLength: 256 }
+        description: { type: string, maxLength: 16384 }
+        recovery_url: { type: string, format: uri, maxLength: 512 }
+    NativeIssueTicketResult:
+      type: object
+      description: Durable GitHub ticket evidence and Gregale attachment state for a native creation operation.
+      required: [request_id, state, ticket_url]
+      properties:
+        request_id: { type: string, format: uuid }
+        state: { type: string, enum: [created, linked] }
+        ticket_url: { type: string, format: uri }
+        link_id: { type: string, format: uuid }
+
     IssueTrackerProviderStatus:
       description: Observed lifecycle and identity of an external tracker issue.
       type: object

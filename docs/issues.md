@@ -557,6 +557,8 @@ Receivers must deduplicate delivery IDs: network retries are at least once.
 | Pro | 1,000 | 50,000 | 600 | 30 days | 100 |
 | Scale | 5,000 | 200,000 | 2,400 | 90 days | 200 |
 
+Each canonical group supports up to 20 tracker links. Native GitHub creation retains at most 100 request receipts per original issue; existing request IDs can retry at that limit.
+
 Payloads are at most 64 KiB, with 32 frames, a 2 KiB message and 16 KiB stack.
 Accepted timestamps must fall inside retention and within five minutes of the
 server's clock. Limits are enforced transactionally across API replicas. Storage
@@ -976,4 +978,22 @@ Connect GitHub and bind the app repository through the existing app connection s
 
 `GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status` returns the canonical issue/reference IDs, installation/repository identity and observed status. POST to the same route accepts `desired_state` and `expected` provider status, and pushes only the current Gregale open/resolved state. Reads require app read permission and Issues entitlement; pushes require deploy-write and normal session MFA. Typed Go, Node and Python clients expose both operations. Tokens stay server-side through the existing githubd credential lifecycle, and errors omit provider credentials and bodies.
 
-Native mode cannot be combined with `--token-env` or `--linear-state`; there is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. This increment supports GitHub status operations. Linear native OAuth, native ticket creation, provider callbacks and continuous reconciliation remain separate work.
+Native mode cannot be combined with `--token-env` or `--linear-state`; there is no silent fallback to a local token. The preview/apply behavior, deployment requirement for pulling resolution, unsupported-state protections and concurrent-edit limitations remain the same as explicit CLI sync. Native GitHub ticket creation is described below. Linear native OAuth, provider callbacks and continuous reconciliation remain separate work.
+
+## Native GitHub ticket creation
+
+After connecting the app owner's GitHub installation and binding the app repository as described above, create a ticket using the server connection:
+
+```sh
+gregale issues tickets create --app my-api --issue ISSUE_UUID \
+  --provider github --target OWNER/REPO --title 'Fix checkout failure' \
+  --request-id REQUEST_UUID --native
+```
+
+The installation needs GitHub Issues write permission. Native mode requires Issues entitlement and deploy-write; session callers also require MFA. It rejects `--token-env` and `--journal-dir` and does not read a local GitHub credential. Keep the request UUID and all content unchanged on retries. Receipts survive CLI host changes and apid restarts; a different title, description, repository or connection binding conflicts with the original request. At most 100 receipts are retained per original issue until issue/app/account deletion; retries of existing IDs remain available at the limit.
+
+If the provider outcome is unconfirmed, the server refuses another create. After the 15-second dispatch window, find the ticket carrying `<!-- gregale-issue-operation: REQUEST_UUID -->` and retry with the same inputs plus `--recover-url https://github.com/OWNER/REPO/issues/NUMBER`. Gregale verifies that marker and repository before attachment. A missing ticket does not prove a create is safe to repeat.
+
+A `created` result means GitHub accepted the ticket but Gregale attachment needs retry; the CLI exits unsuccessfully and prints the confirmed URL. Repeat identical inputs to resume attachment. A `linked` receipt is retained even if the link is subsequently removed, so retrying never creates another ticket. Existing link quota, group lookup and audit rules apply; a full group may leave the external ticket awaiting attachment.
+
+The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear connection and automatic reconciliation remain future work. See [ADR-1212](adr/1212-native-github-ticket-creation.md).

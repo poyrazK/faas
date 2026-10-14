@@ -62,6 +62,7 @@ import (
 // live socket-dialed client.
 type server struct {
 	nativeTrackerProvider                  issuetracker.StatusProvider
+	nativeTicketProvider                   issuetracker.Provider
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
 	profileBackend                         profiling.Backend
 	profileQuerySlots                      chan struct{}

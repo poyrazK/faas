@@ -22,6 +22,8 @@ T = TypeVar("T", bound="IssueTrackerProviderStatus")
 
 @_attrs_define
 class IssueTrackerProviderStatus:
+    """Observed lifecycle and identity of an external tracker issue."""
+
     provider: IssueTrackerProviderStatusProvider
     url: str
     id: str

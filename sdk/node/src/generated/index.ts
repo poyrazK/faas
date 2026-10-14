@@ -316,6 +316,7 @@ export type { CreateManagedPostgresBindingRequest } from './models/CreateManaged
 export type { CreateManagedPostgresDatabaseRequest } from './models/CreateManagedPostgresDatabaseRequest.js';
 export type { CreateManagedRealtimeEndpointRequest } from './models/CreateManagedRealtimeEndpointRequest.js';
 export type { CreateMirrorRuleRequest } from './models/CreateMirrorRuleRequest.js';
+export type { CreateNativeIssueTicketRequest } from './models/CreateNativeIssueTicketRequest.js';
 export type { CreateObjectMultipartUploadRequest } from './models/CreateObjectMultipartUploadRequest.js';
 export type { CreateObjectS3CredentialRequest } from './models/CreateObjectS3CredentialRequest.js';
 export type { CreateObjectStorageComputeBindingRequest } from './models/CreateObjectStorageComputeBindingRequest.js';
@@ -1007,6 +1008,7 @@ export type { MirrorReplayRequestItem } from './models/MirrorReplayRequestItem.j
 export type { MirrorRuleListResponse } from './models/MirrorRuleListResponse.js';
 export type { MirrorRuleResponse } from './models/MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './models/MirrorSummaryResponse.js';
+export type { NativeIssueTicketResult } from './models/NativeIssueTicketResult.js';
 export type { NativeIssueTrackerStatus } from './models/NativeIssueTrackerStatus.js';
 export type { OAuthProviderCapability } from './models/OAuthProviderCapability.js';
 export type { OAuthTokenExchangeError } from './models/OAuthTokenExchangeError.js';

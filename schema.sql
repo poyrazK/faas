@@ -24027,6 +24027,33 @@ CREATE TABLE public.mirror_slot_leases (
 
 
 --
+-- Name: native_issue_ticket_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_issue_ticket_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    state text DEFAULT 'ready'::text NOT NULL,
+    claim_id uuid,
+    recover_after timestamp with time zone,
+    ticket_url text DEFAULT ''::text NOT NULL,
+    provider_id text DEFAULT ''::text NOT NULL,
+    link_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT native_issue_ticket_receipts_check CHECK ((((state = ANY (ARRAY['ready'::text, 'dispatching'::text])) AND (ticket_url = ''::text) AND (provider_id = ''::text) AND (link_id IS NULL)) OR ((state = 'created'::text) AND (ticket_url <> ''::text) AND (provider_id <> ''::text) AND (link_id IS NULL)) OR ((state = 'linked'::text) AND (ticket_url <> ''::text) AND (provider_id <> ''::text) AND (link_id IS NOT NULL)))),
+    CONSTRAINT native_issue_ticket_receipts_check1 CHECK (((state <> 'dispatching'::text) OR ((claim_id IS NOT NULL) AND (recover_after IS NOT NULL)))),
+    CONSTRAINT native_issue_ticket_receipts_provider_id_check CHECK ((octet_length(provider_id) <= 256)),
+    CONSTRAINT native_issue_ticket_receipts_request_hash_check CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT native_issue_ticket_receipts_state_check CHECK ((state = ANY (ARRAY['ready'::text, 'dispatching'::text, 'created'::text, 'linked'::text]))),
+    CONSTRAINT native_issue_ticket_receipts_ticket_url_check CHECK ((octet_length(ticket_url) <= 512))
+);
+
+
+--
 -- Name: node_join_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34967,6 +34994,14 @@ ALTER TABLE ONLY public.mirror_slot_leases
 
 
 --
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_pkey PRIMARY KEY (account_id, request_id);
+
+
+--
 -- Name: node_join_jobs node_join_jobs_node_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -42773,6 +42808,13 @@ CREATE INDEX mirror_rules_source_idx ON public.mirror_rules USING btree (source_
 --
 
 CREATE INDEX mirror_slot_leases_rule_expiry_idx ON public.mirror_slot_leases USING btree (mirror_rule_id, expires_at);
+
+
+--
+-- Name: native_issue_ticket_receipts_issue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_issue_ticket_receipts_issue_idx ON public.native_issue_ticket_receipts USING btree (issue_id);
 
 
 --
@@ -54008,6 +54050,30 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.mirror_slot_leases
     ADD CONSTRAINT mirror_slot_leases_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES public.mirror_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
 
 
 --

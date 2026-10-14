@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { IssueTrackerProviderStatus } from './IssueTrackerProviderStatus.js';
+/**
+ * Verified native connection and observed status of a linked tracker issue.
+ */
 export type NativeIssueTrackerStatus = {
   issue_id: string;
   link_id: string;

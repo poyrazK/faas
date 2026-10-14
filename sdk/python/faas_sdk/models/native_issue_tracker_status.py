@@ -16,12 +16,15 @@ T = TypeVar("T", bound="NativeIssueTrackerStatus")
 
 @_attrs_define
 class NativeIssueTrackerStatus:
+    """Verified native connection and observed status of a linked tracker issue."""
+
     issue_id: UUID
     link_id: UUID
     installation_id: int
     repository: str
     repository_id: int
     status: IssueTrackerProviderStatus
+    """Observed lifecycle and identity of an external tracker issue."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

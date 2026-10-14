@@ -251,3 +251,10 @@ func (c *Client) UpdateNativeIssueTrackerStatus(ctx context.Context, slug, id, l
 	err := c.do(ctx, "POST", issueTrackerLinksPath(slug, id)+"/"+url.PathEscape(link)+"/native-status", in, &out)
 	return out, err
 }
+
+// CreateNativeIssueTicket creates or recovers a GitHub ticket using the owned app connection.
+func (c *Client) CreateNativeIssueTicket(ctx context.Context, slug, issueID string, in CreateNativeIssueTicketRequest) (NativeIssueTicketResult, error) {
+	var out NativeIssueTicketResult
+	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/issues/"+url.PathEscape(issueID)+"/native-tickets", in, &out)
+	return out, err
+}

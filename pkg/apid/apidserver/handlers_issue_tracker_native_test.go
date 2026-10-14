@@ -5,8 +5,11 @@ package apidserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -111,5 +114,129 @@ func TestNativeIssueTrackerUsesOwnedConnectionAndRejectsReportersAndRevokedRepos
 	encoded, _ := json.Marshal(result)
 	if strings.Contains(string(encoded), "native-secret") {
 		t.Fatal("credential persisted in public response")
+	}
+}
+
+type nativeCreateFake struct{ creates int }
+
+func (p *nativeCreateFake) Create(_ context.Context, r issuetracker.Request, token string) (issuetracker.Ticket, error) {
+	p.creates++
+	if token != "native-secret" {
+		return issuetracker.Ticket{}, fmt.Errorf("unexpected credential")
+	}
+	return issuetracker.Ticket{URL: "https://github.com/owner/repo/issues/43", ProviderID: "43"}, nil
+}
+func (p *nativeCreateFake) Recover(context.Context, issuetracker.Request, string, string) (issuetracker.Ticket, error) {
+	panic("unexpected recovery")
+}
+
+// adr: 1212
+func TestNativeIssueTicketCreationPersistsRetryEvidenceAndScopesConnection(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "native-create")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	reporterToken := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	reporter := map[string]string{"Authorization": "Bearer " + reporterToken.Token}
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "CreateError", Message: "failed"}, reporter), 202)
+	path := base + "/issues/" + accepted.IssueID + "/native-tickets"
+	in := api.CreateNativeIssueTicketRequest{RequestID: uuid.NewString(), Repository: "owner/repo", Title: "Fix creation"}
+	if w := e.Do(t, "POST", path, in, reporter); w.Code != 401 && w.Code != 403 {
+		t.Fatal("reporter created native ticket", w.Code)
+	}
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 409 {
+		t.Fatal("unconnected create", w.Code, w.Body.String())
+	}
+	store := apidserver.IssueNativeStore(e)
+	acct := apidserver.IssueNativeAccount(e)
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{AccountID: acct.ID, InstallationID: 42, DefaultBranch: "main", AuditGithubLogin: "owner", SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	binding := state.GitHubBinding{AppID: app.ID, AccountID: acct.ID, BindingID: uuid.NewString(), InstallID: 42, RepoFullName: "Owner/Repo", OwnerID: 10, RepoID: 100, ProductionBranch: "main"}
+	if err := store.UpsertGithubInstallBinding(t.Context(), binding); err != nil {
+		t.Fatal(err)
+	}
+	gh := &nativeGitHubFake{repoID: 100}
+	provider := &nativeCreateFake{}
+	apidserver.IssueNativeSetClients(e, gh, &nativeStatusFake{})
+	apidserver.IssueNativeSetTicketProvider(e, provider)
+	first := apidserver.IssueDecode[api.NativeIssueTicketResult](t, e.Do(t, "POST", path, in, nil), 200)
+	second := apidserver.IssueDecode[api.NativeIssueTicketResult](t, e.Do(t, "POST", path, in, nil), 200)
+	if first.State != "linked" || first.LinkID == "" || second != first || provider.creates != 1 {
+		t.Fatal("native create retry duplicated or lost receipt", first, second)
+	}
+	refs := apidserver.IssueDecode[api.ListIssueTrackerLinksResponse](t, e.Do(t, "GET", base+"/issues/"+accepted.IssueID+"/tracker-links", nil, nil), 200)
+	if len(refs.Items) != 1 || refs.Items[0].URL != first.TicketURL {
+		t.Fatal("ticket not attached")
+	}
+	altered := in
+	altered.Title = "changed"
+	if w := e.Do(t, "POST", path, altered, nil); w.Code != 409 || provider.creates != 1 {
+		t.Fatal("changed inputs dispatched", w.Code, w.Body.String())
+	}
+	altered = in
+	altered.RequestID = uuid.NewString()
+	altered.Repository = "other/repo"
+	if w := e.Do(t, "POST", path, altered, nil); w.Code != 409 || provider.creates != 1 {
+		t.Fatal("unbound repository created", w.Code)
+	}
+	receipts := store.(state.NativeIssueTicketStore)
+	r, err := receipts.ReserveNativeIssueTicket(t.Context(), state.NativeIssueTicketReceipt{AccountID: acct.ID, AppID: app.ID, IssueID: accepted.IssueID, RequestID: uuid.NewString(), Hash: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	claims := make(chan state.NativeIssueTicketReceipt, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, e := receipts.ClaimNativeIssueTicket(t.Context(), r, false)
+			if e == nil {
+				claims <- c
+			} else if !errors.Is(e, state.ErrNativeIssueTicketBusy) {
+				t.Error(e)
+			}
+		}()
+	}
+	wg.Wait()
+	close(claims)
+	if len(claims) != 1 {
+		t.Fatal("concurrent dispatch was not fenced", len(claims))
+	}
+	claimed := <-claims
+	if _, err = receipts.ClaimNativeIssueTicket(t.Context(), r, false); !errors.Is(err, state.ErrNativeIssueTicketBusy) {
+		t.Fatal("duplicate dispatch claim", err)
+	}
+	if _, err = receipts.ClaimNativeIssueTicket(t.Context(), claimed, true); !errors.Is(err, state.ErrNativeIssueTicketBusy) {
+		t.Fatal("active recovery claim", err)
+	}
+	claimed.ClaimID = uuid.NewString()
+	claimed.State = "created"
+	claimed.TicketURL = first.TicketURL
+	claimed.ProviderID = "43"
+	if _, err = receipts.FinishNativeIssueTicket(t.Context(), claimed); !errors.Is(err, state.ErrNativeIssueTicketBusy) {
+		t.Fatal("stale claim completed", err)
+	}
+	foreign := apidserver.SeedPGApp(t, e, "native-create-foreign")
+	if w := e.Do(t, "POST", "/v1/apps/"+foreign.Slug+"/issues/"+accepted.IssueID+"/native-tickets", in, nil); w.Code != 404 {
+		t.Fatal("cross-app creation", w.Code)
+	}
+	for i := 0; i < api.IssueTrackerNativeRequestsMax-2; i++ {
+		if _, err := receipts.ReserveNativeIssueTicket(t.Context(), state.NativeIssueTicketReceipt{AccountID: acct.ID, AppID: app.ID, IssueID: accepted.IssueID, RequestID: uuid.NewString(), Hash: strings.Repeat("b", 64)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := receipts.ReserveNativeIssueTicket(t.Context(), state.NativeIssueTicketReceipt{AccountID: acct.ID, AppID: app.ID, IssueID: accepted.IssueID, RequestID: uuid.NewString(), Hash: strings.Repeat("c", 64)}); err == nil {
+		t.Fatal("native receipt quota ignored")
+	}
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 200 || provider.creates != 1 {
+		t.Fatal("quota blocked retained retry", w.Code)
+	}
+	gh.repoID = 200
+	altered = in
+	altered.RequestID = uuid.NewString()
+	if w := e.Do(t, "POST", path, altered, nil); w.Code != 409 || provider.creates != 1 {
+		t.Fatal("revoked repository created", w.Code)
 	}
 }

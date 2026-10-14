@@ -37,7 +37,7 @@ func (h nativeIssueTrackerHost) Prepare(ctx context.Context) (issuetrackers.Prep
 	}
 	p := issuetrackers.Prepared{Issue: detail.Issue}
 	cursor := state.IssueCursor{}
-	for {
+	for h.linkID != "" {
 		page, e := links.ListIssueTrackerLinks(ctx, h.app.ID, h.app.AccountID, p.Issue.ID, cursor)
 		if e != nil {
 			return p, e
@@ -72,7 +72,7 @@ func (h nativeIssueTrackerHost) Prepare(ctx context.Context) (issuetrackers.Prep
 	}
 	n, e := api.NormalizeIssueTrackerLink(api.PutIssueTrackerLinkRequest{URL: p.Link.URL})
 	repository := strings.ToLower(binding.RepoFullName)
-	if e != nil || n.Provider != "github" || p.Link.Provider != "github" || strings.SplitN(n.ExternalKey, "#", 2)[0] != repository || binding.RepoID <= 0 || binding.OwnerID <= 0 || binding.BindingID == "" {
+	if h.linkID != "" && (e != nil || n.Provider != "github" || p.Link.Provider != "github" || strings.SplitN(n.ExternalKey, "#", 2)[0] != repository) || binding.RepoID <= 0 || binding.OwnerID <= 0 || binding.BindingID == "" {
 		return p, issuetrackers.ConnectionRequired()
 	}
 	repos, e := h.server.githubd.ListInstallableRepos(ctx, h.account.ID, binding.InstallID)

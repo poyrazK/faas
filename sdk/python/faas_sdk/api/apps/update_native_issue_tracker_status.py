@@ -122,7 +122,8 @@ def sync_detailed(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateNativeIssueTrackerStatusRequest):
+        body (UpdateNativeIssueTrackerStatusRequest): Expected provider snapshot and current
+            Gregale lifecycle to push through a native connection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,7 +167,8 @@ def sync(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateNativeIssueTrackerStatusRequest):
+        body (UpdateNativeIssueTrackerStatusRequest): Expected provider snapshot and current
+            Gregale lifecycle to push through a native connection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,7 +207,8 @@ async def asyncio_detailed(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateNativeIssueTrackerStatusRequest):
+        body (UpdateNativeIssueTrackerStatusRequest): Expected provider snapshot and current
+            Gregale lifecycle to push through a native connection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -247,7 +250,8 @@ async def asyncio(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateNativeIssueTrackerStatusRequest):
+        body (UpdateNativeIssueTrackerStatusRequest): Expected provider snapshot and current
+            Gregale lifecycle to push through a native connection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

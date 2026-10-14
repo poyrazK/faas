@@ -42,3 +42,27 @@ func TestIssueNativeTrackerSDKKeepsExpectedSnapshot(t *testing.T) {
 		t.Fatal("native update failed", err)
 	}
 }
+
+func TestIssueNativeCreationSDKRetainsRequestIdentity(t *testing.T) {
+	input := faas.CreateNativeIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", Repository: "owner/repo", Title: "Fix", RecoveryURL: "https://github.com/owner/repo/issues/42"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/issue/native-tickets" {
+			t.Error("wrong creation route")
+		}
+		var in faas.CreateNativeIssueTicketRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
+			t.Error("creation identity lost", in, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(faas.NativeIssueTicketResult{RequestID: in.RequestID, State: "linked", TicketURL: in.RecoveryURL, LinkID: "link"})
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.CreateNativeIssueTicket(t.Context(), "payments", "issue", input)
+	if err != nil || out.RequestID != input.RequestID || out.State != "linked" {
+		t.Fatal(out, err)
+	}
+}

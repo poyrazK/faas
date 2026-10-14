@@ -84,3 +84,56 @@ func TestIssueTicketCLIRetryResumesLinkingAfterProviderSuccess(t *testing.T) {
 		t.Fatal("invalid inputs reached the network")
 	}
 }
+
+func TestIssueTicketNativeCLIUsesServerReceiptWithoutProviderCredential(t *testing.T) {
+	appID := "22222222-2222-4222-8222-222222222222"
+	issueID := "33333333-3333-4333-8333-333333333333"
+	requestID := "11111111-1111-4111-8111-111111111111"
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" {
+			if r.URL.Path == "/v1/apps/payments" {
+				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: appID, Slug: "payments"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.IssueDetail{Issue: api.Issue{ID: issueID, AppID: appID}})
+			return
+		}
+		calls++
+		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/"+issueID+"/native-tickets" {
+			t.Error("wrong native create route")
+		}
+		var in api.CreateNativeIssueTicketRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RequestID != requestID || in.Repository != "owner/repo" || in.Title != "Fix" {
+			t.Error("native inputs lost", in, err)
+		}
+		state := "created"
+		linkID := ""
+		if calls > 1 {
+			state = "linked"
+			linkID = "55555555-5555-4555-8555-555555555555"
+		}
+		_ = json.NewEncoder(w).Encode(api.NativeIssueTicketResult{RequestID: requestID, State: state, TicketURL: "https://github.com/owner/repo/issues/42", LinkID: linkID})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_GITHUB_TOKEN", "")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	provider := &ticketCLIProvider{}
+	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix", "--request-id", requestID, "--native"}
+	if runIssueTickets(args, provider) == 0 {
+		t.Fatal("incomplete attachment reported success")
+	}
+	out.Reset()
+	if runIssueTickets(args, provider) != 0 || provider.creates != 0 || calls != 2 {
+		t.Fatal("native create used local provider or failed retry")
+	}
+	if runIssueTickets(append(args, "--token-env", "LOCAL_TOKEN"), provider) == 0 || calls != 2 {
+		t.Fatal("native create allowed provider credential")
+	}
+}

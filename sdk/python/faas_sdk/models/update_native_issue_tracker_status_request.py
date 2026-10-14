@@ -19,8 +19,11 @@ T = TypeVar("T", bound="UpdateNativeIssueTrackerStatusRequest")
 
 @_attrs_define
 class UpdateNativeIssueTrackerStatusRequest:
+    """Expected provider snapshot and current Gregale lifecycle to push through a native connection."""
+
     desired_state: UpdateNativeIssueTrackerStatusRequestDesiredState
     expected: IssueTrackerProviderStatus
+    """Observed lifecycle and identity of an external tracker issue."""
 
     def to_dict(self) -> dict[str, Any]:
         desired_state: str = self.desired_state

@@ -629,6 +629,7 @@ from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .create_mirror_rule_request import CreateMirrorRuleRequest
+from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
@@ -2006,6 +2007,8 @@ from .mirror_replay_request_item_method import MirrorReplayRequestItemMethod
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
+from .native_issue_ticket_result import NativeIssueTicketResult
+from .native_issue_ticket_result_state import NativeIssueTicketResultState
 from .native_issue_tracker_status import NativeIssueTrackerStatus
 from .o_auth_provider_capability import OAuthProviderCapability
 from .o_auth_token_exchange_error import OAuthTokenExchangeError
@@ -4719,6 +4722,7 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMirrorRuleRequest",
+    "CreateNativeIssueTicketRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
     "CreateObjectS3CredentialRequest",
@@ -6030,6 +6034,8 @@ __all__ = (
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
+    "NativeIssueTicketResult",
+    "NativeIssueTicketResultState",
     "NativeIssueTrackerStatus",
     "OAuthProviderCapability",
     "OAuthTokenExchangeError",

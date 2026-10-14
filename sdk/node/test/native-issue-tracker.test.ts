@@ -18,3 +18,16 @@ test('native status API retains the provider snapshot without provider credentia
  assert.deepEqual(await AppsService.getNativeIssueTrackerStatus({slug:'payments',issueId:issue,linkId:link}),observed);
  const result=await AppsService.updateNativeIssueTrackerStatus({slug:'payments',issueId:issue,linkId:link,requestBody:{desired_state:'open',expected:observed.status}});assert.equal(result.status.state,'open');assert.equal(writes,1);
 });
+
+test('native creation keeps the stable request identity and recovery URL',async(t)=>{
+ const issue='33333333-3333-4333-8333-333333333333';
+ const body={request_id:'11111111-1111-4111-8111-111111111111',repository:'owner/repo',title:'Fix',recovery_url:'https://github.com/owner/repo/issues/42'};
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.method,'POST');assert.equal(req.url,`/v1/apps/payments/issues/${issue}/native-tickets`);
+  const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),body);
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({request_id:body.request_id,state:'linked',ticket_url:body.recovery_url,link_id:'55555555-5555-4555-8555-555555555555'}));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ const result=await AppsService.createNativeIssueTicket({slug:'payments',issueId:issue,requestBody:body});assert.equal(result.state,'linked');assert.equal(result.request_id,body.request_id);
+});

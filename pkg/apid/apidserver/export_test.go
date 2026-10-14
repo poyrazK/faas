@@ -1294,3 +1294,7 @@ func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetrack
 }
 func IssueNativeStore(e pgHandlerEnv) state.Store     { return e.store }
 func IssueNativeAccount(e pgHandlerEnv) state.Account { return e.acct }
+
+func IssueNativeSetTicketProvider(e pgHandlerEnv, p issuetracker.Provider) {
+	e.s.nativeTicketProvider = p
+}

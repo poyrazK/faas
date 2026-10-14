@@ -554,3 +554,6 @@ type ListIssueTrackerLinksResponse = api.ListIssueTrackerLinksResponse
 type IssueTrackerProviderStatus = api.IssueTrackerProviderStatus
 type NativeIssueTrackerStatus = api.NativeIssueTrackerStatus
 type UpdateNativeIssueTrackerStatusRequest = api.UpdateNativeIssueTrackerStatusRequest
+
+type CreateNativeIssueTicketRequest = api.CreateNativeIssueTicketRequest
+type NativeIssueTicketResult = api.NativeIssueTicketResult

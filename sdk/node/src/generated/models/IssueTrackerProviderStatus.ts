@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Observed lifecycle and identity of an external tracker issue.
+ */
 export type IssueTrackerProviderStatus = {
   provider: 'github' | 'linear';
   url: string;
