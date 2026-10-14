@@ -3605,10 +3605,45 @@ waiting work (unassigned plus ready) is reported as broker lag, so an app with a
 Rollback: delete realtime triggers before running the migration's Down step,
 which refuses while any exist.
 
+## Fair-use connection limits
+
+Realtime is free (ADR-1238); plans cap the resource it holds. apid sends each
+endpoint's account allowance (`ConnectionsPerAccount` in `pkg/api/limits.go`:
+Hobby 200, Pro 1,000, Scale 5,000) to realtimed with the endpoint, so plan
+changes apply at the next endpoint reconcile (30 s). realtimed refuses a
+connection with HTTP 429 `realtime_connection_limit` when:
+
+- the account's connections on this node plus the other nodes' last reported
+  connections reach the plan allowance, or
+- the account already holds `RealtimeAccountNodeSharePercent` (50%) of this
+  node's connection cap.
+
+Each realtimed exchanges per-account counts with apid every 5 s over the
+private `RealtimeFleet` service, using the same target and TLS settings as the
+resume preview; the exchange runs whenever realtimed dials apid (any preview
+flag or `FAAS_REALTIME_USAGE_ENABLED=1`). Without a fresh exchange (none in the
+last 30 s), a node enforces the allowance against its own connections only, so
+an apid outage never refuses connections a node could hold; the allowance then
+holds per node rather than per fleet. Multi-node deployments should therefore
+enable the exchange.
+
+The node cap defaults to 6,000 connections (`FAAS_REALTIME_MAX_CONNECTIONS`).
+An idle connection measured about 52 KB of realtimed memory on 2026-10-14, so
+6,000 idle connections use about 310 MB of the unit's 512 MB `MemoryMax`, leaving
+room for queued frames and subscription pumps. Raise the cap only with
+`MemoryMax`.
+
+Watch `realtimed_connection_limit_refusals_total{scope}` (`account` is the plan
+allowance, `account_node` the per-node share),
+`realtimed_connection_sync_failures_total`, and
+`realtimed_connection_sync_last_success_timestamp_seconds`: more than 30 s old
+means accounts are capped per node. apid stores the counts in
+`realtime_node_connections`; a node silent for an hour is removed.
+
 ## Realtime usage recording
 
-ADR-1238 step 2 records realtime usage per endpoint. It is not billed and no
-limit reads it. Enable it on every realtimed node with
+ADR-1238 records realtime usage per endpoint to review the fair-use limits and
+spot abuse. Realtime is free; nothing bills from these rows. Enable it on every realtimed node with
 `FAAS_REALTIME_USAGE_ENABLED=1`; realtimed then reaches apid's private
 listener exactly like the resume preview (`FAAS_REALTIME_HISTORY_TARGET` and,
 for a TCP target, the `FAAS_REALTIME_HISTORY_TLS_*` paths). The node name

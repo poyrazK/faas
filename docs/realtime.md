@@ -20,6 +20,34 @@ and [customer transaction and fencing examples](realtime-customer-examples.md).
 The [realtime operations guide](ops/realtime.md) documents configuration,
 preview gates, limits, recovery behavior, and rollout procedures.
 
+## Fair-use limits
+
+Realtime has no separate charge. Gregale bills compute, and realtime channels,
+consumer groups and delivery are included in every paid plan. Limits apply only
+where realtime holds real capacity on our servers:
+
+| Plan | Endpoints per app / account | Concurrent connections per account |
+|---|---:|---:|
+| Hobby | 2 / 10 | 200 |
+| Pro | 10 / 50 | 1,000 |
+| Scale | 25 / 250 | 5,000 |
+
+- **Connections** count every open WebSocket and SSE connection across all of
+  an account's endpoints. Each holds memory on a realtime node for as long as it
+  is open. A refused connection gets HTTP 429 with code
+  `realtime_connection_limit`, the limit and the number open. Close idle
+  connections, share one connection per browser tab, or upgrade the plan.
+- **One node, one account:** an account may hold at most half of a single
+  realtime node's connections, so one busy account cannot fill a node. This
+  refusal names the per-node limit; retry with backoff, and new connections may
+  land on another node.
+- **Retained history** is bounded per endpoint (24 hours, 1,024 messages per
+  channel, 4 KiB per message).
+- **Functions triggered by channel messages** bill as normal compute.
+
+An endpoint's `max_connections` still caps that endpoint; the account limit
+applies on top of it.
+
 ## Principal access controls preview
 
 When the operator enables the access-control preview, an endpoint can deny a
