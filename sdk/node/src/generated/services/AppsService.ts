@@ -71,6 +71,7 @@ import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequ
 import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
 import type { IssueTeam } from '../models/IssueTeam.js';
 import type { IssueTrackerAutoSync } from '../models/IssueTrackerAutoSync.js';
+import type { IssueTrackerLinearConnection } from '../models/IssueTrackerLinearConnection.js';
 import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
@@ -153,6 +154,7 @@ import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
 import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTrackerAutoSyncRequest.js';
+import type { UpdateIssueTrackerLinearConnectionRequest } from '../models/UpdateIssueTrackerLinearConnectionRequest.js';
 import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
@@ -2872,6 +2874,78 @@ export class AppsService {
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
         409: `Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket.`,
         502: `GitHub rejected creation or connected credentials are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app owner's Linear connection metadata.
+   * Requires app read access and the app owner. Returns only non-secret identity and revision. Unconfigured apps return disconnected with revision zero. Inspection remains available after an Issues plan downgrade.
+   * @returns IssueTrackerLinearConnection Linear connection metadata without credentials.
+   * @throws ApiError
+   */
+  public static getIssueTrackerLinearConnection({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueTrackerLinearConnection> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-tracker-linear-connection',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Connect or disconnect an owner-scoped Linear personal API key.
+   * Requires the app owner with deploy-write and session MFA. Connecting additionally requires Issues entitlement and an account eligible to deploy. Verifies workspace and viewer and active team before sealing credentials. expected_revision fences competing changes. Disconnect erases credentials without provider access and remains available after a plan downgrade. This does not enable automatic sync or perform provider writes.
+   * @returns IssueTrackerLinearConnection Updated non-secret connection metadata and revision.
+   * @throws ApiError
+   */
+  public static updateIssueTrackerLinearConnection({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit connection decision and known revision; personal API key is accepted only when connecting.
+     */
+    requestBody: UpdateIssueTrackerLinearConnectionRequest,
+  }): CancelablePromise<IssueTrackerLinearConnection> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-tracker-linear-connection',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `The connection revision changed; read metadata again.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

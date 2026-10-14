@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -61,6 +62,7 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
 	nativeTrackerProvider                  issuetracker.StatusProvider
 	nativeTicketProvider                   issuetracker.Provider
 	environmentGitOpsAcceptanceEnforcement atomic.Bool

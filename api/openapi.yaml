@@ -13656,6 +13656,51 @@ paths:
         '502': { description: GitHub rejected creation or connected credentials are unavailable. }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issue-tracker-linear-connection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueTrackerLinearConnection
+      summary: Read the app owner's Linear connection metadata.
+      description: Requires app read access and the app owner. Returns only non-secret identity and revision. Unconfigured apps return disconnected with revision zero. Inspection remains available after an Issues plan downgrade.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Linear connection metadata without credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerLinearConnection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: updateIssueTrackerLinearConnection
+      summary: Connect or disconnect an owner-scoped Linear personal API key.
+      description: Requires the app owner with deploy-write and session MFA. Connecting additionally requires Issues entitlement and an account eligible to deploy. Verifies workspace and viewer and active team before sealing credentials. expected_revision fences competing changes. Disconnect erases credentials without provider access and remains available after a plan downgrade. This does not enable automatic sync or perform provider writes.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit connection decision and known revision; personal API key is accepted only when connecting.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueTrackerLinearConnectionRequest' }
+      responses:
+        '200':
+          description: Updated non-secret connection metadata and revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerLinearConnection' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: The connection revision changed; read metadata again. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82355,6 +82400,25 @@ components:
         ticket_url: { type: string, format: uri }
         link_id: { type: string, format: uuid }
 
+    IssueTrackerLinearConnection:
+      type: object
+      description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
+      required: [connected, revision]
+      properties:
+        connected: { type: boolean, description: Whether a verified personal API key is stored. }
+        revision: { type: integer, format: int64, minimum: 0, description: Configuration revision used to fence concurrent changes. }
+        workspace_id: { type: string, format: uuid, description: Verified Linear organization identity. }
+        team_id: { type: string, format: uuid, description: Verified active Linear team identity. }
+        viewer_id: { type: string, format: uuid, description: Verified Linear user identity owning the API key. }
+    UpdateIssueTrackerLinearConnectionRequest:
+      type: object
+      description: Explicit connection or disconnection against a known revision.
+      required: [connected, expected_revision]
+      properties:
+        connected: { type: boolean, description: True connects a verified personal API key; false erases it. }
+        expected_revision: { type: integer, format: int64, minimum: 0, description: Revision from the latest connection metadata read. }
+        team_id: { type: string, format: uuid, description: Active team UUID required only when connecting. }
+        api_key: { type: string, maxLength: 4096, writeOnly: true, description: Personal API key required only when connecting; never returned or logged. }
     IssueTrackerAutoSync:
       type: object
       description: Opt-in automatic Gregale-to-GitHub policy and latest durable worker outcome for a tracker reference.

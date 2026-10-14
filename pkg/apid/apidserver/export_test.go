@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -1305,4 +1306,8 @@ func IssueNativeRunAutoSyncBatch(e pgHandlerEnv, ctx context.Context) {
 func IssueNativeAutoSyncDue(e pgHandlerEnv, ctx context.Context, link string) error {
 	_, err := e.pool.Exec(ctx, "UPDATE issue_tracker_auto_sync SET next_check_at=now(),claim_until=now()-interval '1 second' WHERE link_id=$1", link)
 	return err
+}
+
+func IssueNativeSetLinearVerifier(e pgHandlerEnv, p issuetrackers.LinearConnectionVerifier) {
+	e.s.nativeLinearVerifier = p
 }

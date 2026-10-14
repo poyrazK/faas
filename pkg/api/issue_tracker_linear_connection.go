@@ -1,0 +1,18 @@
+package api
+
+// IssueTrackerLinearConnection contains only non-secret connection metadata.
+type IssueTrackerLinearConnection struct {
+	Connected   bool   `json:"connected"`
+	Revision    int64  `json:"revision"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+	ViewerID    string `json:"viewer_id,omitempty"`
+}
+
+// UpdateIssueTrackerLinearConnectionRequest explicitly connects or disconnects.
+type UpdateIssueTrackerLinearConnectionRequest struct {
+	Connected        bool   `json:"connected"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	TeamID           string `json:"team_id,omitempty"`
+	APIKey           string `json:"api_key,omitempty"`
+}

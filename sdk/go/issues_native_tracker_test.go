@@ -96,3 +96,32 @@ func TestIssueNativeAutoSyncSDKKeepsRevisionAndDelegationSnapshot(t *testing.T) 
 		t.Fatal(out, err)
 	}
 }
+
+func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T) {
+	input := faas.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 7, TeamID: "team", APIKey: "secret"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/payments/issue-tracker-linear-connection" {
+			t.Error("wrong connection route")
+		}
+		if r.Method == "PUT" {
+			var in faas.UpdateIssueTrackerLinearConnectionRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
+				t.Error("connection input lost", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(faas.IssueTrackerLinearConnection{Connected: true, Revision: 8, TeamID: "team"})
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetIssueTrackerLinearConnection(t.Context(), "payments"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.UpdateIssueTrackerLinearConnection(t.Context(), "payments", input)
+	if err != nil || out.Revision != 8 || !out.Connected {
+		t.Fatal("connection response lost", err)
+	}
+}

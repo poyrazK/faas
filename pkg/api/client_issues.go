@@ -269,3 +269,14 @@ func (c *Client) UpdateIssueTrackerAutoSync(ctx context.Context, slug, issue, li
 	err := c.do(ctx, "PUT", issueTrackerLinksPath(slug, issue)+"/"+url.PathEscape(link)+"/auto-sync", in, &out)
 	return out, err
 }
+
+func (c *Client) GetIssueTrackerLinearConnection(ctx context.Context, slug string) (IssueTrackerLinearConnection, error) {
+	var out IssueTrackerLinearConnection
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/issue-tracker-linear-connection", nil, &out)
+	return out, err
+}
+func (c *Client) UpdateIssueTrackerLinearConnection(ctx context.Context, slug string, in UpdateIssueTrackerLinearConnectionRequest) (IssueTrackerLinearConnection, error) {
+	var out IssueTrackerLinearConnection
+	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(slug)+"/issue-tracker-linear-connection", in, &out)
+	return out, err
+}

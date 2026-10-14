@@ -58376,3 +58376,42 @@ ALTER TABLE ONLY public.issue_tracker_auto_sync
 
 ALTER TABLE ONLY public.issue_tracker_auto_sync
     ADD CONSTRAINT issue_tracker_auto_sync_source_issue_id_fkey FOREIGN KEY (source_issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_linear_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_linear_connections (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    connected boolean NOT NULL,
+    workspace_id uuid,
+    team_id uuid,
+    viewer_id uuid,
+    sealed_credential bytea,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_tracker_linear_connections_check CHECK (((connected AND (workspace_id IS NOT NULL) AND (team_id IS NOT NULL) AND (viewer_id IS NOT NULL) AND (octet_length(sealed_credential) > 0) AND (sealed_credential IS NOT NULL)) OR ((NOT connected) AND (workspace_id IS NULL) AND (team_id IS NULL) AND (viewer_id IS NULL) AND (sealed_credential IS NULL)))),
+    CONSTRAINT issue_tracker_linear_connections_revision_check CHECK ((revision > 0))
+);
+
+--
+-- Name: issue_tracker_linear_connections issue_tracker_linear_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_connections
+    ADD CONSTRAINT issue_tracker_linear_connections_pkey PRIMARY KEY (app_id);
+
+--
+-- Name: issue_tracker_linear_connections issue_tracker_linear_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_connections
+    ADD CONSTRAINT issue_tracker_linear_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_linear_connections issue_tracker_linear_connections_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_connections
+    ADD CONSTRAINT issue_tracker_linear_connections_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

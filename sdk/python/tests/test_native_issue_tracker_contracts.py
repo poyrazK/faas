@@ -90,3 +90,23 @@ def test_auto_sync_routes_keep_revision_and_aligned_native_snapshot():
     assert policy.revision == 8
     assert policy.outcome == "conflict"
     assert policy.reason == "provider_changed"
+
+
+def test_linear_connection_routes_preserve_revision_and_omit_key_on_disconnect():
+    from faas_sdk.api.apps import get_issue_tracker_linear_connection, update_issue_tracker_linear_connection
+    from faas_sdk.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
+    from faas_sdk.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
+
+    team = uuid4()
+    payload = {"connected": True, "expected_revision": 7, "team_id": str(team), "api_key": "secret"}
+    body = UpdateIssueTrackerLinearConnectionRequest.from_dict(payload)
+    route = "/v1/apps/payments/issue-tracker-linear-connection"
+    assert get_issue_tracker_linear_connection._get_kwargs("payments")["url"] == route
+    request = update_issue_tracker_linear_connection._get_kwargs("payments", body=body)
+    assert request["method"] == "put"
+    assert request["url"] == route
+    assert request["json"] == payload
+    disconnected = UpdateIssueTrackerLinearConnectionRequest.from_dict({"connected": False, "expected_revision": 8})
+    assert disconnected.to_dict() == {"connected": False, "expected_revision": 8}
+    metadata = IssueTrackerLinearConnection.from_dict({"connected": False, "revision": 9})
+    assert metadata.to_dict() == {"connected": False, "revision": 9}

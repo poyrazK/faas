@@ -1649,6 +1649,7 @@ from .issue_tracker_auto_sync_outcome import IssueTrackerAutoSyncOutcome
 from .issue_tracker_auto_sync_pending_state import IssueTrackerAutoSyncPendingState
 from .issue_tracker_auto_sync_provider_state import IssueTrackerAutoSyncProviderState
 from .issue_tracker_auto_sync_source_state import IssueTrackerAutoSyncSourceState
+from .issue_tracker_linear_connection import IssueTrackerLinearConnection
 from .issue_tracker_link import IssueTrackerLink
 from .issue_tracker_link_provider import IssueTrackerLinkProvider
 from .issue_tracker_provider_status import IssueTrackerProviderStatus
@@ -3851,6 +3852,7 @@ from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRe
 from .update_issue_tracker_auto_sync_request_expected_issue_state import (
     UpdateIssueTrackerAutoSyncRequestExpectedIssueState,
 )
+from .update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
@@ -5725,6 +5727,7 @@ __all__ = (
     "IssueTrackerAutoSyncPendingState",
     "IssueTrackerAutoSyncProviderState",
     "IssueTrackerAutoSyncSourceState",
+    "IssueTrackerLinearConnection",
     "IssueTrackerLink",
     "IssueTrackerLinkProvider",
     "IssueTrackerProviderStatus",
@@ -7761,6 +7764,7 @@ __all__ = (
     "UpdateIssueImpactAlertPolicyRequest",
     "UpdateIssueTrackerAutoSyncRequest",
     "UpdateIssueTrackerAutoSyncRequestExpectedIssueState",
+    "UpdateIssueTrackerLinearConnectionRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",

@@ -996,7 +996,7 @@ If the provider outcome is unconfirmed, the server refuses another create. After
 
 A `created` result means GitHub accepted the ticket but Gregale attachment needs retry; the CLI exits unsuccessfully and prints the confirmed URL. Repeat identical inputs to resume attachment. A `linked` receipt is retained even if the link is subsequently removed, so retrying never creates another ticket. Existing link quota, group lookup and audit rules apply; a full group may leave the external ticket awaiting attachment.
 
-The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear connection remains future work; automatic GitHub push is described below. See [ADR-1212](adr/1212-native-github-ticket-creation.md).
+The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation remains future work; automatic GitHub push is described below. See [ADR-1212](adr/1212-native-github-ticket-creation.md).
 
 ## Automatic native GitHub lifecycle sync
 
@@ -1020,4 +1020,32 @@ Unexpected provider edits, a changed source group or connection, ignored/unsuppo
 
 Disabling remains available when repository access is revoked and invalidates the worker claim. A GitHub write already dispatched during disable cannot be recalled. The provider and Gregale do not share an atomic transaction; see [ADR-1213](adr/1213-automatic-native-github-lifecycle.md) for the recovery and concurrency limits.
 
-The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear connections, provider callbacks and automatic inbound resolution remain separate work.
+The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear ticket operations, provider callbacks and automatic inbound resolution remain separate work.
+
+## Connect a Linear team
+
+Store a verified Linear personal API key for the app owner:
+
+```sh
+gregale issues tickets linear-connection --app payments --connect --team <LINEAR_TEAM_UUID>
+# Reads GREGALE_LINEAR_TOKEN; --token-env NAME selects another environment variable.
+gregale issues tickets linear-connection --app payments
+# Erase the server credential without requiring Linear access:
+gregale issues tickets linear-connection --app payments --disconnect
+```
+
+Connecting requires the app owner, deploy-write, Issues entitlement and an account
+eligible to deploy; session callers also need MFA. Gregale verifies the workspace,
+viewer and active team, then encrypts the key with that identity and the account/app
+scope. Responses contain metadata only. Competing changes use a revision check;
+retry after reading the current metadata if another change wins. Disconnect erases
+the key and remains available after a plan downgrade, even if Linear is unavailable.
+
+GET/PUT `/v1/apps/{slug}/issue-tracker-linear-connection` exposes this owner-only
+configuration. PUT supplies `connected` and `expected_revision`; connecting also
+requires `team_id` and `api_key`, while disconnect must omit both. Go exposes
+`GetIssueTrackerLinearConnection`/`UpdateIssueTrackerLinearConnection`, Node uses
+matching `AppsService` operations, and Python exposes matching `faas_sdk.api.apps`
+operations. This connection does not yet enable native Linear creation, lifecycle
+sync or OAuth. Existing explicit CLI Linear operations still use a local key.
+See [ADR-1215](adr/1215-durable-linear-issue-connections.md).

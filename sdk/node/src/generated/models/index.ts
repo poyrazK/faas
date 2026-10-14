@@ -809,6 +809,7 @@ export type { IssueSplitRuleUpdate } from './IssueSplitRuleUpdate.js';
 export type { IssueSymbolicationResult } from './IssueSymbolicationResult.js';
 export type { IssueTeam } from './IssueTeam.js';
 export type { IssueTrackerAutoSync } from './IssueTrackerAutoSync.js';
+export type { IssueTrackerLinearConnection } from './IssueTrackerLinearConnection.js';
 export type { IssueTrackerLink } from './IssueTrackerLink.js';
 export type { IssueTrackerProviderStatus } from './IssueTrackerProviderStatus.js';
 export type { JobArtifactDownloadResponse } from './JobArtifactDownloadResponse.js';
@@ -1992,6 +1993,7 @@ export type { UpdateFinancialBudgetRequest } from './UpdateFinancialBudgetReques
 export type { UpdateInboundWebhookEndpointRequest } from './UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateIssueImpactAlertPolicyRequest } from './UpdateIssueImpactAlertPolicyRequest.js';
 export type { UpdateIssueTrackerAutoSyncRequest } from './UpdateIssueTrackerAutoSyncRequest.js';
+export type { UpdateIssueTrackerLinearConnectionRequest } from './UpdateIssueTrackerLinearConnectionRequest.js';
 export type { UpdateJobRequest } from './UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './UpdateMirrorRuleRequest.js';

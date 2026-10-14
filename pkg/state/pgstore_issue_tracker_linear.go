@@ -1,0 +1,70 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+func linearConnectionRow(r sqlc.IssueTrackerLinearConnection) IssueTrackerLinearRecord {
+	return IssueTrackerLinearRecord{AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), SealedCredential: r.SealedCredential, Connection: api.IssueTrackerLinearConnection{Connected: r.Connected, Revision: r.Revision, WorkspaceID: issueID(r.WorkspaceID), TeamID: issueID(r.TeamID), ViewerID: issueID(r.ViewerID)}}
+}
+func (s *PgStore) GetIssueTrackerLinearConnection(ctx context.Context, app, account string) (IssueTrackerLinearRecord, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return IssueTrackerLinearRecord{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	if _, err = q.IssueTrackerLinearOwner(ctx, tx, sqlc.IssueTrackerLinearOwnerParams{AppID: issueUUID(app), AccountID: issueUUID(account)}); err != nil {
+		return IssueTrackerLinearRecord{}, mapErr(err)
+	}
+	row, err := q.IssueTrackerLinearGet(ctx, tx, sqlc.IssueTrackerLinearGetParams{AppID: issueUUID(app), AccountID: issueUUID(account)})
+	out := IssueTrackerLinearRecord{AppID: app, AccountID: account}
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = nil
+	} else if err == nil {
+		out = linearConnectionRow(row)
+	}
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+func (s *PgStore) ConfigureIssueTrackerLinearConnection(ctx context.Context, in IssueTrackerLinearRecord, expected int64) (IssueTrackerLinearRecord, error) {
+	if expected < 0 || in.Connection.Connected && (len(in.SealedCredential) == 0 || issueUUID(in.Connection.WorkspaceID).Valid == false || issueUUID(in.Connection.TeamID).Valid == false || issueUUID(in.Connection.ViewerID).Valid == false) {
+		return in, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return in, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	if _, err = q.IssueTrackerLinearOwner(ctx, tx, sqlc.IssueTrackerLinearOwnerParams{AppID: issueUUID(in.AppID), AccountID: issueUUID(in.AccountID)}); err != nil {
+		return in, mapErr(err)
+	}
+	row, err := q.IssueTrackerLinearGet(ctx, tx, sqlc.IssueTrackerLinearGetParams{AppID: issueUUID(in.AppID), AccountID: issueUUID(in.AccountID)})
+	revision := int64(0)
+	if err == nil {
+		revision = row.Revision
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return in, err
+	}
+	if revision != expected {
+		return in, api.NewProblem(409, "issue_tracker_linear_connection_changed", "Linear connection changed", "read the connection again before changing it")
+	}
+	if !in.Connection.Connected {
+		in.Connection.WorkspaceID = ""
+		in.Connection.TeamID = ""
+		in.Connection.ViewerID = ""
+		in.SealedCredential = nil
+	}
+	row, err = q.IssueTrackerLinearPut(ctx, tx, sqlc.IssueTrackerLinearPutParams{AppID: issueUUID(in.AppID), AccountID: issueUUID(in.AccountID), Connected: in.Connection.Connected, WorkspaceID: issueUUID(in.Connection.WorkspaceID), TeamID: issueUUID(in.Connection.TeamID), ViewerID: issueUUID(in.Connection.ViewerID), SealedCredential: in.SealedCredential})
+	if err != nil {
+		return in, mapErr(err)
+	}
+	return linearConnectionRow(row), tx.Commit(ctx)
+}

@@ -560,3 +560,6 @@ type NativeIssueTicketResult = api.NativeIssueTicketResult
 
 type IssueTrackerAutoSync = api.IssueTrackerAutoSync
 type UpdateIssueTrackerAutoSyncRequest = api.UpdateIssueTrackerAutoSyncRequest
+
+type IssueTrackerLinearConnection = api.IssueTrackerLinearConnection
+type UpdateIssueTrackerLinearConnectionRequest = api.UpdateIssueTrackerLinearConnectionRequest

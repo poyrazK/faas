@@ -200,3 +200,55 @@ func TestIssueTicketAutoSyncCLIRequiresAlignmentAndPreservesPolicyRevision(t *te
 		t.Fatal("ambiguous mode reached provider")
 	}
 }
+
+func TestIssueTicketLinearConnectionUsesRevisionAndErasesWithoutLocalKey(t *testing.T) {
+	const team = "22222222-2222-4222-8222-222222222222"
+	writes := 0
+	connected := false
+	revision := int64(4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/payments/issue-tracker-linear-connection" {
+			t.Error("wrong connection path")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "PUT" {
+			writes++
+			var in api.UpdateIssueTrackerLinearConnectionRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedRevision != revision {
+				t.Error("revision lost", err)
+			}
+			if in.Connected && (in.APIKey != "lin_api_secret" || in.TeamID != team) {
+				t.Error("connection input lost")
+			}
+			if !in.Connected && (in.APIKey != "" || in.TeamID != "") {
+				t.Error("disconnect sent a credential")
+			}
+			connected = in.Connected
+			revision++
+		}
+		_ = json.NewEncoder(w).Encode(api.IssueTrackerLinearConnection{Connected: connected, Revision: revision})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_LINEAR_TOKEN", "lin_api_secret")
+	previousOut, previousJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--connect", "--team", team}); code != 0 || !connected || writes != 1 {
+		t.Fatal("connect failed", code)
+	}
+	if strings.Contains(out.String(), "lin_api_secret") {
+		t.Fatal("credential leaked")
+	}
+	t.Setenv("GREGALE_LINEAR_TOKEN", "")
+	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--disconnect"}); code != 0 || connected || writes != 2 {
+		t.Fatal("disconnect required key", code)
+	}
+	for _, args := range [][]string{{"--connect", "--disconnect"}, {"--disconnect", "--team", team}, {"--connect", "--team", "invalid"}, {"--connect", "--team", team}} {
+		if code := cmdIssueTickets(append([]string{"linear-connection", "--app", "payments"}, args...)); code == 0 || writes != 2 {
+			t.Fatal("invalid flags changed connection")
+		}
+	}
+}

@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -408,4 +410,111 @@ func TestNativeIssueTrackerAutoSyncScopesClaimsPushesAndPauses(t *testing.T) {
 		t.Fatal("downgrade used GitHub credentials", downgraded.Policy, err)
 	}
 
+}
+
+type nativeLinearFake struct {
+	calls int
+	fail  bool
+}
+
+func (p *nativeLinearFake) VerifyLinearConnection(_ context.Context, token, team string) (issuetracker.LinearIdentity, error) {
+	p.calls++
+	if p.fail {
+		return issuetracker.LinearIdentity{}, errors.New("lin_api_secret provider diagnostic")
+	}
+	return issuetracker.LinearIdentity{WorkspaceID: "11111111-1111-4111-8111-111111111111", ViewerID: "33333333-3333-4333-8333-333333333333", TeamID: team}, nil
+}
+
+// adr: 1215
+func TestNativeIssueLinearConnectionScopesSealsAndDisconnects(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "linear-connection")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	reporterToken := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	reporter := map[string]string{"Authorization": "Bearer " + reporterToken.Token}
+	path := "/v1/apps/" + app.Slug + "/issue-tracker-linear-connection"
+	provider := &nativeLinearFake{}
+	apidserver.IssueNativeSetLinearVerifier(e, provider)
+	identity, _ := age.GenerateX25519Identity()
+	previous := *apidserver.SetSecretRecipient
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = previous })
+	initial := apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "GET", path, nil, nil), 200)
+	if initial.Connected || initial.Revision != 0 {
+		t.Fatal("default connection enabled")
+	}
+	in := api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, TeamID: "22222222-2222-4222-8222-222222222222", APIKey: "lin_api_secret"}
+	for _, method := range []string{"GET", "PUT"} {
+		w := e.Do(t, method, path, in, reporter)
+		if w.Code != 401 && w.Code != 403 {
+			t.Fatal("reporter connection access", w.Code)
+		}
+	}
+	w := e.Do(t, "PUT", path, in, nil)
+	out := apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, w, 200)
+	if !out.Connected || out.Revision != 1 || strings.Contains(w.Body.String(), in.APIKey) {
+		t.Fatal("invalid public connection", w.Body.String())
+	}
+	store := apidserver.IssueNativeStore(e).(state.IssueTrackerLinearStore)
+	acct := apidserver.IssueNativeAccount(e)
+	record, err := store.GetIssueTrackerLinearConnection(t.Context(), app.ID, acct.ID)
+	if err != nil || strings.Contains(string(record.SealedCredential), in.APIKey) {
+		t.Fatal("credential not sealed", err)
+	}
+	scope := issuetrackers.LinearCredentialScope{AccountID: acct.ID, AppID: app.ID, Identity: issuetracker.LinearIdentity{WorkspaceID: out.WorkspaceID, TeamID: out.TeamID, ViewerID: out.ViewerID}}
+	token, err := issuetrackers.OpenLinearCredential([]*age.X25519Identity{identity}, scope, record.SealedCredential)
+	if err != nil || token != in.APIKey {
+		t.Fatal("sealed identity invalid", err)
+	}
+	if w := e.Do(t, "PUT", path, in, nil); w.Code != 409 {
+		t.Fatal("stale revision accepted", w.Code, w.Body.String())
+	}
+	foreign := apidserver.SeedPGApp(t, e, "linear-other")
+	if _, err := store.GetIssueTrackerLinearConnection(t.Context(), foreign.ID, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("foreign owner read", err)
+	}
+	// Concurrent contenders sharing one observed revision have exactly one winner.
+	contenders := 8
+	var wg sync.WaitGroup
+	results := make(chan error, contenders)
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := store.ConfigureIssueTrackerLinearConnection(t.Context(), record, 1)
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	wins := 0
+	for err := range results {
+		if err == nil {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatal("connection revision race", wins)
+	}
+	provider.fail = true
+	in.ExpectedRevision = 2
+	if w := e.Do(t, "PUT", path, in, nil); w.Code != 400 || strings.Contains(w.Body.String(), in.APIKey) {
+		t.Fatal("provider failure leaked or accepted", w.Code, w.Body.String())
+	}
+	before := provider.calls
+	if err := apidserver.IssueNativeStore(e).UpdateAccountPlan(t.Context(), acct.ID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	if w := e.Do(t, "PUT", path, in, nil); w.Code != 402 || provider.calls != before {
+		t.Fatal("downgrade authorized provider access", w.Code)
+	}
+	*apidserver.SetSecretRecipient = nil
+	disconnected := apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", path, api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 2}, nil), 200)
+	if disconnected.Connected || disconnected.Revision != 3 || disconnected.TeamID != "" || provider.calls != before {
+		t.Fatal("offline disconnect failed", disconnected)
+	}
+	record, err = store.GetIssueTrackerLinearConnection(t.Context(), app.ID, acct.ID)
+	if err != nil || len(record.SealedCredential) != 0 {
+		t.Fatal("disconnect retained credential", err)
+	}
 }

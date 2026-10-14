@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar
+from uuid import UUID
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+T = TypeVar("T", bound="IssueTrackerLinearConnection")
+
+
+@_attrs_define
+class IssueTrackerLinearConnection:
+    """Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity."""
+
+    connected: bool
+    """Whether a verified personal API key is stored."""
+    revision: int
+    """Configuration revision used to fence concurrent changes."""
+    workspace_id: UUID | Unset = UNSET
+    """Verified Linear organization identity."""
+    team_id: UUID | Unset = UNSET
+    """Verified active Linear team identity."""
+    viewer_id: UUID | Unset = UNSET
+    """Verified Linear user identity owning the API key."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        connected = self.connected
+
+        revision = self.revision
+
+        workspace_id: str | Unset = UNSET
+        if not isinstance(self.workspace_id, Unset):
+            workspace_id = str(self.workspace_id)
+
+        team_id: str | Unset = UNSET
+        if not isinstance(self.team_id, Unset):
+            team_id = str(self.team_id)
+
+        viewer_id: str | Unset = UNSET
+        if not isinstance(self.viewer_id, Unset):
+            viewer_id = str(self.viewer_id)
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "connected": connected,
+                "revision": revision,
+            }
+        )
+        if workspace_id is not UNSET:
+            field_dict["workspace_id"] = workspace_id
+        if team_id is not UNSET:
+            field_dict["team_id"] = team_id
+        if viewer_id is not UNSET:
+            field_dict["viewer_id"] = viewer_id
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
+        connected = d.pop("connected")
+
+        revision = d.pop("revision")
+
+        _workspace_id = d.pop("workspace_id", UNSET)
+        workspace_id: UUID | Unset
+        if isinstance(_workspace_id, Unset):
+            workspace_id = UNSET
+        else:
+            workspace_id = UUID(_workspace_id)
+
+        _team_id = d.pop("team_id", UNSET)
+        team_id: UUID | Unset
+        if isinstance(_team_id, Unset):
+            team_id = UNSET
+        else:
+            team_id = UUID(_team_id)
+
+        _viewer_id = d.pop("viewer_id", UNSET)
+        viewer_id: UUID | Unset
+        if isinstance(_viewer_id, Unset):
+            viewer_id = UNSET
+        else:
+            viewer_id = UUID(_viewer_id)
+
+        issue_tracker_linear_connection = cls(
+            connected=connected,
+            revision=revision,
+            workspace_id=workspace_id,
+            team_id=team_id,
+            viewer_id=viewer_id,
+        )
+
+        issue_tracker_linear_connection.additional_properties = d
+        return issue_tracker_linear_connection
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

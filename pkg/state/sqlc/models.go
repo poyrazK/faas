@@ -4020,6 +4020,18 @@ type IssueTrackerAutoSync struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type IssueTrackerLinearConnection struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Revision         int64
+	Connected        bool
+	WorkspaceID      pgtype.UUID
+	TeamID           pgtype.UUID
+	ViewerID         pgtype.UUID
+	SealedCredential []byte
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type IssueTrackerLink struct {
 	ID                 pgtype.UUID
 	IssueID            pgtype.UUID
