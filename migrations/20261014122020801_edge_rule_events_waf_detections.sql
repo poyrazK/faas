@@ -1,4 +1,4 @@
--- filename: 20261013143818527_edge_rule_events_waf_detections.sql
+-- filename: 20261014122020801_edge_rule_events_waf_detections.sql
 --
 -- ADR-831 amendment 5: kind=waf detections are ADR-964 security events.
 -- New outcomes: detected (off-path sample), warned and blocked (in-path).

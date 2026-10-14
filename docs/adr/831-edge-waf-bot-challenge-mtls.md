@@ -359,8 +359,8 @@ Amendment 4 set two conditions for leaving preview: a false-positive review
 and the in-path p95 under production-like load. Production traffic is too
 thin for the review, so this amendment replays the CRS regression corpus
 and a corpus of legitimate requests, and measures in-path latency on
-`gregale-internal-test-1`. (Amendment 5, WAF detections as security
-events, is proposed separately.)
+`gregale-internal-test-1`. The detection events of amendment 5 make the
+review possible once real traffic arrives.
 
 ### Detection: the CRS regression corpus
 
