@@ -19,17 +19,26 @@ const CodeBillingProviderUnavailable = "billing_provider_unavailable"
 type PutBillingConnectionRequest struct {
 	SecretKey string `json:"secret_key"`
 	APIURL    string `json:"api_url,omitempty"`
+	// Collection is what the provider does with exported invoices
+	// (ADR-1311): none (drafts, the default), send (Stripe only) or charge
+	// (Stripe and Lago). DaysUntilDue applies to send; default 30.
+	Collection   string `json:"collection,omitempty"`
+	DaysUntilDue int    `json:"days_until_due,omitempty"`
 }
 
 // BillingConnectionResponse describes a stored payment-provider key without
 // revealing it.
 type BillingConnectionResponse struct {
-	Provider  string    `json:"provider"`
-	KeyLast4  string    `json:"key_last4"`
-	Livemode  bool      `json:"livemode"`
-	APIURL    string    `json:"api_url,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Provider string `json:"provider"`
+	KeyLast4 string `json:"key_last4"`
+	Livemode bool   `json:"livemode"`
+	APIURL   string `json:"api_url,omitempty"`
+	// Collection and DaysUntilDue are the connection's collection mode
+	// (ADR-1311).
+	Collection   string    `json:"collection"`
+	DaysUntilDue int       `json:"days_until_due"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // CreateStatementInvoiceRequest exports a finalized statement as an invoice
@@ -45,17 +54,20 @@ type CreateStatementInvoiceRequest struct {
 // StatementInvoiceExportResponse is one statement's invoice in the account's
 // billing provider. AmountMinor is in the currency's minor unit (cents).
 type StatementInvoiceExportResponse struct {
-	StatementID  string     `json:"statement_id"`
-	Provider     string     `json:"provider"`
-	Customer     string     `json:"customer"`
-	Status       string     `json:"status"`
-	InvoiceID    string     `json:"invoice_id,omitempty"`
-	DashboardURL string     `json:"dashboard_url,omitempty"`
-	Currency     string     `json:"currency"`
-	AmountMinor  int64      `json:"amount_minor"`
-	Livemode     bool       `json:"livemode"`
-	CreatedAt    time.Time  `json:"created_at"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	StatementID  string `json:"statement_id"`
+	Provider     string `json:"provider"`
+	Customer     string `json:"customer"`
+	Status       string `json:"status"`
+	InvoiceID    string `json:"invoice_id,omitempty"`
+	DashboardURL string `json:"dashboard_url,omitempty"`
+	Currency     string `json:"currency"`
+	AmountMinor  int64  `json:"amount_minor"`
+	Livemode     bool   `json:"livemode"`
+	// Collection is what the provider was asked to do with the invoice
+	// (ADR-1311): none, send or charge.
+	Collection  string     `json:"collection,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	// Payment fields follow the provider invoice (ADR-1302).
 	SourceKind           string     `json:"source_kind,omitempty"`
 	PaymentStatus        string     `json:"payment_status,omitempty"`

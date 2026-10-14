@@ -7,6 +7,14 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_platform_tenant_rate_card_request_tier_mode import (
+    CreatePlatformTenantRateCardRequestTierMode,
+    check_create_platform_tenant_rate_card_request_tier_mode,
+)
+from ..models.create_platform_tenant_rate_card_request_unit import (
+    CreatePlatformTenantRateCardRequestUnit,
+    check_create_platform_tenant_rate_card_request_unit,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -35,12 +43,19 @@ class CreatePlatformTenantRateCardRequest:
     """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975).
     Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."""
     route_weights: CreatePlatformTenantRateCardRequestRouteWeights | Unset = UNSET
-    """Counts each consumer request on a listed "METHOD /template" route as that many units (1..1000, at most 50
-    routes; ADR-1307). Unlisted routes, tenant surfaces and JWT rules count 1. Statements for periods it prices must
-    cover one calendar month."""
+    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes;
+    ADR-1307), including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods
+    it prices must cover one calendar month."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any
-    tenant card has included units, tiers or route weights."""
+    tenant card has included units, tiers, route weights, or a compute or response-size unit."""
+    unit: CreatePlatformTenantRateCardRequestUnit | Unset = "request"
+    """What the card prices (ADR-1310): requests, or the compute seconds or response megabytes of billable
+    requests, rounded per subject minute. Compute and response-size cards take no route weights, are month-priced,
+    cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC."""
+    tier_mode: CreatePlatformTenantRateCardRequestTierMode | Unset = "graduated"
+    """How the tenant ladder prices a month (ADR-1309): graduated by each unit's position, or volume, every unit of
+    the month at the step the tenant's total reaches. volume needs tiers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +84,14 @@ class CreatePlatformTenantRateCardRequest:
         else:
             effective_from = self.effective_from
 
+        unit: str | Unset = UNSET
+        if not isinstance(self.unit, Unset):
+            unit = self.unit
+
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,6 +109,10 @@ class CreatePlatformTenantRateCardRequest:
             field_dict["route_weights"] = route_weights
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
+        if unit is not UNSET:
+            field_dict["unit"] = unit
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
 
         return field_dict
 
@@ -136,6 +163,20 @@ class CreatePlatformTenantRateCardRequest:
 
         effective_from = _parse_effective_from(d.pop("effective_from", UNSET))
 
+        _unit = d.pop("unit", UNSET)
+        unit: CreatePlatformTenantRateCardRequestUnit | Unset
+        if isinstance(_unit, Unset):
+            unit = UNSET
+        else:
+            unit = check_create_platform_tenant_rate_card_request_unit(_unit)
+
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: CreatePlatformTenantRateCardRequestTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_create_platform_tenant_rate_card_request_tier_mode(_tier_mode)
+
         create_platform_tenant_rate_card_request = cls(
             price_millicents_per_unit=price_millicents_per_unit,
             currency=currency,
@@ -143,6 +184,8 @@ class CreatePlatformTenantRateCardRequest:
             tiers=tiers,
             route_weights=route_weights,
             effective_from=effective_from,
+            unit=unit,
+            tier_mode=tier_mode,
         )
 
         create_platform_tenant_rate_card_request.additional_properties = d

@@ -152,6 +152,9 @@ type InvoiceParams struct {
 	Currency           string
 	Fees               []Fee
 	From, To           time.Time
+	// Charge lets Lago send the invoice to the operator's payment provider,
+	// which charges the customer's saved payment method (ADR-1311).
+	Charge bool
 }
 
 type metadataItem struct {
@@ -184,8 +187,9 @@ func (d invoiceData) metadata(key string) string {
 	return ""
 }
 
-// CreateInvoice creates a one-off invoice with skip_psp set, so Lago never
-// charges it through a payment provider. Lago finalizes it immediately.
+// CreateInvoice creates a one-off invoice, which Lago finalizes at once.
+// Unless p.Charge is set, skip_psp keeps Lago from charging it through the
+// operator's payment provider (ADR-1311).
 func (c *Client) CreateInvoice(ctx context.Context, baseURL, key string, p InvoiceParams) (string, error) {
 	fees := make([]map[string]any, 0, len(p.Fees))
 	for _, f := range p.Fees {
@@ -199,7 +203,7 @@ func (c *Client) CreateInvoice(ctx context.Context, baseURL, key string, p Invoi
 		Invoice invoiceData `json:"invoice"`
 	}
 	err := c.do(ctx, baseURL, key, http.MethodPost, "/invoices", map[string]any{"invoice": map[string]any{
-		"external_customer_id": p.ExternalCustomerID, "currency": strings.ToUpper(p.Currency), "skip_psp": true, "fees": fees}}, &out)
+		"external_customer_id": p.ExternalCustomerID, "currency": strings.ToUpper(p.Currency), "skip_psp": !p.Charge, "fees": fees}}, &out)
 	if err != nil {
 		return "", err
 	}

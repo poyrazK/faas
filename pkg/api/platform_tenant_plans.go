@@ -23,6 +23,10 @@ type PlatformTenantPlanRequest struct {
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	RequestBudget          *PlatformTenantPlanBudget `json:"request_budget,omitempty"`
+	// Unit (ADR-1310) and TierMode (ADR-1309) default to request and
+	// graduated.
+	Unit     string `json:"unit,omitempty"`
+	TierMode string `json:"tier_mode,omitempty"`
 }
 
 // PlatformTenantPlanResponse is one tenant plan.
@@ -35,6 +39,8 @@ type PlatformTenantPlanResponse struct {
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	RequestBudget          *PlatformTenantPlanBudget `json:"request_budget,omitempty"`
+	Unit                   string                    `json:"unit"`
+	TierMode               string                    `json:"tier_mode"`
 	CreatedAt              time.Time                 `json:"created_at"`
 	UpdatedAt              time.Time                 `json:"updated_at"`
 }

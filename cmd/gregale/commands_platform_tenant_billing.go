@@ -16,7 +16,7 @@ import (
 // `gregale platform-tenants`, mapped to the flags each accepts.
 var platformTenantBillingVerbs = map[string][]string{
 	"rate-cards":         {"id"},
-	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "weight", "effective-from"},
+	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "weight", "effective-from", "unit", "tier-mode"},
 	"statements":         {"id", "month", "period-start", "period-end"},
 	"statement-draft":    {"id", "month", "period-start", "period-end"},
 	"statement-show":     {"id", "statement-id"},
@@ -29,6 +29,7 @@ type platformTenantBillingFlags struct {
 	id, statementID, invoiceID    string
 	customer, provider            string
 	currency, effectiveFrom       string
+	unit, tierMode                string
 	priceMillicents               int64
 	includedUnits                 int64
 	tiers, weights                multiFlag
@@ -53,8 +54,10 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per tenant per UTC calendar month across all apps")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS counted per tenant per UTC month, repeatable; the last step's UP_TO is inf")
-	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\" for consumer requests, repeatable; unlisted routes count 1")
+	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable; unlisted routes count 1")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
+	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second or response_megabyte")
+	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -128,6 +131,7 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		out, err = client.CreatePlatformTenantRateCard(ctx, f.id, api.CreatePlatformTenantRateCardRequest{
 			Currency: rateCard.Currency, PriceMillicentsPerUnit: rateCard.PriceMillicentsPerUnit, EffectiveFrom: rateCard.EffectiveFrom,
 			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers, RouteWeights: rateCard.RouteWeights,
+			Unit: strings.TrimSpace(f.unit), TierMode: strings.TrimSpace(f.tierMode),
 		})
 	case "statements":
 		out, err = client.ListPlatformTenantStatements(ctx, f.id, start, end)

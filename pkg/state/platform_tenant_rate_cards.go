@@ -34,12 +34,27 @@ type PlatformTenantRateCardInput struct {
 	Tiers                  []APIConsumerRateCardTier
 	RouteWeights           map[string]int64
 	EffectiveFrom          time.Time
+	// Unit is what the card prices; empty means request (ADR-1310).
+	Unit string
+	// TierMode is how Tiers price a month; empty means graduated (ADR-1309).
+	TierMode string
 }
 
 func normalizePlatformTenantRateCardInput(in PlatformTenantRateCardInput) (PlatformTenantRateCardInput, error) {
 	const op = "CreatePlatformTenantRateCard"
 	in.Currency = normalizePlatformTenantRateCardCurrency(in.Currency)
 	in.EffectiveFrom = in.EffectiveFrom.UTC()
+	if in.Unit == "" {
+		in.Unit = PlatformTenantRateCardUnitRequest
+	}
+	if !ValidAPIConsumerRateCardUnit(in.Unit) || (in.Unit != PlatformTenantRateCardUnitRequest && len(in.RouteWeights) > 0) {
+		return in, fmt.Errorf("%s: %w: unit must be request, compute_second or response_megabyte, and route weights apply to request cards only", op, ErrInvalidArgument)
+	}
+	mode, err := normalizeRateCardTierMode(in.TierMode, in.Tiers)
+	if err != nil {
+		return in, fmt.Errorf("%s: %w", op, err)
+	}
+	in.TierMode = mode
 	if len(in.Tiers) > 0 {
 		if err := ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
 			return in, fmt.Errorf("%s: %w: %w", op, ErrInvalidArgument, err)

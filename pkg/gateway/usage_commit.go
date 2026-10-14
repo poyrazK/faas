@@ -59,7 +59,8 @@ type usageEventInput struct {
 	requestID                 string
 	target                    Target
 	// computeMS and responseBytes are measured at commit for billable
-	// consumer requests (ADR-1308); zero elsewhere.
+	// consumer and tenant-source requests (ADR-1308, ADR-1310); zero
+	// elsewhere.
 	computeMS, responseBytes int64
 }
 
@@ -81,7 +82,10 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 		WindowStart:                          in.at.UTC().Truncate(time.Minute),
 		RequestCount:                         1, ErrorCount: errorCount, BillableUnits: billableUnits,
 	}
-	if event.ConsumerID != "" {
+	// Consumers and tenant surfaces and JWT rules are billed subjects whose
+	// routes and resources rate cards can price (ADR-952, ADR-1308,
+	// ADR-1310).
+	if event.ConsumerID != "" || event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != "" {
 		event.BillingRoute = billingRouteFrom(r)
 		if billableUnits > 0 {
 			event.ComputeMS, event.ResponseBytes = max(in.computeMS, 0), max(in.responseBytes, 0)

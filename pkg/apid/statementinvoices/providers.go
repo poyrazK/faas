@@ -30,6 +30,10 @@ type connection struct {
 	key      string
 	apiURL   string
 	livemode bool
+	// collection and daysUntilDue are the connection's collection mode
+	// (ADR-1311).
+	collection   string
+	daysUntilDue int
 }
 
 // provider is one billing system statements export to (ADR-1305).
@@ -163,7 +167,8 @@ func (p stripeProvider) push(ctx context.Context, conn connection, export *state
 	metadata := map[string]string{"gregale_statement_id": src.statementID, "gregale_statement_revision": strconv.Itoa(src.revision), "gregale_source": src.kind}
 	if export.ProviderInvoiceID == "" {
 		invoice, err := p.client.CreateInvoice(ctx, conn.key, "gregale-"+export.ID+"-invoice", stripeinvoice.InvoiceParams{
-			Customer: export.Customer, Currency: export.Currency, Description: periodDescription(src), Metadata: metadata})
+			Customer: export.Customer, Currency: export.Currency, Description: periodDescription(src), Metadata: metadata,
+			CollectionMethod: stripeCollectionMethod(export.Collection), DaysUntilDue: export.DaysUntilDue})
 		if err != nil {
 			return stripeCallProblem(err)
 		}
@@ -186,6 +191,38 @@ func (p stripeProvider) push(ctx context.Context, conn connection, export *state
 			Description: item.description, PeriodStart: src.start, PeriodEnd: src.end, Metadata: lineMetadata}); err != nil {
 			return stripeCallProblem(err)
 		}
+	}
+	return p.collect(ctx, conn, export)
+}
+
+// stripeCollectionMethod is the Stripe collection method for an export's
+// collection mode (ADR-1311); drafts keep Stripe's default.
+func stripeCollectionMethod(mode string) string {
+	switch mode {
+	case state.CollectionSend:
+		return "send_invoice"
+	case state.CollectionCharge:
+		return "charge_automatically"
+	}
+	return ""
+}
+
+// collect finalizes a complete invoice whose export asks Stripe to send or
+// charge it (ADR-1311). A resumed export finalizes only a draft, so the
+// step is safe to repeat.
+func (p stripeProvider) collect(ctx context.Context, conn connection, export *state.StatementInvoiceExport) *api.Problem {
+	if export.Collection != state.CollectionSend && export.Collection != state.CollectionCharge {
+		return nil
+	}
+	invoice, err := p.client.GetInvoice(ctx, conn.key, export.ProviderInvoiceID)
+	if err != nil {
+		return stripeCallProblem(err)
+	}
+	if invoice.Deleted || invoice.Status != "draft" {
+		return nil
+	}
+	if err := p.client.FinalizeInvoice(ctx, conn.key, "gregale-"+export.ID+"-finalize", export.ProviderInvoiceID); err != nil {
+		return stripeCallProblem(err)
 	}
 	return nil
 }
@@ -401,7 +438,8 @@ func (p lagoProvider) findOrCreate(ctx context.Context, conn connection, export 
 	if err := p.client.EnsureAddOn(ctx, conn.apiURL, conn.key, export.Currency); err != nil {
 		return "", lagoCallProblem(err)
 	}
-	params := lagoinvoice.InvoiceParams{ExternalCustomerID: export.Customer, Currency: export.Currency, From: src.start, To: src.end}
+	params := lagoinvoice.InvoiceParams{ExternalCustomerID: export.Customer, Currency: export.Currency, From: src.start, To: src.end,
+		Charge: export.Collection == state.CollectionCharge}
 	for _, item := range items {
 		params.Fees = append(params.Fees, lagoinvoice.Fee{Description: item.description, AmountCents: item.amount})
 	}

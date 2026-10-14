@@ -17,6 +17,14 @@ export type BillingConnectionResponse = {
    * The Lago API origin.
    */
   api_url?: string;
+  /**
+   * What the provider does with exported invoices (ADR-1311).
+   */
+  collection?: 'none' | 'send' | 'charge';
+  /**
+   * Days until a sent invoice is due.
+   */
+  days_until_due?: number;
   created_at: string;
   updated_at: string;
 };

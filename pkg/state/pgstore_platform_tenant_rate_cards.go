@@ -12,7 +12,7 @@ import (
 )
 
 const platformTenantRateCardSelectCols = `id, account_id, platform_tenant_id, currency, unit,
-	price_millicents_per_unit, included_units_per_month, tiers, effective_from, created_at, route_weights`
+	price_millicents_per_unit, included_units_per_month, tiers, effective_from, created_at, route_weights, tier_mode`
 
 type platformTenantRateCardRowScanner interface {
 	Scan(dest ...any) error
@@ -22,7 +22,7 @@ func scanPlatformTenantRateCardRow(row platformTenantRateCardRowScanner) (Platfo
 	var card PlatformTenantRateCard
 	var tiers, weights []byte
 	err := row.Scan(&card.ID, &card.AccountID, &card.TenantID, &card.Currency, &card.Unit,
-		&card.PriceMillicentsPerUnit, &card.IncludedUnitsPerMonth, &tiers, &card.EffectiveFrom, &card.CreatedAt, &weights)
+		&card.PriceMillicentsPerUnit, &card.IncludedUnitsPerMonth, &tiers, &card.EffectiveFrom, &card.CreatedAt, &weights, &card.TierMode)
 	if err != nil {
 		return PlatformTenantRateCard{}, err
 	}
@@ -90,12 +90,12 @@ func (s *PgStore) CreatePlatformTenantRateCardVersion(ctx context.Context, in Pl
 	card, err := scanPlatformTenantRateCardRow(tx.QueryRow(ctx,
 		`insert into platform_tenant_rate_cards
 			(account_id, platform_tenant_id, currency, unit, price_millicents_per_unit, effective_from,
-			 included_units_per_month, tiers, route_weights)
-		 select account_id, id, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb from platform_tenants
+			 included_units_per_month, tiers, route_weights, tier_mode)
+		 select account_id, id, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10 from platform_tenants
 		 where account_id = $1::uuid and id = $2::uuid
 		 returning `+platformTenantRateCardSelectCols,
-		accountID, tenantID, currency, PlatformTenantRateCardUnitRequest, in.PriceMillicentsPerUnit, effectiveFrom,
-		in.IncludedUnitsPerMonth, string(tiers), string(weights)))
+		accountID, tenantID, currency, in.Unit, in.PriceMillicentsPerUnit, effectiveFrom,
+		in.IncludedUnitsPerMonth, string(tiers), string(weights), in.TierMode))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

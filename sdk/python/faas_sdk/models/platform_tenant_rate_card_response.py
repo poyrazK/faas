@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.platform_tenant_rate_card_response_tier_mode import (
+    PlatformTenantRateCardResponseTierMode,
+    check_platform_tenant_rate_card_response_tier_mode,
+)
 from ..models.platform_tenant_rate_card_response_unit import (
     PlatformTenantRateCardResponseUnit,
     check_platform_tenant_rate_card_response_unit,
@@ -30,15 +34,18 @@ class PlatformTenantRateCardResponse:
     tenant_id: UUID
     currency: str
     unit: PlatformTenantRateCardResponseUnit
+    """What the tenant card prices (ADR-1310)."""
     price_millicents_per_unit: int
     included_units_per_month: int
     """Free units per tenant per UTC calendar month (ADR-975)."""
     effective_from: datetime.datetime
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
-    """Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."""
+    """Ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."""
+    tier_mode: PlatformTenantRateCardResponseTierMode | Unset = UNSET
+    """How the tenant ladder prices a month (ADR-1309)."""
     route_weights: PlatformTenantRateCardResponseRouteWeights | Unset = UNSET
-    """Units per consumer request on a route (ADR-1307); absent when every request counts 1."""
+    """Units per request on a route (ADR-1307, ADR-1310); absent when every request counts 1."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +72,10 @@ class PlatformTenantRateCardResponse:
                 tiers_item = tiers_item_data.to_dict()
                 tiers.append(tiers_item)
 
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         route_weights: dict[str, Any] | Unset = UNSET
         if not isinstance(self.route_weights, Unset):
             route_weights = self.route_weights.to_dict()
@@ -85,6 +96,8 @@ class PlatformTenantRateCardResponse:
         )
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
         if route_weights is not UNSET:
             field_dict["route_weights"] = route_weights
 
@@ -121,6 +134,13 @@ class PlatformTenantRateCardResponse:
 
                 tiers.append(tiers_item)
 
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: PlatformTenantRateCardResponseTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_platform_tenant_rate_card_response_tier_mode(_tier_mode)
+
         _route_weights = d.pop("route_weights", UNSET)
         route_weights: PlatformTenantRateCardResponseRouteWeights | Unset
         if isinstance(_route_weights, Unset):
@@ -138,6 +158,7 @@ class PlatformTenantRateCardResponse:
             effective_from=effective_from,
             created_at=created_at,
             tiers=tiers,
+            tier_mode=tier_mode,
             route_weights=route_weights,
         )
 

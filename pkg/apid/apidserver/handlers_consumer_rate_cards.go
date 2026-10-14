@@ -17,9 +17,35 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 	return api.APIConsumerRateCardResponse{
 		ID: card.ID, AppID: card.AppID, Currency: card.Currency, Unit: card.Unit,
 		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-		Tiers: apiRateCardTiers(card.Tiers), RouteWeights: card.RouteWeights, PlanID: card.PlanID,
-		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode), RouteWeights: card.RouteWeights,
+		PlanID: card.PlanID, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
 	}
+}
+
+// rateCardTierMode reports a stored ladder mode; cards created before
+// ADR-1309 are graduated.
+func rateCardTierMode(mode string) string {
+	if mode == "" {
+		return state.RateCardTierModeGraduated
+	}
+	return mode
+}
+
+// tierModeProblem checks a requested ladder mode (ADR-1309).
+func tierModeProblem(mode string, tiers int) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
+	}
+	switch mode {
+	case "", state.RateCardTierModeGraduated:
+		return nil
+	case state.RateCardTierModeVolume:
+		if tiers == 0 {
+			return invalid("tier_mode volume needs tiers")
+		}
+		return nil
+	}
+	return invalid("tier_mode must be graduated or volume")
 }
 
 func apiRateCardTiers(tiers []state.APIConsumerRateCardTier) []api.APIConsumerRateCardTier {
@@ -66,6 +92,9 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 		if req.IncludedUnitsPerMonth != 0 {
 			return invalid("tiers replace included_units_per_month; make the first step free instead")
 		}
+	}
+	if problem := tierModeProblem(req.TierMode, len(req.Tiers)); problem != nil {
+		return problem
 	}
 	if problem := rateCardUnitProblem(req, effectiveFrom, existing); problem != nil {
 		return problem
@@ -204,7 +233,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 	card, err := store.CreateAPIConsumerRateCardVersion(r.Context(), state.APIConsumerRateCardInput{
 		AccountID: acct.ID, AppID: app.ID, Currency: req.Currency, PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
-		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit,
+		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit, TierMode: req.TierMode,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

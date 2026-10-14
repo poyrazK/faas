@@ -65,7 +65,7 @@ type consumerFlags struct {
 	customer, provider                 string
 	amountMillicents                   int64
 	monthlyCapMillicents               int64
-	note, unit                         string
+	note, unit, tierMode               string
 	tiers                              multiFlag
 	weights                            multiFlag
 	plan                               string
@@ -79,7 +79,7 @@ var consumerVerbFlags = map[string][]string{
 	"usage":             {"since", "until"},
 	"quote":             {"since", "until"},
 	"completeness":      {"period-start", "period-end", "month"},
-	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit"},
+	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode"},
 	"plan-create":       {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"plan-update":       {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"set-plan":          {"plan", "effective-from"},
@@ -113,6 +113,7 @@ func cmdConsumers(args []string) int {
 	fs.Int64Var(&f.monthlyCapMillicents, "monthly-cap-millicents", -1, "monthly spend cap in millicents after prepaid credit; 0 allows prepaid usage only (spend-cap-set)")
 	fs.StringVar(&f.note, "note", "", "note shown with the credit (credit-grant)")
 	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second or response_megabyte (rate-card-create)")
+	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume (rate-card-create)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
@@ -255,7 +256,7 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 	if err != nil {
 		return req, err
 	}
-	req.Unit = strings.TrimSpace(f.unit)
+	req.Unit, req.TierMode = strings.TrimSpace(f.unit), strings.TrimSpace(f.tierMode)
 	req.RouteWeights, err = parseRouteWeights(f.weights)
 	return req, err
 }

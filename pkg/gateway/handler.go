@@ -5984,11 +5984,16 @@ haveApp:
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
-	// Consumer-attributed traffic always carries a bounded billing route so
-	// rate cards can weight routes (ADR-952); consumer auth ran above.
-	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
+	// Consumer- and tenant-surface-attributed traffic always carries a
+	// bounded billing route so rate cards can weight routes (ADR-952,
+	// ADR-1310); consumer and surface attribution ran above. A JWT rule can
+	// attribute a tenant only after edge rewrites, so with tenant JWT
+	// resolution armed the original path's label waits as a candidate.
+	auth := authenticatedFrom(r.Context())
+	billingAttributed := auth.ConsumerID != "" || auth.PlatformTenantSurfaceID != ""
+	jwtTenantPossible := !billingAttributed && h.platformTenantExternalRefResolver != nil
 	routeCarrier := ObservedRouteCarrierFrom(r.Context())
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || billingAttributed || jwtTenantPossible || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -6000,8 +6005,10 @@ haveApp:
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
-		if consumerAttributed {
+		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
+		} else if jwtTenantPossible {
+			r = withBillingRouteCandidate(r, preLabel)
 		}
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
@@ -6167,6 +6174,7 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	r = h.admitJWTTenantBillingRoute(r, app.ID)
 	// Public-auth configuration is validated before either auth gate. This
 	// keeps an empty or unknown mode from being masked by a 401 and ensures
 	// no malformed configuration can reach wake admission or proxying.

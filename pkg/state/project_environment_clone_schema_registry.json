@@ -14,7 +14,9 @@
     "columns": [
       "account_id",
       "api_url",
+      "collection",
       "created_at",
+      "days_until_due",
       "key_last4",
       "livemode",
       "provider",
@@ -290,6 +292,7 @@
       "plan_id",
       "price_millicents_per_unit",
       "route_weights",
+      "tier_mode",
       "tiers",
       "unit"
     ],
@@ -7163,7 +7166,9 @@
       "name",
       "price_millicents_per_unit",
       "route_weights",
+      "tier_mode",
       "tiers",
+      "unit",
       "updated_at"
     ],
     "kind": "configuration"
@@ -7180,6 +7185,7 @@
       "platform_tenant_id",
       "price_millicents_per_unit",
       "route_weights",
+      "tier_mode",
       "tiers",
       "unit"
     ],
@@ -7211,6 +7217,21 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "platform_tenant_source_route_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "billable_units",
+      "platform_tenant_id",
+      "route",
+      "source_id",
+      "source_kind",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
   },
   {
     "table": "platform_tenant_statement_consumers",
@@ -7281,10 +7302,12 @@
       "account_id",
       "app_id",
       "billable_units",
+      "compute_ms",
       "consumer_key",
       "error_count",
       "platform_tenant_id",
       "request_count",
+      "response_bytes",
       "source_kind",
       "updated_at",
       "window_start"
@@ -10143,10 +10166,12 @@
       "amount_minor",
       "amount_paid_minor",
       "amount_remaining_minor",
+      "collection",
       "completed_at",
       "created_at",
       "currency",
       "customer",
+      "days_until_due",
       "due_at",
       "hosted_invoice_url",
       "id",

@@ -16,7 +16,7 @@
       "id": "api-monetization",
       "name": "API monetization",
       "category": "billing",
-      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage per request, compute second or response megabyte with versioned rate cards (monthly included units, graduated tiers, and per-route weights, per app or per customer with reusable customer plans), bill every customer's month in one run, sell prepaid credit and cap each customer's monthly spend, and send the statements to your own Stripe, Paddle or Lago as invoices whose payment status Gregale follows. Usage is durable before a billed response completes.",
+      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage per request, compute second or response megabyte with versioned rate cards (monthly included units, graduated or volume tiers, and per-route weights, per app or per customer with reusable customer plans), bill every customer's month in one run, sell prepaid credit and cap each customer's monthly spend, and send the statements to your own Stripe, Paddle or Lago as invoices your provider can also send or charge, and whose payment status Gregale follows. Usage is durable before a billed response completes.",
       "maturity": "beta",
       "plans": [
         "hobby",

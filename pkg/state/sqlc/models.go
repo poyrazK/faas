@@ -102,6 +102,9 @@ type AccountBillingConnection struct {
 	Livemode     bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	ApiUrl       pgtype.Text
+	Collection   string
+	DaysUntilDue int32
 }
 
 // Operator-issued EUR-cent credits; one credit cent offsets one GB-RAM-hour of overage at the current public rate.
@@ -273,6 +276,29 @@ type ApiConsumer struct {
 	PlatformTenantManaged bool
 }
 
+type ApiConsumerCreditApplication struct {
+	GrantID          pgtype.UUID
+	StatementID      pgtype.UUID
+	AccountID        pgtype.UUID
+	AmountMillicents int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+// Prepaid credit granted to an API consumer; finalized statements draw it down oldest-expiring first (ADR-1306).
+type ApiConsumerCreditGrant struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	ConsumerID          pgtype.UUID
+	Currency            string
+	AmountMillicents    int64
+	RemainingMillicents int64
+	Note                string
+	ExpiresAt           pgtype.Timestamptz
+	VoidedAt            pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
 // Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).
 type ApiConsumerPlan struct {
 	ID                   pgtype.UUID
@@ -324,7 +350,8 @@ type ApiConsumerRateCard struct {
 	// Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.
 	RouteWeights []byte
 	// Plan whose price history this card belongs to; NULL is the app default plan.
-	PlanID pgtype.UUID
+	PlanID   pgtype.UUID
+	TierMode string
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -336,6 +363,22 @@ type ApiConsumerRouteUsageMinute struct {
 	WindowStart   pgtype.Timestamptz
 	BillableUnits int64
 	UpdatedAt     pgtype.Timestamptz
+}
+
+// Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
+type ApiConsumerSpendCap struct {
+	ConsumerID           pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Currency             string
+	MonthlyCapMillicents int64
+	Capped               bool
+	MonthStart           pgtype.Timestamptz
+	AmountDueMillicents  pgtype.Int8
+	CheckedAt            pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
 }
 
 // One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.
@@ -377,6 +420,8 @@ type ApiConsumerUsageMinute struct {
 	ErrorCount    int64
 	BillableUnits int64
 	UpdatedAt     pgtype.Timestamptz
+	ComputeMs     int64
+	ResponseBytes int64
 }
 
 type ApiConsumerUsageStatement struct {
@@ -397,7 +442,8 @@ type ApiConsumerUsageStatement struct {
 	CreatedAt        pgtype.Timestamptz
 	FinalizedAt      pgtype.Timestamptz
 	// Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.
-	Revision int32
+	Revision                int32
+	CreditAppliedMillicents int64
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -6104,6 +6150,34 @@ type PlatformTenantOffboardingReceipt struct {
 	Actions   []byte
 }
 
+// Reusable platform tenant price and request-budget bundle; assigning one creates the tenant's rate card and sets its budget (ADR-1307).
+type PlatformTenantPlan struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	Currency               string
+	PriceMillicentsPerUnit int64
+	IncludedUnitsPerMonth  int64
+	Tiers                  []byte
+	RouteWeights           []byte
+	MaxRequestsPerMinute   pgtype.Int8
+	MaxRequestsPerDay      pgtype.Int8
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	TierMode               string
+	Unit                   string
+}
+
+type PlatformTenantPlanAssignment struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	TenantID      pgtype.UUID
+	PlanID        pgtype.UUID
+	RateCardID    pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
 type PlatformTenantRateCard struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -6117,6 +6191,9 @@ type PlatformTenantRateCard struct {
 	IncludedUnitsPerMonth int64
 	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.
 	Tiers []byte
+	// Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.
+	RouteWeights []byte
+	TierMode     string
 }
 
 type PlatformTenantReconciliationReceipt struct {
@@ -6138,6 +6215,19 @@ type PlatformTenantRequestBudget struct {
 	DayStart             pgtype.Timestamptz
 	DayUsed              int64
 	UpdatedAt            pgtype.Timestamptz
+}
+
+// Billable units per tenant surface or JWT authorization rule, bounded route label, and UTC minute; consumer routes stay in api_consumer_route_usage_minutes.
+type PlatformTenantSourceRouteUsageMinute struct {
+	AccountID        pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	AppID            pgtype.UUID
+	SourceKind       string
+	SourceID         pgtype.UUID
+	Route            string
+	WindowStart      pgtype.Timestamptz
+	BillableUnits    int64
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PlatformTenantStatement struct {
@@ -6201,6 +6291,8 @@ type PlatformTenantUsageMinute struct {
 	BillableUnits    int64
 	UpdatedAt        pgtype.Timestamptz
 	SourceKind       string
+	ComputeMs        int64
+	ResponseBytes    int64
 }
 
 type PlatformTenantWorkflowScheduleCursor struct {
@@ -8775,6 +8867,8 @@ type UsageStatementInvoiceExport struct {
 	StatusSyncedAt       pgtype.Timestamptz
 	NextStatusSyncAt     pgtype.Timestamptz
 	OverdueNotifiedAt    pgtype.Timestamptz
+	Collection           string
+	DaysUntilDue         int32
 }
 
 type WarmHint struct {

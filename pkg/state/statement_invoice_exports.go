@@ -26,6 +26,38 @@ const (
 	StatementInvoiceExportCompleted = "completed"
 )
 
+// Collection modes (ADR-1311): what the provider does with an exported
+// invoice. None leaves a draft for the operator (ADR-1300); send has the
+// provider issue and email it; charge has the provider charge the
+// customer's saved payment method. Gregale never holds the money.
+const (
+	CollectionNone   = "none"
+	CollectionSend   = "send"
+	CollectionCharge = "charge"
+)
+
+// DefaultCollectionDaysUntilDue is when a sent invoice falls due.
+const DefaultCollectionDaysUntilDue = 30
+
+// ProviderCollectionModes are the modes each provider supports: Paddle
+// needs a customer address to bill a transaction, and Lago sends invoices
+// by its own email settings, so it can only add charging.
+var ProviderCollectionModes = map[string][]string{
+	BillingProviderStripe: {CollectionNone, CollectionSend, CollectionCharge},
+	BillingProviderPaddle: {CollectionNone},
+	BillingProviderLago:   {CollectionNone, CollectionCharge},
+}
+
+// ValidCollection reports whether provider supports mode.
+func ValidCollection(provider, mode string) bool {
+	for _, m := range ProviderCollectionModes[provider] {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
 // BillingProviders are the providers statements export to (ADR-1305).
 var BillingProviders = []string{BillingProviderStripe, BillingProviderPaddle, BillingProviderLago}
 
@@ -44,6 +76,10 @@ type BillingConnection struct {
 	KeyLast4     string
 	Livemode     bool
 	APIURL       string
+	// Collection is the connection's collection mode (ADR-1311), and
+	// DaysUntilDue when a sent invoice falls due.
+	Collection   string
+	DaysUntilDue int
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -64,8 +100,12 @@ type StatementInvoiceExport struct {
 	Currency          string
 	AmountMinor       int64
 	Livemode          bool
-	CreatedAt         time.Time
-	CompletedAt       *time.Time
+	// Collection and DaysUntilDue are the connection's collection mode when
+	// the export began (ADR-1311), so a resumed export keeps it.
+	Collection   string
+	DaysUntilDue int
+	CreatedAt    time.Time
+	CompletedAt  *time.Time
 	// Payment fields mirror the provider invoice (ADR-1302); PaymentStatus is
 	// empty until the first sync, and NextStatusSyncAt is nil once final.
 	PaymentStatus        string
@@ -115,7 +155,8 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 	if e.SourceKind != StatementSourceAppConsumer && e.SourceKind != StatementSourcePlatformTenant {
 		return fmt.Errorf("%w: unknown statement source %q", ErrInvalidArgument, e.SourceKind)
 	}
-	if !ValidBillingProvider(e.Provider) || e.Customer == "" || !isUpperASCIICurrency(e.Currency) {
+	if !ValidBillingProvider(e.Provider) || e.Customer == "" || !isUpperASCIICurrency(e.Currency) ||
+		!ValidCollection(e.Provider, e.Collection) || e.DaysUntilDue < 1 || e.DaysUntilDue > 365 {
 		return fmt.Errorf("%w: invalid statement invoice export", ErrInvalidArgument)
 	}
 	return nil
@@ -125,13 +166,27 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 
 func validateBillingConnection(c BillingConnection) error {
 	if !ValidBillingProvider(c.Provider) || len(c.KeyLast4) != 4 || len(c.SealedSecret) == 0 ||
-		(c.APIURL != "" && (len(c.APIURL) > 512 || !strings.HasPrefix(c.APIURL, "https://"))) {
+		(c.APIURL != "" && (len(c.APIURL) > 512 || !strings.HasPrefix(c.APIURL, "https://"))) ||
+		!ValidCollection(c.Provider, c.Collection) || c.DaysUntilDue < 1 || c.DaysUntilDue > 365 {
 		return ErrInvalidArgument
 	}
 	return nil
 }
 
+// normalizeCollection defaults an unset collection mode to none, due in
+// DefaultCollectionDaysUntilDue days.
+func normalizeCollection(mode string, days int) (string, int) {
+	if mode == "" {
+		mode = CollectionNone
+	}
+	if days == 0 {
+		days = DefaultCollectionDaysUntilDue
+	}
+	return mode, days
+}
+
 func (m *MemStore) PutBillingConnection(_ context.Context, c BillingConnection) (BillingConnection, error) {
+	c.Collection, c.DaysUntilDue = normalizeCollection(c.Collection, c.DaysUntilDue)
 	if err := validateBillingConnection(c); err != nil {
 		return BillingConnection{}, err
 	}
@@ -175,6 +230,7 @@ func (m *MemStore) DeleteBillingConnection(_ context.Context, accountID, provide
 }
 
 func (m *MemStore) BeginStatementInvoiceExport(_ context.Context, e StatementInvoiceExport) (StatementInvoiceExport, bool, error) {
+	e.Collection, e.DaysUntilDue = normalizeCollection(e.Collection, e.DaysUntilDue)
 	if err := validateStatementInvoiceExport(e); err != nil {
 		return StatementInvoiceExport{}, false, err
 	}
@@ -245,17 +301,19 @@ func (m *MemStore) GetStatementInvoiceExport(_ context.Context, accountID, sourc
 // --- PgStore ---
 
 func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection) (BillingConnection, error) {
+	c.Collection, c.DaysUntilDue = normalizeCollection(c.Collection, c.DaysUntilDue)
 	if err := validateBillingConnection(c); err != nil {
 		return BillingConnection{}, err
 	}
 	err := s.pool.QueryRow(ctx, `insert into account_billing_connections
-			(account_id, provider, sealed_secret, key_last4, livemode, api_url)
-		values ($1::uuid, $2, $3, $4, $5, nullif($6, ''))
+			(account_id, provider, sealed_secret, key_last4, livemode, api_url, collection, days_until_due)
+		values ($1::uuid, $2, $3, $4, $5, nullif($6, ''), $7, $8)
 		on conflict (account_id, provider) do update
 		   set sealed_secret = excluded.sealed_secret, key_last4 = excluded.key_last4,
-		       livemode = excluded.livemode, api_url = excluded.api_url, updated_at = now()
+		       livemode = excluded.livemode, api_url = excluded.api_url, collection = excluded.collection,
+		       days_until_due = excluded.days_until_due, updated_at = now()
 		returning created_at, updated_at`,
-		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL).Scan(&c.CreatedAt, &c.UpdatedAt)
+		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL, c.Collection, c.DaysUntilDue).Scan(&c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return BillingConnection{}, fmt.Errorf("put billing connection: %w", err)
 	}
@@ -265,9 +323,10 @@ func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection)
 
 func (s *PgStore) GetBillingConnection(ctx context.Context, accountID, provider string) (BillingConnection, error) {
 	c := BillingConnection{AccountID: accountID, Provider: provider}
-	err := s.pool.QueryRow(ctx, `select sealed_secret, key_last4, livemode, coalesce(api_url, ''), created_at, updated_at
+	err := s.pool.QueryRow(ctx, `select sealed_secret, key_last4, livemode, coalesce(api_url, ''), collection, days_until_due,
+		created_at, updated_at
 		from account_billing_connections where account_id = $1::uuid and provider = $2`, accountID, provider).
-		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.Collection, &c.DaysUntilDue, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingConnection{}, ErrNotFound
 	}
@@ -292,14 +351,14 @@ func (s *PgStore) DeleteBillingConnection(ctx context.Context, accountID, provid
 const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, provider, customer, status,
 	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at,
 	coalesce(payment_status, ''), amount_paid_minor, amount_remaining_minor, due_at, paid_at,
-	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at`
+	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due`
 
 func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 	var e StatementInvoiceExport
 	err := row.Scan(&e.ID, &e.AccountID, &e.SourceKind, &e.StatementID, &e.Provider, &e.Customer, &e.Status,
 		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt,
 		&e.PaymentStatus, &e.AmountPaidMinor, &e.AmountRemainingMinor, &e.DueAt, &e.PaidAt,
-		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt)
+		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
@@ -315,15 +374,16 @@ func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 }
 
 func (s *PgStore) BeginStatementInvoiceExport(ctx context.Context, e StatementInvoiceExport) (StatementInvoiceExport, bool, error) {
+	e.Collection, e.DaysUntilDue = normalizeCollection(e.Collection, e.DaysUntilDue)
 	if err := validateStatementInvoiceExport(e); err != nil {
 		return StatementInvoiceExport{}, false, err
 	}
 	created, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `insert into usage_statement_invoice_exports
-			(account_id, source_kind, statement_id, provider, customer, currency, amount_minor, livemode)
-		values ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8)
+			(account_id, source_kind, statement_id, provider, customer, currency, amount_minor, livemode, collection, days_until_due)
+		values ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
 		on conflict (source_kind, statement_id) do nothing
 		returning `+statementInvoiceExportCols,
-		e.AccountID, e.SourceKind, e.StatementID, e.Provider, e.Customer, e.Currency, e.AmountMinor, e.Livemode))
+		e.AccountID, e.SourceKind, e.StatementID, e.Provider, e.Customer, e.Currency, e.AmountMinor, e.Livemode, e.Collection, e.DaysUntilDue))
 	if err == nil {
 		return created, false, nil
 	}

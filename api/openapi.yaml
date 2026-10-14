@@ -57110,9 +57110,11 @@ components:
         route_weights:
           type: object
           maxProperties: 50
-          description: "Counts each consumer request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes; ADR-1307). Unlisted routes, tenant surfaces and JWT rules count 1. Statements for periods it prices must cover one calendar month."
+          description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes; ADR-1307), including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods it prices must cover one calendar month."
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
-        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers or route weights." }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers, route weights, or a compute or response-size unit." }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card prices (ADR-1310): requests, or the compute seconds or response megabytes of billable requests, rounded per subject minute. Compute and response-size cards take no route weights, are month-priced, cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC." }
+        tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How the tenant ladder prices a month (ADR-1309): graduated by each unit's position, or volume, every unit of the month at the step the tenant's total reaches. volume needs tiers." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
@@ -57122,16 +57124,17 @@ components:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
-        unit: { type: string, enum: [request] }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the tenant card prices (ADR-1310)." }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free units per tenant per UTC calendar month (ADR-975)." }
         tiers:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
-          description: "Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
+          description: "Ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
+        tier_mode: { type: string, enum: [graduated, volume], description: "How the tenant ladder prices a month (ADR-1309)." }
         route_weights:
           type: object
-          description: "Units per consumer request on a route (ADR-1307); absent when every request counts 1."
+          description: "Units per request on a route (ADR-1307, ADR-1310); absent when every request counts 1."
           additionalProperties: { type: integer, format: int64, minimum: 1 }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
@@ -57162,6 +57165,8 @@ components:
           maxProperties: 50
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
         request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card a plan assignment creates prices (ADR-1310). Assigning a plan whose unit differs from the tenant's current card starts its card at the next UTC month boundary." }
+        tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How the plan's ladder prices a tenant's month (ADR-1309); volume needs tiers." }
 
     PlatformTenantPlanResponse:
       description: "One tenant plan."
@@ -57180,6 +57185,8 @@ components:
           type: object
           additionalProperties: { type: integer, format: int64, minimum: 1 }
         request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the plan's card prices (ADR-1310)." }
+        tier_mode: { type: string, enum: [graduated, volume], description: "How the plan's ladder prices a month (ADR-1309)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -57709,6 +57716,7 @@ components:
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
         plan_id: { type: string, format: uuid, description: "Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated." }
         unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card prices (ADR-1308). compute_second and response_megabyte count billable requests' execution time or response size per consumer minute, rounded to the nearest whole unit; they take no route weights, cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC." }
+        tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
 
     CreateAPIConsumerPlanRequest:
@@ -57813,6 +57821,7 @@ components:
         tiers:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        tier_mode: { type: string, enum: [graduated, volume], description: "How the ladder prices a consumer's month (ADR-1309)." }
         route_weights:
           type: object
           description: "Units charged per request on a listed route; unlisted routes count 1."
@@ -79634,6 +79643,8 @@ components:
       properties:
         secret_key: { type: string, minLength: 8, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key.", writeOnly: true }
         api_url: { type: string, format: uri, maxLength: 512, description: "Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default https://api.getlago.com." }
+        collection: { type: string, enum: [none, send, charge], default: none, description: "What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none only." }
+        days_until_due: { type: integer, minimum: 1, maximum: 365, default: 30, description: "With collection send, days until a sent invoice is due." }
 
     BillingConnectionResponse:
       description: "A stored payment-provider key, identified without revealing it."
@@ -79644,6 +79655,8 @@ components:
         key_last4: { type: string, minLength: 4, maxLength: 4 }
         livemode: { type: boolean, description: "False for Stripe test and Paddle sandbox keys; Lago has no test mode." }
         api_url: { type: string, format: uri, description: "The Lago API origin." }
+        collection: { type: string, enum: [none, send, charge], description: "What the provider does with exported invoices (ADR-1311)." }
+        days_until_due: { type: integer, minimum: 1, maximum: 365, description: "Days until a sent invoice is due." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -79668,6 +79681,7 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         amount_minor: { type: integer, format: int64, description: "Invoice total in the currency's minor unit (cents): the statement total rounded to the cent." }
         livemode: { type: boolean }
+        collection: { type: string, enum: [none, send, charge], description: "What the provider was asked to do with the invoice when the export began (ADR-1311)." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
         source_kind: { type: string, enum: [app_consumer, platform_tenant] }

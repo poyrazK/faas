@@ -16,14 +16,15 @@ import (
 // platform-tenants` (ADR-1307), mapped to the flags each accepts.
 var platformTenantPlanVerbs = map[string][]string{
 	"plans":        {},
-	"plan-create":  {"name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day"},
-	"plan-update":  {"plan", "name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day"},
+	"plan-create":  {"name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day", "unit", "tier-mode"},
+	"plan-update":  {"plan", "name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day", "unit", "tier-mode"},
 	"set-plan":     {"id", "plan"},
 	"plan-history": {"id"},
 }
 
 type platformTenantPlanFlags struct {
 	id, plan, name, currency string
+	unit, tierMode           string
 	priceMillicents          int64
 	includedUnits            int64
 	tiers, weights           multiFlag
@@ -47,7 +48,9 @@ func cmdPlatformTenantPlans(verb string, args []string) (handled bool, code int)
 	fs.Int64Var(&f.priceMillicents, "price-millicents", 0, "price per request unit in millicents; 100000 = 1.00")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free units per tenant per UTC calendar month")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS, repeatable; the last step's UP_TO is inf")
-	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\" for consumer requests, repeatable")
+	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable")
+	fs.StringVar(&f.unit, "unit", "", "what the plan's card prices: request (default), compute_second or response_megabyte")
+	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume")
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "request budget per minute the plan sets; 0 disables the ceiling")
 	fs.Int64Var(&f.maxPerDay, "max-requests-per-day", -1, "request budget per day the plan sets; 0 disables the ceiling")
 	if err := fs.Parse(args); err != nil {
@@ -96,7 +99,7 @@ func callPlatformTenantPlans(ctx context.Context, client *Client, verb string, f
 		}
 		req, err := applyPlanFlags(api.PlatformTenantPlanRequest{Name: plan.Name, Currency: plan.Currency,
 			PriceMillicentsPerUnit: plan.PriceMillicentsPerUnit, IncludedUnitsPerMonth: plan.IncludedUnitsPerMonth,
-			Tiers: plan.Tiers, RouteWeights: plan.RouteWeights, RequestBudget: plan.RequestBudget}, f)
+			Tiers: plan.Tiers, RouteWeights: plan.RouteWeights, RequestBudget: plan.RequestBudget, Unit: plan.Unit, TierMode: plan.TierMode}, f)
 		if err != nil {
 			return nil, err
 		}
@@ -141,6 +144,12 @@ func applyPlanFlags(req api.PlatformTenantPlanRequest, f platformTenantPlanFlags
 			return req, err
 		}
 		req.RouteWeights = weights
+	}
+	if f.set["unit"] {
+		req.Unit = strings.TrimSpace(f.unit)
+	}
+	if f.set["tier-mode"] {
+		req.TierMode = strings.TrimSpace(f.tierMode)
 	}
 	if f.set["max-requests-per-minute"] != f.set["max-requests-per-day"] {
 		return req, errors.New("set --max-requests-per-minute and --max-requests-per-day together")

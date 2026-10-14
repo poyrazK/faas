@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.put_billing_connection_request_collection import (
+    PutBillingConnectionRequestCollection,
+    check_put_billing_connection_request_collection,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="PutBillingConnectionRequest")
@@ -20,12 +24,24 @@ class PutBillingConnectionRequest:
     api_url: str | Unset = UNSET
     """Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default
     https://api.getlago.com."""
+    collection: PutBillingConnectionRequestCollection | Unset = "none"
+    """What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without
+    charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or
+    Lago charge through its payment provider. Paddle supports none only."""
+    days_until_due: int | Unset = 30
+    """With collection send, days until a sent invoice is due."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         secret_key = self.secret_key
 
         api_url = self.api_url
+
+        collection: str | Unset = UNSET
+        if not isinstance(self.collection, Unset):
+            collection = self.collection
+
+        days_until_due = self.days_until_due
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -36,6 +52,10 @@ class PutBillingConnectionRequest:
         )
         if api_url is not UNSET:
             field_dict["api_url"] = api_url
+        if collection is not UNSET:
+            field_dict["collection"] = collection
+        if days_until_due is not UNSET:
+            field_dict["days_until_due"] = days_until_due
 
         return field_dict
 
@@ -46,9 +66,20 @@ class PutBillingConnectionRequest:
 
         api_url = d.pop("api_url", UNSET)
 
+        _collection = d.pop("collection", UNSET)
+        collection: PutBillingConnectionRequestCollection | Unset
+        if isinstance(_collection, Unset):
+            collection = UNSET
+        else:
+            collection = check_put_billing_connection_request_collection(_collection)
+
+        days_until_due = d.pop("days_until_due", UNSET)
+
         put_billing_connection_request = cls(
             secret_key=secret_key,
             api_url=api_url,
+            collection=collection,
+            days_until_due=days_until_due,
         )
 
         put_billing_connection_request.additional_properties = d

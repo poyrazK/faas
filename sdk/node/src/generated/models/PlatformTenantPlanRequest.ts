@@ -15,5 +15,13 @@ export type PlatformTenantPlanRequest = {
   tiers?: Array<APIConsumerRateCardTier>;
   route_weights?: Record<string, number>;
   request_budget?: PlatformTenantPlanBudget;
+  /**
+   * What the card a plan assignment creates prices (ADR-1310). Assigning a plan whose unit differs from the tenant's current card starts its card at the next UTC month boundary.
+   */
+  unit?: 'request' | 'compute_second' | 'response_megabyte';
+  /**
+   * How the plan's ladder prices a tenant's month (ADR-1309); volume needs tiers.
+   */
+  tier_mode?: 'graduated' | 'volume';
 };
 

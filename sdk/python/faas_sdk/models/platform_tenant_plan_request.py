@@ -6,6 +6,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.platform_tenant_plan_request_tier_mode import (
+    PlatformTenantPlanRequestTierMode,
+    check_platform_tenant_plan_request_tier_mode,
+)
+from ..models.platform_tenant_plan_request_unit import (
+    PlatformTenantPlanRequestUnit,
+    check_platform_tenant_plan_request_unit,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -29,6 +37,11 @@ class PlatformTenantPlanRequest:
     route_weights: PlatformTenantPlanRequestRouteWeights | Unset = UNSET
     request_budget: PlatformTenantPlanBudget | Unset = UNSET
     """The request budget a tenant plan sets (ADR-240); zero disables a ceiling."""
+    unit: PlatformTenantPlanRequestUnit | Unset = "request"
+    """What the card a plan assignment creates prices (ADR-1310). Assigning a plan whose unit differs from the
+    tenant's current card starts its card at the next UTC month boundary."""
+    tier_mode: PlatformTenantPlanRequestTierMode | Unset = "graduated"
+    """How the plan's ladder prices a tenant's month (ADR-1309); volume needs tiers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +68,14 @@ class PlatformTenantPlanRequest:
         if not isinstance(self.request_budget, Unset):
             request_budget = self.request_budget.to_dict()
 
+        unit: str | Unset = UNSET
+        if not isinstance(self.unit, Unset):
+            unit = self.unit
+
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +93,10 @@ class PlatformTenantPlanRequest:
             field_dict["route_weights"] = route_weights
         if request_budget is not UNSET:
             field_dict["request_budget"] = request_budget
+        if unit is not UNSET:
+            field_dict["unit"] = unit
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
 
         return field_dict
 
@@ -113,6 +138,20 @@ class PlatformTenantPlanRequest:
         else:
             request_budget = PlatformTenantPlanBudget.from_dict(_request_budget)
 
+        _unit = d.pop("unit", UNSET)
+        unit: PlatformTenantPlanRequestUnit | Unset
+        if isinstance(_unit, Unset):
+            unit = UNSET
+        else:
+            unit = check_platform_tenant_plan_request_unit(_unit)
+
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: PlatformTenantPlanRequestTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_platform_tenant_plan_request_tier_mode(_tier_mode)
+
         platform_tenant_plan_request = cls(
             name=name,
             currency=currency,
@@ -121,6 +160,8 @@ class PlatformTenantPlanRequest:
             tiers=tiers,
             route_weights=route_weights,
             request_budget=request_budget,
+            unit=unit,
+            tier_mode=tier_mode,
         )
 
         platform_tenant_plan_request.additional_properties = d

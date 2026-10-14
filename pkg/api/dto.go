@@ -1368,6 +1368,10 @@ type CreateAPIConsumerRateCardRequest struct {
 	// compute_second, or response_megabyte. Compute and response size count
 	// billable requests per consumer minute, rounded to the nearest unit.
 	Unit string `json:"unit,omitempty"`
+	// TierMode is how tiers price a month (ADR-1309): graduated (default)
+	// prices each unit at its position's step; volume prices every unit at
+	// the step the month's total reaches.
+	TierMode string `json:"tier_mode,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1389,6 +1393,7 @@ type APIConsumerRateCardResponse struct {
 	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
 	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
 	EffectiveFrom          time.Time                 `json:"effective_from"`

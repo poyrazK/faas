@@ -31,6 +31,12 @@ type fakeStripe struct {
 	// payments maps an invoice ID to the invoice JSON GET /v1/invoices/{id}
 	// returns (ADR-1302); unknown invoices are 404.
 	payments map[string]string
+	// trackDrafts reports created invoices as drafts until finalized
+	// (ADR-1311); collection and finalized record what Stripe was asked.
+	trackDrafts      bool
+	failNextFinalize bool
+	collection       map[string]string
+	finalized        map[string]string
 }
 
 // setPayment sets what Stripe reports for an invoice's payment.
@@ -63,9 +69,34 @@ func (f *fakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, invoice)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/invoices":
 		_, _ = fmt.Fprint(w, `{"data":[],"has_more":false}`)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/finalize"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/invoices/"), "/finalize")
+		if f.failNextFinalize {
+			f.failNextFinalize = false
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"try again"}}`)
+			return
+		}
+		if f.finalized == nil {
+			f.finalized = map[string]string{}
+		}
+		f.finalized[id] = r.PostForm.Get("auto_advance")
+		f.payments[id] = fmt.Sprintf(`{"id":%q,"status":"open","amount_paid":0,"amount_remaining":4,"status_transitions":{"paid_at":null}}`, id)
+		_, _ = fmt.Fprintf(w, `{"id":%q,"status":"open"}`, id)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/invoices":
 		f.invoices++
-		_, _ = fmt.Fprintf(w, `{"id":"in_%d","livemode":false,"total":0}`, f.invoices)
+		id := fmt.Sprintf("in_%d", f.invoices)
+		if f.trackDrafts {
+			if f.payments == nil {
+				f.payments = map[string]string{}
+			}
+			if f.collection == nil {
+				f.collection = map[string]string{}
+			}
+			f.payments[id] = fmt.Sprintf(`{"id":%q,"status":"draft","amount_paid":0,"amount_remaining":4,"status_transitions":{"paid_at":null}}`, id)
+			f.collection[id] = r.PostForm.Get("collection_method") + "/" + r.PostForm.Get("days_until_due")
+		}
+		_, _ = fmt.Fprintf(w, `{"id":%q,"livemode":false,"total":0}`, id)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/invoiceitems":
 		var data []string
 		for i, line := range f.items[r.URL.Query().Get("invoice")] {

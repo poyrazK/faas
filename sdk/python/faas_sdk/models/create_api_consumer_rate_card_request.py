@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_api_consumer_rate_card_request_tier_mode import (
+    CreateAPIConsumerRateCardRequestTierMode,
+    check_create_api_consumer_rate_card_request_tier_mode,
+)
 from ..models.create_api_consumer_rate_card_request_unit import (
     CreateAPIConsumerRateCardRequestUnit,
     check_create_api_consumer_rate_card_request_unit,
@@ -49,6 +53,9 @@ class CreateAPIConsumerRateCardRequest:
     """What the card prices (ADR-1308). compute_second and response_megabyte count billable requests' execution
     time or response size per consumer minute, rounded to the nearest whole unit; they take no route weights, cannot
     be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC."""
+    tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset = "graduated"
+    """How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in;
+    volume prices every unit of the month at the step the month's total reaches. volume needs tiers."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -79,6 +86,10 @@ class CreateAPIConsumerRateCardRequest:
         if not isinstance(self.unit, Unset):
             unit = self.unit
 
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
             effective_from = UNSET
@@ -106,6 +117,8 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["plan_id"] = plan_id
         if unit is not UNSET:
             field_dict["unit"] = unit
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -155,6 +168,13 @@ class CreateAPIConsumerRateCardRequest:
         else:
             unit = check_create_api_consumer_rate_card_request_unit(_unit)
 
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_create_api_consumer_rate_card_request_tier_mode(_tier_mode)
+
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -180,6 +200,7 @@ class CreateAPIConsumerRateCardRequest:
             route_weights=route_weights,
             plan_id=plan_id,
             unit=unit,
+            tier_mode=tier_mode,
             effective_from=effective_from,
         )
 

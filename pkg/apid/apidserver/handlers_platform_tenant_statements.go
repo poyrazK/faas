@@ -187,7 +187,7 @@ func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenant
 			return state.PlatformTenantStatementInput{}, err
 		}
 	}
-	routes, err := s.tenantRouteUsage(ctx, accountID, tenantCards, monthUsage, start, end)
+	routes, err := s.tenantRouteUsage(ctx, accountID, tenantID, tenantCards, monthUsage, start, end)
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
@@ -195,9 +195,10 @@ func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenant
 		usageDelta, monthUsage, cards, tenantCards, previous, routes)
 }
 
-// tenantRouteUsage loads each consumer subject's route counts when a tenant
-// card weights routes (ADR-1307).
-func (s *server) tenantRouteUsage(ctx context.Context, accountID string, tenantCards []state.PlatformTenantRateCard,
+// tenantRouteUsage loads each subject's route counts when a tenant card
+// weights routes: consumers' (ADR-1307), and surfaces' and JWT rules'
+// (ADR-1310).
+func (s *server) tenantRouteUsage(ctx context.Context, accountID, tenantID string, tenantCards []state.PlatformTenantRateCard,
 	monthUsage []state.APIConsumerUsageBucket, start, end time.Time) (billing.TenantRouteUsage, error) {
 	weighted := false
 	for _, card := range tenantCards {
@@ -208,7 +209,9 @@ func (s *server) tenantRouteUsage(ctx context.Context, accountID string, tenantC
 		return nil, nil
 	}
 	routes := billing.TenantRouteUsage{}
+	sources := false
 	for _, bucket := range monthUsage {
+		sources = sources || bucket.SurfaceID != "" || bucket.JWTAuthorizationRuleID != ""
 		key := billing.TenantRouteKey(bucket.AppID, bucket.ConsumerKey)
 		if _, loaded := routes[key]; loaded || bucket.ConsumerKey == "" {
 			continue
@@ -218,6 +221,18 @@ func (s *server) tenantRouteUsage(ctx context.Context, accountID string, tenantC
 			return nil, fmt.Errorf("list tenant route usage: %w", err)
 		}
 		routes[key] = rows
+	}
+	sourceStore, ok := s.store.(state.PlatformTenantSourceRouteUsageStore)
+	if !sources || !ok {
+		return routes, nil
+	}
+	rows, err := sourceStore.ListPlatformTenantSourceRouteUsage(ctx, accountID, tenantID, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("list tenant source route usage: %w", err)
+	}
+	for _, row := range rows {
+		key := billing.TenantSourceRouteKey(row.AppID, row.SourceKind, row.SourceID)
+		routes[key] = append(routes[key], state.APIConsumerRouteUsageBucket{WindowStart: row.WindowStart, Route: row.Route, BillableUnits: row.BillableUnits})
 	}
 	return routes, nil
 }

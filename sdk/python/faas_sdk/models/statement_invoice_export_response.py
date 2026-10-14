@@ -9,6 +9,10 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.billing_provider import BillingProvider, check_billing_provider
+from ..models.statement_invoice_export_response_collection import (
+    StatementInvoiceExportResponseCollection,
+    check_statement_invoice_export_response_collection,
+)
 from ..models.statement_invoice_export_response_payment_status import (
     StatementInvoiceExportResponsePaymentStatus,
     check_statement_invoice_export_response_payment_status,
@@ -43,6 +47,8 @@ class StatementInvoiceExportResponse:
     created_at: datetime.datetime
     invoice_id: str | Unset = UNSET
     dashboard_url: str | Unset = UNSET
+    collection: StatementInvoiceExportResponseCollection | Unset = UNSET
+    """What the provider was asked to do with the invoice when the export began (ADR-1311)."""
     completed_at: datetime.datetime | Unset = UNSET
     source_kind: StatementInvoiceExportResponseSourceKind | Unset = UNSET
     payment_status: StatementInvoiceExportResponsePaymentStatus | Unset = UNSET
@@ -79,6 +85,10 @@ class StatementInvoiceExportResponse:
         invoice_id = self.invoice_id
 
         dashboard_url = self.dashboard_url
+
+        collection: str | Unset = UNSET
+        if not isinstance(self.collection, Unset):
+            collection = self.collection
 
         completed_at: str | Unset = UNSET
         if not isinstance(self.completed_at, Unset):
@@ -130,6 +140,8 @@ class StatementInvoiceExportResponse:
             field_dict["invoice_id"] = invoice_id
         if dashboard_url is not UNSET:
             field_dict["dashboard_url"] = dashboard_url
+        if collection is not UNSET:
+            field_dict["collection"] = collection
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
         if source_kind is not UNSET:
@@ -175,6 +187,13 @@ class StatementInvoiceExportResponse:
         invoice_id = d.pop("invoice_id", UNSET)
 
         dashboard_url = d.pop("dashboard_url", UNSET)
+
+        _collection = d.pop("collection", UNSET)
+        collection: StatementInvoiceExportResponseCollection | Unset
+        if isinstance(_collection, Unset):
+            collection = UNSET
+        else:
+            collection = check_statement_invoice_export_response_collection(_collection)
 
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset
@@ -237,6 +256,7 @@ class StatementInvoiceExportResponse:
             created_at=created_at,
             invoice_id=invoice_id,
             dashboard_url=dashboard_url,
+            collection=collection,
             completed_at=completed_at,
             source_kind=source_kind,
             payment_status=payment_status,

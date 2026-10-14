@@ -14,5 +14,13 @@ export type PutBillingConnectionRequest = {
    * Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default https://api.getlago.com.
    */
   api_url?: string;
+  /**
+   * What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none only.
+   */
+  collection?: 'none' | 'send' | 'charge';
+  /**
+   * With collection send, days until a sent invoice is due.
+   */
+  days_until_due?: number;
 };
 

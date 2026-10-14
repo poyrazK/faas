@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func platformTenantRateCardResponse(card state.PlatformTenantRateCard) api.PlatformTenantRateCardResponse {
 	return api.PlatformTenantRateCardResponse{ID: card.ID, TenantID: card.TenantID,
 		Currency: card.Currency, Unit: card.Unit, PriceMillicentsPerUnit: card.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: card.IncludedUnitsPerMonth, Tiers: apiRateCardTiers(card.Tiers), RouteWeights: card.RouteWeights,
-		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC()}
+		IncludedUnitsPerMonth: card.IncludedUnitsPerMonth, Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode),
+		RouteWeights: card.RouteWeights, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC()}
 }
 
 func (s *server) platformTenantRateCardStore(w http.ResponseWriter, r *http.Request, acct state.Account) (state.PlatformTenant, state.PlatformTenantRateCardStore, bool) {
@@ -106,7 +107,7 @@ func platformTenantRateCardInput(req api.CreatePlatformTenantRateCardRequest, ac
 	in := state.PlatformTenantRateCardInput{AccountID: accountID, TenantID: tenantID,
 		Currency: strings.ToUpper(strings.TrimSpace(req.Currency)), PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers), RouteWeights: req.RouteWeights,
-		EffectiveFrom: time.Now().UTC().Truncate(time.Minute).Add(time.Minute)}
+		EffectiveFrom: time.Now().UTC().Truncate(time.Minute).Add(time.Minute), Unit: req.Unit, TierMode: req.TierMode}
 	if in.Currency == "" {
 		in.Currency = "EUR"
 	}
@@ -132,14 +133,56 @@ func platformTenantRateCardInput(req api.CreatePlatformTenantRateCardRequest, ac
 			return in, invalid("effective_from must be a UTC minute")
 		}
 	}
-	monthly := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0
+	if detail := tenantCardUnitProblem(in, existing); detail != "" {
+		return in, invalid(detail)
+	}
+	monthly := state.PlatformTenantRateCard{IncludedUnitsPerMonth: in.IncludedUnitsPerMonth, Tiers: in.Tiers,
+		RouteWeights: in.RouteWeights, Unit: in.Unit}.MonthlyPricing()
 	for _, card := range existing {
 		monthly = monthly || card.MonthlyPricing()
 	}
 	if monthly && in.EffectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
-		return in, invalid("effective_from cannot be in the past once a tenant rate card includes units, tiers or route weights")
+		return in, invalid("effective_from cannot be in the past once a tenant rate card includes units, tiers, route weights, or compute or response-size units")
 	}
 	return in, nil
+}
+
+// tenantCardUnitProblem checks a tenant card's unit (ADR-1310) and ladder
+// mode (ADR-1309): known values, route weights only on request cards, and a
+// change of unit only at a UTC month boundary, so one month's allowance and
+// tiers never count two kinds of unit.
+func tenantCardUnitProblem(in state.PlatformTenantRateCardInput, existing []state.PlatformTenantRateCard) string {
+	unit := in.Unit
+	if unit == "" {
+		unit = state.PlatformTenantRateCardUnitRequest
+	}
+	switch {
+	case !state.ValidAPIConsumerRateCardUnit(unit):
+		return "unit must be request, compute_second or response_megabyte"
+	case unit != state.PlatformTenantRateCardUnitRequest && len(in.RouteWeights) > 0:
+		return "route_weights apply to request cards only"
+	case in.TierMode != "" && in.TierMode != state.RateCardTierModeGraduated && in.TierMode != state.RateCardTierModeVolume:
+		return "tier_mode must be graduated or volume"
+	case in.TierMode == state.RateCardTierModeVolume && len(in.Tiers) == 0:
+		return "tier_mode volume needs tiers"
+	}
+	var previous *state.PlatformTenantRateCard
+	for i, card := range existing {
+		if card.EffectiveFrom.Before(in.EffectiveFrom) && (previous == nil || card.EffectiveFrom.After(previous.EffectiveFrom)) {
+			previous = &existing[i]
+		}
+	}
+	if previous != nil && tenantUnit(previous.Unit) != unit && !in.EffectiveFrom.Equal(billing.MonthStart(in.EffectiveFrom)) {
+		return "a card that changes the unit must start at a UTC month boundary (effective_from on the 1st at 00:00 UTC)"
+	}
+	return ""
+}
+
+func tenantUnit(unit string) string {
+	if unit == "" {
+		return state.PlatformTenantRateCardUnitRequest
+	}
+	return unit
 }
 
 func platformTenantRateCardError(err error) *api.Problem {

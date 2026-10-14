@@ -137,8 +137,9 @@ type PlatformTenantStatementInput struct {
 	// and units × price per line still hold, and the amount is never negative.
 	Repriced bool `json:"-"`
 	// Weighted marks a re-priced revision whose lines count route-weighted
-	// units (ADR-1307): coverage stays in raw request units, so line units
-	// no longer equal it per subject or in total.
+	// units (ADR-1307) or compute seconds or response megabytes (ADR-1310):
+	// coverage stays in raw request units, so line units no longer equal it
+	// per subject or in total.
 	Weighted bool `json:"-"`
 }
 

@@ -131,12 +131,17 @@ func (c *Client) CheckKey(ctx context.Context, key string) error {
 }
 
 // InvoiceParams describe a draft invoice. Pending items already on the
-// customer are excluded, and Stripe never finalizes or sends the draft.
+// customer are excluded, and Stripe does not finalize the draft on its own.
 type InvoiceParams struct {
 	Customer    string
 	Currency    string
 	Description string
 	Metadata    map[string]string
+	// CollectionMethod is how Stripe collects the invoice once it is
+	// finalized (ADR-1311): charge_automatically or send_invoice, due
+	// DaysUntilDue days later. Empty leaves Stripe's default.
+	CollectionMethod string
+	DaysUntilDue     int
 }
 
 // Invoice is the part of a Stripe invoice an export records.
@@ -155,6 +160,12 @@ func (c *Client) CreateInvoice(ctx context.Context, key, idempotencyKey string, 
 	form.Set("auto_advance", "false")
 	form.Set("pending_invoice_items_behavior", "exclude")
 	form.Set("description", p.Description)
+	if p.CollectionMethod != "" {
+		form.Set("collection_method", p.CollectionMethod)
+	}
+	if p.CollectionMethod == "send_invoice" {
+		form.Set("days_until_due", strconv.Itoa(p.DaysUntilDue))
+	}
 	for k, v := range p.Metadata {
 		form.Set("metadata["+k+"]", v)
 	}
@@ -223,6 +234,15 @@ func (c *Client) ExportedLines(ctx context.Context, key, invoiceID string) (map[
 		after = out.Data[len(out.Data)-1].ID
 	}
 	return nil, fmt.Errorf("stripe invoice %s has too many items", invoiceID)
+}
+
+// FinalizeInvoice finalizes a draft with auto_advance on, so Stripe
+// collects it as its collection method says: it charges the customer's
+// saved payment method, or emails the invoice (ADR-1311).
+func (c *Client) FinalizeInvoice(ctx context.Context, key, idempotencyKey, invoiceID string) error {
+	form := url.Values{}
+	form.Set("auto_advance", "true")
+	return c.do(ctx, key, http.MethodPost, "/v1/invoices/"+url.PathEscape(invoiceID)+"/finalize", idempotencyKey, form, nil)
 }
 
 // InvoiceState is the payment state of an invoice (ADR-1302). Deleted is

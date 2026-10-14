@@ -112,3 +112,10 @@ func TestPgStoreConsumerResourceUsage(t *testing.T) {
 	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
 	checkConsumerResourceUsage(t, ctx, store, accountID, appID)
 }
+
+// adr: 1309, 1310, 1311
+func TestPgStoreTenantResourcesAndCollection(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	checkTenantResourcesAndCollection(t, ctx, store, accountID, appID)
+}

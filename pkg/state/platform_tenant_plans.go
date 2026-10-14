@@ -27,6 +27,10 @@ type PlatformTenantPlan struct {
 	IncludedUnitsPerMonth  int64
 	Tiers                  []APIConsumerRateCardTier
 	RouteWeights           map[string]int64
+	// Unit is what the plan's card prices (ADR-1310) and TierMode how its
+	// tiers price a month (ADR-1309); empty means request and graduated.
+	Unit     string
+	TierMode string
 	// MaxRequestsPerMinute and MaxRequestsPerDay are set together, or
 	// both nil when the plan leaves the tenant's budget alone (ADR-240).
 	MaxRequestsPerMinute *int64
@@ -93,6 +97,12 @@ func ValidatePlatformTenantPlan(p PlatformTenantPlan) error {
 	if err := ValidateAPIConsumerRouteWeights(p.RouteWeights); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
+	if p.Unit != "" && (!ValidAPIConsumerRateCardUnit(p.Unit) || (p.Unit != PlatformTenantRateCardUnitRequest && len(p.RouteWeights) > 0)) {
+		return fmt.Errorf("%w: unit must be request, compute_second or response_megabyte, and route weights apply to request plans only", ErrInvalidArgument)
+	}
+	if _, err := normalizeRateCardTierMode(p.TierMode, p.Tiers); err != nil {
+		return err
+	}
 	if (p.MaxRequestsPerMinute == nil) != (p.MaxRequestsPerDay == nil) ||
 		(p.MaxRequestsPerMinute != nil && (*p.MaxRequestsPerMinute < 0 || *p.MaxRequestsPerDay < 0)) {
 		return fmt.Errorf("%w: a plan budget needs both non-negative ceilings", ErrInvalidArgument)
@@ -101,6 +111,10 @@ func ValidatePlatformTenantPlan(p PlatformTenantPlan) error {
 }
 
 func normalizePlatformTenantPlan(p PlatformTenantPlan) PlatformTenantPlan {
+	if p.Unit == "" {
+		p.Unit = PlatformTenantRateCardUnitRequest
+	}
+	p.TierMode, _ = normalizeRateCardTierMode(p.TierMode, p.Tiers)
 	p.Tiers = cloneRateCardTiers(p.Tiers)
 	if len(p.Tiers) > 0 {
 		p.PriceMillicentsPerUnit = p.Tiers[len(p.Tiers)-1].PriceMillicentsPerUnit

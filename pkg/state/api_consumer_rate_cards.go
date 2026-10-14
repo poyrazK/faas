@@ -25,6 +25,29 @@ func ValidAPIConsumerRateCardUnit(unit string) bool {
 		unit == APIConsumerRateCardUnitResponseMegabyte
 }
 
+// Ladder modes (ADR-1309): graduated prices each unit at the step its
+// position in the month falls in (ADR-951); volume prices every unit of the
+// month at the step the month's total reaches.
+const (
+	RateCardTierModeGraduated = "graduated"
+	RateCardTierModeVolume    = "volume"
+)
+
+// normalizeRateCardTierMode defaults an empty mode to graduated and rejects
+// an unknown mode or a volume card without a ladder.
+func normalizeRateCardTierMode(mode string, tiers []APIConsumerRateCardTier) (string, error) {
+	switch mode {
+	case "", RateCardTierModeGraduated:
+		return RateCardTierModeGraduated, nil
+	case RateCardTierModeVolume:
+		if len(tiers) == 0 {
+			return "", fmt.Errorf("%w: tier_mode volume needs tiers", ErrInvalidArgument)
+		}
+		return mode, nil
+	}
+	return "", fmt.Errorf("%w: tier_mode must be graduated or volume", ErrInvalidArgument)
+}
+
 // APIConsumerRateCardStore is deliberately narrower than Store. The pricing
 // surface is additive, so existing test doubles that only implement the core
 // state contract do not need to grow methods before they opt into pricing.
@@ -53,6 +76,8 @@ type APIConsumerRateCardInput struct {
 	EffectiveFrom          time.Time
 	// Unit is what the card prices; empty means request (ADR-1308).
 	Unit string
+	// TierMode is how Tiers price a month; empty means graduated (ADR-1309).
+	TierMode string
 }
 
 // normalizeAPIConsumerRateCardInput validates a version and derives the
@@ -66,6 +91,11 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 	if !ValidAPIConsumerRateCardUnit(in.Unit) || (in.Unit != APIConsumerRateCardUnitRequest && len(in.RouteWeights) > 0) {
 		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w: route weights apply to request cards only", ErrInvalidArgument)
 	}
+	mode, err := normalizeRateCardTierMode(in.TierMode, in.Tiers)
+	if err != nil {
+		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)
+	}
+	in.TierMode = mode
 	if len(in.Tiers) > 0 {
 		if err := ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
 			return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)

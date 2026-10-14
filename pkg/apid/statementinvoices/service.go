@@ -105,7 +105,7 @@ func (s *Service) statementInvoiceStore(w http.ResponseWriter, acct state.Accoun
 
 func billingConnectionResponse(c state.BillingConnection) api.BillingConnectionResponse {
 	return api.BillingConnectionResponse{Provider: c.Provider, KeyLast4: c.KeyLast4, Livemode: c.Livemode, APIURL: c.APIURL,
-		CreatedAt: c.CreatedAt.UTC(), UpdatedAt: c.UpdatedAt.UTC()}
+		Collection: c.Collection, DaysUntilDue: c.DaysUntilDue, CreatedAt: c.CreatedAt.UTC(), UpdatedAt: c.UpdatedAt.UTC()}
 }
 
 func unknownProviderProblem() *api.Problem {
@@ -153,13 +153,14 @@ func (s *Service) PutBillingConnection(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	stored, err := store.PutBillingConnection(r.Context(), state.BillingConnection{AccountID: acct.ID, Provider: name,
-		SealedSecret: sealed, KeyLast4: conn.key[len(conn.key)-4:], Livemode: conn.livemode, APIURL: conn.apiURL})
+		SealedSecret: sealed, KeyLast4: conn.key[len(conn.key)-4:], Livemode: conn.livemode, APIURL: conn.apiURL,
+		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue})
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not store the "+p.title()+" key"))
 		return
 	}
 	s.Host.Audit(r.Context(), "billing_connection.updated", acct.ID, map[string]any{"provider": name,
-		"key_last4": stored.KeyLast4, "livemode": stored.Livemode, "api_url": stored.APIURL})
+		"key_last4": stored.KeyLast4, "livemode": stored.Livemode, "api_url": stored.APIURL, "collection": stored.Collection})
 	httpkit.WriteJSON(w, http.StatusOK, billingConnectionResponse(stored))
 }
 
@@ -174,6 +175,9 @@ func parseConnection(name string, p provider, req api.PutBillingConnectionReques
 		return connection{}, providerProblem(http.StatusUnprocessableEntity, "Invalid "+p.title()+" key", detail)
 	}
 	conn := connection{key: key, livemode: livemode}
+	if conn.collection, conn.daysUntilDue, err = parseCollection(name, req); err != nil {
+		return connection{}, providerProblem(http.StatusUnprocessableEntity, "Bad collection", err.Error())
+	}
 	if name != state.BillingProviderLago {
 		if strings.TrimSpace(req.APIURL) != "" {
 			return connection{}, providerProblem(http.StatusUnprocessableEntity, "Bad api_url", "api_url applies to Lago connections only")
@@ -185,6 +189,25 @@ func parseConnection(name string, p provider, req api.PutBillingConnectionReques
 		return connection{}, providerProblem(http.StatusUnprocessableEntity, "Bad api_url", err.Error())
 	}
 	return conn, nil
+}
+
+// parseCollection checks a connection's collection mode (ADR-1311) against
+// what its provider supports.
+func parseCollection(name string, req api.PutBillingConnectionRequest) (string, int, error) {
+	mode, days := strings.TrimSpace(req.Collection), req.DaysUntilDue
+	if mode == "" {
+		mode = state.CollectionNone
+	}
+	if !state.ValidCollection(name, mode) {
+		return "", 0, fmt.Errorf("%s supports collection %s", name, strings.Join(state.ProviderCollectionModes[name], ", "))
+	}
+	if days == 0 {
+		days = state.DefaultCollectionDaysUntilDue
+	}
+	if days < 1 || days > 365 || (req.DaysUntilDue != 0 && mode != state.CollectionSend) {
+		return "", 0, fmt.Errorf("days_until_due is 1 to 365 and applies to collection send only")
+	}
+	return mode, days, nil
 }
 
 func (s *Service) GetBillingConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -252,7 +275,7 @@ type statementInvoiceSource struct {
 func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.StatementInvoiceExportResponse {
 	out := api.StatementInvoiceExportResponse{StatementID: e.StatementID, Provider: e.Provider, Customer: e.Customer,
 		Status: e.Status, InvoiceID: e.ProviderInvoiceID, Currency: e.Currency, AmountMinor: e.AmountMinor,
-		Livemode: e.Livemode, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt,
+		Livemode: e.Livemode, Collection: e.Collection, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt,
 		SourceKind: e.SourceKind, PaymentStatus: e.PaymentStatus, AmountPaidMinor: e.AmountPaidMinor,
 		AmountRemainingMinor: e.AmountRemainingMinor, DueAt: e.DueAt, PaidAt: e.PaidAt,
 		HostedInvoiceURL: e.HostedInvoiceURL, StatusSyncedAt: e.StatusSyncedAt, Overdue: e.Overdue(time.Now())}
@@ -305,7 +328,8 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	}
 	export, resumed, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: src.kind,
 		StatementID: src.statementID, Provider: providerName, Customer: src.customer,
-		Currency: src.invoice.Currency, AmountMinor: src.invoice.TotalMinor, Livemode: conn.livemode})
+		Currency: src.invoice.Currency, AmountMinor: src.invoice.TotalMinor, Livemode: conn.livemode,
+		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue})
 	if errors.Is(err, state.ErrConflict) {
 		return state.StatementInvoiceExport{}, exportConflict("an export for this statement already targets another customer or provider")
 	}
@@ -368,7 +392,8 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 	if !ok {
 		return connection{}, api.ErrInternal("could not open the stored " + p.title() + " key; reconnect " + p.title())
 	}
-	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode}, nil
+	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, collection: stored.Collection,
+		daysUntilDue: stored.DaysUntilDue}, nil
 }
 
 func (s *Service) openKey(accountID string, stored state.BillingConnection) (string, bool) {

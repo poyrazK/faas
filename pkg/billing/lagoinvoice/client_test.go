@@ -72,6 +72,12 @@ func TestLagoInvoices(t *testing.T) {
 	if _, err := c.CreateInvoice(ctx, base, "key-1", InvoiceParams{Fees: []Fee{{AmountCents: -5}}}); err == nil {
 		t.Fatal("negative fee accepted")
 	}
+	// adr: 1311 — a charging connection lets Lago's payment provider collect.
+	if _, err := c.CreateInvoice(ctx, base, "key-1", InvoiceParams{ExternalCustomerID: "cust-1", Currency: "eur", Charge: true,
+		Fees: []Fee{{Description: "3 usage units", AmountCents: 375}}, From: from, To: from.AddDate(0, 1, 0)}); err != nil ||
+		created["invoice"].(map[string]any)["skip_psp"] != false {
+		t.Fatalf("charged invoice = %v, %v", created, err)
+	}
 	if err := c.SetExportMetadata(ctx, base, "key-1", "inv-1", "exp-1", "st-1"); err != nil || tagged == nil {
 		t.Fatalf("SetExportMetadata = %v", err)
 	}

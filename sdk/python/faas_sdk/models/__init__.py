@@ -103,6 +103,7 @@ from .api_consumer_plan_response import APIConsumerPlanResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
 from .api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
+from .api_consumer_rate_card_response_tier_mode import APIConsumerRateCardResponseTierMode
 from .api_consumer_rate_card_response_unit import APIConsumerRateCardResponseUnit
 from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
@@ -407,6 +408,7 @@ from .billing_catalog_entry_kind import BillingCatalogEntryKind
 from .billing_catalog_entry_plan import BillingCatalogEntryPlan
 from .billing_catalog_response import BillingCatalogResponse
 from .billing_connection_response import BillingConnectionResponse
+from .billing_connection_response_collection import BillingConnectionResponseCollection
 from .billing_paddle_overage_preflight_response import BillingPaddleOveragePreflightResponse
 from .billing_portal_response import BillingPortalResponse
 from .billing_provider import BillingProvider
@@ -570,6 +572,7 @@ from .create_api_consumer_credit_request import CreateAPIConsumerCreditRequest
 from .create_api_consumer_plan_request import CreateAPIConsumerPlanRequest
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+from .create_api_consumer_rate_card_request_tier_mode import CreateAPIConsumerRateCardRequestTierMode
 from .create_api_consumer_rate_card_request_unit import CreateAPIConsumerRateCardRequestUnit
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
@@ -681,6 +684,8 @@ from .create_platform_tenant_access_token_response import CreatePlatformTenantAc
 from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_rate_card_request_route_weights import CreatePlatformTenantRateCardRequestRouteWeights
+from .create_platform_tenant_rate_card_request_tier_mode import CreatePlatformTenantRateCardRequestTierMode
+from .create_platform_tenant_rate_card_request_unit import CreatePlatformTenantRateCardRequestUnit
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
 from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
@@ -2750,12 +2755,17 @@ from .platform_tenant_plan_budget import PlatformTenantPlanBudget
 from .platform_tenant_plan_list_response import PlatformTenantPlanListResponse
 from .platform_tenant_plan_request import PlatformTenantPlanRequest
 from .platform_tenant_plan_request_route_weights import PlatformTenantPlanRequestRouteWeights
+from .platform_tenant_plan_request_tier_mode import PlatformTenantPlanRequestTierMode
+from .platform_tenant_plan_request_unit import PlatformTenantPlanRequestUnit
 from .platform_tenant_plan_response import PlatformTenantPlanResponse
 from .platform_tenant_plan_response_route_weights import PlatformTenantPlanResponseRouteWeights
+from .platform_tenant_plan_response_tier_mode import PlatformTenantPlanResponseTierMode
+from .platform_tenant_plan_response_unit import PlatformTenantPlanResponseUnit
 from .platform_tenant_publish_event_response import PlatformTenantPublishEventResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from .platform_tenant_rate_card_response_route_weights import PlatformTenantRateCardResponseRouteWeights
+from .platform_tenant_rate_card_response_tier_mode import PlatformTenantRateCardResponseTierMode
 from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
 from .platform_tenant_reconciliation_applied_webhook_payload import PlatformTenantReconciliationAppliedWebhookPayload
 from .platform_tenant_reconciliation_apply_response import PlatformTenantReconciliationApplyResponse
@@ -3144,6 +3154,7 @@ from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_billing_connection_request import PutBillingConnectionRequest
+from .put_billing_connection_request_collection import PutBillingConnectionRequestCollection
 from .put_billing_run_schedule_request import PutBillingRunScheduleRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
@@ -3701,6 +3712,7 @@ from .start_durable_entity_registry_cleanup_response_200 import StartDurableEnti
 from .start_durable_entity_retirement_body import StartDurableEntityRetirementBody
 from .start_durable_entity_retirement_response_200 import StartDurableEntityRetirementResponse200
 from .statement_invoice_export_response import StatementInvoiceExportResponse
+from .statement_invoice_export_response_collection import StatementInvoiceExportResponseCollection
 from .statement_invoice_export_response_payment_status import StatementInvoiceExportResponsePaymentStatus
 from .statement_invoice_export_response_source_kind import StatementInvoiceExportResponseSourceKind
 from .statement_invoice_export_response_status import StatementInvoiceExportResponseStatus
@@ -4221,6 +4233,7 @@ __all__ = (
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
     "APIConsumerRateCardResponseRouteWeights",
+    "APIConsumerRateCardResponseTierMode",
     "APIConsumerRateCardResponseUnit",
     "APIConsumerRateCardTier",
     "APIConsumerResponse",
@@ -4525,6 +4538,7 @@ __all__ = (
     "BillingCatalogEntryPlan",
     "BillingCatalogResponse",
     "BillingConnectionResponse",
+    "BillingConnectionResponseCollection",
     "BillingPaddleOveragePreflightResponse",
     "BillingPortalResponse",
     "BillingProvider",
@@ -4684,6 +4698,7 @@ __all__ = (
     "CreateAPIConsumerPlanRequest",
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRateCardRequestRouteWeights",
+    "CreateAPIConsumerRateCardRequestTierMode",
     "CreateAPIConsumerRateCardRequestUnit",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
@@ -4789,6 +4804,8 @@ __all__ = (
     "CreatePlatformTenantAccessTokenResponseScopesItem",
     "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRateCardRequestRouteWeights",
+    "CreatePlatformTenantRateCardRequestTierMode",
+    "CreatePlatformTenantRateCardRequestUnit",
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantSelfConsumerRequest",
     "CreatePlatformTenantSelfHostnameRequest",
@@ -6738,12 +6755,17 @@ __all__ = (
     "PlatformTenantPlanListResponse",
     "PlatformTenantPlanRequest",
     "PlatformTenantPlanRequestRouteWeights",
+    "PlatformTenantPlanRequestTierMode",
+    "PlatformTenantPlanRequestUnit",
     "PlatformTenantPlanResponse",
     "PlatformTenantPlanResponseRouteWeights",
+    "PlatformTenantPlanResponseTierMode",
+    "PlatformTenantPlanResponseUnit",
     "PlatformTenantPublishEventResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
     "PlatformTenantRateCardResponseRouteWeights",
+    "PlatformTenantRateCardResponseTierMode",
     "PlatformTenantRateCardResponseUnit",
     "PlatformTenantReconciliationAppliedWebhookPayload",
     "PlatformTenantReconciliationApplyResponse",
@@ -7090,6 +7112,7 @@ __all__ = (
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
     "PutBillingConnectionRequest",
+    "PutBillingConnectionRequestCollection",
     "PutBillingRunScheduleRequest",
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
@@ -7631,6 +7654,7 @@ __all__ = (
     "StartDurableEntityRetirementBody",
     "StartDurableEntityRetirementResponse200",
     "StatementInvoiceExportResponse",
+    "StatementInvoiceExportResponseCollection",
     "StatementInvoiceExportResponsePaymentStatus",
     "StatementInvoiceExportResponseSourceKind",
     "StatementInvoiceExportResponseStatus",

@@ -106,3 +106,34 @@ func TestGetInvoicePaymentState(t *testing.T) {
 		t.Fatalf("deleted = %+v, %v", gone, err)
 	}
 }
+
+// adr: 1311 — a collected invoice is created with its collection method
+// and finalized with auto_advance, so Stripe charges or emails it.
+func TestCollectedInvoice(t *testing.T) {
+	forms := map[string]map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		form := map[string]string{"idempotency": r.Header.Get("Idempotency-Key")}
+		for k := range r.PostForm {
+			form[k] = r.PostForm.Get(k)
+		}
+		forms[r.URL.Path] = form
+		_, _ = fmt.Fprint(w, `{"id":"in_1","livemode":false,"total":0}`)
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	ctx := context.Background()
+	if _, err := c.CreateInvoice(ctx, "rk_test_x", "idem", InvoiceParams{Customer: "cus_1", Currency: "EUR",
+		CollectionMethod: "send_invoice", DaysUntilDue: 14}); err != nil {
+		t.Fatal(err)
+	}
+	if got := forms["/v1/invoices"]; got["collection_method"] != "send_invoice" || got["days_until_due"] != "14" || got["auto_advance"] != "false" {
+		t.Fatalf("invoice form = %v", got)
+	}
+	if err := c.FinalizeInvoice(ctx, "rk_test_x", "idem-finalize", "in_1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := forms["/v1/invoices/in_1/finalize"]; got["auto_advance"] != "true" || got["idempotency"] != "idem-finalize" {
+		t.Fatalf("finalize form = %v", got)
+	}
+}

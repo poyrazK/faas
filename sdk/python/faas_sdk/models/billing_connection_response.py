@@ -7,6 +7,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.billing_connection_response_collection import (
+    BillingConnectionResponseCollection,
+    check_billing_connection_response_collection,
+)
 from ..models.billing_provider import BillingProvider, check_billing_provider
 from ..types import UNSET, Unset
 
@@ -26,6 +30,10 @@ class BillingConnectionResponse:
     updated_at: datetime.datetime
     api_url: str | Unset = UNSET
     """The Lago API origin."""
+    collection: BillingConnectionResponseCollection | Unset = UNSET
+    """What the provider does with exported invoices (ADR-1311)."""
+    days_until_due: int | Unset = UNSET
+    """Days until a sent invoice is due."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +49,12 @@ class BillingConnectionResponse:
 
         api_url = self.api_url
 
+        collection: str | Unset = UNSET
+        if not isinstance(self.collection, Unset):
+            collection = self.collection
+
+        days_until_due = self.days_until_due
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -54,6 +68,10 @@ class BillingConnectionResponse:
         )
         if api_url is not UNSET:
             field_dict["api_url"] = api_url
+        if collection is not UNSET:
+            field_dict["collection"] = collection
+        if days_until_due is not UNSET:
+            field_dict["days_until_due"] = days_until_due
 
         return field_dict
 
@@ -72,6 +90,15 @@ class BillingConnectionResponse:
 
         api_url = d.pop("api_url", UNSET)
 
+        _collection = d.pop("collection", UNSET)
+        collection: BillingConnectionResponseCollection | Unset
+        if isinstance(_collection, Unset):
+            collection = UNSET
+        else:
+            collection = check_billing_connection_response_collection(_collection)
+
+        days_until_due = d.pop("days_until_due", UNSET)
+
         billing_connection_response = cls(
             provider=provider,
             key_last4=key_last4,
@@ -79,6 +106,8 @@ class BillingConnectionResponse:
             created_at=created_at,
             updated_at=updated_at,
             api_url=api_url,
+            collection=collection,
+            days_until_due=days_until_due,
         )
 
         billing_connection_response.additional_properties = d

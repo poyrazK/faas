@@ -770,17 +770,20 @@ Account-wide SLO panel
 
 Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin
 
-`gregale account billing-connection [--api-url <URL>] {connect|status|disconnect} {stripe|paddle|lago}`
+`gregale account billing-connection [--api-url <URL>] [--collection <MODE>] [--days-until-due <N>] {connect|status|disconnect} {stripe|paddle|lago}`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--api-url <URL>` | Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com) |  |
+| `--collection <MODE>` | what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none) | one of `none` · `send` · `charge` |
+| `--days-until-due <N>` | days until a sent invoice is due (connect --collection send; default 30) |  |
 
 Examples:
 
 ```sh
 gregale account billing-connection connect paddle < paddle-key.txt
 gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt
+gregale account billing-connection connect stripe --collection charge < stripe-key.txt
 ```
 
 ### account billing-run
@@ -7380,7 +7383,7 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7392,11 +7395,13 @@ Add an immutable per-request price version
 | `--plan <NAME>` | add the price to a consumer plan instead of the app default |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
 | `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, per consumer minute rounded to the nearest unit | one of `request` · `compute_second` · `response_megabyte` |
+| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 Examples:
 
 ```sh
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume
 ```
 
 ### consumers statements
@@ -7734,7 +7739,7 @@ List a customer&#39;s cross-app price versions
 
 Add a customer-wide per-request price version
 
-`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--effective-from <RFC3339>]`
+`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7743,8 +7748,10 @@ Add a customer-wide per-request price version
 | `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
 | `--included-units <N>` | free requests per tenant per UTC calendar month across all apps |  |
 | `--tier <UP_TO:PRICE>` | graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units) |  |
-| `--weight <"METHOD /template=N">` | units per consumer request on a route; repeat per route, unlisted routes count 1 (statements then cover calendar months) |  |
+| `--weight <"METHOD /template=N">` | units per request on a route, including surface and JWT-rule requests; repeat per route, unlisted routes count 1 (statements then cover calendar months) |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
+| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
+| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 ### platform-tenants statements
 
@@ -7827,7 +7834,7 @@ List tenant plans: reusable price and request-budget bundles
 
 Create a tenant plan
 
-`gregale platform-tenants plan-create --name <NAME> [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>]`
+`gregale platform-tenants plan-create --name <NAME> [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--tier-mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7836,9 +7843,11 @@ Create a tenant plan
 | `--price-millicents <N>` | price per request unit; 100000 = 1.00 |  |
 | `--included-units <N>` | free units per tenant per UTC calendar month |  |
 | `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf |  |
-| `--weight <"METHOD /template=N">` | units per consumer request on a route; repeat per route |  |
+| `--weight <"METHOD /template=N">` | units per request on a route; repeat per route |  |
 | `--max-requests-per-minute <N>` | request budget per minute the plan sets (with --max-requests-per-day) |  |
 | `--max-requests-per-day <N>` | request budget per day the plan sets (with --max-requests-per-minute) |  |
+| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
+| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 Examples:
 
@@ -7850,7 +7859,7 @@ gregale platform-tenants plan-create --name growth --currency EUR --price-millic
 
 Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again
 
-`gregale platform-tenants plan-update --plan <NAME> [--name <NAME>] [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>]`
+`gregale platform-tenants plan-update --plan <NAME> [--name <NAME>] [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--tier-mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7860,13 +7869,15 @@ Change a tenant plan; flags not given keep their value, and tenants get it when 
 | `--price-millicents <N>` | price per request unit; 100000 = 1.00 |  |
 | `--included-units <N>` | free units per tenant per UTC calendar month |  |
 | `--tier <UP_TO:PRICE>` | graduated step; repeat in order, last UP_TO is inf |  |
-| `--weight <"METHOD /template=N">` | units per consumer request on a route; repeat per route |  |
+| `--weight <"METHOD /template=N">` | units per request on a route; repeat per route |  |
 | `--max-requests-per-minute <N>` | request budget per minute (with --max-requests-per-day) |  |
 | `--max-requests-per-day <N>` | request budget per day (with --max-requests-per-minute) |  |
+| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
+| `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 ### platform-tenants set-plan
 
-Move a tenant onto a plan: its rate card from the next minute and its request budget at once
+Move a tenant onto a plan: its rate card from the next minute (the next month when the unit changes) and its request budget at once
 
 `gregale platform-tenants set-plan --id <UUID> --plan <NAME>`
 

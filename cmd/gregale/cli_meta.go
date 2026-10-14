@@ -530,7 +530,9 @@ var cliCommands = []cliCommand{
 			{Name: "slo", Short: "Account-wide SLO panel"},
 			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
 				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
-			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt"}},
+				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
+				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
+			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
 			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
@@ -2674,7 +2676,8 @@ var cliCommands = []cliCommand{
 				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, per consumer minute rounded to the nearest unit", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
-			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
+			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -2788,8 +2791,10 @@ var cliCommands = []cliCommand{
 				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
 				{Name: "included-units", Short: "free requests per tenant per UTC calendar month across all apps", Value: "N"},
 				{Name: "tier", Short: "graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
-				{Name: "weight", Short: "units per consumer request on a route; repeat per route, unlisted routes count 1 (statements then cover calendar months)", Value: "\"METHOD /template=N\"", Repeatable: true},
+				{Name: "weight", Short: "units per request on a route, including surface and JWT-rule requests; repeat per route, unlisted routes count 1 (statements then cover calendar months)", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}},
 			{Name: "statements", Short: "List a period's cross-app statement revisions", Flags: []cliFlag{
 				platformTenantIDFlag,
@@ -2821,9 +2826,11 @@ var cliCommands = []cliCommand{
 				{Name: "price-millicents", Short: "price per request unit; 100000 = 1.00", Value: "N"},
 				{Name: "included-units", Short: "free units per tenant per UTC calendar month", Value: "N"},
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf", Value: "UP_TO:PRICE", Repeatable: true},
-				{Name: "weight", Short: "units per consumer request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
+				{Name: "weight", Short: "units per request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "max-requests-per-minute", Short: "request budget per minute the plan sets (with --max-requests-per-day)", Value: "N"},
 				{Name: "max-requests-per-day", Short: "request budget per day the plan sets (with --max-requests-per-minute)", Value: "N"},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}, Examples: []string{"gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 --weight \"POST /generate=5\" --max-requests-per-minute 600 --max-requests-per-day 100000"}},
 			{Name: "plan-update", Short: "Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again", Flags: []cliFlag{
 				{Name: "plan", Short: "plan to change", Value: "NAME", Req: true},
@@ -2832,11 +2839,13 @@ var cliCommands = []cliCommand{
 				{Name: "price-millicents", Short: "price per request unit; 100000 = 1.00", Value: "N"},
 				{Name: "included-units", Short: "free units per tenant per UTC calendar month", Value: "N"},
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf", Value: "UP_TO:PRICE", Repeatable: true},
-				{Name: "weight", Short: "units per consumer request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
+				{Name: "weight", Short: "units per request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "max-requests-per-minute", Short: "request budget per minute (with --max-requests-per-day)", Value: "N"},
 				{Name: "max-requests-per-day", Short: "request budget per day (with --max-requests-per-minute)", Value: "N"},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}},
-			{Name: "set-plan", Short: "Move a tenant onto a plan: its rate card from the next minute and its request budget at once", Flags: []cliFlag{
+			{Name: "set-plan", Short: "Move a tenant onto a plan: its rate card from the next minute (the next month when the unit changes) and its request budget at once", Flags: []cliFlag{
 				platformTenantIDFlag,
 				{Name: "plan", Short: "tenant plan name", Value: "NAME", Req: true},
 			}},

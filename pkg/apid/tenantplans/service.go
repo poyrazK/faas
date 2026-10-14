@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -51,7 +52,14 @@ func (s *Service) store(w http.ResponseWriter, acct state.Account) (state.Platfo
 
 func planResponse(p state.PlatformTenantPlan) api.PlatformTenantPlanResponse {
 	out := api.PlatformTenantPlanResponse{ID: p.ID, Name: p.Name, Currency: p.Currency, PriceMillicentsPerUnit: p.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: p.IncludedUnitsPerMonth, RouteWeights: p.RouteWeights, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+		IncludedUnitsPerMonth: p.IncludedUnitsPerMonth, RouteWeights: p.RouteWeights, Unit: p.Unit, TierMode: p.TierMode,
+		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+	if out.Unit == "" {
+		out.Unit = state.PlatformTenantRateCardUnitRequest
+	}
+	if out.TierMode == "" {
+		out.TierMode = state.RateCardTierModeGraduated
+	}
 	for _, tier := range p.Tiers {
 		out.Tiers = append(out.Tiers, api.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit})
 	}
@@ -69,7 +77,7 @@ func validation(detail string) *api.Problem {
 func planFromRequest(req api.PlatformTenantPlanRequest, accountID string) (state.PlatformTenantPlan, *api.Problem) {
 	p := state.PlatformTenantPlan{AccountID: accountID, Name: strings.TrimSpace(req.Name),
 		Currency: strings.ToUpper(strings.TrimSpace(req.Currency)), PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, RouteWeights: req.RouteWeights}
+		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, RouteWeights: req.RouteWeights, Unit: req.Unit, TierMode: req.TierMode}
 	for _, tier := range req.Tiers {
 		p.Tiers = append(p.Tiers, state.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit})
 	}
@@ -214,13 +222,41 @@ func (s *Service) AssignPlan(w http.ResponseWriter, r *http.Request, acct state.
 	httpkit.WriteJSON(w, http.StatusCreated, assignmentResponse(assignment, plan.Name))
 }
 
+// unitChangeStart is when an assigned plan's card starts: the next minute,
+// unless the plan prices a different unit than the tenant's current card,
+// which can only change at the next UTC month boundary (ADR-1310).
+func (s *Service) unitChangeStart(ctx context.Context, accountID, tenantID, unit string) *time.Time {
+	if unit == "" {
+		unit = state.PlatformTenantRateCardUnitRequest
+	}
+	store, ok := s.Host.Store().(state.PlatformTenantRateCardStore)
+	if !ok {
+		return nil
+	}
+	cards, err := store.ListPlatformTenantRateCards(ctx, accountID, tenantID)
+	if err != nil || len(cards) == 0 {
+		return nil
+	}
+	current := cards[len(cards)-1].Unit
+	if current == "" {
+		current = state.PlatformTenantRateCardUnitRequest
+	}
+	if current == unit {
+		return nil
+	}
+	now := time.Now().UTC()
+	next := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	return &next
+}
+
 func (s *Service) assign(ctx context.Context, acct state.Account, tenant state.PlatformTenant, plan state.PlatformTenantPlan,
 	store state.PlatformTenantPlanStore) (state.PlatformTenantPlanAssignment, *api.Problem) {
 	cardReq := api.CreatePlatformTenantRateCardRequest{Currency: plan.Currency, PriceMillicentsPerUnit: plan.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: plan.IncludedUnitsPerMonth, RouteWeights: plan.RouteWeights}
+		IncludedUnitsPerMonth: plan.IncludedUnitsPerMonth, RouteWeights: plan.RouteWeights, Unit: plan.Unit, TierMode: plan.TierMode}
 	for _, tier := range plan.Tiers {
 		cardReq.Tiers = append(cardReq.Tiers, api.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit})
 	}
+	cardReq.EffectiveFrom = s.unitChangeStart(ctx, acct.ID, tenant.ID, plan.Unit)
 	card, problem := s.Host.CreateTenantRateCard(ctx, acct, tenant.ID, cardReq)
 	if problem != nil {
 		return state.PlatformTenantPlanAssignment{}, problem

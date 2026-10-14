@@ -18,6 +18,10 @@ export type APIConsumerRateCardResponse = {
   included_units_per_month: number;
   tiers?: Array<APIConsumerRateCardTier>;
   /**
+   * How the ladder prices a consumer's month (ADR-1309).
+   */
+  tier_mode?: 'graduated' | 'volume';
+  /**
    * Units charged per request on a listed route; unlisted routes count 1.
    */
   route_weights?: Record<string, number>;

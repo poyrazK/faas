@@ -16,6 +16,14 @@ export type PlatformTenantPlanResponse = {
   tiers?: Array<APIConsumerRateCardTier>;
   route_weights?: Record<string, number>;
   request_budget?: PlatformTenantPlanBudget;
+  /**
+   * What the plan's card prices (ADR-1310).
+   */
+  unit?: 'request' | 'compute_second' | 'response_megabyte';
+  /**
+   * How the plan's ladder prices a month (ADR-1309).
+   */
+  tier_mode?: 'graduated' | 'volume';
   created_at: string;
   updated_at: string;
 };

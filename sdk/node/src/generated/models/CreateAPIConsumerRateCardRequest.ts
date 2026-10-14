@@ -30,6 +30,10 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   unit?: 'request' | 'compute_second' | 'response_megabyte';
   /**
+   * How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers.
+   */
+  tier_mode?: 'graduated' | 'volume';
+  /**
    * UTC minute at which this version starts; omitted means the next UTC minute.
    */
   effective_from?: string | null;

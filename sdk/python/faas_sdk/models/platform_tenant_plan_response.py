@@ -8,6 +8,14 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.platform_tenant_plan_response_tier_mode import (
+    PlatformTenantPlanResponseTierMode,
+    check_platform_tenant_plan_response_tier_mode,
+)
+from ..models.platform_tenant_plan_response_unit import (
+    PlatformTenantPlanResponseUnit,
+    check_platform_tenant_plan_response_unit,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -34,6 +42,10 @@ class PlatformTenantPlanResponse:
     route_weights: PlatformTenantPlanResponseRouteWeights | Unset = UNSET
     request_budget: PlatformTenantPlanBudget | Unset = UNSET
     """The request budget a tenant plan sets (ADR-240); zero disables a ceiling."""
+    unit: PlatformTenantPlanResponseUnit | Unset = UNSET
+    """What the plan's card prices (ADR-1310)."""
+    tier_mode: PlatformTenantPlanResponseTierMode | Unset = UNSET
+    """How the plan's ladder prices a month (ADR-1309)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +78,14 @@ class PlatformTenantPlanResponse:
         if not isinstance(self.request_budget, Unset):
             request_budget = self.request_budget.to_dict()
 
+        unit: str | Unset = UNSET
+        if not isinstance(self.unit, Unset):
+            unit = self.unit
+
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -85,6 +105,10 @@ class PlatformTenantPlanResponse:
             field_dict["route_weights"] = route_weights
         if request_budget is not UNSET:
             field_dict["request_budget"] = request_budget
+        if unit is not UNSET:
+            field_dict["unit"] = unit
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
 
         return field_dict
 
@@ -132,6 +156,20 @@ class PlatformTenantPlanResponse:
         else:
             request_budget = PlatformTenantPlanBudget.from_dict(_request_budget)
 
+        _unit = d.pop("unit", UNSET)
+        unit: PlatformTenantPlanResponseUnit | Unset
+        if isinstance(_unit, Unset):
+            unit = UNSET
+        else:
+            unit = check_platform_tenant_plan_response_unit(_unit)
+
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: PlatformTenantPlanResponseTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_platform_tenant_plan_response_tier_mode(_tier_mode)
+
         platform_tenant_plan_response = cls(
             id=id,
             name=name,
@@ -143,6 +181,8 @@ class PlatformTenantPlanResponse:
             tiers=tiers,
             route_weights=route_weights,
             request_budget=request_budget,
+            unit=unit,
+            tier_mode=tier_mode,
         )
 
         platform_tenant_plan_response.additional_properties = d

@@ -861,6 +861,9 @@ type MemStore struct {
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
 	routePriorities     map[string]memRoutePriorities
 	platformTenantUsage map[string]APIConsumerUsageBucket
+	// platformTenantSourceRouteUsage counts surface and JWT-rule requests per
+	// route (ADR-1310).
+	platformTenantSourceRouteUsage map[string]PlatformTenantSourceRouteUsageBucket
 	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
 	apiConsumerPlans           map[string]APIConsumerPlan

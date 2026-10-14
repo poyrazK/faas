@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.api_consumer_rate_card_response_tier_mode import (
+    APIConsumerRateCardResponseTierMode,
+    check_api_consumer_rate_card_response_tier_mode,
+)
 from ..models.api_consumer_rate_card_response_unit import (
     APIConsumerRateCardResponseUnit,
     check_api_consumer_rate_card_response_unit,
@@ -37,6 +41,8 @@ class APIConsumerRateCardResponse:
     effective_from: datetime.datetime
     created_at: datetime.datetime
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
+    tier_mode: APIConsumerRateCardResponseTierMode | Unset = UNSET
+    """How the ladder prices a consumer's month (ADR-1309)."""
     route_weights: APIConsumerRateCardResponseRouteWeights | Unset = UNSET
     """Units charged per request on a listed route; unlisted routes count 1."""
     plan_id: UUID | Unset = UNSET
@@ -66,6 +72,10 @@ class APIConsumerRateCardResponse:
                 tiers_item = tiers_item_data.to_dict()
                 tiers.append(tiers_item)
 
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         route_weights: dict[str, Any] | Unset = UNSET
         if not isinstance(self.route_weights, Unset):
             route_weights = self.route_weights.to_dict()
@@ -90,6 +100,8 @@ class APIConsumerRateCardResponse:
         )
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
         if route_weights is not UNSET:
             field_dict["route_weights"] = route_weights
         if plan_id is not UNSET:
@@ -128,6 +140,13 @@ class APIConsumerRateCardResponse:
 
                 tiers.append(tiers_item)
 
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: APIConsumerRateCardResponseTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_api_consumer_rate_card_response_tier_mode(_tier_mode)
+
         _route_weights = d.pop("route_weights", UNSET)
         route_weights: APIConsumerRateCardResponseRouteWeights | Unset
         if isinstance(_route_weights, Unset):
@@ -152,6 +171,7 @@ class APIConsumerRateCardResponse:
             effective_from=effective_from,
             created_at=created_at,
             tiers=tiers,
+            tier_mode=tier_mode,
             route_weights=route_weights,
             plan_id=plan_id,
         )

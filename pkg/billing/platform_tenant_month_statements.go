@@ -10,9 +10,10 @@ import (
 )
 
 // ErrTenantMonthPeriodRequired reports a statement whose period a tenant
-// card with a monthly allowance or tiers prices but that is not exactly one
-// UTC calendar month (ADR-975).
-var ErrTenantMonthPeriodRequired = errors.New("platform tenant statements priced by a monthly allowance or tiers must cover one UTC calendar month")
+// card with a monthly allowance, tiers, route weights, or compute or
+// response-size units prices but that is not exactly one UTC calendar month
+// (ADR-975, ADR-1307, ADR-1310).
+var ErrTenantMonthPeriodRequired = errors.New("platform tenant statements priced by a monthly allowance, tiers, route weights, or compute or response-size units must cover one UTC calendar month")
 
 // ErrTenantChargeDecreased reports that re-pricing a month would bill less
 // than its finalized revisions did. Gregale never issues credits.
@@ -99,12 +100,9 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	asApp := make([]state.APIConsumerRateCard, 0, len(cards))
 	tiersByCard := map[string][]state.APIConsumerRateCardTier{}
 	for _, card := range cards {
-		if card.Unit != state.PlatformTenantRateCardUnitRequest {
-			return nil, "", fmt.Errorf("billing: unsupported platform tenant rate-card unit %q", card.Unit)
-		}
-		asApp = append(asApp, state.APIConsumerRateCard{ID: card.ID, Currency: card.Currency, Unit: state.APIConsumerRateCardUnitRequest,
+		asApp = append(asApp, state.APIConsumerRateCard{ID: card.ID, Currency: card.Currency, Unit: tenantCardUnit(card),
 			PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-			Tiers: card.Tiers, EffectiveFrom: card.EffectiveFrom})
+			Tiers: card.Tiers, TierMode: card.TierMode, EffectiveFrom: card.EffectiveFrom})
 		tiersByCard[card.ID] = card.Tiers
 	}
 	var tenantUsage []state.APIConsumerUsageBucket
@@ -171,7 +169,9 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 		if err != nil {
 			return nil, "", err
 		}
-		quote, err := QuoteAPIConsumerUsageFrom(asApp, weighted, time.Time{})
+		// Each subject minute rounds its own compute time or response size
+		// (ADR-1310), as a consumer minute does (ADR-1308).
+		quote, err := QuoteAPIConsumerUsageFrom(asApp, MeterAPIConsumerUsage(asApp, weighted), time.Time{})
 		if err != nil {
 			return nil, "", err
 		}
@@ -206,16 +206,36 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	return lines, currency, nil
 }
 
-// TenantRouteUsage holds consumer route counts for tenant route weights
-// (ADR-1307), keyed by TenantRouteKey.
+// TenantRouteUsage holds subjects' route counts for tenant route weights
+// (ADR-1307, ADR-1310), keyed by TenantRouteKey or TenantSourceRouteKey.
 type TenantRouteUsage map[string][]state.APIConsumerRouteUsageBucket
 
 // TenantRouteKey keys one consumer's route counts in one app.
 func TenantRouteKey(appID, consumerID string) string { return appID + "\x00" + consumerID }
 
-// weightTenantUsage converts consumer subjects' minutes into the units the
-// tenant card in force weights (ADR-1307). Surfaces and JWT rules have no
-// route counts and keep weight 1, like routes the card does not list.
+// TenantSourceRouteKey keys one tenant surface's or JWT rule's route counts
+// in one app; kind is "surface" or "jwt".
+func TenantSourceRouteKey(appID, kind, sourceID string) string {
+	return TenantRouteKey(appID, kind+":"+sourceID)
+}
+
+// tenantSubjectRouteKey keys a usage bucket's subject in TenantRouteUsage.
+func tenantSubjectRouteKey(bucket state.APIConsumerUsageBucket) string {
+	switch {
+	case bucket.ConsumerKey != "":
+		return TenantRouteKey(bucket.AppID, bucket.ConsumerKey)
+	case bucket.SurfaceID != "":
+		return TenantSourceRouteKey(bucket.AppID, "surface", bucket.SurfaceID)
+	case bucket.JWTAuthorizationRuleID != "":
+		return TenantSourceRouteKey(bucket.AppID, "jwt", bucket.JWTAuthorizationRuleID)
+	}
+	return ""
+}
+
+// weightTenantUsage converts subjects' minutes into the units the tenant
+// card in force weights: consumers by their route counts (ADR-1307), and
+// surfaces and JWT rules by theirs (ADR-1310). Requests without a recorded
+// route keep weight 1, like routes the card does not list.
 func weightTenantUsage(cards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket, routes TenantRouteUsage) ([]state.APIConsumerUsageBucket, error) {
 	byMinute := map[string][]state.APIConsumerRouteUsageBucket{}
 	for key, rows := range routes {
@@ -227,8 +247,8 @@ func weightTenantUsage(cards []state.PlatformTenantRateCard, usage []state.APICo
 	out := make([]state.APIConsumerUsageBucket, 0, len(usage))
 	for _, bucket := range usage {
 		card := tenantCardAt(cards, bucket.WindowStart.UTC())
-		if card != nil && len(card.RouteWeights) > 0 && bucket.ConsumerKey != "" {
-			minuteKey := TenantRouteKey(bucket.AppID, bucket.ConsumerKey) + "\x00" + bucket.WindowStart.UTC().Format(time.RFC3339)
+		if subject := tenantSubjectRouteKey(bucket); card != nil && len(card.RouteWeights) > 0 && subject != "" {
+			minuteKey := subject + "\x00" + bucket.WindowStart.UTC().Format(time.RFC3339)
 			units, err := weightedUnits(card.RouteWeights, bucket.BillableUnits, byMinute[minuteKey])
 			if err != nil {
 				return nil, err
@@ -240,8 +260,9 @@ func weightTenantUsage(cards []state.PlatformTenantRateCard, usage []state.APICo
 	return out, nil
 }
 
-// tenantWeightsInForce reports whether a card that weights routes is in
-// force for any minute of [start, end).
+// tenantWeightsInForce reports whether a card whose lines count units other
+// than requests, because it weights routes or prices compute or response
+// size, is in force for any minute of [start, end).
 func tenantWeightsInForce(cards []state.PlatformTenantRateCard, start, end time.Time) bool {
 	ordered := sortedTenantCards(cards)
 	for i, card := range ordered {
@@ -249,7 +270,7 @@ func tenantWeightsInForce(cards []state.PlatformTenantRateCard, start, end time.
 		if i+1 < len(ordered) && ordered[i+1].EffectiveFrom.Before(end) {
 			until = ordered[i+1].EffectiveFrom
 		}
-		if len(card.RouteWeights) > 0 && card.EffectiveFrom.Before(end) && until.After(start) {
+		if (len(card.RouteWeights) > 0 || !card.PricesRequests()) && card.EffectiveFrom.Before(end) && until.After(start) {
 			return true
 		}
 	}

@@ -846,6 +846,18 @@ type APIConsumerRouteUsageBucket struct {
 	BillableUnits int64
 }
 
+// PlatformTenantSourceRouteUsageBucket is one tenant surface's or JWT
+// authorization rule's billable units on one route in one minute (ADR-1310).
+// SourceKind is "surface" or "jwt".
+type PlatformTenantSourceRouteUsageBucket struct {
+	AppID         string
+	SourceKind    string
+	SourceID      string
+	WindowStart   time.Time
+	Route         string
+	BillableUnits int64
+}
+
 // MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
 const MaxBillingRouteBytes = 256
 
@@ -883,6 +895,9 @@ type APIConsumerRateCard struct {
 	// Tiers is an optional graduated price ladder (ADR-951). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
 	Tiers []APIConsumerRateCardTier
+	// TierMode is how Tiers price a month: graduated (the default) or
+	// volume (ADR-1309).
+	TierMode string
 	// RouteWeights counts each request on a listed route label as that many
 	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
@@ -976,18 +991,29 @@ type PlatformTenantRateCard struct {
 	// across every attributed app (ADR-975); it replaces the flat price and
 	// allowance, and PriceMillicentsPerUnit records the last step's price.
 	Tiers []APIConsumerRateCardTier
-	// RouteWeights charge a consumer request on a route that many units
-	// (ADR-1307); other routes and non-consumer subjects count 1.
+	// TierMode is how Tiers price a month: graduated (the default) or
+	// volume (ADR-1309).
+	TierMode string
+	// RouteWeights charge a request on a route that many units (ADR-1307);
+	// unlisted routes count 1. Surface and JWT-rule requests are weighted
+	// by their own route (ADR-1310).
 	RouteWeights  map[string]int64
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
 }
 
 // MonthlyPricing reports whether statements must re-price whole months:
-// the card prices usage by its position in the tenant's UTC month, or
-// weights routes, which per-minute coverage deltas cannot express.
+// the card prices usage by its position in the tenant's UTC month, weights
+// routes, or prices compute or response size (ADR-1310), none of which
+// per-minute request coverage deltas can express.
 func (c PlatformTenantRateCard) MonthlyPricing() bool {
-	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests()
+}
+
+// PricesRequests reports whether the card counts requests rather than
+// compute seconds or response megabytes.
+func (c PlatformTenantRateCard) PricesRequests() bool {
+	return c.Unit == "" || c.Unit == PlatformTenantRateCardUnitRequest
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage

@@ -3156,7 +3156,11 @@ CREATE TABLE public.account_billing_connections (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     api_url text,
+    collection text DEFAULT 'none'::text NOT NULL,
+    days_until_due integer DEFAULT 30 NOT NULL,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
     CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
 );
@@ -15682,11 +15686,13 @@ CREATE TABLE public.api_consumer_rate_cards (
     tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
     plan_id uuid,
+    tier_mode text DEFAULT 'graduated'::text NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
     CONSTRAINT api_consumer_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT api_consumer_rate_cards_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
     CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
 );
@@ -16610,7 +16616,7 @@ CREATE TABLE public.app_runtime_config_scope_changes (
     app_id uuid NOT NULL,
     scope text NOT NULL,
     changed_at timestamp with time zone NOT NULL,
-    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT app_runtime_config_scope_changes_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64)))
 );
 
@@ -18973,6 +18979,9 @@ CREATE TABLE public.usage_statement_invoice_exports (
     status_synced_at timestamp with time zone,
     next_status_sync_at timestamp with time zone,
     overdue_notified_at timestamp with time zone,
+    collection text DEFAULT 'none'::text NOT NULL,
+    days_until_due integer DEFAULT 30 NOT NULL,
+    CONSTRAINT usage_statement_invoice_exports_collection_chk CHECK (((collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text])) AND ((days_until_due >= 1) AND (days_until_due <= 365)))),
     CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
     CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (((hosted_invoice_url IS NULL) OR ((char_length(hosted_invoice_url) <= 2048) AND (hosted_invoice_url ~~ 'https://%'::text)))),
@@ -20072,7 +20081,7 @@ CREATE TABLE public.environment_gitops_runtime_effects (
     CONSTRAINT environment_gitops_runtime_effects_generation_check CHECK ((generation > 0)),
     CONSTRAINT environment_gitops_runtime_effects_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_gitops_runtime_effects_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 00:00:00+00'::timestamp with time zone))
+    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 02:00:00+02'::timestamp with time zone))
 );
 
 
@@ -20112,7 +20121,7 @@ CREATE TABLE public.instance_runtime_config_receipts (
     acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT instance_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT instance_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -20150,7 +20159,7 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
     all_secrets boolean NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT snapshot_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -20223,14 +20232,14 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
             t.environment_slug,
             GREATEST(COALESCE(( SELECT c.changed_at
                    FROM public.app_runtime_config_changes c
-                  WHERE (c.app_id = t.app_id)), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
+                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
                    FROM public.app_runtime_config_scope_changes c
-                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
+                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
                    FROM (public.app_envs v
                      JOIN public.environment_managed_fields f ON (((f.source_id = t.source_id) AND (f.resource = t.resource) AND (f.field_path = ('variables/'::text || v.key)))))
-                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
+                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
                    FROM public.environment_gitops_runtime_effects x
-                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 00:00:00+00'::timestamp with time zone)) AS required_at
+                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 02:00:00+02'::timestamp with time zone)) AS required_at
            FROM targets t
         )
  SELECT source_id,
@@ -24052,7 +24061,7 @@ CREATE TABLE public.managed_realtime_inbox_fallbacks (
     priority text DEFAULT 'normal'::text NOT NULL,
     expires_at timestamp with time zone,
     collapse_key text DEFAULT ''::text NOT NULL,
-    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     CONSTRAINT managed_realtime_inbox_fallbacks_category_check CHECK ((category ~ '^[a-z0-9_.-]{1,64}$'::text)),
     CONSTRAINT managed_realtime_inbox_fallbacks_collapse_key_check CHECK ((octet_length(collapse_key) <= 128)),
     CONSTRAINT managed_realtime_inbox_fallbacks_message_id_check CHECK (((length(message_id) >= 1) AND (length(message_id) <= 128))),
@@ -24134,8 +24143,8 @@ CREATE TABLE public.managed_realtime_notification_timeline (
     attempts integer DEFAULT 0 NOT NULL,
     status_code integer DEFAULT 0 NOT NULL,
     occurred_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
-    next_attempt timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL
+    not_before timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
+    next_attempt timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL
 );
 
 
@@ -24204,11 +24213,11 @@ CREATE TABLE public.managed_realtime_push_deliveries (
     group_label text DEFAULT ''::text NOT NULL,
     digest_id uuid,
     digest_count integer DEFAULT 0 NOT NULL,
-    digest_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    digest_at timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     priority text DEFAULT 'normal'::text NOT NULL,
     hard_expires_at timestamp with time zone,
     collapse_key text DEFAULT ''::text NOT NULL,
-    not_before timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    not_before timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     CONSTRAINT managed_realtime_push_deliveries_category_check CHECK ((category ~ '^[a-z0-9_.-]{1,64}$'::text)),
     CONSTRAINT managed_realtime_push_deliveries_collapse_key_check CHECK ((octet_length(collapse_key) <= 128)),
     CONSTRAINT managed_realtime_push_deliveries_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'urgent'::text]))),
@@ -26300,12 +26309,16 @@ CREATE TABLE public.platform_tenant_plans (
     max_requests_per_day bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tier_mode text DEFAULT 'graduated'::text NOT NULL,
+    unit text DEFAULT 'request'::text NOT NULL,
     CONSTRAINT platform_tenant_plans_budget_chk CHECK ((((max_requests_per_minute IS NULL) = (max_requests_per_day IS NULL)) AND ((max_requests_per_minute IS NULL) OR ((max_requests_per_minute >= 0) AND (max_requests_per_day >= 0))))),
     CONSTRAINT platform_tenant_plans_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT platform_tenant_plans_price_chk CHECK (((price_millicents_per_unit >= 0) AND (included_units_per_month >= 0))),
     CONSTRAINT platform_tenant_plans_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
-    CONSTRAINT platform_tenant_plans_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0))))
+    CONSTRAINT platform_tenant_plans_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
+    CONSTRAINT platform_tenant_plans_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
+    CONSTRAINT platform_tenant_plans_unit_chk CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
 );
 
 
@@ -26332,13 +26345,15 @@ CREATE TABLE public.platform_tenant_rate_cards (
     included_units_per_month bigint DEFAULT 0 NOT NULL,
     tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tier_mode text DEFAULT 'graduated'::text NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
     CONSTRAINT platform_tenant_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT platform_tenant_rate_cards_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
-    CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = 'request'::text))
+    CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
 );
 
 
@@ -26402,6 +26417,34 @@ CREATE TABLE public.platform_tenant_request_budgets (
     CONSTRAINT platform_tenant_request_budgets_minute_start_check CHECK (((minute_start IS NULL) OR (minute_start = (date_trunc('minute'::text, (minute_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
     CONSTRAINT platform_tenant_request_budgets_minute_used_check CHECK ((minute_used >= 0))
 );
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_source_route_usage_minutes (
+    account_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    source_id uuid NOT NULL,
+    route text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    billable_units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_source_route_usage_minutes_kind_chk CHECK ((source_kind = ANY (ARRAY['surface'::text, 'jwt'::text]))),
+    CONSTRAINT platform_tenant_source_route_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT platform_tenant_source_route_usage_minutes_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT platform_tenant_source_route_usage_minutes_units_chk CHECK ((billable_units >= 0))
+);
+
+
+--
+-- Name: TABLE platform_tenant_source_route_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_source_route_usage_minutes IS 'Billable units per tenant surface or JWT authorization rule, bounded route label, and UTC minute; consumer routes stay in api_consumer_route_usage_minutes.';
 
 
 --
@@ -26519,11 +26562,14 @@ CREATE TABLE public.platform_tenant_usage_minutes (
     billable_units bigint NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     source_kind text DEFAULT 'consumer'::text NOT NULL,
+    compute_ms bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_tenant_usage_minutes_check CHECK (((error_count >= 0) AND (error_count <= request_count))),
     CONSTRAINT platform_tenant_usage_minutes_check1 CHECK (((billable_units >= 0) AND (billable_units <= request_count))),
     CONSTRAINT platform_tenant_usage_minutes_consumer_key_chk CHECK ((consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
     CONSTRAINT platform_tenant_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT platform_tenant_usage_minutes_request_count_check CHECK ((request_count >= 0)),
+    CONSTRAINT platform_tenant_usage_minutes_resources_chk CHECK (((compute_ms >= 0) AND (response_bytes >= 0))),
     CONSTRAINT platform_tenant_usage_minutes_source_kind_chk CHECK ((source_kind = ANY (ARRAY['consumer'::text, 'surface'::text, 'jwt'::text])))
 );
 
@@ -30479,7 +30525,7 @@ CREATE TABLE public.service_recovery (
     app_id uuid NOT NULL,
     revision text NOT NULL,
     claim_token uuid,
-    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     status text NOT NULL,
     failures integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
@@ -31806,14 +31852,14 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 -- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
 
 
 --
 -- Name: log_events_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 03:00:00+03') TO ('2026-12-01 03:00:00+03');
 
 
 --
@@ -31827,21 +31873,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+03') TO ('2026-11-01 00:00:00+03');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+03') TO ('2026-12-01 00:00:00+03');
 
 
 --
 -- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+03') TO ('2027-01-01 00:00:00+03');
 
 
 --
@@ -36441,6 +36487,14 @@ ALTER TABLE ONLY public.platform_tenant_reconciliation_receipts
 
 ALTER TABLE ONLY public.platform_tenant_request_budgets
     ADD CONSTRAINT platform_tenant_request_budgets_pkey PRIMARY KEY (tenant_id);
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes platform_tenant_source_route_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
+    ADD CONSTRAINT platform_tenant_source_route_usage_minutes_pkey PRIMARY KEY (account_id, platform_tenant_id, app_id, source_kind, source_id, window_start, route);
 
 
 --
@@ -44167,6 +44221,13 @@ CREATE INDEX platform_tenant_plan_assignments_tenant_idx ON public.platform_tena
 --
 
 CREATE INDEX platform_tenant_reconciliation_receipts_history_idx ON public.platform_tenant_reconciliation_receipts USING btree (account_id, tenant_id, applied_at DESC, receipt_id DESC);
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes_read_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_source_route_usage_minutes_read_idx ON public.platform_tenant_source_route_usage_minutes USING btree (account_id, platform_tenant_id, window_start);
 
 
 --
@@ -55911,6 +55972,14 @@ ALTER TABLE ONLY public.platform_tenant_reconciliation_receipts
 
 ALTER TABLE ONLY public.platform_tenant_request_budgets
     ADD CONSTRAINT platform_tenant_request_budgets_account_id_tenant_id_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes platform_tenant_source_route_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
+    ADD CONSTRAINT platform_tenant_source_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

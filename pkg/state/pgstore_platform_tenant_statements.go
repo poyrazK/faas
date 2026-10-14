@@ -239,7 +239,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 		case when source_kind = 'consumer' then consumer_key else '' end,
 		case when source_kind = 'surface' then consumer_key else '' end,
 		case when source_kind = 'jwt' then consumer_key else '' end, window_start,
-		request_count, error_count, billable_units from platform_tenant_usage_minutes
+		request_count, error_count, billable_units, compute_ms, response_bytes from platform_tenant_usage_minutes
 		where account_id = $1::uuid and platform_tenant_id = $2::uuid
 		and window_start >= $3 and window_start < $4
 		order by app_id, source_kind, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
@@ -251,7 +251,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	for rows.Next() {
 		var b APIConsumerUsageBucket
 		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.SurfaceID, &b.JWTAuthorizationRuleID, &b.WindowStart,
-			&b.RequestCount, &b.ErrorCount, &b.BillableUnits); err != nil {
+			&b.RequestCount, &b.ErrorCount, &b.BillableUnits, &b.ComputeMS, &b.ResponseBytes); err != nil {
 			return nil, err
 		}
 		b.WindowStart = b.WindowStart.UTC()
