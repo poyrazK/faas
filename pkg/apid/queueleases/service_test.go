@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -167,5 +168,41 @@ func TestQueueMessageDue(t *testing.T) {
 		if got := queueMessageDue(tc.payload, "a"); got != tc.want {
 			t.Errorf("queueMessageDue(%s) = %v, want %v", tc.payload, got, tc.want)
 		}
+	}
+}
+
+func TestNackPersistsSafeErrorText(t *testing.T) {
+	for _, test := range []struct {
+		name, message, want string
+	}{
+		{"partial rune at byte limit", strings.Repeat("x", 1023) + "é", strings.Repeat("x", 1023)},
+		{"NUL in error", "upstream\x00failed", "upstream�failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLeaseFixture(t)
+			f.enqueue(t)
+			status, leased := f.lease(t, `{}`)
+			if status != http.StatusOK || len(leased.Messages) != 1 {
+				t.Fatalf("lease: status %d messages %d", status, len(leased.Messages))
+			}
+			raw, err := json.Marshal(api.QueueLeaseReceiptsRequest{Receipts: []string{leased.Messages[0].Receipt}, Error: test.message})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/v1/apps/waiter/queues/jobs/leases:nack", strings.NewReader(string(raw)))
+			request.SetPathValue("queue", "jobs")
+			response := httptest.NewRecorder()
+			Service{Host: f.host}.Nack(response, request, f.account, f.app, "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("nack: %d %s", response.Code, response.Body.String())
+			}
+			invocation, err := f.host.store.InvocationByID(t.Context(), leased.Messages[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !utf8.ValidString(invocation.LastError) || strings.ContainsRune(invocation.LastError, '\x00') || invocation.LastError != test.want {
+				t.Fatalf("persisted error is not safe text: %q", invocation.LastError)
+			}
+		})
 	}
 }
