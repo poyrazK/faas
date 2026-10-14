@@ -272,10 +272,11 @@ func run(args []string) (status int) {
 		// 8 source-side failure modes. Routes to commands_doctor.go.
 		return cmdDoctor(args[1:])
 	case dispatchApps:
-		// `gregale apps ls` is an alias for the default list action.
-		if len(args) > 1 && args[1] == "ls" {
+		// `gregale apps ls` (or `list`, as `projects list` spells it) is an
+		// alias for the default list action.
+		if len(args) > 1 && (args[1] == "ls" || args[1] == "list") {
 			if len(args) != 2 {
-				PrintUsage(os.Stderr, "usage: gregale apps [ls]", "apps")
+				PrintUsage(os.Stderr, "usage: gregale apps [ls|list]", "apps")
 				return 1
 			}
 			return cmdApps()
@@ -340,7 +341,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()

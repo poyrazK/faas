@@ -1271,3 +1271,9 @@ func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[str
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
+
+var ComposeDockerBuildContext = composeDockerBuildContext
+
+func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
+	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
+}

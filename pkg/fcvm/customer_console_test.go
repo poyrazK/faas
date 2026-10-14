@@ -87,6 +87,14 @@ func TestFirecrackerControlLineRecognizesTimestampedProductionLines(t *testing.T
 		"2026-09-22T18:27:44.319312144 [" + id + ":main] [DevPreview] Virtual machine snapshots is in development preview - 'load snapshot' VMM action took 7038 us.",
 		"2026-09-22T18:27:44.320377143 [" + id + ":fc_api] 'load snapshot' API request took 8347 us.",
 		"2026-09-22T19:35:17.807045958 [" + id + ":main] Firecracker exiting successfully. exit_code=0",
+		// hunt #10: device kicks on every rc.257 restore.
+		"2026-10-14T08:12:32.964273610 [" + id + ":main] [Vsock:vsock] notifying tx queue",
+		"2026-10-14T08:12:32.964280138 [" + id + ":main] [Balloon:balloon] notifying queues",
+		"2026-10-14T08:12:32.964289134 [" + id + ":main] [Block:layer] notifying queues",
+		"2026-10-14T08:12:32.964295007 [" + id + ":main] [Net:eth0] notifying queues",
+		"2026-10-14T08:12:32.964295007 [" + id + ":main] [Rng:rng] notifying queues",
+		"2026-10-14T08:12:32.964295007 [" + id + ":main] [Vsock:vsock] signaling event queue",
+		"2026-10-14T08:12:32.964301857 [" + id + ":main] kick pmem base.",
 	} {
 		if !firecrackerControlLine([]byte(line)) {
 			t.Errorf("production control line was not filtered: %q", line)
@@ -95,6 +103,7 @@ func TestFirecrackerControlLineRecognizesTimestampedProductionLines(t *testing.T
 	for _, line := range []string{
 		"2026-09-22T18:27:44Z request handled in 3ms",
 		"2026-09-22T18:27:44Z [worker:main] processed job 42",
+		"[worker:main] notifying 3 subscribers",
 		"crashing on purpose",
 		"guest-init: app crash-looped after 3 restart(s)",
 	} {
@@ -174,6 +183,8 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 00:58:50 INFO event publish proxy started endpoint=http://169.254.169.254/v1/events:publish\n",
 		"2026/10/14 00:58:50 INFO outbound relay started endpoint=http://127.0.0.1:2774\n",
 		"2026/10/14 00:58:50 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err=\"invalid argument\"\n",
+		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
+		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
 		"hello-gregale listening on :3000\n",
