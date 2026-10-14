@@ -360,6 +360,20 @@ const (
 // realtime trigger may bind (ADR-1237): one GatewaySynthDispatchTimeout
 // invocation plus wake and queueing margin.
 const RealtimeTriggerMinLeaseSeconds = 120
+
+// Realtime usage recording (ADR-1238 step 2: recorded, not billed). Each
+// realtimed process reports its cumulative per-endpoint usage for the current
+// UTC hour once per RealtimeUsageReportInterval, in reports of at most
+// RealtimeUsageReportMaxEndpoints endpoints. It keeps completed hours it could
+// not deliver for RealtimeUsageReportMaxAge, and apid refuses reports for
+// older hours. Rows live as long as usage_minutes (13 months).
+const (
+	RealtimeUsageReportInterval     = time.Minute
+	RealtimeUsageReportMaxEndpoints = 200
+	RealtimeUsageReportMaxBytes     = 256 << 10
+	RealtimeUsageReportMaxAge       = 24 * time.Hour
+	RealtimeUsageReadMaxRows        = 10_000
+)
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 

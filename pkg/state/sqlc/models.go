@@ -7851,6 +7851,22 @@ type QueueBinding struct {
 	EnvironmentID   pgtype.UUID
 }
 
+type RealtimeUsageHour struct {
+	EndpointID            pgtype.UUID
+	Hour                  pgtype.Timestamptz
+	NodeName              string
+	Incarnation           pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	MinutePeakConnections []int32
+	ConnectionSeconds     int64
+	DeliveredMessages     int64
+	DeliveredBytes        int64
+	ReceivedMessages      int64
+	ReceivedBytes         int64
+	ReportedAt            pgtype.Timestamptz
+}
+
 type RecentBuildClaim struct {
 	AccountID pgtype.UUID
 	ClaimedAt pgtype.Timestamptz

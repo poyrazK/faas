@@ -28805,6 +28805,35 @@ CREATE TABLE public.queue_bindings (
 
 
 --
+-- Name: realtime_usage_hours; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.realtime_usage_hours (
+    endpoint_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    node_name text NOT NULL,
+    incarnation uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    minute_peak_connections integer[] NOT NULL,
+    connection_seconds bigint NOT NULL,
+    delivered_messages bigint NOT NULL,
+    delivered_bytes bigint NOT NULL,
+    received_messages bigint NOT NULL,
+    received_bytes bigint NOT NULL,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT realtime_usage_hours_connection_seconds_check CHECK ((connection_seconds >= 0)),
+    CONSTRAINT realtime_usage_hours_delivered_bytes_check CHECK ((delivered_bytes >= 0)),
+    CONSTRAINT realtime_usage_hours_delivered_messages_check CHECK ((delivered_messages >= 0)),
+    CONSTRAINT realtime_usage_hours_hour_check CHECK ((((EXTRACT(epoch FROM hour))::bigint % (3600)::bigint) = 0)),
+    CONSTRAINT realtime_usage_hours_minute_peak_connections_check CHECK (((cardinality(minute_peak_connections) = 60) AND (0 <= ALL (minute_peak_connections)))),
+    CONSTRAINT realtime_usage_hours_node_name_check CHECK (((length(node_name) >= 1) AND (length(node_name) <= 253))),
+    CONSTRAINT realtime_usage_hours_received_bytes_check CHECK ((received_bytes >= 0)),
+    CONSTRAINT realtime_usage_hours_received_messages_check CHECK ((received_messages >= 0))
+);
+
+
+--
 -- Name: recent_build_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37664,6 +37693,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 
 --
+-- Name: realtime_usage_hours realtime_usage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.realtime_usage_hours
+    ADD CONSTRAINT realtime_usage_hours_pkey PRIMARY KEY (endpoint_id, hour, node_name, incarnation);
+
+
+--
 -- Name: release_bundles release_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44394,6 +44431,20 @@ CREATE UNIQUE INDEX queue_bindings_app_queue_name_uniq ON public.queue_bindings 
 --
 
 CREATE INDEX queue_bindings_enabled_idx ON public.queue_bindings USING btree (app_id, enabled) WHERE enabled;
+
+
+--
+-- Name: realtime_usage_hours_account_hour; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_usage_hours_account_hour ON public.realtime_usage_hours USING btree (account_id, hour);
+
+
+--
+-- Name: realtime_usage_hours_hour; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX realtime_usage_hours_hour ON public.realtime_usage_hours USING btree (hour);
 
 
 --

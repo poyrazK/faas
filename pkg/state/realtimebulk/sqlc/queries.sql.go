@@ -1137,6 +1137,81 @@ func (q *Queries) ReadPrunedDeliveryEvents(ctx context.Context, db DBTX, groupID
 	return history_pruned_events, err
 }
 
+const readRealtimeUsageHours = `-- name: ReadRealtimeUsageHours :many
+WITH selected AS (
+ SELECT endpoint_id, hour, node_name, incarnation, account_id, app_id, minute_peak_connections, connection_seconds, delivered_messages, delivered_bytes, received_messages, received_bytes, reported_at FROM realtime_usage_hours WHERE account_id=$2::uuid
+ AND hour>=$3::timestamptz AND hour<$4::timestamptz),
+minutes AS (
+ SELECT s.endpoint_id,s.hour,m.i,sum(m.v)::bigint AS connections
+ FROM selected s CROSS JOIN LATERAL unnest(s.minute_peak_connections) WITH ORDINALITY AS m(v,i)
+ GROUP BY s.endpoint_id,s.hour,m.i),
+peaks AS (SELECT endpoint_id,hour,max(connections)::bigint AS peak_connections FROM minutes GROUP BY endpoint_id,hour)
+SELECT s.endpoint_id::text AS endpoint_id,max(s.app_id::text)::text AS app_id,s.hour,p.peak_connections,
+ sum(s.connection_seconds)::bigint AS connection_seconds,sum(s.delivered_messages)::bigint AS delivered_messages,
+ sum(s.delivered_bytes)::bigint AS delivered_bytes,sum(s.received_messages)::bigint AS received_messages,
+ sum(s.received_bytes)::bigint AS received_bytes
+FROM selected s JOIN peaks p ON p.endpoint_id=s.endpoint_id AND p.hour=s.hour
+GROUP BY s.endpoint_id,s.hour,p.peak_connections
+ORDER BY s.hour,s.endpoint_id
+LIMIT $1::integer
+`
+
+type ReadRealtimeUsageHoursParams struct {
+	RowLimit  int32
+	AccountID pgtype.UUID
+	FromHour  pgtype.Timestamptz
+	ToHour    pgtype.Timestamptz
+}
+
+type ReadRealtimeUsageHoursRow struct {
+	EndpointID        string
+	AppID             string
+	Hour              pgtype.Timestamptz
+	PeakConnections   int64
+	ConnectionSeconds int64
+	DeliveredMessages int64
+	DeliveredBytes    int64
+	ReceivedMessages  int64
+	ReceivedBytes     int64
+}
+
+// Fleet usage per endpoint and hour. The peak is the largest per-minute sum of
+// node peaks, so connections on different nodes at the same minute add up.
+func (q *Queries) ReadRealtimeUsageHours(ctx context.Context, db DBTX, arg ReadRealtimeUsageHoursParams) ([]ReadRealtimeUsageHoursRow, error) {
+	rows, err := db.Query(ctx, readRealtimeUsageHours,
+		arg.RowLimit,
+		arg.AccountID,
+		arg.FromHour,
+		arg.ToHour,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRealtimeUsageHoursRow{}
+	for rows.Next() {
+		var i ReadRealtimeUsageHoursRow
+		if err := rows.Scan(
+			&i.EndpointID,
+			&i.AppID,
+			&i.Hour,
+			&i.PeakConnections,
+			&i.ConnectionSeconds,
+			&i.DeliveredMessages,
+			&i.DeliveredBytes,
+			&i.ReceivedMessages,
+			&i.ReceivedBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readReplayJob = `-- name: ReadReplayJob :one
 SELECT id, group_id, state, rate, selection, outcomes, error_count, last_error, position, created_at, next_at, updated_at, dry_run, reviewed_job_id, started_job_id FROM managed_realtime_replay_jobs WHERE group_id=$1::uuid AND id=$2::uuid FOR UPDATE
 `
@@ -1295,6 +1370,57 @@ func (q *Queries) ReadWorkerHeartbeats(ctx context.Context, db DBTX, arg ReadWor
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordRealtimeUsage = `-- name: RecordRealtimeUsage :execrows
+INSERT INTO realtime_usage_hours AS t (endpoint_id,hour,node_name,incarnation,account_id,app_id,minute_peak_connections,
+ connection_seconds,delivered_messages,delivered_bytes,received_messages,received_bytes,reported_at)
+SELECT e.id,$1::timestamptz,$2::text,$3::uuid,e.account_id,e.app_id,
+ $4::integer[],$5::bigint,$6::bigint,
+ $7::bigint,$8::bigint,$9::bigint,clock_timestamp()
+FROM managed_realtime_endpoints e WHERE e.id=$10::uuid
+ON CONFLICT (endpoint_id,hour,node_name,incarnation) DO UPDATE SET
+ minute_peak_connections=ARRAY(SELECT greatest(t.minute_peak_connections[g.i],excluded.minute_peak_connections[g.i]) FROM generate_series(1,60) AS g(i) ORDER BY g.i),
+ connection_seconds=greatest(t.connection_seconds,excluded.connection_seconds),
+ delivered_messages=greatest(t.delivered_messages,excluded.delivered_messages),
+ delivered_bytes=greatest(t.delivered_bytes,excluded.delivered_bytes),
+ received_messages=greatest(t.received_messages,excluded.received_messages),
+ received_bytes=greatest(t.received_bytes,excluded.received_bytes),
+ reported_at=excluded.reported_at
+`
+
+type RecordRealtimeUsageParams struct {
+	Hour                  pgtype.Timestamptz
+	NodeName              string
+	Incarnation           pgtype.UUID
+	MinutePeakConnections []int32
+	ConnectionSeconds     int64
+	DeliveredMessages     int64
+	DeliveredBytes        int64
+	ReceivedMessages      int64
+	ReceivedBytes         int64
+	EndpointID            pgtype.UUID
+}
+
+// Cumulative per-process values only grow, so taking the larger value makes
+// repeated and out-of-order reports harmless. Unknown endpoints record nothing.
+func (q *Queries) RecordRealtimeUsage(ctx context.Context, db DBTX, arg RecordRealtimeUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, recordRealtimeUsage,
+		arg.Hour,
+		arg.NodeName,
+		arg.Incarnation,
+		arg.MinutePeakConnections,
+		arg.ConnectionSeconds,
+		arg.DeliveredMessages,
+		arg.DeliveredBytes,
+		arg.ReceivedMessages,
+		arg.ReceivedBytes,
+		arg.EndpointID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordReplayJobError = `-- name: RecordReplayJobError :exec
