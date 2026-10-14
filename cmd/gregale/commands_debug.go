@@ -1167,7 +1167,7 @@ func formatRegressionErrors(r api.DebugRegressionItem) string {
 	if r.Kind != "errors" && r.Kind != "latency_and_errors" {
 		return "-"
 	}
-	return strconv.FormatFloat(r.ErrorRateBasePct, 'f', -1, 64) + "→" + strconv.FormatFloat(r.ErrorRatePct, 'f', -1, 64) + "%"
+	return fmt.Sprintf("%s→%s%%", strconv.FormatFloat(r.ErrorRateBasePct, 'f', -1, 64), strconv.FormatFloat(r.ErrorRatePct, 'f', -1, 64))
 }
 
 // formatSuspectedDependency renders `postgresql "SELECT orders" 82→191ms`
