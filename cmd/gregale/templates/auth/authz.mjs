@@ -177,7 +177,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
   throw new HTTPError(404, 'not_found')
 }
 
-function readJSON(req, maxBytes) {
+export function readJSON(req, maxBytes) {
   return new Promise((resolve, reject) => {
     if (!['POST', 'PATCH'].includes(req.method)) { req.resume(); return resolve(undefined) }
     if (!/^application\/json(;|$)/i.test(req.headers['content-type'] ?? '')) return reject(new HTTPError(415, 'json_required'))

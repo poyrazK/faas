@@ -10256,6 +10256,10 @@ const (
 	// AuthStorageURLSeconds is the lifetime of an object URL the Auth app
 	// signs after authorize() allows the read or write.
 	AuthStorageURLSeconds = 60
+	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
+	// the most users one import request creates.
+	AuthAdminBodyBytes = 1 << 20
+	AuthImportBatch    = 100
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

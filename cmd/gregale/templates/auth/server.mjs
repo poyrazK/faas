@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
+import { adminKeyHashes, createAdminHandler, goTrueAdmin, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
@@ -61,6 +62,14 @@ function forwardHeaders(headers) {
   return out
 }
 
+// GoTrue's admin endpoints need a service_role token that only this front
+// mints, so the public path never needs them; owners use /admin/v1.
+export function goTrueAdminPath(path) {
+  let decoded
+  try { decoded = decodeURIComponent(path.split('?')[0]) } catch { return true }
+  return /^\/(admin|invite)(\/|$)/.test(decoded.replace(/\/{2,}/g, '/').toLowerCase())
+}
+
 // upstreamPath maps /auth/v1/<path> to GoTrue's root without decoding, so a
 // path GoTrue would reject is never rewritten into one it accepts.
 export function upstreamPath(url) {
@@ -69,9 +78,10 @@ export function upstreamPath(url) {
   return null
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin } = {}) {
   return http.createServer((req, res) => {
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
+    if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
     if (authz && req.url.startsWith(authzPrefix)) return authz(req, res, '/' + req.url.slice(authzPrefix.length).split('?')[0])
     if (ui && serveUI(req, res, ui)) return
     if (req.url === '/healthz') {
@@ -87,7 +97,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
       return
     }
     const path = upstreamPath(req.url)
-    if (path === null) return problem(res, 404, 'not_found')
+    if (path === null || goTrueAdminPath(path)) return problem(res, 404, 'not_found')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared > bodyBytes) return problem(res, 413, 'request_too_large')
     const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers: forwardHeaders(req.headers) }, response => {
@@ -129,7 +139,11 @@ export function start(env = process.env) {
   const workflows = workflowsConfig(env)
   const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows) })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
-  const server = createServer({ authz, ui, realtime })
+  // The dashboard is served from the Gregale API origin.
+  let dashboard = []
+  try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
+  const admin = createAdminHandler({ pool, admin: goTrueAdmin(signingKey(env.AUTH_JWT_KEYS)), keys: adminKeyHashes(env), origins: dashboard })
+  const server = createServer({ authz, ui, realtime, admin })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()
