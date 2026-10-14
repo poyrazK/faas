@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"math"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -45,7 +46,7 @@ func (s *PgStore) JobTaskLogTarget(ctx context.Context, accountID, jobName, runI
 		return JobTaskLogTarget{}, ErrNotFound
 	}
 	run, err := uuid.Parse(runID)
-	if err != nil || taskIndex < 0 {
+	if err != nil || taskIndex < 0 || taskIndex > math.MaxInt32 {
 		return JobTaskLogTarget{}, ErrNotFound
 	}
 	row, err := sqlc.New().JobTaskLogTarget(ctx, s.pool, sqlc.JobTaskLogTargetParams{

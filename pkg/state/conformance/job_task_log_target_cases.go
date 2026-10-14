@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -37,11 +38,12 @@ func testJobTaskLogTarget(t *testing.T, fx *Fixture) {
 		account, job, run string
 		index             int
 	}{
-		"other account":  {uuid.NewString(), name, run.ID, 0},
-		"other job name": {fx.Account.ID, name + "-x", run.ID, 0},
-		"unknown run":    {fx.Account.ID, name, uuid.NewString(), 0},
-		"unknown task":   {fx.Account.ID, name, run.ID, 1},
-		"malformed run":  {fx.Account.ID, name, "run-1", 0},
+		"other account":    {uuid.NewString(), name, run.ID, 0},
+		"other job name":   {fx.Account.ID, name + "-x", run.ID, 0},
+		"unknown run":      {fx.Account.ID, name, uuid.NewString(), 0},
+		"unknown task":     {fx.Account.ID, name, run.ID, 1},
+		"index past int32": {fx.Account.ID, name, run.ID, math.MaxInt32 + 1},
+		"malformed run":    {fx.Account.ID, name, "run-1", 0},
 	} {
 		if _, err := targets.JobTaskLogTarget(fx.Ctx, args.account, args.job, args.run, args.index); !errors.Is(err, state.ErrNotFound) {
 			t.Errorf("%s: err = %v, want ErrNotFound", label, err)
