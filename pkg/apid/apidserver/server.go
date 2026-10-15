@@ -3998,6 +3998,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/teams", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTeamHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/bulk-actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueBulkActionHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/frequency-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueFrequencyAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))

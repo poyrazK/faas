@@ -1610,6 +1610,8 @@ from .issue_event_response import IssueEventResponse
 from .issue_event_symbolication_strategy import IssueEventSymbolicationStrategy
 from .issue_event_tags import IssueEventTags
 from .issue_frame import IssueFrame
+from .issue_frequency_alert_policy import IssueFrequencyAlertPolicy
+from .issue_frequency_alert_rule import IssueFrequencyAlertRule
 from .issue_grouping_explanation import IssueGroupingExplanation
 from .issue_grouping_explanation_basis import IssueGroupingExplanationBasis
 from .issue_grouping_explanation_discriminator_kind import IssueGroupingExplanationDiscriminatorKind
@@ -3851,6 +3853,7 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_frequency_alert_policy_request import UpdateIssueFrequencyAlertPolicyRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
 from .update_issue_tracker_auto_sync_request_direction import UpdateIssueTrackerAutoSyncRequestDirection
@@ -5697,6 +5700,8 @@ __all__ = (
     "IssueEventSymbolicationStrategy",
     "IssueEventTags",
     "IssueFrame",
+    "IssueFrequencyAlertPolicy",
+    "IssueFrequencyAlertRule",
     "IssueGroupingExplanation",
     "IssueGroupingExplanationBasis",
     "IssueGroupingExplanationDiscriminatorKind",
@@ -7774,6 +7779,7 @@ __all__ = (
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueFrequencyAlertPolicyRequest",
     "UpdateIssueImpactAlertPolicyRequest",
     "UpdateIssueTrackerAutoSyncRequest",
     "UpdateIssueTrackerAutoSyncRequestDirection",

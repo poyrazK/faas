@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { verifyWebhook, type WebhookHeaders, type VerifyWebhookOptions, type VerifiedWebhook } from './webhook.js';
 
 export const ISSUE_SLACK_DEFAULT_EVENTS = Object.freeze(['issue.created', 'issue.regressed', 'issue.impact_threshold_reached'] as const);
-export const ISSUE_SLACK_EVENTS = Object.freeze([...ISSUE_SLACK_DEFAULT_EVENTS, 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored'] as const);
+export const ISSUE_SLACK_EVENTS = Object.freeze([...ISSUE_SLACK_DEFAULT_EVENTS, 'issue.frequency_threshold_reached', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored'] as const);
 export type IssueSlackEvent = typeof ISSUE_SLACK_EVENTS[number];
 
 export interface IssueSlackOptions {
@@ -103,6 +103,7 @@ export function formatIssueSlackMessage(payload: unknown, options: IssueSlackOpt
     || options.teamID !== undefined && String(issue.assignee_team_id).toLowerCase() !== options.teamID.toLowerCase()) return null;
   const labels: Record<IssueSlackEvent, string> = {
     'issue.created': 'New issue', 'issue.regressed': 'Issue regressed', 'issue.impact_threshold_reached': 'Customer-impact threshold reached',
+    'issue.frequency_threshold_reached': 'Event-frequency threshold reached',
     'issue.assigned': 'Issue ownership changed', 'issue.resolved': 'Issue resolved', 'issue.reopened': 'Issue reopened', 'issue.ignored': 'Issue ignored',
   };
   const owner = issue.assignee_team_id ? `Team ${issue.assignee_team_id}` : issue.assignee_account_id ? `Account ${issue.assignee_account_id}` : 'Unassigned';

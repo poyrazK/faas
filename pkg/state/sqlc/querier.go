@@ -1610,6 +1610,12 @@ type Querier interface {
 	IssueFindSplitTarget(ctx context.Context, db DBTX, arg IssueFindSplitTargetParams) (pgtype.UUID, error)
 	IssueFindToken(ctx context.Context, db DBTX, arg IssueFindTokenParams) (IssueIngestToken, error)
 	IssueFindTrackerLink(ctx context.Context, db DBTX, arg IssueFindTrackerLinkParams) (IssueTrackerLink, error)
+	IssueFrequencyCount(ctx context.Context, db DBTX, arg IssueFrequencyCountParams) (int64, error)
+	IssueFrequencyLastAlert(ctx context.Context, db DBTX, arg IssueFrequencyLastAlertParams) (pgtype.Timestamptz, error)
+	IssueFrequencyPolicy(ctx context.Context, db DBTX, arg IssueFrequencyPolicyParams) (IssueFrequencyPolicyRow, error)
+	IssueFrequencyPruneReceipts(ctx context.Context, db DBTX, arg IssueFrequencyPruneReceiptsParams) error
+	IssueFrequencyPutPolicy(ctx context.Context, db DBTX, arg IssueFrequencyPutPolicyParams) error
+	IssueFrequencyRecordAlert(ctx context.Context, db DBTX, arg IssueFrequencyRecordAlertParams) error
 	IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (AppIssue, error)
 	IssueGetGroup(ctx context.Context, db DBTX, arg IssueGetGroupParams) (IssueGroupRollup, error)
 	IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (int32, error)

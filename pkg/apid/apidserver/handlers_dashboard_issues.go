@@ -59,6 +59,15 @@ type dashboardIssuesData struct {
 	ReplayTargets        map[string][]dashboardIssueReplayTarget
 	Since                string
 	EventCursor          string
+	FrequencyAvailable   bool
+	FrequencyPolicy      api.IssueFrequencyAlertPolicy
+	FrequencySaved       bool
+	FrequencyMaxRules    int
+	FrequencyMaxEvents   int
+	FrequencyMinWindow   int
+	FrequencyMaxWindow   int
+	FrequencyMinCooldown int
+	FrequencyMaxCooldown int
 	ImpactAlertPolicy    api.IssueImpactAlertPolicy
 	ImpactAlertSaved     bool
 	OwnershipRulesJSON   string
@@ -115,6 +124,21 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 	if err != nil {
 		writeIssueError(w, err)
 		return
+	}
+	if frequency, ok := s.store.(state.IssueFrequencyAlertStore); ok {
+		data.FrequencyAvailable = true
+		data.FrequencySaved = r.URL.Query().Get("frequency_alert") == "updated"
+		data.FrequencyMaxRules = api.IssueFrequencyAlertMaxRules
+		data.FrequencyMaxEvents = api.IssueFrequencyAlertMaxEvents
+		data.FrequencyMinWindow = api.IssueFrequencyAlertMinWindowSeconds
+		data.FrequencyMaxWindow = api.IssueFrequencyAlertMaxWindowSeconds
+		data.FrequencyMinCooldown = api.IssueFrequencyAlertMinCooldownSeconds
+		data.FrequencyMaxCooldown = api.IssueFrequencyAlertMaxCooldownSeconds
+		data.FrequencyPolicy, err = frequency.GetIssueFrequencyAlertPolicy(r.Context(), app.ID, app.AccountID)
+		if err != nil {
+			writeIssueError(w, err)
+			return
+		}
 	}
 	ownershipRules, err := st.GetIssueOwnershipRules(r.Context(), app.ID)
 	if err != nil {

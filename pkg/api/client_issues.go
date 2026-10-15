@@ -297,3 +297,14 @@ func (c *Client) UpdateNativeLinearIssueTrackerStatus(ctx context.Context, slug,
 	err := c.do(ctx, "POST", issueTrackerLinksPath(slug, issue)+"/"+url.PathEscape(link)+"/native-linear-status", in, &out)
 	return out, err
 }
+
+func (c *Client) GetIssueFrequencyAlertPolicy(ctx context.Context, slug string) (IssueFrequencyAlertPolicy, error) {
+	var out IssueFrequencyAlertPolicy
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-frequency-alert-policy", nil, &out)
+	return out, err
+}
+func (c *Client) SetIssueFrequencyAlertPolicy(ctx context.Context, slug string, in UpdateIssueFrequencyAlertPolicyRequest) (IssueFrequencyAlertPolicy, error) {
+	var out IssueFrequencyAlertPolicy
+	err := c.do(ctx, "PUT", issueAppPath(slug)+"/issue-frequency-alert-policy", in, &out)
+	return out, err
+}

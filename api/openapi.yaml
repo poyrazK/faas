@@ -13266,6 +13266,63 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-frequency-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueFrequencyAlertPolicy
+      summary: Read application issue event-frequency rules.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current policy. Unconfigured apps return revision zero and no rules.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueFrequencyAlertPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueFrequencyAlertPolicy
+      summary: Replace application issue event-frequency rules.
+      description: >-
+        Requires the current revision (zero initially). Replaces up to ten named rules;
+        an empty array removes all rules. Stale writes return 409. Counts retained accepted
+        occurrences per canonical issue in (now-window, now]. Only a new capture inside
+        the window evaluates a rule. At or above threshold, the first eligible capture
+        after cooldown alerts again. Active ignore periods suppress alerts while collection
+        continues. Configuration edits do not send notifications. Changing a rule's
+        environment, threshold, window or cooldown starts a fresh cycle on the next capture;
+        unchanged rules and disable/re-enable retain cooldowns. Webhook event is
+        issue.frequency_threshold_reached. This policy does not alter customer-impact alerts.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueFrequencyAlertPolicyRequest' }
+      responses:
+        '200':
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueFrequencyAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409':
+          description: Policy revision changed. Read the current policy and retry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issue-impact-alert-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -79589,7 +79646,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -80489,7 +80546,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -80571,7 +80628,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "consumer.usage_threshold", "outbound.ai_budget.threshold", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered", "event_recovery.execution_finished", "event_recovery.execution_attention", "automation.recovery_review_ready", "automation.recovery_review_finished", "automation.recovery_policy_paused", "automation.recovery_queue_blocked", "automation.recovery_health_alert", "automation.recovery_health_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -82450,6 +82507,40 @@ components:
         unattributed_events: { type: integer }
         coverage: { type: string }
 
+    IssueFrequencyAlertRule:
+      type: object
+      additionalProperties: false
+      required: [key, enabled, environment, minimum_events, window_seconds, cooldown_seconds]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+        enabled: { type: boolean }
+        environment:
+          type: string
+          maxLength: 63
+          description: Exact issue environment. Empty string matches all environments.
+        minimum_events: { type: integer, format: int64, minimum: 1, maximum: 100000 }
+        window_seconds: { type: integer, format: int64, minimum: 60, maximum: 86400 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 60, maximum: 604800 }
+    IssueFrequencyAlertPolicy:
+      type: object
+      additionalProperties: false
+      required: [revision, rules]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/IssueFrequencyAlertRule' }
+    UpdateIssueFrequencyAlertPolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, rules]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/IssueFrequencyAlertRule' }
     IssueImpactAlertPolicy:
       description: "App-level customer-impact threshold measured using verified distinct customers in a rolling 24-hour window."
       type: object

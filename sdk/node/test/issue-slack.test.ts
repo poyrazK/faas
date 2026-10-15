@@ -51,3 +51,11 @@ test('JSON and CloudEvents retries bind stable transition content and delivery i
  const wrongApp=Buffer.from(JSON.stringify({specversion:'1.0',id:'delivery-one',type:'issue.created',appid:activity,data:payload}));
  assert.throws(()=>issueSlackMessageFromWebhook('test-secret',signed(wrongApp),wrongApp,options),/invalid issue webhook/);
 });
+
+test('frequency Slack alerts require explicit subscription and use a safe label',()=>{
+ const frequency={...payload,type:'issue.frequency_threshold_reached'};
+ assert.equal(formatIssueSlackMessage(frequency,options),null);
+ const message=formatIssueSlackMessage(frequency,{...options,events:['issue.frequency_threshold_reached']});
+ assert.ok(message?.text.includes('Event-frequency threshold reached'));
+ assert.ok(!message?.text.includes('must not be rendered'));
+});

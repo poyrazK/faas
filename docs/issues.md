@@ -557,6 +557,74 @@ transaction snapshots recipients in the existing webhook outbox. The normal
 relay and signed delivery ledger recover committed transitions after restart.
 Receivers must deduplicate delivery IDs: network retries are at least once.
 
+### Event-frequency alerts
+
+Use **Event-frequency alerts** on the app's Issues page to add, edit, disable or
+remove up to ten named rules. For example: at least 50 events for an issue within
+300 seconds, only in `production`, with an 1800-second notification cooldown.
+Leave environment empty to match every environment; counts still remain separate
+for each issue and its environment. Exact environment names do not support globs.
+All matching rules evaluate independently; rule order has no effect. Cooldowns
+apply separately to each rule and issue.
+
+Rules count accepted retained occurrences in `(now-window, now]`, by occurrence
+time, across the current canonical group and merged members. They measure observed
+frequency, not unsampled traffic or distinct users. Duplicated, rejected, sampled
+out and expired occurrences do not increase the count. An old/future-dated capture
+outside the window cannot trigger a frequency alert. Request identity enrichment
+cannot trigger one either. Windows range from 60 to 86,400 seconds, thresholds from
+1 to 100,000 events, and cooldowns from 60 to 604,800 seconds.
+
+The first qualifying capture at or above threshold emits
+`issue.frequency_threshold_reached`. During sustained failures, another qualifying
+capture can alert once cooldown has elapsed. There is no timer-driven repeat or
+recovery notification, and frequency rules do not change issue lifecycle state.
+An active ignore period suppresses frequency alerts while events accumulate.
+Reopening/expiry sends nothing by itself; the next qualifying capture can alert
+if the threshold and cooldown permit it. This differs from customer-impact alerts,
+which require a below-to-above customer-count crossing.
+
+The API reads or replaces the complete rule set:
+`GET /v1/apps/{slug}/issue-frequency-alert-policy` and
+`PUT /v1/apps/{slug}/issue-frequency-alert-policy`. Start with revision zero:
+
+```json
+{
+  "expected_revision": 0,
+  "rules": [{
+    "key": "production-burst",
+    "enabled": true,
+    "environment": "production",
+    "minimum_events": 50,
+    "window_seconds": 300,
+    "cooldown_seconds": 1800
+  }]
+}
+```
+
+Writes return `{ "revision": 1, "rules": [...] }`. Use the returned revision for
+subsequent updates; stale API or dashboard writes return 409 and require a reload.
+An empty rules array removes every rule. An unchanged rule, list reordering or
+an enable toggle preserves cooldown receipts. Editing threshold, environment,
+window or cooldown starts a new cycle on the next matching capture. Configuration
+changes never send notifications by themselves. Merging uses the most recent
+matching cooldown among current members; after splitting, counts and cooldowns
+follow resulting group identities. Regrouping itself sends no frequency alert.
+
+Subscribe an app webhook to `issue.frequency_threshold_reached`. The alert activity,
+per-issue cooldown and snapshotted webhook recipients commit with the occurrence.
+The existing signed outbox and retry ledger recover deliveries after restart;
+receivers must deduplicate transition IDs. Alert `details` include `rule_key`,
+`policy_revision`, environment, observed/required counts, window bounds, cooldown
+and deployment ID. A cooldown limits new alerts, not retries of an already-queued
+webhook. Queued deliveries survive later rule edits, disabling and ignore actions.
+
+Go clients expose `GetIssueFrequencyAlertPolicy` / `SetIssueFrequencyAlertPolicy`;
+Node's generated `AppsService` and Python's generated apps API expose the matching
+operations. The customer-operated Node Slack bridge accepts frequency alerts when
+its explicit `events` list includes `issue.frequency_threshold_reached`; its default
+event list is unchanged. Native Slack destinations still cover tracker-sync notices.
+
 ### Application error alerting compared with Sentry
 
 The current application-error alert surface has these boundaries (reviewed
@@ -566,16 +634,15 @@ The current application-error alert surface has these boundaries (reviewed
 | --- | --- | --- |
 | New issue and release-aware regression | Durable `issue.created` and `issue.regressed` webhooks | Configurable trigger/filter/action rules |
 | Customer impact | One policy per app, counting verified distinct customers per issue over a fixed rolling 24 hours | Per-rule windows and thresholds; verified customers differ from Sentry user counts |
-| Event frequency | Retained event counts in the inbox | Event-count threshold alerts over selectable short windows |
-| Environment routing | Issue groups are isolated by environment; webhook payload includes the issue environment | Native environment selectors on application alert policies |
-| Noise control | Threshold crossings avoid repeats while impact stays above threshold; active ignore periods suppress impact crossings | Configurable cooldowns and repeat-notification policies |
+| Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
+| Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
+| Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
 | Slack | Customer-operated application webhook bridge | Native application-error delivery; native team Slack destinations currently cover tracker-sync incidents only |
 
-The next implementation priority is event-frequency alerts with explicit window,
-environment and cooldown semantics. Tracker-sync acknowledgment, reminders and
-escalation policies are a separate workflow and do not provide these application
-error alert rules. Ending an ignore period does not retroactively notify about
-suppressed customer-impact crossings.
+The next delivery gap is native Slack routing for application-error rules.
+Tracker-sync acknowledgment, reminders and escalation policies remain a separate
+workflow. Frequency rules do not yet share those incident controls. Ending an ignore
+period does not retroactively notify about suppressed customer-impact crossings.
 
 ## Limits
 

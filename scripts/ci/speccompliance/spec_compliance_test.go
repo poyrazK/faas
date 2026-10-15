@@ -89,6 +89,13 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
@@ -96,6 +103,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
 	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                      true, // scoped HTML/CSRF frequency alert policy adapter
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 	"POST /dashboard/apps/{slug}/issues/bulk-actions":                          true, // session/CSRF HTML adapter for the corresponding public Issues API
@@ -1109,6 +1117,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
+		filepath.Join(root, "pkg", "api", "issue_frequency_alerts.go"),
 		filepath.Join(root, "pkg", "api", "issue_context.go"),
 		filepath.Join(root, "pkg", "api", "issue_source_maps.go"),
 		filepath.Join(root, "pkg", "api", "issue_triage.go"),

@@ -10538,3 +10538,13 @@ const (
 	IssueSlackSendInterval     = time.Second
 	IssueSlackTick             = 5 * time.Second
 )
+
+// Issue frequency alert bounds cap configuration and per-capture evaluation work.
+const (
+	IssueFrequencyAlertMaxRules           = 10
+	IssueFrequencyAlertMaxEvents          = 100000
+	IssueFrequencyAlertMinWindowSeconds   = 60
+	IssueFrequencyAlertMaxWindowSeconds   = 86400
+	IssueFrequencyAlertMinCooldownSeconds = 60
+	IssueFrequencyAlertMaxCooldownSeconds = 604800
+)

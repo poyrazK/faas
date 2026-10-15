@@ -47,6 +47,14 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                               true, // authenticated browser-only frequency alert form
+
 	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 
@@ -356,6 +364,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-frequency-alert-policy":                         "GetIssueFrequencyAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-frequency-alert-policy":                         "SetIssueFrequencyAlertPolicy",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                            "GetIssueImpactAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                            "SetIssueImpactAlertPolicy",
 	"GET /v1/apps/{slug}/issue-ownership-rules":                                "GetIssueOwnershipRules",

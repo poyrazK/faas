@@ -3778,6 +3778,7 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventIssueFrequencyThresholdReached   AppWebhookEvent = "issue.frequency_threshold_reached"
 	AppWebhookEventRecoveryQueueBlocked             AppWebhookEvent = "automation.recovery_queue_blocked"
 	AppWebhookEventRecoveryHealthAlert              AppWebhookEvent = "automation.recovery_health_alert"
 	AppWebhookEventRecoveryHealthRecovered          AppWebhookEvent = "automation.recovery_health_recovered"
@@ -3850,6 +3851,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventIssueFrequencyThresholdReached,
 	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }

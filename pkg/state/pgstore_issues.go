@@ -324,6 +324,9 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 			return api.IssueEventResponse{}, err
 		}
 	}
+	if err = recordIssueFrequencyAlerts(ctx, q, tx, row, in); err != nil {
+		return api.IssueEventResponse{}, err
+	}
 	action := ""
 	if created {
 		action = "created"

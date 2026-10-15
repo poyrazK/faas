@@ -720,6 +720,12 @@ type AppIssue struct {
 	AssigneeTeamID           pgtype.UUID
 }
 
+type AppIssueFrequencyAlertPolicy struct {
+	AppID    pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
 type AppIssueImpactAlertPolicy struct {
 	AppID            pgtype.UUID
 	MinimumCustomers int32
@@ -3902,6 +3908,14 @@ type IssueEvent struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+}
+
+type IssueFrequencyAlertReceipt struct {
+	AppID       pgtype.UUID
+	RuleKey     string
+	IssueID     pgtype.UUID
+	RuleHash    string
+	LastAlertAt pgtype.Timestamptz
 }
 
 type IssueGroupAssignment struct {

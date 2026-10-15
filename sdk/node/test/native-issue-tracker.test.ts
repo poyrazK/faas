@@ -117,3 +117,23 @@ test('Linear callback configuration keeps the signing secret write-only',async(t
  const address=server.address();assert.ok(address&&typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
  const out=await AppsService.updateIssueTrackerLinearConnection({slug:'payments',requestBody:body});assert.equal(out.webhook_enabled,true);assert.equal(out.callback_path,'/hooks/issue-trackers/linear/app');assert.ok(!JSON.stringify(out).includes(body.webhook_secret));
 });
+
+test('frequency policies send the expected revision and preserve rule timing',async(t)=>{
+ const rule={key:'burst',enabled:true,environment:'production',minimum_events:50,window_seconds:300,cooldown_seconds:1800};
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.url,'/v1/apps/payments/issue-frequency-alert-policy');res.setHeader('Content-Type','application/json');
+  if(req.method==='PUT'){
+   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+   assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),{expected_revision:7,rules:[rule]});
+   res.end(JSON.stringify({revision:8,rules:[rule]}));return;
+  }
+  assert.equal(req.method,'GET');res.end(JSON.stringify({revision:7,rules:[rule]}));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address&&typeof address!=='string');
+ new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ const current=await AppsService.getIssueFrequencyAlertPolicy({slug:'payments'});
+ assert.deepEqual(current,{revision:7,rules:[rule]});
+ const updated=await AppsService.setIssueFrequencyAlertPolicy({slug:'payments',requestBody:{expected_revision:current.revision,rules:[rule]}});
+ assert.deepEqual(updated,{revision:8,rules:[rule]});
+});

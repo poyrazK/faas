@@ -59,6 +59,7 @@ import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
 import type { IssueEvent } from '../models/IssueEvent.js';
 import type { IssueEventResponse } from '../models/IssueEventResponse.js';
+import type { IssueFrequencyAlertPolicy } from '../models/IssueFrequencyAlertPolicy.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
@@ -154,6 +155,7 @@ import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateIssueFrequencyAlertPolicyRequest } from '../models/UpdateIssueFrequencyAlertPolicyRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
 import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTrackerAutoSyncRequest.js';
 import type { UpdateIssueTrackerLinearConnectionRequest } from '../models/UpdateIssueTrackerLinearConnectionRequest.js';
@@ -2250,6 +2252,75 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read application issue event-frequency rules.
+   * @returns IssueFrequencyAlertPolicy Current policy. Unconfigured apps return revision zero and no rules.
+   * @throws ApiError
+   */
+  public static getIssueFrequencyAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueFrequencyAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-frequency-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace application issue event-frequency rules.
+   * Requires the current revision (zero initially). Replaces up to ten named rules; an empty array removes all rules. Stale writes return 409. Counts retained accepted occurrences per canonical issue in (now-window, now]. Only a new capture inside the window evaluates a rule. At or above threshold, the first eligible capture after cooldown alerts again. Active ignore periods suppress alerts while collection continues. Configuration edits do not send notifications. Changing a rule's environment, threshold, window or cooldown starts a fresh cycle on the next capture; unchanged rules and disable/re-enable retain cooldowns. Webhook event is issue.frequency_threshold_reached. This policy does not alter customer-impact alerts.
+   * @returns IssueFrequencyAlertPolicy Updated policy.
+   * @throws ApiError
+   */
+  public static setIssueFrequencyAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueFrequencyAlertPolicyRequest,
+  }): CancelablePromise<IssueFrequencyAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-frequency-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Policy revision changed. Read the current policy and retry.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
