@@ -425,3 +425,6 @@ enums before using these outcomes. Upgrade apid and every scheduler before using
 negative acknowledgments: an older scheduler cannot reset the saved rejection
 receipt on a new offer and fails closed. Drain these attempts with compatible
 schedulers before rollback. No production migration or deployment is performed.
+
+For the Go receipt-aware worker, renewal lifecycle, explicit failure methods and
+crash recovery, see [Go worker acknowledgments](event-acknowledgment-worker.md).
