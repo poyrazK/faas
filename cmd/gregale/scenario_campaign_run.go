@@ -160,11 +160,11 @@ func cmdTestCampaignRun(args []string) int {
 	_ = lock.Close()
 	defer func(){ _ = os.Remove(lockPath) }()
 	checkpointPath := filepath.Join(*directory,"checkpoint.json")
-	checkpoint := testCampaignCheckpoint{SchemaVersion:1,PlanSHA256:testCampaignJSONHash(plan),Side:*side,Revision:*revision,Batches:make(map[string]testCampaignCheckpointBatch)}
+	checkpoint := testCampaignCheckpoint{SchemaVersion:1,LineageVersion:1,Recovery:plan.Recovery,PlanSHA256:testCampaignJSONHash(plan),Side:*side,Revision:*revision,Batches:make(map[string]testCampaignCheckpointBatch)}
 	if _, err := os.Lstat(checkpointPath); err == nil {
 		if err := readTestCampaignJSON(checkpointPath,&checkpoint); err != nil { return printErr("Invalid campaign checkpoint",err) }
 		if checkpoint.SchemaVersion != 1 || checkpoint.PlanSHA256 != testCampaignJSONHash(plan) ||
-			checkpoint.Side != *side || checkpoint.Revision != *revision || checkpoint.Batches == nil {
+			checkpoint.Side != *side || checkpoint.Revision != *revision || checkpoint.Batches == nil || !testCampaignCheckpointLineageMatches(checkpoint,plan) {
 			return printErr("Checkpoint does not match",errors.New("plan, revision and side must match the original invocation"))
 		}
 	} else if !os.IsNotExist(err) { return printErr("Could not inspect checkpoint",err) } else {

@@ -949,3 +949,75 @@ Omit a report flag when that report is absent from the bundle. Reconciliation
 returns 0 when the bundle is ready, 2 when unresolved evidence blocks execution,
 and 1 for invalid inputs or artifact errors. Ready means the recovery evidence
 permits continuation; remaining coverage violations are reported independently.
+
+
+### Unified campaign status
+
+Use `test policy status` to inspect a saved plan, its checkpoint and optional
+recovery bundle through one read-only report. It never authenticates, calls the
+platform, runs application commands, takes an execution lock, merges files into
+the campaign, or modifies checkpoints/seals.
+
+```sh
+gregale test policy status --plan campaign-plan.json --policy campaign-policy.yaml --manifest gregale-test.yaml --from current.json --baseline baseline.json --directory /tmp/gregale-current-campaign --json campaign-status.json --html campaign-status.html
+```
+
+JSON is also written to stdout. The optional exports must be outside campaign,
+recovery-bundle and parent campaign directories and cannot alias inputs or each
+other, including hard links. Use a separate file for shell redirection.
+
+The same manifest, policy and exact original report inputs are required. Omit
+report flags absent from the saved plan. With a checkpoint, status is scoped to
+its revision side; an explicit `--side` must agree. Without `--directory`, it
+shows the planned batches for both sides, or just the selected `--side`.
+A directory without a checkpoint is also inspectable as an unstarted plan.
+
+The report includes:
+
+- Completed, running, pending, blocked, recovered and awaiting-reconciliation
+  batch counts, context, repeat count, evidence quality and next action.
+- Allocated, reserved and remaining conservative estimates for leaf runs,
+  deployments and workload minutes. Any checkpointed batch or orphan report/log
+  reserves its full estimate; missing evidence does not refund work.
+- Actual coverage gaps, environment gaps, policy violations and next actions,
+  reevaluated from verified raw receipt evidence. Saved policy-result files are
+  never treated as the source of truth.
+- Verified parent checkpoint/seal links, revision identity and per-parent budget
+  reservations across recovery history, with cycle/depth and legacy diagnostics.
+
+A checkpoint's running label and the presence of `runner.lock` do not prove that
+a process is alive. Complete reports without a matching done checkpoint remain
+awaiting reconciliation and do not count as adopted execution. Changed, missing,
+duplicate or incompatible evidence cannot inflate observed coverage. Recorded
+cleanup failures remain visible even when their completed execution produced
+qualifying assertion evidence.
+
+Checkpoint and seal stamps are compared before and after inspection. A change
+sets `snapshot_stable: false` and asks for a fresh status snapshot. This is a
+best-effort view, not a synchronization mechanism or an execution/cleanup gate.
+Batch-report inspection is bounded to 128 MiB in addition to the separately
+bounded original reports; reaching this limit is reported explicitly.
+
+To include adopted partial work, point status at the original campaign and its
+published recovery bundle:
+
+```sh
+gregale test policy status --plan campaign-plan.json --policy campaign-policy.yaml --manifest gregale-test.yaml --from current.json --baseline baseline.json --directory /tmp/gregale-current-campaign --recovery-bundle /tmp/gregale-current-recovery --html recovered-status.html
+```
+
+The bundle must match the original checkpoint and seal. Status verifies
+reconciliation/continuation identities, per-batch adoption counts and receipt
+hashes, reservation totals and merged-report hashes before using recovered
+coverage. The report distinguishes a mere seal marker from verified adoption.
+
+New execution checkpoints retain their plan's recovery link with lineage
+version 1. Status traces up to 32 parents through those links. Older checkpoints
+remain usable; when earlier links were not retained, the report stops and marks
+the history incomplete rather than guessing that it reached the original root.
+
+The HTML export is a standalone document with escaped report text, inline CSS,
+and no JavaScript, external resources or automatic polling. The policy verdict
+describes only the verified evidence subset and does not imply all planned
+batches completed. Status returns 0 for an informational report, including
+recorded failures/blockers, and 1 for invalid inputs, mismatched artifacts or
+export errors.

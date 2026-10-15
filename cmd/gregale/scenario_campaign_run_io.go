@@ -22,6 +22,8 @@ type testCampaignExecutionBinding struct {
 }
 
 type testCampaignCheckpoint struct {
+	LineageVersion int `json:"lineage_version,omitempty"`
+	Recovery *testCampaignRecoveryLink `json:"recovery,omitempty"`
 	SchemaVersion int `json:"schema_version"`
 	PlanSHA256 string `json:"plan_sha256"`
 	Side string `json:"side"`

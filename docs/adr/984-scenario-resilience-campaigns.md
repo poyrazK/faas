@@ -78,3 +78,20 @@ continuation plan, preventing both schedulers from spending the same pending
 allocation. A continuation without its matching seal is not executable. Blocked
 seals can be refreshed after evidence reconciliation; ready seals are immutable.
 Original checkpoints and execution report bytes remain unchanged.
+
+
+## Unified campaign status (2026-10-15)
+
+Expose an informational read-only snapshot of plan/checkpoint progress, verified
+receipt coverage, cost reservations, recovery adoption and concrete next actions.
+Do not provision workloads, take an execution lock, change artifacts or infer
+process liveness from checkpoint labels or lock presence. Reevaluate coverage
+from verified receipt inputs, never saved policy verdicts. Recovery adoption
+requires its matching sealed bundle.
+
+New execution checkpoints retain the current plan's recovery link with lineage
+version 1. Existing versionless checkpoints remain compatible and are not
+rewritten; status stops at an unrecorded ancestry boundary. Bound tracing to 32
+parents and validate every parent checkpoint/seal link. Export escaped standalone
+HTML and versioned JSON outside execution/evidence directories. A status snapshot
+is not an execution, cleanup or policy enforcement gate.

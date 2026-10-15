@@ -57,7 +57,7 @@ func cmdTestCampaignReconcile(args []string) int {
 	var checkpoint testCampaignCheckpoint
 	if err := readTestCampaignJSON(filepath.Join(*directory,"checkpoint.json"),&checkpoint); err != nil { return printErr("Invalid checkpoint",err) }
 	revision,revisionErr := hex.DecodeString(checkpoint.Revision)
-	if checkpoint.SchemaVersion != 1 || checkpoint.PlanSHA256 != testCampaignJSONHash(plan) || checkpoint.Batches == nil ||
+	if checkpoint.SchemaVersion != 1 || checkpoint.PlanSHA256 != testCampaignJSONHash(plan) || checkpoint.Batches == nil || !testCampaignCheckpointLineageMatches(checkpoint,plan) ||
 		(checkpoint.Side != "current" && checkpoint.Side != "baseline") || revisionErr != nil || (len(revision) != 20 && len(revision) != 32) {
 		return printErr("Checkpoint binding changed",errors.New("checkpoint does not identify this plan and a revision side"))
 	}
