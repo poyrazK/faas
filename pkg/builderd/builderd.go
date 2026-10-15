@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -149,6 +150,7 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	buildPublisher buildpublisher.Signer
 	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
 	notif          Notifier
@@ -1528,6 +1530,13 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 // completeBuild commits the claim, artifact and provenance before publishing
 // any success signal. imaged polls the committed records if NOTIFY is lost.
 func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA, frameworkVer string, result BuildResult, buildStart time.Time) (BuildResult, error) {
+	if err := b.publishBuildExport(ctx, build, dep, app, srcSHA, result); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return BuildResult{}, nil
+		}
+		b.markFailed(ctx, build, state.FailureInfra, "approved build publication unavailable", buildStart)
+		return BuildResult{}, fmt.Errorf("builderd: approved build publication: %w", err)
+	}
 	prov := state.BuildProvenance{
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,

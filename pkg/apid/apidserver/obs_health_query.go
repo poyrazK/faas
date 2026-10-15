@@ -6,7 +6,7 @@
 // Source-of-truth design:
 //
 //   - audit_log_write_total / audit_log_write_failures_total /
-//     audit_log_coverage_ratio: apid's own Prometheus counters
+//     audit_log_coverage_ratio: durable SQL coverage and apid Prometheus counters
 //     (PR #TBD / C5). Federation is out of scope; schedd's gauges
 //     stay on schedd's /metrics. This endpoint answers the local
 //     apid's health, not the fleet's.
@@ -61,7 +61,7 @@ func (s *server) auditLogWrite5mStatus(ctx context.Context) (int64, bool) {
 		return 0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(increase(audit_log_write_total[5m])) or vector(0)`)
+		`sum(increase(apid_audit_log_write_total[5m]))`)
 	if err != nil {
 		return 0, false
 	}
@@ -76,32 +76,11 @@ func (s *server) auditLogWriteFailures5mStatus(ctx context.Context) (int64, bool
 		return 0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(increase(audit_log_write_failures_total[5m])) or vector(0)`)
+		`sum(increase(apid_audit_log_write_failures_total[5m]))`)
 	if err != nil {
 		return 0, false
 	}
 	return int64(v), true
-}
-
-// auditLogCoverageRatio5mStatus reads the trace_id coverage ratio
-// directly from Prometheus (the gauge is set by the C5 schedd
-// 60s tick). Returns 1.0 (vacuous truth) when the gauge has
-// never been set — a fresh apid that hasn't seen any
-// audit_log writes yet reports "100% covered" rather than
-// "0% covered", which is the right default for an empty window.
-func (s *server) auditLogCoverageRatio5mStatus(ctx context.Context) (float64, bool) {
-	if s.promqlClient == nil {
-		return 1.0, false
-	}
-	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(audit_log_coverage_ratio_5m) or vector(1)`)
-	if err != nil {
-		return 1.0, false
-	}
-	if v <= 0 {
-		return 1.0, true
-	}
-	return v, true
 }
 
 // operatorIntentOutcomeMissing returns the per-kind count of
@@ -130,17 +109,12 @@ func (s *server) traceIDCompletenessRatio(ctx context.Context) (map[string]float
 // {alertstate="firing"} which Alertmanager emits for every
 // active firing rule. Returns 0 on nil-promql or query error
 // — same "no data" posture as auditLogWrite5m.
-func (s *server) alertsFiring(ctx context.Context) int64 {
-	v, _ := s.alertsFiringStatus(ctx)
-	return v
-}
-
 func (s *server) alertsFiringStatus(ctx context.Context) (int64, bool) {
 	if s.promqlClient == nil {
 		return 0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`count(ALERTS{alertstate="firing"}) or vector(0)`)
+		`count(ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"}) or vector(0)`)
 	if err != nil {
 		return 0, false
 	}

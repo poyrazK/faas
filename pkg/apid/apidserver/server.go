@@ -389,13 +389,19 @@ type server struct {
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled bool
+	// ADR-435: keep standards intent/exception mutations disabled until
+	// consumer convergence, rollout recovery and native acceptance pass.
+	applicationStandardMutationsEnabled bool
 	// interactiveAppTasksEnabled additionally admits ADR-1037 interactive
 	// sessions (`gregale app exec -it`). It requires appTaskAPIEnabled.
 	interactiveAppTasksEnabled bool
 	// imageRunsEnabled is the operator gate for POST /v1/image-runs
 	// (ADR-1161, FAAS_IMAGE_RUNS).
-	imageRunsEnabled        bool
-	outboundProbeGatewayURL string
+	imageRunsEnabled bool
+	// interactiveImageRunsEnabled admits `interactive: true` image runs
+	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
+	interactiveImageRunsEnabled bool
+	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -801,6 +807,13 @@ func (s *server) WithInteractiveAppTasksEnabled(enabled bool) *server {
 // WithImageRunsEnabled attaches the image-run gate (ADR-1161).
 func (s *server) WithImageRunsEnabled(enabled bool) *server {
 	s.imageRunsEnabled = enabled
+	return s
+}
+
+// WithInteractiveImageRunsEnabled attaches the interactive image-run gate
+// (ADR-1330).
+func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
+	s.interactiveImageRunsEnabled = enabled
 	return s
 }
 
@@ -1446,6 +1459,29 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgActivity)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.previewApplicationStandardAssignment))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-reviews/{review}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardReview)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-operations/{operation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardOperation)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-reviews/{review}/approve", s.applicationStandardRolloutRoute("review", s.approveApplicationStandardReview))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/pause", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationPause)))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationResume)))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationAbort)))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardExceptions)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardAssignments)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-assignments/{assignment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardAssignment)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardEnrollment)))))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent", s.applicationStandardMutationRoute(authz.OrgActionSetApplicationStandardLocalIntent, s.setApplicationStandardLocalIntent))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.approveApplicationStandardException))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.revokeApplicationStandardException))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandards)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards/{standard}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardVersion)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standards/{standard}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.publishApplicationStandardVersion))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-log-destinations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardLogDestinations)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-log-destinations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.createApplicationStandardLogDestination))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-log-destinations/{resource}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardLogDestination)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-publishers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardPublishers)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-publishers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.createApplicationStandardPublisher))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-publishers/{resource}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardPublisher)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgApps)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.requireVerifiedEmail(s.idempotent(s.createOrgApp)))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.patchOrg)))))
@@ -4818,7 +4854,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) {
+		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
 			_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
 		}
 	}
@@ -4833,11 +4869,13 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 // 24 h replay window: after paying, verifying the email, or waiting out the
 // hourly deploy limit, `gregale deploy` still got the old 402/403/429. A
 // cached 404 did the same: `gregale deliver` to a webhook registered after
-// the first attempt kept answering "no webhook registered" (H10-54).
+// the first attempt kept answering "no webhook registered" (H10-54). A 501
+// is an operator gate that is not enabled yet (interactive sessions,
+// ADR-1037 and ADR-1330); it clears when the operator enables it.
 func idempotencyReplayable(status int) bool {
 	switch status {
 	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound,
-		http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		http.StatusTooManyRequests, http.StatusNotImplemented, http.StatusServiceUnavailable:
 		return false
 	}
 	return true
@@ -4949,7 +4987,9 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
 		ctx := context.WithoutCancel(r.Context())
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) {
+		// A response with a one-time credential (httpkit.SkipIdempotentReplay)
+		// releases the key: a retry runs the operation again.
+		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
 			_ = s.store.PutIdempotent(ctx, acct.ID, key, cap.status, cap.body.Bytes())
 			return
 		}
@@ -4996,7 +5036,13 @@ type captureWriter struct {
 	http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	// skipReplay is set by httpkit.SkipIdempotentReplay for a response that
+	// carries a one-time credential.
+	skipReplay bool
 }
+
+// SkipIdempotentReplay implements httpkit.IdempotentReplaySkipper.
+func (c *captureWriter) SkipIdempotentReplay() { c.skipReplay = true }
 
 func (c *captureWriter) WriteHeader(status int) {
 	c.status = status

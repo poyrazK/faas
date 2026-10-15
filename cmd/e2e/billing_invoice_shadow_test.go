@@ -292,6 +292,21 @@ func filterShadowLogLines(logs, prefix, acctID string, expected int64) []string 
 	return out
 }
 
+// seedShadowSamplingWindows records every minute of the finality window as
+// compute-complete, as a long-running meterd would have. ADR-1162 delivers an
+// hour only once every minute of the trailing MeterUsageFinalAfter (24 h plus
+// skew) is complete; a fresh meterd catches that up 15 minutes per sample
+// tick, which takes minutes, not the oracle's 35 s.
+func seedShadowSamplingWindows(t *testing.T, ctx context.Context, store *state.PgStore) {
+	t.Helper()
+	end := time.Now().UTC().Truncate(time.Minute)
+	for minute := end.Add(-api.MeterUsageFinalAfter - 5*time.Minute); minute.Before(end); minute = minute.Add(time.Minute) {
+		if err := store.RecordFinancialSamplingWindow(ctx, minute, true, true); err != nil {
+			t.Fatalf("seed sampling window %s: %v", minute, err)
+		}
+	}
+}
+
 // TestInvoiceShadow_24h is the §14 M7 push-side acceptance gate
 // wired end-to-end. Two subtests (stripe + paddle); each runs in
 // its own PG schema (pgtest.Open mints a unique schema per call)
@@ -334,6 +349,7 @@ func runShadowSubtest(t *testing.T, provider string) {
 
 	acct, _, _ := seedShadowAccount(t, ctx, pool, t0)
 	seedShadowBillingIdentity(t, ctx, state.NewPgStore(pool), acct, provider, t0)
+	seedShadowSamplingWindows(t, ctx, state.NewPgStore(pool))
 
 	hits := pollShadowLog(t, h, acct.ID, int(shadowHours), shadowPerHour)
 	if int64(len(hits)) != shadowHours {

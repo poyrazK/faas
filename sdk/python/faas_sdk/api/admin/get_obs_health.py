@@ -64,15 +64,16 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ObsHealthResponse | Problem]:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -81,8 +82,8 @@ def sync_detailed(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
@@ -111,15 +112,16 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ObsHealthResponse | Problem | None:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -128,8 +130,8 @@ def sync(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
@@ -154,15 +156,16 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ObsHealthResponse | Problem]:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -171,8 +174,8 @@ async def asyncio_detailed(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds
@@ -199,15 +202,16 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ObsHealthResponse | Problem | None:
-    r"""Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
+    """Meta-obs health snapshot — audit write rates, outcome-missing counts, trace_id completeness, alert
     firing count (admin-only).
 
      Operator-side meta-observation endpoint. Composes a single
     JSON snapshot from:
 
-      - `audit_log_write_total[5m]` / `audit_log_write_failures_total[5m]` /
-        `audit_log_coverage_ratio_5m` — apid's own Prometheus
-        counters (PR #TBD / C5).
+      - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
+        — apid's own Prometheus counters.
+      - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
+        audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
         status = 'running' AND started_at < now() - interval
         '5 minutes' GROUP BY kind` — single SQL query.
@@ -216,8 +220,8 @@ async def asyncio(
         'operator.action.%' AND at > now() - interval '5
         minutes' GROUP BY kind` — reads events (live), NOT
         audit_log (FK-free post-deletion copy).
-      - `count(ALERTS{alertstate=\"firing\"})` — Prometheus
-        Alertmanager integration.
+      - A Prometheus count of firing alerts, excluding FaasWatchdog
+        and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
     /metrics); this endpoint is the local apid's view. Kinds

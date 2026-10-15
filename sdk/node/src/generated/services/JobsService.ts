@@ -40,7 +40,10 @@ export class JobsService {
    * set) and `args` replaces the image CMD. Runs, logs and cancellation
    * use `/v1/jobs/{job}/runs`. Free accounts get 402
    * `jobs_not_allowed`; the route returns 404 until the operator sets
-   * `FAAS_IMAGE_RUNS=1`.
+   * `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+   * response carries a one-time `attach` credential for
+   * `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
+   * for Idempotency-Key replay.
    *
    * @returns ImageRunResponse A one-task run was queued.
    * @throws ApiError
@@ -77,6 +80,7 @@ export class JobsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `Interactive image runs are not enabled on this control-plane host.`,
       },
     });
   }
@@ -861,6 +865,74 @@ export class JobsService {
         401: `code: unauthorized`,
         402: `Live task output needs a plan with Jobs (not Free).`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Attach to an interactive image run's task (WebSocket).
+   * ADR-1330. Served by the compute gateway, not apid. The session uses
+   * the interactive app-task wire contract (ADR-1037): the account
+   * credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
+   * image run's create response, and the `gregale-app-task-attach-v1`
+   * WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
+   * size. The run's VM holds the command until the first successful
+   * attach, which consumes the token.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static attachJobTask({
+    name,
+    id,
+    idx,
+    rows,
+    cols,
+  }: {
+    /**
+     * Runner job of the interactive image run.
+     */
+    name: string,
+    /**
+     * Job-run identifier (UUIDv4) of the interactive image run.
+     */
+    id: string,
+    /**
+     * Zero-based index of the task; an interactive run has only task 0.
+     */
+    idx: number,
+    /**
+     * Initial height of the run's terminal when tty was requested; defaults to 24.
+     */
+    rows?: number,
+    /**
+     * Initial width of the run's terminal when tty was requested; defaults to 80.
+     */
+    cols?: number,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/attach',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      query: {
+        'rows': rows,
+        'cols': cols,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `Interactive image runs need a plan with Jobs (not Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The task VM is still queued or starting; retry after the Retry-After interval.`,
+        410: `The task finished, already has a client, or its attach window closed.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

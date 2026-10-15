@@ -265,6 +265,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_secrets.scope",
 		"app_tasks.deployment_scope",
 		"app_webhooks.scope",
+		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"custom_domains.environment_id",
 		"customer_operation_definitions.scope",
 		"customer_operation_workflow_states.scope",

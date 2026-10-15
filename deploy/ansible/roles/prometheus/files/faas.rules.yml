@@ -4930,7 +4930,11 @@ groups:
           description: "{{ $labels.job }} on {{ $labels.instance }} has subscribers but no hub connection, so FAAS_DB_NOTIFY_HUB=0 is set and each subscriber holds its own LISTEN connection. Not an outage; it consumes the pre-hub connection count against max_connections."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
       - alert: FaasDBPoolNearCap
-        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
+        # Only acquired connections are in use. A grown pool's idle connections
+        # also report under <daemon>_db_pool_conns{state="idle"}; summing every
+        # state read apid's 1 acquired + 11 idle as 12/12 and fired on every
+        # daemon after rc.263 activated this rule.
+        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns",state="acquired"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
         for: 10m
         labels:
           severity: warn

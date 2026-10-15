@@ -3589,9 +3589,12 @@ var cliCommands = []cliCommand{
 		Examples: []string{
 			"gregale run --image alpine echo hello",
 			"gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'",
+			"gregale run -it --image alpine sh",
 		},
 		Flags: []cliFlag{
 			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161)", Value: "REF"},
+			{Name: "interactive", Short: "with --image, attach stdin and relay the session until the command exits (-i; ADR-1330)"},
+			{Name: "tty", Short: "with --image --interactive, give the command a terminal (-t; -it for both)"},
 			{Name: "entrypoint", Short: "with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute", Value: "CMD|FILE"},
 			{Name: "env", Short: "with --image, KEY=VALUE environment variable (repeatable; -e)", Value: "KEY=VALUE"},
 			{Name: "ram", Short: "with --image, memory in MB (default: Job default)", Value: "MB"},
@@ -3999,6 +4002,36 @@ var cliCommands = []cliCommand{
 		DocSlug: "orgs",
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
+			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "assignments", Short: "Inspect current versions and revisions, including inactive assignments", Subcommands: standardAssignmentCLIHelp(), Examples: []string{"gregale orgs standards assignments list --org acme --limit 100", "gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID"}},
+				{Name: "reviews", Short: "Preview assignment changes and inspect saved reviews", Subcommands: standardReviewCLIHelp()},
+				{Name: "operation", Short: "Inspect rollout progress or apply gated operator controls", Flags: standardInspectionCLIHelp("operation UUID"), Subcommands: standardOperationCLIHelp()},
+				{Name: "exceptions", Short: "Inspect history or manage bounded exceptions", Flags: standardExceptionCLIHelp(), Subcommands: standardExceptionMutationCLIHelp()},
+				{Name: "local-intent", Short: "Replace permitted local settings with revision checks; release gated", Flags: standardMutationCLIHelp(false)},
+				{Name: "application", Short: "Inspect application adoption and installed standards", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "app", Short: "application UUID", Value: "UUID", Req: true},
+				}},
+				{Name: "destinations", Short: "Manage immutable logging destination references", Subcommands: standardResourceCLIHelp()},
+				{Name: "publishers", Short: "Manage immutable trusted publisher references", Subcommands: standardResourceCLIHelp()},
+				{Name: "list", Short: "List the organization's latest standard versions", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "after", Short: "last standard slug from the previous page", Value: "SLUG"},
+					{Name: "limit", Short: "page size (1..100)", Value: "N"},
+				}},
+				{Name: "show", Short: "Inspect an immutable standard version", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "standard", Short: "standard slug", Value: "SLUG", Req: true},
+					{Name: "version", Short: "version; omitted reads the latest", Value: "N"},
+				}},
+				{Name: "publish", Short: "Publish a candidate version; does not activate it", Examples: []string{"gregale orgs standards publish --org acme --standard production-baseline --file standard.json --expected-version 0"}, Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "standard", Short: "standard slug", Value: "SLUG", Req: true},
+					{Name: "file", Short: "standard definition JSON file", Value: "PATH", Req: true},
+					{Name: "expected-version", Short: "current version; 0 creates a new standard", Value: "N", Req: true},
+					{Name: "description", Short: "version description", Value: "TEXT"},
+				}},
+			}},
 			{Name: "ls", Short: "List orgs"},
 			{Name: "create", Short: "Create an org", Flags: []cliFlag{
 				{Name: "slug", Short: "org slug (lowercase alphanumeric + dashes)", Value: "SLUG", Req: true},

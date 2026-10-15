@@ -61,6 +61,7 @@ var memDispatched = map[string]bool{
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
 	"IssueObjectMultipartURLCredential":                       true,
+	"JobRunAttachSession":                                     true,
 	"LatestParkedDeploymentForApp":                            true,
 	"ListAppErrorGroups":                                      true,
 	"ListAppErrorRequests":                                    true,
@@ -443,6 +444,15 @@ func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.Obj
 		return o.IssueObjectMultipartURLCredential(p0, p1, p2, p3)
 	}
 	return s.MemStore.IssueObjectMultipartURLCredential(p0, p1, p2, p3)
+}
+
+func (s *Mem) JobRunAttachSession(p0 context.Context, p1 string) (state.JobRunAttach, error) {
+	if o, ok := s.over.(interface {
+		JobRunAttachSession(context.Context, string) (state.JobRunAttach, error)
+	}); ok {
+		return o.JobRunAttachSession(p0, p1)
+	}
+	return s.MemStore.JobRunAttachSession(p0, p1)
 }
 
 func (s *Mem) LatestParkedDeploymentForApp(p0 context.Context, p1 string) (state.Deployment, error) {

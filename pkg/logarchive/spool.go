@@ -134,6 +134,33 @@ func NewSpool(root string, maxBytes int64) *Spool {
 	}
 }
 
+// PruneEmptyDirs removes every empty directory under the spool root, deepest
+// first, and returns how many it removed. The purger deletes shipped
+// .jsonl.gz markers but left their {instance}/{YYYY}/{MM} directories behind;
+// after a boot storm on 2026-10-14 one node held 58k of them, and the startup
+// walk in NewSpool outran systemd's start timeout (hunt #10, H10-80). It holds
+// the spool lock, under which writes create their directories, so a write
+// never loses the directory it just made.
+func (s *Spool) PruneEmptyDirs() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var dirs []string
+	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr == nil && d.IsDir() && path != s.root {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	removed := 0
+	for i := len(dirs) - 1; i >= 0; i-- {
+		// Remove fails on a non-empty directory, which keeps it.
+		if os.Remove(dirs[i]) == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
 func existingUnshippedBytes(root string) int64 {
 	var total int64
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {

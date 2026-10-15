@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -131,7 +132,7 @@ func TestNativeSnapshotBackingJournalRetainsFirstPublicationAndRejectsMalformedE
 				}
 			}
 			got, err := f.q.readBackings(f.capture)
-			if (err == nil) != (change == "original") || change == "original" && got != r {
+			if (err == nil) != (change == "original") || change == "original" && !reflect.DeepEqual(got, r) {
 				t.Fatal("malformed original evidence accepted", change, err)
 			}
 			if err := f.lock.Close(); err != nil {
@@ -143,7 +144,7 @@ func TestNativeSnapshotBackingJournalRetainsFirstPublicationAndRejectsMalformedE
 			if change == "original" {
 				completed := f.capture
 				completed.Info, completed.Backing, completed.CompletedAt, completed.FCVersion = SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}, r.Backing, time.Now(), "1.7.0"
-				if got, err := f.q.readBackings(completed); err != nil || got != r {
+				if got, err := f.q.readBackings(completed); err != nil || !reflect.DeepEqual(got, r) {
 					t.Fatal("completion lost original backing receipt", err)
 				}
 				completed.Backing.Base += "-changed"
