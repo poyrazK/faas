@@ -91,6 +91,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	proxy, err := pgproxy.New(pgproxy.Config{
 		TLS: &tls.Config{Certificates: []tls.Certificate{cert}}, HostSuffix: cfg.HostSuffix, DecoySecret: decoy,
 		PoolMaxServers: cfg.PoolMaxServers, PoolWait: cfg.PoolWait, PoolServerIdle: cfg.PoolServerIdle,
+		InstanceID: uint8(cfg.InstanceID), CancelPeers: cfg.peers, //nolint:gosec // validated 0-255
 		Metrics: pgproxy.NewMetrics(reg),
 	}, verifiers, pgproxy.NewScheddWaker(scheddpb.NewScheddClient(scheddConn)), dialer, log)
 	if err != nil {

@@ -15,6 +15,11 @@ Inputs (all required when `pgproxyd_enabled: true`):
 | `pgproxyd_tls_cert_src`, `pgproxyd_tls_key_src` | publicly trusted `*.<suffix>` certificate and key |
 | `pgproxyd_db_url` | read-only DSN of the `faas_pgproxyd` role (Vault) |
 
+Optional, with more than one database node: `pgproxyd_instance_id` (a
+distinct 0-255 per node) and `pgproxyd_cancel_peers` (the other nodes'
+overlay listeners by id). A client's cancel request can reach any node's
+pgproxyd; it is forwarded to the instance that issued the client's key.
+
 The node's mTLS bundle (vmmd server leaf and the pgproxyd client leaves) is
 staged by the `database_node` role (`database_node_pki_source`).
 
@@ -29,4 +34,5 @@ Files written on the host:
 
 Operations: `/healthz`, `/readyz` and `/metrics` are served on
 `127.0.0.1:9109`. Metrics: `pgproxyd_sessions_total{result}`,
-`pgproxyd_active_sessions`, `pgproxyd_wake_seconds`.
+`pgproxyd_active_sessions`, `pgproxyd_wake_seconds`,
+`pgproxyd_cancel_requests_total{result}`.

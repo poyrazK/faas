@@ -94,6 +94,13 @@ type Config struct {
 	PoolMaxServers int
 	PoolWait       time.Duration
 	PoolServerIdle time.Duration
+	// Query cancellation (cancel.go): InstanceID tags the cancel keys this
+	// proxy issues; CancelPeers are the other instances' listeners by id,
+	// reached over the overlay; CancelTimeout bounds one cancel (default
+	// 5 s).
+	InstanceID    uint8
+	CancelPeers   map[uint8]string
+	CancelTimeout time.Duration
 	// Metrics records session outcomes; nil records nothing.
 	Metrics *Metrics
 }
@@ -113,6 +120,9 @@ type Proxy struct {
 	handshakes  int
 
 	pools *poolSet
+
+	cancelMu sync.Mutex
+	cancels  map[cancelKey]canceler
 }
 
 // New validates cfg and builds a Proxy.
@@ -147,6 +157,12 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	if cfg.PoolServerIdle <= 0 {
 		cfg.PoolServerIdle = time.Minute
 	}
+	if cfg.CancelTimeout <= 0 {
+		cfg.CancelTimeout = defaultCancelTimeout
+	}
+	if _, self := cfg.CancelPeers[cfg.InstanceID]; self {
+		return nil, errors.New("pgproxy: cancel_peers lists this instance")
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -157,7 +173,7 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	// PostgreSQL 17 direct TLS requires the "postgresql" ALPN protocol.
 	tlsCfg.NextProtos = []string{"postgresql"}
 	cfg.HostSuffix = strings.ToLower(strings.TrimPrefix(cfg.HostSuffix, "."))
-	proxy := &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}}
+	proxy := &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}, cancels: map[cancelKey]canceler{}}
 	proxy.pools = newPoolSet(proxy)
 	return proxy, nil
 }
@@ -201,14 +217,21 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 		}
 	}()
 	_ = raw.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
-	conn, err := p.negotiateTLS(raw)
+	conn, err := p.negotiateTLS(ctx, raw)
+	if errors.Is(err, errCancelServed) {
+		return
+	}
 	if err != nil {
 		p.cfg.Metrics.result("tls")
 		return
 	}
 	defer func() { _ = conn.Close() }()
 	client := pgproto3.NewBackend(conn, conn)
-	session, pooled, databaseID, err := p.establish(ctx, conn, client)
+	est, err := p.establish(ctx, conn, client)
+	if errors.Is(err, errCancelServed) {
+		return
+	}
+	databaseID := est.databaseID
 	if err != nil {
 		result := "error"
 		var f *fatal
@@ -227,18 +250,34 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	p.cfg.Metrics.sessionStarted()
 	defer p.cfg.Metrics.sessionEnded()
 	_ = conn.SetDeadline(time.Time{})
-	if pooled != nil {
-		p.servePooled(ctx, conn, client, pooled)
+	defer est.release()
+	if est.pool != nil {
+		p.servePooled(ctx, conn, client, est.pool, est.canceler)
 		return
 	}
-	defer func() { _ = session.Close() }()
-	p.splice(ctx, conn, session, databaseID)
+	defer func() { _ = est.session.Close() }()
+	p.splice(ctx, conn, est.session, databaseID)
+}
+
+// errCancelServed ends a connection that carried a cancel request.
+var errCancelServed = errors.New("pgproxy: cancel request served")
+
+// established is a client ready for its session: a backend session to
+// splice, or a pool with the client's canceler. release drops the
+// client's cancel key.
+type established struct {
+	session    io.ReadWriteCloser
+	pool       *pool
+	canceler   *pooledCanceler
+	databaseID string
+	release    func()
 }
 
 // negotiateTLS answers SSLRequest (or accepts direct TLS) and completes the
 // handshake. Plaintext clients are refused: credentials only travel inside
-// TLS.
-func (p *Proxy) negotiateTLS(raw net.Conn) (*tls.Conn, error) {
+// TLS. A plaintext cancel request carries none and is served
+// (errCancelServed).
+func (p *Proxy) negotiateTLS(ctx context.Context, raw net.Conn) (*tls.Conn, error) {
 	br := bufio.NewReader(raw)
 	pc := &prefixConn{Conn: raw, r: br}
 	for {
@@ -253,7 +292,7 @@ func (p *Proxy) negotiateTLS(raw net.Conn) (*tls.Conn, error) {
 		if _, err := io.ReadFull(br, hdr); err != nil {
 			return nil, err
 		}
-		switch binary.BigEndian.Uint32(hdr[4:]) {
+		switch code := binary.BigEndian.Uint32(hdr[4:]); code {
 		case sslRequestCode:
 			if _, err := raw.Write([]byte{'S'}); err != nil {
 				return nil, err
@@ -263,8 +302,13 @@ func (p *Proxy) negotiateTLS(raw net.Conn) (*tls.Conn, error) {
 			if _, err := raw.Write([]byte{'N'}); err != nil {
 				return nil, err
 			}
-		case cancelRequestCode:
-			return nil, errors.New("pgproxy: cancel requests are not supported")
+		case cancelRequestCode, forwardedCancelCode:
+			pid, secret, err := readCancelBody(br, binary.BigEndian.Uint32(hdr[:4]))
+			if err != nil {
+				return nil, err
+			}
+			p.handleCancel(ctx, pid, secret, code == forwardedCancelCode)
+			return nil, errCancelServed
 		default:
 			resp := (&pgproto3.ErrorResponse{Severity: "FATAL", SeverityUnlocalized: "FATAL", Code: "08P01", Message: "TLS is required: connect with sslmode=require or stronger"})
 			if buf, err := resp.Encode(nil); err == nil {
@@ -293,47 +337,58 @@ func (c *prefixConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 
 // establish authenticates the client, then either wakes the database and
 // logs in to it, returning a session ready for splicing, or, on a pooled
-// endpoint, returns the role's pool with the client logged in to it.
-func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.Backend) (io.ReadWriteCloser, *pool, string, error) {
+// endpoint, returns the role's pool with the client logged in to it. Either
+// way the client gets a cancel key of its own. A cancel request sent
+// after TLS is served (errCancelServed).
+func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.Backend) (established, error) {
+	none := established{release: func() {}}
 	msg, err := client.ReceiveStartupMessage()
 	if err != nil {
-		return nil, nil, "", err
+		return none, err
+	}
+	if c, ok := msg.(*pgproto3.CancelRequest); ok {
+		p.handleCancel(ctx, c.ProcessID, c.SecretKey, false)
+		return none, errCancelServed
 	}
 	startup, ok := msg.(*pgproto3.StartupMessage)
 	if !ok {
-		return nil, nil, "", &fatal{"08P01", "expected a startup message"}
+		return none, &fatal{"08P01", "expected a startup message"}
 	}
 	user := startup.Parameters["user"]
 	databaseID, pooled, err := p.route(conn.ConnectionState().ServerName, startup.Parameters["options"])
 	if err != nil {
-		return nil, nil, "", &fatal{"08004", err.Error()}
+		return none, &fatal{"08004", err.Error()}
 	}
+	none.databaseID = databaseID
 	var poolParams map[string]string
 	if pooled {
 		if poolParams, err = pooledParams(startup.Parameters); err != nil {
-			return nil, nil, databaseID, &fatal{"08P01", fmt.Sprintf("the pooled endpoint does not support startup parameter %v; use the direct endpoint", err)}
+			return none, &fatal{"08P01", fmt.Sprintf("the pooled endpoint does not support startup parameter %v; use the direct endpoint", err)}
 		}
 	}
 	verifier := p.verifier(ctx, databaseID, user)
 	clientKey, serverFinal, err := authenticateClient(client, verifier)
 	if err != nil {
 		p.creds.Forget(databaseID, user)
-		return nil, nil, databaseID, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
+		return none, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
 	}
 	if pooled {
 		pl, err := p.joinPool(ctx, poolKey{databaseID: databaseID, role: user, dbname: poolParams["database"], verifier: verifierKey(verifier)},
 			clientKey, verifier.ServerKey, poolParams)
 		if err != nil {
-			return nil, nil, databaseID, err
+			return none, err
 		}
 		pl.mu.Lock()
 		status := pl.status
 		pl.mu.Unlock()
-		if err := greetPooled(client, conn, serverFinal, status); err != nil {
+		c := &pooledCanceler{p: p}
+		key, release := p.register(c)
+		if err := greetPooled(client, conn, serverFinal, status, key); err != nil {
+			release()
 			pl.leave()
-			return nil, nil, databaseID, err
+			return none, err
 		}
-		return nil, pl, databaseID, nil
+		return established{pool: pl, canceler: c, databaseID: databaseID, release: release}, nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
@@ -341,11 +396,11 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	target, err := p.waker.Wake(wakeCtx, databaseID)
 	p.cfg.Metrics.woke(time.Since(wakeStarted))
 	if err != nil {
-		return nil, nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	session, err := p.dialer.Dial(wakeCtx, target, databaseID)
 	if err != nil {
-		return nil, nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	backend := pgproto3.NewFrontend(session, session)
 	if err := loginBackend(backend, forwardParams(startup.Parameters), clientKey, verifier.ServerKey); err != nil {
@@ -355,17 +410,26 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 			if f.code == "28P01" {
 				p.creds.Forget(databaseID, user)
 			}
-			return nil, nil, databaseID, f
+			return none, f
 		}
-		return nil, nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
+		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	client.Send(&pgproto3.AuthenticationSASLFinal{Data: serverFinal})
 	client.Send(&pgproto3.AuthenticationOk{})
-	if err := relayUntilReady(backend, client); err != nil {
-		_ = session.Close()
-		return nil, nil, databaseID, err
+	release := func() {}
+	// The client gets its own key in place of the backend's; a cancel with
+	// it reaches this backend through the node's vmmd.
+	swapKey := func(k *pgproto3.BackendKeyData) *pgproto3.BackendKeyData {
+		key, drop := p.register(directCanceler{p: p, key: backendKey{target: target, databaseID: databaseID, pid: k.ProcessID, secret: append([]byte(nil), k.SecretKey...)}})
+		release = drop
+		return key
 	}
-	return session, nil, databaseID, nil
+	if err := relayUntilReady(backend, client, swapKey); err != nil {
+		release()
+		_ = session.Close()
+		return none, err
+	}
+	return established{session: session, databaseID: databaseID, release: release}, nil
 }
 
 // joinPool counts the client into its role's pool. A new pool logs a first
@@ -554,8 +618,8 @@ func loginBackend(backend *pgproto3.Frontend, params map[string]string, clientKe
 
 // relayUntilReady forwards PostgreSQL's post-login messages (parameters,
 // backend key, notices) until ReadyForQuery, after which the session is a
-// plain byte stream.
-func relayUntilReady(backend *pgproto3.Frontend, client *pgproto3.Backend) error {
+// plain byte stream. swapKey replaces the backend's key with the client's.
+func relayUntilReady(backend *pgproto3.Frontend, client *pgproto3.Backend, swapKey func(*pgproto3.BackendKeyData) *pgproto3.BackendKeyData) error {
 	for {
 		msg, err := backend.Receive()
 		if err != nil {
@@ -563,6 +627,9 @@ func relayUntilReady(backend *pgproto3.Frontend, client *pgproto3.Backend) error
 		}
 		if e, ok := msg.(*pgproto3.ErrorResponse); ok {
 			return &fatal{e.Code, e.Message}
+		}
+		if k, ok := msg.(*pgproto3.BackendKeyData); ok {
+			msg = swapKey(k)
 		}
 		client.Send(msg)
 		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {

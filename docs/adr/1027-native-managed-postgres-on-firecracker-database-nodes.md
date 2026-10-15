@@ -248,7 +248,8 @@ client pool, so on Neon runtime credentials use its pooled endpoint
   `PREPARE`, unnamed statements across a Sync) and startup parameters
   other than the role, database and drivers' cosmetic ones (which must
   match server defaults). Others are refused with a pointer to the direct
-  endpoint. Cancel requests are not supported on either endpoint.
+  endpoint. Cancel requests work on both endpoints (see Query
+  cancellation).
 - The native driver returns both endpoints; credential delivery gives
   runtime, read-only and Data API credentials the pooled one and
   migrations the direct one, as on Neon. `PooledConnections` is now true.
@@ -259,6 +260,49 @@ client pool, so on Neon runtime credentials use its pooled endpoint
   Metal (through vmmd to a VM): 40 pooled clients ran 800 queries in
   0.4 s, while 28 of 40 direct sessions were refused at the database's
   limit.
+
+### Query cancellation
+
+A client cancels a running query on a new connection that carries the key
+PostgreSQL sent at login. pgproxyd serves these on both endpoints.
+
+- **Keys.** Every client gets a key of pgproxyd's own in place of
+  PostgreSQL's: a random 32-bit secret and a process id whose top byte is
+  the issuing instance's `instance_id`. pgproxyd keeps the key until the
+  client leaves.
+  - On the direct endpoint, the key maps to the session's backend: the
+    node's vmmd target and the key PostgreSQL sent.
+  - On the pooled endpoint, it maps to the server the client holds for its
+    current transaction, if any.
+- **Serving a cancel.** Most drivers send the cancel in plaintext; libpq 17
+  and later, and pgx for an encrypted session, send it after TLS. Both are
+  accepted. The cancel carries no credentials. pgproxyd opens a session
+  stream through vmmd, sends PostgreSQL the backend's own cancel and waits
+  until PostgreSQL closes it, by which time the backend is signalled. It
+  never wakes a database. The client's connection is then closed, as
+  PostgreSQL closes it.
+- **Pooled safety.** A pooled client returns its server only after any
+  cancel in flight for it has been delivered. A cancel therefore never
+  reaches another client's transaction. A cancel that reaches an idle
+  backend is ignored by PostgreSQL.
+- **Several instances.** The app route rotates over pgproxyd upstreams, so
+  a cancel can reach another database node's pgproxyd. The key's top byte
+  names the issuing instance. Its peers forward the cancel to it over the
+  overlay (`cancel_peers`, by id) with a private request code. A forwarded
+  cancel is only ever handled locally, so a wrong peer list cannot make it
+  loop. Unknown keys and unknown instances are dropped.
+- **Operations.** pgproxyd's `instance_id` and `[cancel_peers]` are set
+  through Ansible (`pgproxyd_instance_id`, `pgproxyd_cancel_peers`);
+  `pgproxyd_cancel_requests_total{result}` counts ok, forwarded, unknown
+  and failed cancels.
+- **Evidence.**
+  - Against PostgreSQL: TLS and plaintext cancels on both endpoints, a
+    forward between two instances (and a re-forward dropped), and the
+    sparing of other clients. With one pooled server shared by two
+    clients, the idle client's key and an unknown key cancel nothing.
+  - Metal, through vmmd into a database VM: the cancel ends the query
+    15 ms (direct) and 11 ms (pooled) after it is sent, and the session
+    goes on.
 
 ### App route
 

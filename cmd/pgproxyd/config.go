@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +50,15 @@ type Config struct {
 	PoolMaxServers int           `toml:"pool_max_servers"`
 	PoolWait       time.Duration `toml:"pool_wait"`
 	PoolServerIdle time.Duration `toml:"pool_server_idle"`
+	// Query cancellation: instance_id (0-255, unique among the fleet's
+	// pgproxyd) tags the cancel keys this instance issues; cancel_peers
+	// maps the other instances' ids to their listeners on the overlay
+	// ("host:port"), where cancels for their keys are forwarded. One
+	// instance needs neither.
+	InstanceID  int               `toml:"instance_id"`
+	CancelPeers map[string]string `toml:"cancel_peers"`
+	// peers is CancelPeers parsed by validate.
+	peers map[uint8]string
 }
 
 // DefaultOpsAddr is pgproxyd's loopback ops listener.
@@ -88,6 +99,24 @@ func (c *Config) validate() error {
 	}
 	if c.PoolWait < 0 || c.PoolWait > 5*time.Minute || c.PoolServerIdle < 0 || c.PoolServerIdle > time.Hour {
 		return errors.New("pgproxyd: pool_wait must be at most 5m and pool_server_idle at most 1h")
+	}
+	return c.parsePeers()
+}
+
+func (c *Config) parsePeers() error {
+	if c.InstanceID < 0 || c.InstanceID > 255 {
+		return errors.New("pgproxyd: instance_id must be between 0 and 255")
+	}
+	c.peers = make(map[uint8]string, len(c.CancelPeers))
+	for id, addr := range c.CancelPeers {
+		n, err := strconv.Atoi(id)
+		if err != nil || n < 0 || n > 255 || n == c.InstanceID {
+			return fmt.Errorf("pgproxyd: cancel_peers key %q must be another instance's id (0-255)", id)
+		}
+		if host, port, err := net.SplitHostPort(addr); err != nil || host == "" || port == "" {
+			return fmt.Errorf("pgproxyd: cancel_peers[%s] must be host:port", id)
+		}
+		c.peers[uint8(n)] = addr
 	}
 	return nil
 }

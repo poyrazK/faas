@@ -37,6 +37,20 @@ db_url_path = "/u"
 	if _, err := LoadConfig(write(full + "verifier_cache_ttl = \"1h\"\n")); err == nil {
 		t.Fatal("an hour-long verifier cache was accepted")
 	}
+	peered, err := LoadConfig(write(full + "instance_id = 2\n[cancel_peers]\n\"1\" = \"100.64.0.11:5432\"\n\"3\" = \"[fd00::3]:5432\"\n"))
+	if err != nil || peered.InstanceID != 2 || len(peered.peers) != 2 || peered.peers[1] != "100.64.0.11:5432" || peered.peers[3] != "[fd00::3]:5432" {
+		t.Fatalf("cancel peers = %+v, %v", peered, err)
+	}
+	for _, bad := range []string{
+		"instance_id = 256\n",
+		"instance_id = 1\n[cancel_peers]\n\"1\" = \"100.64.0.11:5432\"\n",
+		"[cancel_peers]\n\"x\" = \"100.64.0.11:5432\"\n",
+		"[cancel_peers]\n\"4\" = \"100.64.0.11\"\n",
+	} {
+		if _, err := LoadConfig(write(full + bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
 }
 
 func TestReadSecretRefusesSharedFiles(t *testing.T) {

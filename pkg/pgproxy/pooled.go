@@ -3,7 +3,6 @@ package pgproxy
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -77,10 +76,12 @@ type pooledSession struct {
 	// copyIn: the server waits for the client's COPY data.
 	copyIn     bool
 	statements map[string]*pgproto3.Parse // client name -> its Parse
-	events     chan serverEvent
-	resume     chan bool
-	stop       chan struct{}
-	egress     func(int)
+	// canceler is the client's cancel key's view of the server it holds.
+	canceler *pooledCanceler
+	events   chan serverEvent
+	resume   chan bool
+	stop     chan struct{}
+	egress   func(int)
 }
 
 type serverEvent struct {
@@ -89,11 +90,11 @@ type serverEvent struct {
 }
 
 // servePooled runs a pooled client until it leaves.
-func (p *Proxy) servePooled(ctx context.Context, conn net.Conn, client *pgproto3.Backend, pl *pool) {
+func (p *Proxy) servePooled(ctx context.Context, conn net.Conn, client *pgproto3.Backend, pl *pool, c *pooledCanceler) {
 	defer pl.leave()
 	egress := p.pools.egressOf(pl.key.databaseID)
 	s := &pooledSession{p: p, pl: pl, client: client, out: bufio.NewWriterSize(conn, 32<<10), txStatus: 'I',
-		statements: map[string]*pgproto3.Parse{}, egress: func(n int) { egress.Add(int64(n)) }}
+		statements: map[string]*pgproto3.Parse{}, canceler: c, egress: func(n int) { egress.Add(int64(n)) }}
 	defer s.unlink(false)
 	for {
 		msg, err := client.Receive()
@@ -164,6 +165,7 @@ func (s *pooledSession) link(ctx context.Context) error {
 		return err
 	}
 	s.server = srv
+	s.canceler.hold(srv)
 	s.events = make(chan serverEvent, 64)
 	s.resume = make(chan bool)
 	s.stop = make(chan struct{})
@@ -218,6 +220,9 @@ func (s *pooledSession) unlink(clean bool) {
 	}
 	srv := s.server
 	s.server = nil
+	// After a cancel in flight for this server, and before another client
+	// can borrow it.
+	s.canceler.hold(nil)
 	s.expect, s.copyIn = nil, false
 	if !clean {
 		srv.close()
@@ -464,9 +469,8 @@ func serverStatement(p *pgproto3.Parse) string {
 }
 
 // greetPooled completes a pooled client's login with the pool's server
-// parameters and a backend key of its own (cancel requests are not
-// supported).
-func greetPooled(client *pgproto3.Backend, out net.Conn, serverFinal []byte, status [][]byte) error {
+// parameters and the client's own cancel key.
+func greetPooled(client *pgproto3.Backend, out net.Conn, serverFinal []byte, status [][]byte, key *pgproto3.BackendKeyData) error {
 	client.Send(&pgproto3.AuthenticationSASLFinal{Data: serverFinal})
 	client.Send(&pgproto3.AuthenticationOk{})
 	if err := client.Flush(); err != nil {
@@ -477,9 +481,7 @@ func greetPooled(client *pgproto3.Backend, out net.Conn, serverFinal []byte, sta
 			return err
 		}
 	}
-	var key [8]byte
-	_, _ = rand.Read(key[:])
-	client.Send(&pgproto3.BackendKeyData{ProcessID: binary.BigEndian.Uint32(key[:4]), SecretKey: key[4:]})
+	client.Send(key)
 	client.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
 	return client.Flush()
 }

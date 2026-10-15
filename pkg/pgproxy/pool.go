@@ -56,6 +56,8 @@ type serverConn struct {
 	fe       *pgproto3.Frontend
 	prepared map[string]bool
 	idleAt   time.Time
+	// key reaches the server's backend for cancel requests.
+	key backendKey
 }
 
 func (s *serverConn) close() { _ = s.rw.Close() }
@@ -215,7 +217,7 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv := &serverConn{rw: rw, fe: pgproto3.NewFrontend(rw, rw), prepared: map[string]bool{}}
+	srv := &serverConn{rw: rw, fe: pgproto3.NewFrontend(rw, rw), prepared: map[string]bool{}, key: backendKey{target: target, databaseID: pl.key.databaseID}}
 	if err := loginBackend(srv.fe, pl.params, pl.clientKey, pl.serverKey); err != nil {
 		srv.close()
 		return nil, err
@@ -235,6 +237,8 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 				return nil, err
 			}
 			status = append(status, buf)
+		case *pgproto3.BackendKeyData:
+			srv.key.pid, srv.key.secret = m.ProcessID, append([]byte(nil), m.SecretKey...)
 		case *pgproto3.ErrorResponse:
 			srv.close()
 			return nil, &fatal{m.Code, m.Message}
