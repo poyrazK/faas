@@ -2949,9 +2949,310 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-lineage-case-backfill-pause
+
+Pause a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-pause [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill-resume
+
+Resume a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-resume [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill-cancel
+
+Cancel a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-cancel [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill
+
+Inspect latest lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill <app> <subscription-id>`
+
+### events subscription-lineage-case-backfill-request
+
+Backfill missing lineage diagnostics from retained evidence
+
+`gregale events subscription-lineage-case-backfill-request [--request-id <UUID>] [--expected-previous-request-id <UUID>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable scan identity |  |
+| `--expected-previous-request-id <UUID>` | reviewed completed, cancelled or expired scan identity |  |
+
+### events subscription-lineage-retry-preview
+
+Preview retained unresolved lineage cases
+
+`gregale events subscription-lineage-retry-preview [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+| `--reason <CODE>` | exact case reason filter |  |
+
+### events subscription-lineage-retry-export
+
+Save a guarded preview as a reviewable retry request
+
+`gregale events subscription-lineage-retry-export [--file <PATH>] [--raw] [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new scoped retry file (never overwrite) |  |
+| `--raw` | legacy unscoped API body |  |
+| `--limit <N>` | selected cases (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+| `--reason <CODE>` | exact case reason filter |  |
+
+### events subscription-lineage-retry-control-plan-export
+
+Save fixed guarded controls from one attention page
+
+`gregale events subscription-lineage-retry-control-plan-export [--file <PATH>] [--action <ACTION>] [--attention <WARNING>] [--status <STATE>] [--limit <N>] [--after <CURSOR>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new private plan file (never overwrite) |  |
+| `--action <ACTION>` | pause, resume or cancel |  |
+| `--attention <WARNING>` | any, stalled or retention_risk (default any) |  |
+| `--status <STATE>` | pending or paused |  |
+| `--limit <N>` | fixed jobs (default 50, maximum 200) |  |
+| `--after <CURSOR>` | attention-list cursor |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-apply
+
+Apply a reviewed fixed control plan with independent results
+
+`gregale events subscription-lineage-retry-control-plan-apply [--report <PATH>] [--resume-report <PATH>] [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | new private durable execution report |  |
+| `--resume-report <PATH>` | inspect prior report before retry; requires new --report |  |
+| `--file <PATH>` | reviewed plan; unchanged on apply |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-preflight
+
+Check reviewed commands with read-only job and receipt inspection
+
+`gregale events subscription-lineage-retry-control-plan-preflight [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | reviewed plan; unchanged on preflight |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-reconcile
+
+Reconcile execution evidence with read-only receipt inspection
+
+`gregale events subscription-lineage-retry-control-plan-reconcile [--file <PATH>] [--source-report <PATH>] [--report <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | unchanged reviewed plan |  |
+| `--source-report <PATH>` | previous matching execution report |  |
+| `--report <PATH>` | new private reconciled report; never overwrite |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-jobs
+
+List retained bulk lineage retry job summaries
+
+`gregale events subscription-lineage-retry-jobs [--attention <WARNING>] [--status <STATE>] [--limit <N>] [--after <CURSOR>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--attention <WARNING>` | any, stalled or retention_risk (active jobs only) |  |
+| `--status <STATE>` | pending, paused, completed or cancelled (default all) |  |
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <CURSOR>` | continuation cursor from the previous page |  |
+
+### events subscription-lineage-retry-preflight
+
+Check a saved retry request without changing it
+
+`gregale events subscription-lineage-retry-preflight [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | scoped retry file or legacy request body |  |
+| `--timeout <DURATION>` | maximum preflight duration (default 2m) |  |
+
+### events subscription-lineage-retry-job-create
+
+Submit a reviewed fixed lineage retry selection
+
+`gregale events subscription-lineage-retry-job-create [--file <PATH>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
+
+### events subscription-lineage-retry-job-controls-inspect
+
+Inspect or compare saved control history offline
+
+`gregale events subscription-lineage-retry-job-controls-inspect [--file <PATH>] [--compare <BASELINE_PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | saved control-history artifact (local read only) |  |
+| `--compare <BASELINE_PATH>` | earlier artifact with the same job scope and filters |  |
+
+### events subscription-lineage-retry-job-controls-export
+
+Export a guarded private control-history snapshot
+
+`gregale events subscription-lineage-retry-job-controls-export [--file <PATH>] [--expected-created-at <TIMESTAMP>] [--action <ACTION>] [--actor-id <UUID_OR_STORE>] [--credential-type <TYPE>] [--timeout <DURATION>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new private JSON artifact (never overwrite) |  |
+| `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
+| `--action <ACTION>` | exact action: pause, resume or cancel |  |
+| `--actor-id <UUID_OR_STORE>` | exact original actor identity |  |
+| `--credential-type <TYPE>` | exact original credential type |  |
+| `--timeout <DURATION>` | maximum export duration (default 2m) |  |
+
+### events subscription-lineage-retry-job-controls
+
+List retained immutable bulk retry command receipts
+
+`gregale events subscription-lineage-retry-job-controls [--action <ACTION>] [--actor-id <UUID_OR_STORE>] [--credential-type <TYPE>] [--expected-created-at <TIMESTAMP>] [--limit <N>] [--after <SEQUENCE>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--action <ACTION>` | exact action: pause, resume or cancel |  |
+| `--actor-id <UUID_OR_STORE>` | exact original actor identity |  |
+| `--credential-type <TYPE>` | exact original credential type |  |
+| `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <SEQUENCE>` | exclusive recorded command sequence |  |
+
+### events subscription-lineage-retry-job-pause
+
+Pause unprocessed bulk lineage retries
+
+`gregale events subscription-lineage-retry-job-pause [--expected-created-at <TIMESTAMP>] [--command-id <UUID>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+| `--command-id <UUID>` | optional immutable receipt identity; reuse after timeouts |  |
+
+### events subscription-lineage-retry-job-resume
+
+Resume a paused bulk lineage retry job
+
+`gregale events subscription-lineage-retry-job-resume [--expected-created-at <TIMESTAMP>] [--command-id <UUID>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+| `--command-id <UUID>` | optional immutable receipt identity; reuse after timeouts |  |
+
+### events subscription-lineage-retry-job-cancel
+
+Cancel unprocessed lineage retries
+
+`gregale events subscription-lineage-retry-job-cancel [--command-id <UUID>] [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--command-id <UUID>` | optional reusable UUID for an immutable control receipt |  |
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+
+### events subscription-lineage-retry-job-export
+
+Export current guards for remaining cases from a finished job
+
+`gregale events subscription-lineage-retry-job-export [--file <PATH>] [--raw] [--expected-created-at <TIMESTAMP>] [--outcomes <STATES>] [--timeout <DURATION>] <app> <subscription-id> <source-request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new scoped retry file (never overwrite) |  |
+| `--raw` | legacy unscoped API body without provenance |  |
+| `--expected-created-at <TIMESTAMP>` | required reviewed source creation timestamp |  |
+| `--outcomes <STATES>` | original outcomes (default unresolved,conflict,changed,unavailable; cancelled also allowed) |  |
+| `--timeout <DURATION>` | maximum export duration (default 2m) |  |
+
+### events subscription-lineage-retry-job-watch
+
+Watch a retained bulk retry job and summarize outcomes
+
+`gregale events subscription-lineage-retry-job-watch [--timeout <DURATION>] [--poll-interval <DURATION>] [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum watch duration (default 10m) |  |
+| `--poll-interval <DURATION>` | delay between reads (default 2s, between 1s and 1h) |  |
+| `--expected-created-at <TIMESTAMP>` | optional reviewed original RFC3339 creation timestamp |  |
+
+### events subscription-lineage-retry-job
+
+Inspect durable lineage retry progress
+
+`gregale events subscription-lineage-retry-job <app> <subscription-id> <request-id>`
+
+### events subscription-lineage-cases
+
+List retained lineage repair cases
+
+`gregale events subscription-lineage-cases [--limit <N>] [--after <ID>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+
+### events subscription-lineage-retry
+
+Retry one reviewed lineage case
+
+`gregale events subscription-lineage-retry [--request-id <UUID>] [--expected-revision <N>] [--expected-diagnostic-id <UUID>] <app> <subscription-id> <outbox-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable request identity |  |
+| `--expected-revision <N>` | reviewed case revision |  |
+| `--expected-diagnostic-id <UUID>` | incarnation guard for a backfilled case |  |
+
+### events subscription-execution-reconciliation
+
+Inspect durable execution coverage reconciliation
+
+`gregale events subscription-execution-reconciliation <app> <subscription-id>`
+
+### events subscription-reconcile-execution
+
+Request a forward-only execution coverage boundary
+
+`gregale events subscription-reconcile-execution <app> <subscription-id>`
+
 ### events subscription-execution-health
 
-Inspect retained consumer executions and handler outcomes
+Inspect executions, handler outcomes, and active retry-job health
 
 `gregale events subscription-execution-health [--window <5m|15m|1h|6h|24h>] <app> <subscription-id>`
 
@@ -2973,15 +3274,24 @@ Inspect, replay, or acknowledge a local delivery health alert queue
 
 ### events subscription-delivery-health
 
-Inspect routing, retained executions, and oldest pending blockers
+Inspect routing, executions, retry jobs, and pending blockers
 
-`gregale events subscription-delivery-health [--window <WINDOW>] [--watch] [--alerts-json] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
+`gregale events subscription-delivery-health [--lineage-stalled-threshold <N>] [--lineage-retention-risk-threshold <N>] [--lineage-paused-threshold <DURATION>] [--receipt-budget-full-threshold <DURATION>] [--receipt-budget-remaining-threshold <N>] [--receipt-budget-low-sustain <DURATION>] [--receipt-budget-recovery-threshold <N>] [--receipt-budget-recovery-sustain <DURATION>] [--window <WINDOW>] [--watch] [--alerts-json] [--confirmation-progress] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lineage-stalled-threshold <N>` | stalled pending retry-job count threshold |  |
+| `--lineage-retention-risk-threshold <N>` | active retry-job retention-risk count threshold |  |
+| `--lineage-paused-threshold <DURATION>` | sustained nonzero paused retry-job backlog |  |
+| `--receipt-budget-full-threshold <DURATION>` | sustained full capacity-command receipt budget |  |
+| `--receipt-budget-remaining-threshold <N>` | warn below N remaining receipt slots (1..128; zero disables) |  |
+| `--receipt-budget-low-sustain <DURATION>` | confirm low remaining slots (default 30s when enabled) |  |
+| `--receipt-budget-recovery-threshold <N>` | opt-in recovery at N remaining slots; N must be at least the warning threshold |  |
+| `--receipt-budget-recovery-sustain <DURATION>` | fresh recovery confirmation (default 30s when recovery enabled) |  |
 | `--window <WINDOW>` | 5m\|15m\|1h\|6h\|24h |  |
 | `--watch` | watch configured local health thresholds |  |
 | `--alerts-json` | lifecycle alert JSON lines on stderr |  |
+| `--confirmation-progress` | live receipt-budget confirmation details on text stdout; omit with --json |  |
 | `--interval <DURATION>` | poll interval (100ms-1m) |  |
 | `--timeout <DURATION>` | watch deadline (up to 24h) |  |
 | `--max-age <DURATION>` | maximum sample age |  |
@@ -3019,6 +3329,55 @@ Inspect consumer backlog, routing rates, latency, and pause duration
 Inspect delivery pause, pacing, and oldest waiting event
 
 `gregale events subscription-status <app> <subscription-id>`
+
+### events subscription-capacity
+
+Set a lower live-delivery limit for one subscription
+
+`gregale events subscription-capacity [--command-id <UUID>] [--expected-max-pending <N>] [--expected-plan-max-pending <N>] [--max-pending <N>] [--yes] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--command-id <UUID>` | retain original outcome; reuse unchanged on uncertain response |  |
+| `--expected-max-pending <N>` | reviewed saved setting; use with expected-plan-max-pending |  |
+| `--expected-plan-max-pending <N>` | reviewed plan ceiling; use with expected-max-pending |  |
+| `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |
+| `--yes` | confirm changing subscription capacity |  |
+
+### events subscription-capacity-commands
+
+List a page of retained original capacity-command receipts
+
+`gregale events subscription-capacity-commands [--outcome <FILTER>] [--limit <N>] [--after <CURSOR>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--outcome <FILTER>` | any (default), applied or unchanged |  |
+| `--limit <N>` | receipts per page (default 25; maximum 100) |  |
+| `--after <CURSOR>` | next_after for the same app, subscription and outcome filter |  |
+| `--timeout <DURATION>` | total read deadline (default 5s; maximum 1m) |  |
+
+### events subscription-capacity-command
+
+Read retained original capacity-command evidence without applying a change
+
+`gregale events subscription-capacity-command [--timeout <DURATION>] <app> <subscription-id> <command-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | total read deadline (default 5s; maximum 1m) |  |
+
+### events subscription-capacity-preview
+
+Preview delivery capacity and command receipt budget without changing controls
+
+`gregale events subscription-capacity-preview [--max-pending <N>] [--timeout <DURATION>] [--max-age <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--max-pending <N>` | proposed live ceiling; 0 restores plan default |  |
+| `--timeout <DURATION>` | total read deadline (default 5s) |  |
+| `--max-age <DURATION>` | maximum pressure snapshot age (default 30s) |  |
 
 ### events recovery-preview
 
