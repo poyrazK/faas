@@ -148,3 +148,61 @@ The JUnit path cannot alias either input report, the policy file, or an existing
 file used for JSON stdout, including hard links. Shell redirection can truncate
 an input before Gregale starts; always redirect JSON to a separate destination.
 JUnit output is available only in explicit `--policy` mode.
+
+## Scoped policy rules
+
+Optional ordered `rules` override the global settings:
+
+```yaml
+schema_version: 1
+fail_new_failures: true
+max_frequency_increase_percentage_points: 10
+min_executed_runs: 5
+on_not_comparable: fail
+on_insufficient_samples: fail
+rules:
+  - name: checkout-recovery
+    match:
+      scenario: checkout
+      phase: recovery
+    fail_new_failures: true
+    max_frequency_increase_percentage_points: 0
+  - name: search-latency
+    match:
+      scenario: search
+      assertion: p95_ms
+    fail_new_failures: false
+    max_frequency_increase_percentage_points: 5
+  - name: reset-samples
+    match:
+      scenario: dependency-reset
+    min_executed_runs: 20
+```
+
+All specified selectors must match exactly. Supported selectors are
+`configuration_sha256`, `scenario`, `profile`, `engine`, `case`, `step`,
+`phase`, `kind` (assertion kind), `assertion`, and `request`. There are no
+globs, regular expressions, or implicit phase-role matching. An omitted selector
+matches any value; an explicit empty string matches only an empty value.
+
+The first matching rule wins. Omitted settings inherit global defaults, never
+later rules. Put specific exceptions before broader rules. Set
+`disable_frequency_check: true` to disable an inherited frequency limit;
+combining that setting with a limit is invalid. Boolean false and numeric zero
+are explicit overrides. Each rule needs a unique nonempty name other than
+`default`, at least one selector, and at least one override. At most 100 rules
+are accepted. Existing policies without rules retain their global behavior.
+
+Assertion comparisons use all selectors. Whole-context coverage checks only
+consider rules whose selectors are limited to configuration, scenario, profile,
+engine, and case. Assertion-specific exceptions cannot waive a missing context
+or a global context sample minimum. Context requirements remain independent;
+use a context-level rule to change them. Matching coverage and assertion sample
+violations for the same rule/context are reported once.
+
+JSON `decisions` records the zero-based comparison index, `policy_rule`
+(`default` when no rule matched), and effective settings for every comparison,
+including accepted or ignored comparisons. Violations also carry the matched
+rule and effective settings. JUnit failure names include the rule name and
+failure details use the effective thresholds; accepted JUnit output includes
+the comparison decisions. These are additive fields in result schema version 1.

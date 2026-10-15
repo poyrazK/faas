@@ -32,6 +32,12 @@ type testCampaignJUnitFailure struct {
 func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampaignPolicyResult) ([]byte, error) {
 	suite := testCampaignJUnitSuite{Name: "gregale.campaign-policy", Cases: make([]testCampaignJUnitCase, 0)}
 	for index, violation := range result.Violations {
+		effective := policy
+		if violation.EffectivePolicy != nil {
+			settings := violation.EffectivePolicy
+			effective.FailNewFailures, effective.MaxFrequencyIncrease = settings.FailNewFailures, settings.MaxFrequencyIncrease
+			effective.MinExecutedRuns, effective.NotComparable, effective.InsufficientSamples = settings.MinExecutedRuns, settings.NotComparable, settings.InsufficientSamples
+		}
 		context, err := json.Marshal(violation.Context)
 		if err != nil {
 			return nil, err
@@ -49,24 +55,28 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 			Violation            testCampaignPolicyViolation `json:"violation"`
 		}{
 			Rule: violation.Rule, Reason: violation.Reason,
-			FailNewFailures: policy.FailNewFailures, MaxFrequencyIncrease: policy.MaxFrequencyIncrease,
-			MinExecutedRuns: policy.MinExecutedRuns, NotComparable: policy.NotComparable,
-			InsufficientSamples: policy.InsufficientSamples, BaselineURL: result.BaselineURL,
+			FailNewFailures: effective.FailNewFailures, MaxFrequencyIncrease: effective.MaxFrequencyIncrease,
+			MinExecutedRuns: effective.MinExecutedRuns, NotComparable: effective.NotComparable,
+			InsufficientSamples: effective.InsufficientSamples, BaselineURL: result.BaselineURL,
 			CurrentURL: result.CurrentURL, Violation: violation,
 		}, "", "  ")
 		if err != nil {
 			return nil, err
 		}
 		suite.Cases = append(suite.Cases, testCampaignJUnitCase{
-			Name: fmt.Sprintf("%s [%d] configuration=%s context=%s", violation.Rule, index+1, violation.Configuration, context),
+			Name: fmt.Sprintf("%s / %s [%d] configuration=%s context=%s", violation.PolicyRule, violation.Rule, index+1, violation.Configuration, context),
 			Classname: "gregale.campaign-policy",
 			Failure: &testCampaignJUnitFailure{Message: violation.Reason, Type: violation.Rule, Body: string(detail)},
 		})
 	}
 	if len(suite.Cases) == 0 {
+		decisions, err := json.Marshal(result.Decisions)
+		if err != nil {
+			return nil, err
+		}
 		suite.Cases = append(suite.Cases, testCampaignJUnitCase{
 			Name: "campaign policy accepted", Classname: "gregale.campaign-policy",
-			Output: "No policy violations. This includes explicitly ignored coverage and sample conditions; it does not assert that all application tests passed.",
+			Output: "No policy violations. This includes explicitly ignored coverage and sample conditions; it does not assert that all application tests passed. Matched comparison rules: " + string(decisions),
 		})
 	}
 	suite.Tests, suite.Failures = len(suite.Cases), len(result.Violations)
