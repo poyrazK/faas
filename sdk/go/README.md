@@ -784,6 +784,8 @@ must not perform external effects or control the transaction lifecycle.
 
 See [the transaction contract and retention rules](../../docs/event-consumer-transactions.md).
 
+For long-running preparation, the opt-in [processing lease helper](../../docs/event-consumer-processing.md) provides durable claims, renewal and fenced transactional completion. HTTP success still follows completion.
+
 Enqueue follow-up Commit work inside the event-consumer callback with `InsertCommitEventInTransaction(ctx, tx, event)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
 
 For transactional publication to subscribers, configure an immutable `event` Commit destination with contract version 3. The existing insert helpers accept an optional schema version and run in the consumer callback transaction. See [publication setup and receipt recovery](../../docs/gregale-commit.md#version-3-application-event-publication-adr-935).

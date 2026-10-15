@@ -283,3 +283,8 @@ The same callback inserts compose; the source destination determines whether
 Gregale accepts a managed Operation or an application-event fanout. Install the
 publication checkpoint upgrade explicitly and retain consumer receipts across
 all relevant replay paths.
+
+## Long-running preparation
+
+The Go SDK offers [application-owned processing leases](event-consumer-processing.md)
+for durable claims, renewal and fenced transactional completion before HTTP success.
