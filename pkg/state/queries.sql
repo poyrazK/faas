@@ -14955,6 +14955,16 @@ UPDATE workflow_runs SET status='failed',cancelled_at=clock_timestamp(),finished
  last_error=sqlc.arg(reason)::text,updated_at=clock_timestamp(),lease_until=NULL
 WHERE id=sqlc.arg(run_id)::uuid AND status IN ('pending','running','awaiting_event');
 
+-- name: ActiveCustomerOperationsForSubject :many
+-- ADR-1197: a subject signal reaches every active Operation of one name about
+-- one business subject, oldest first, through the subject history index.
+SELECT id::text FROM customer_operations
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND record ? 'subject'
+  AND record #>> '{subject,type}' = sqlc.arg(subject_type)::text AND record #>> '{subject,id}' = sqlc.arg(subject_id)::text
+  AND record->>'scope' = sqlc.arg(scope)::text AND record->>'name' = sqlc.arg(name)::text
+  AND state IN ('accepted','running','waiting')
+ORDER BY created_at,id LIMIT sqlc.arg(page_limit)::integer;
+
 -- name: ListDueCustomerOperationDeadlines :many
 -- ADR-1196: HTTP executions carry the deadline themselves; workflow runs
 -- have none, so the sweeper stops them.

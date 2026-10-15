@@ -419,6 +419,55 @@ func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const activeCustomerOperationsForSubject = `-- name: ActiveCustomerOperationsForSubject :many
+SELECT id::text FROM customer_operations
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND record ? 'subject'
+  AND record #>> '{subject,type}' = $3::text AND record #>> '{subject,id}' = $4::text
+  AND record->>'scope' = $5::text AND record->>'name' = $6::text
+  AND state IN ('accepted','running','waiting')
+ORDER BY created_at,id LIMIT $7::integer
+`
+
+type ActiveCustomerOperationsForSubjectParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	SubjectType string
+	SubjectID   string
+	Scope       string
+	Name        string
+	PageLimit   int32
+}
+
+// ADR-1197: a subject signal reaches every active Operation of one name about
+// one business subject, oldest first, through the subject history index.
+func (q *Queries) ActiveCustomerOperationsForSubject(ctx context.Context, db DBTX, arg ActiveCustomerOperationsForSubjectParams) ([]string, error) {
+	rows, err := db.Query(ctx, activeCustomerOperationsForSubject,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.Scope,
+		arg.Name,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const activeEnvironmentWorkloadReleaseMembers = `-- name: ActiveEnvironmentWorkloadReleaseMembers :many
 SELECT rm.app_id::text AS app_id, rm.deployment_id::text AS deployment_id
 FROM environment_git_sources source

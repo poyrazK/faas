@@ -1765,6 +1765,18 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 		return fmt.Errorf("pgstore: begin workflow event: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	if err := insertWorkflowEventTx(ctx, tx, tenantID, e); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pgstore: commit workflow event: %w", err)
+	}
+	return nil
+}
+
+// insertWorkflowEventTx records an event and wakes a run parked on events.
+// Callers that also lock the run's Operation share its transaction (ADR-1197).
+func insertWorkflowEventTx(ctx context.Context, tx pgx.Tx, tenantID string, e *WorkflowEvent) error {
 	var runStatus string
 	if tenantID == "" {
 		if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, e.RunID).Scan(&runStatus); err != nil {
@@ -1791,7 +1803,7 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 		  AND workflow_events.event_name = excluded.event_name
 		RETURNING received_at
 	`
-	err = tx.QueryRow(ctx, query, e.ID, e.RunID, e.EventName, e.Payload).Scan(&e.ReceivedAt)
+	err := tx.QueryRow(ctx, query, e.ID, e.RunID, e.EventName, e.Payload).Scan(&e.ReceivedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: workflow_events.id", ErrConflict)
@@ -1804,9 +1816,6 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 		WHERE id = $1 AND status = 'awaiting_event'
 	`, e.RunID); err != nil {
 		return fmt.Errorf("pgstore: wake workflow for event: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("pgstore: commit workflow event: %w", err)
 	}
 	return nil
 }

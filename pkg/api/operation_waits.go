@@ -34,6 +34,8 @@ type OperationWaitingState struct {
 	Since    time.Time  `json:"since"`
 	Until    *time.Time `json:"until,omitempty"`
 	Approver string     `json:"approver,omitempty"`
+	// Event names the signal an event wait expects (ADR-1197).
+	Event string `json:"event,omitempty"`
 }
 
 type OperationApprovalRequest struct {

@@ -43,7 +43,7 @@ func TestWorkflowOperationContractRejectsReplayAndControlActions(t *testing.T) {
 
 // ADR-1194: timers and declared approvals join the linear chain; every other
 // wait or control action stays excluded and the result comes from an action.
-func TestWorkflowOperationContractAdmitsTimersAndApprovals(t *testing.T) {
+func TestWorkflowOperationContractAdmitsTimersApprovalsAndEvents(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		alter func(*api.OperationDefinitionSpec, *api.WorkflowSpec)
@@ -61,8 +61,22 @@ func TestWorkflowOperationContractAdmitsTimersAndApprovals(t *testing.T) {
 			w.Steps = w.Steps[:3]
 			op.ProgressStages = op.ProgressStages[:3]
 		}, false},
+		// ADR-1197: an event wait is allowed when it can end on its own.
 		{"event wait", func(_ *api.OperationDefinitionSpec, w *api.WorkflowSpec) {
 			w.Steps[2] = api.WorkflowStepSpec{Name: "cool", WaitForEvent: "invoice.paid", Timeout: time.Hour, DependsOn: []string{"review"}}
+		}, true},
+		{"event wait without timeout", func(_ *api.OperationDefinitionSpec, w *api.WorkflowSpec) {
+			w.Steps[2] = api.WorkflowStepSpec{Name: "cool", WaitForEvent: "invoice.paid", DependsOn: []string{"review"}}
+		}, false},
+		{"event wait on a callback name", func(_ *api.OperationDefinitionSpec, w *api.WorkflowSpec) {
+			w.Steps[2] = api.WorkflowStepSpec{Name: "cool", WaitForEvent: "workflow.callback.cool", Timeout: time.Hour, DependsOn: []string{"review"}}
+		}, false},
+		{"event wait with an unbounded name", func(_ *api.OperationDefinitionSpec, w *api.WorkflowSpec) {
+			w.Steps[2] = api.WorkflowStepSpec{Name: "cool", WaitForEvent: "Invoice Paid", Timeout: time.Hour, DependsOn: []string{"review"}}
+		}, false},
+		{"event wait declared as an approval", func(op *api.OperationDefinitionSpec, w *api.WorkflowSpec) {
+			w.Steps[2] = api.WorkflowStepSpec{Name: "cool", WaitForEvent: "invoice.paid", Timeout: time.Hour, DependsOn: []string{"review"}}
+			op.Approvals = append(op.Approvals, api.OperationApprovalSpec{Step: "cool", Approver: api.OperationApproverAccount})
 		}, false},
 		{"timeout handler", func(_ *api.OperationDefinitionSpec, w *api.WorkflowSpec) { w.Steps[1].OnTimeout = "uploading" }, false},
 	} {
@@ -118,5 +132,22 @@ func TestOperationApprovalsCompile(t *testing.T) {
 	http.Approvals = []api.OperationApprovalSpec{{Step: http.ProgressStages[0], Approver: api.OperationApproverAccount}}
 	if _, err := Compile(http, limits); err == nil {
 		t.Fatal("an HTTP operation declared an approval")
+	}
+}
+
+func TestOperationSignalEvents(t *testing.T) {
+	workflow := api.WorkflowSpec{Steps: []api.WorkflowStepSpec{
+		{Name: "a", Path: "/a"},
+		{Name: "b", WaitForEvent: "payment.succeeded", Timeout: time.Hour},
+		{Name: "c", WaitForCallback: true, Timeout: time.Hour},
+	}}
+	events := OperationSignalEvents(workflow)
+	if len(events) != 1 || !events["payment.succeeded"] {
+		t.Fatalf("signal events %v", events)
+	}
+	for name, valid := range map[string]bool{"payment.succeeded": true, "a": true, "order_ready-2": true, "": false, "Payment": false, "workflow.callback.x": false, "1st": false} {
+		if ValidOperationSignalEvent(name) != valid {
+			t.Fatalf("ValidOperationSignalEvent(%q) != %v", name, valid)
+		}
 	}
 }

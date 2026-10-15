@@ -1404,6 +1404,11 @@ func (m *MemStore) insertWorkflowEvent(_ context.Context, tenantID string, e *Wo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.insertWorkflowEventLocked(tenantID, e)
+}
+
+// insertWorkflowEventLocked mirrors insertWorkflowEventTx.
+func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) error {
 	run, ok := m.workflowRuns[e.RunID]
 	if !ok {
 		return ErrWorkflowRunNotFound

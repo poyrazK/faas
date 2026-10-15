@@ -19,6 +19,7 @@ type waitOperationFixture struct {
 	workflowOperationFixture
 	finished     *atomic.Int32
 	orchestrator *sched.WorkflowOrchestrator
+	inputs       *[]string
 }
 
 // waitOperationSetup deploys validate -> review (approval) -> cool (timer) -> finish.

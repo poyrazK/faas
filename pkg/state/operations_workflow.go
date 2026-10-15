@@ -118,6 +118,9 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 					failureCode = api.OperationFailureApprovalDenied
 				}
 			}
+			if failed && wait.Kind == api.OperationWaitEvent && failureCode == "" {
+				failureCode = api.OperationFailureEventExpiry
+			}
 			continue
 		}
 		if (failed || step.Status == WorkflowStepStatusSkipped) && step.Attempt > 0 && len(step.Output) == 0 {
@@ -176,6 +179,7 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 type operationWorkflowWait struct {
 	Kind     string
 	Duration time.Duration
+	Event    string
 }
 
 func operationWorkflowWaits(run WorkflowRun) map[string]operationWorkflowWait {
@@ -190,6 +194,8 @@ func operationWorkflowWaits(run WorkflowRun) map[string]operationWorkflowWait {
 			waits[step.Name] = operationWorkflowWait{Kind: api.OperationWaitTimer, Duration: step.WaitForDuration}
 		case api.OperationWaitApproval:
 			waits[step.Name] = operationWorkflowWait{Kind: api.OperationWaitApproval, Duration: step.Timeout}
+		case api.OperationWaitEvent:
+			waits[step.Name] = operationWorkflowWait{Kind: api.OperationWaitEvent, Duration: step.Timeout, Event: step.WaitForEvent}
 		}
 	}
 	return waits
@@ -213,7 +219,7 @@ func operationWorkflowWaitTransition(op *Operation, def OperationDefinition, run
 		return nil
 	}
 	until := step.StartedAt.Add(wait.Duration)
-	waiting := &api.OperationWaitingState{Kind: wait.Kind, Step: step.StepName, Since: *step.StartedAt, Until: &until}
+	waiting := &api.OperationWaitingState{Kind: wait.Kind, Step: step.StepName, Since: *step.StartedAt, Until: &until, Event: wait.Event}
 	if approval, ok := operations.ApprovalFor(def.Spec, step.StepName); ok {
 		waiting.Approver = approval.Approver
 	}
@@ -221,6 +227,9 @@ func operationWorkflowWaitTransition(op *Operation, def OperationDefinition, run
 	data := map[string]any{"state": op.State, "kind": waiting.Kind, "step": waiting.Step, "since": waiting.Since, "until": until}
 	if waiting.Approver != "" {
 		data["approver"] = waiting.Approver
+	}
+	if waiting.Event != "" {
+		data["event"] = waiting.Event
 	}
 	return []api.OperationEvent{operationWorkflowEvent(op, run, "waiting", data, now)}
 }
