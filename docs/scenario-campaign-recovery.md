@@ -249,3 +249,52 @@ files changed. Optional JSON export is the only requested write.
 A valid informational report still exits zero when recovery is incomplete.
 Invalid options, inputs or failed inspection exit one. Implementation tests and
 CI remain deferred.
+
+
+## Portable end-to-end recovery acceptance suite
+
+The `TestCampaignRecoveryAcceptance*` tests exercise the real campaign scheduler,
+bundle import/export, ownership claims, cleanup CLI, recovery assessment,
+completion verifier and reconciliation CLI together. An in-process HTTP server
+implements only scoped session GET and DELETE; unexpected paths, workspaces,
+authorization or mutating methods fail the test. No VM, deployment, lease renewal
+or fixture command is needed.
+
+The interrupted-worker case uses the native batch launcher injection point to
+persist a provisioning intent and returned identity, then exits before publishing
+the final report. It asserts an uncertain halted checkpoint, source freeze,
+inspection-only and duplicate-recipient rejection, cleanup under the activated
+recipient, immutable source snapshots, and bound version-two observation output.
+A second handoff transfers cleanup progress and explicitly supplied observation
+provenance. Fresh absence checks can then confirm resource cleanup while missing
+test evidence still blocks completion and reconciliation.
+
+Failure cases cover replacement app IDs, read failures, failed deletion and its
+partial provenance, an unconfirmed provisioning outcome, a stale ownership claim,
+and a recorded fixture cleanup error. A positive case supplies complete receipt fixtures
+and recomputes status and policy through the CLI, then confirms that a
+fully evidenced campaign with absent sessions can pass completion verification.
+The suite checks that read-only assessment and reconciliation never issue DELETE.
+
+Run the focused portable suite first:
+
+```sh
+go test ./cmd/gregale -run '^TestCampaignRecoveryAcceptance' -count=1
+go test -race ./cmd/gregale -run '^TestCampaignRecoveryAcceptance' -count=1
+```
+
+After those pass, run the CLI package checks:
+
+```sh
+go test ./cmd/gregale
+```
+
+This suite tests integration contracts using an injected launcher failure; it
+does not claim to exercise an actual OS process kill, native VM startup,
+network faults on a deployed workload or real-VM cleanup. Those remain separate
+native qualification targets.
+
+The suite was added while this chat's managed execution environment was failed
+and no shell runner was available. The commands above, compilation, formatting
+and CI have not been run for this change; these are intended assertions rather
+than a passing acceptance result.
