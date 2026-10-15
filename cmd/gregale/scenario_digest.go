@@ -14,6 +14,7 @@ import (
 
 func cmdTestDigest(args []string) int {
 	fs := newFlagSet("test digest", flag.ContinueOnError)
+	comparisonJSON := fs.String("comparison-json", "", "write a versioned JSON baseline comparison (requires --baseline)")
 	baseline := fs.String("baseline", "", "optional previous JSON report")
 	baselineEvidence := fs.String("baseline-evidence-url", "", "HTTPS URL of the baseline HTML report")
 	from := fs.String("from", "", "saved JSON scenario report")
@@ -32,13 +33,38 @@ func cmdTestDigest(args []string) int {
 	if *from == "" || *markdown == "" || *limit < 1 || *limit > 20 {
 		return printErr("Invalid digest options", errors.New("--from and --markdown are required; --limit must be 1..20"))
 	}
+	if *comparisonJSON != "" && *baseline == "" {
+		return printErr("Invalid digest options", errors.New("--comparison-json requires --baseline"))
+	}
+	outputs := []string{*markdown}
+	if *comparisonJSON != "" {
+		if err := testDigestDistinctOutputs(*markdown, *comparisonJSON); err != nil {
+			return printErr("Invalid digest outputs", err)
+		}
+		outputs = append(outputs, *comparisonJSON)
+	}
 	origin, err := validateTestDigestURL(*evidence)
 	if err != nil {
 		return printErr("Invalid evidence URL", err)
 	}
-	receipts, _, err := readTestBaselineReport(*from, []string{*markdown})
+	receipts, _, err := readTestBaselineReport(*from, outputs)
 	if err != nil {
 		return printErr("Could not read scenario report", err)
+	}
+	var comparisonBody []byte
+	if *comparisonJSON != "" {
+		previous, _, readErr := readTestBaselineReport(*baseline, outputs)
+		if readErr != nil {
+			return printErr("Could not read baseline", readErr)
+		}
+		baselineURL, urlErr := validateTestDigestURL(*baselineEvidence)
+		if urlErr != nil {
+			return printErr("Invalid baseline evidence URL", urlErr)
+		}
+		comparisonBody, err = marshalTestDigestComparison(previous, receipts, baselineURL, origin)
+		if err != nil {
+			return printErr("Could not encode comparison", err)
+		}
 	}
 	body := renderTestDigest(receipts, *limit, origin)
 	body, err = appendTestDigestBaseline(body, receipts, *baseline, *baselineEvidence, *markdown, origin, *limit)
@@ -47,6 +73,11 @@ func cmdTestDigest(args []string) int {
 	}
 	if err := os.WriteFile(*markdown, []byte(body), 0o600); err != nil {
 		return printErr("Could not write digest", err)
+	}
+	if *comparisonJSON != "" {
+		if err := os.WriteFile(*comparisonJSON, comparisonBody, 0o600); err != nil {
+			return printErr("Could not write comparison JSON", err)
+		}
 	}
 	return 0
 }
