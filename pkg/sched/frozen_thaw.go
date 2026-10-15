@@ -30,13 +30,24 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 	if app.Status != state.AppActive || !instanceModeUsesSnapshots(mode) || e.ledger.FrozenCountForApp(app.ID) == 0 {
 		return WakeResult{}, false, nil
 	}
-	candidates, err := e.frozenCandidates(ctx, app, dep)
-	if err != nil || len(candidates) == 0 {
-		return WakeResult{}, false, err
+	// The candidates (instance list, then their nodes) and the runtime values
+	// do not depend on each other; reading them at once saves the values'
+	// round trip. The ledger counted a frozen VM, so values are rarely wasted.
+	var (
+		candidates   []frozenCandidate
+		candidateErr error
+		values       runtimeDeploymentValues
+		valuesErr    error
+	)
+	concurrently(
+		func() { candidates, candidateErr = e.frozenCandidates(ctx, app, dep) },
+		func() { values, valuesErr = e.loadRuntimeDeploymentValues(ctx, app, dep) },
+	)
+	if candidateErr != nil || len(candidates) == 0 {
+		return WakeResult{}, false, candidateErr
 	}
-	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
-	if err != nil {
-		return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: runtime values: %w", err)
+	if valuesErr != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: runtime values: %w", valuesErr)
 	}
 	environmentKey := runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID)
 	production := reaperProductionScope(values.Snapshot.Scope)

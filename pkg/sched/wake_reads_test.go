@@ -132,3 +132,25 @@ func TestWakeStillHonoursTheCutoverBarrier(t *testing.T) {
 		})
 	}
 }
+
+func TestWakeAppIsReusedOnlyForItsAppAndOneAdmission(t *testing.T) {
+	app := state.App{ID: "00000000-0000-4000-8000-0000000000a1"}
+	for _, tc := range []struct {
+		name  string
+		ctx   context.Context
+		appID string
+		want  bool
+	}{
+		{name: "no wake app", ctx: context.Background(), appID: app.ID},
+		{name: "same app", ctx: withWakeApp(context.Background(), app), appID: app.ID, want: true},
+		{name: "another app", ctx: withWakeApp(context.Background(), app), appID: "00000000-0000-4000-8000-0000000000a2"},
+		{name: "unread app is not carried", ctx: withWakeApp(context.Background(), state.App{}), appID: ""},
+		{name: "after admission resolved it", ctx: forgetWakeApp(withWakeApp(context.Background(), app)), appID: app.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := wakeAppFrom(tc.ctx, tc.appID); ok != tc.want {
+				t.Fatalf("wakeAppFrom = %v, want %v", ok, tc.want)
+			}
+		})
+	}
+}

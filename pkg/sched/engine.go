@@ -1743,21 +1743,37 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	scope = ScopeFrom(ctx)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
-	// One app read serves the standards check and the fast path's tenant.
-	app, appErr := e.store.AppByID(ctx, appID)
+	// One app read serves the standards check, the fast path's tenant and,
+	// through the context, admission. It does not depend on the running
+	// instance lookup, so the two run at once; their errors are checked in
+	// the order they used to run.
+	var (
+		app                  state.App
+		appErr, standardsErr error
+		ins                  state.Instance
+		insErr               error
+	)
+	concurrently(
+		func() {
+			if app, appErr = e.store.AppByID(ctx, appID); appErr == nil {
+				standardsErr = e.checkApplicationStandardAdmission(ctx, app)
+			}
+		},
+		func() { ins, insErr = e.runningInstanceForWake(ctx, appID, deploymentID, scope) },
+	)
 	if appErr != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: read application for standard admission: %w", appErr)
 	}
-	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+	if standardsErr != nil {
 		release()
-		return WakeResult{}, err
+		return WakeResult{}, standardsErr
 	}
 	// The database cutover barrier is checked where its answer is used:
 	// before this path returns a running instance, and in
 	// admitAndDispatchWithOptions before a new admission. Checking it here
 	// as well cost every wake that goes on to admit a second round trip.
-	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
+	if err := insErr; err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
 		if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
 			release()
 			return WakeResult{}, err
@@ -1805,6 +1821,8 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
 	}
 	release()
+	// Admission reuses the app read and standards check made above.
+	ctx = withWakeApp(ctx, app)
 	// Wake preserves the legacy contract: a ledger refusal surfaces
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
@@ -2798,9 +2816,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	wakeStarted := time.Now()
 	// Explicit deployment, worker/job and config-restart paths may bypass
 	// ordinary request gates; none may bypass a database cutover barrier.
-	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
-		return WakeResult{}, err
-	}
+	// The barrier is read while the app is resolved below, and checked
+	// before anything resolved is used.
+	barrier := make(chan error, 1)
+	go func(ctx context.Context) { barrier <- e.checkManagedPostgresAdmission(ctx, appID) }(ctx)
 	var releaseRestorePressure func()
 	defer func() {
 		if releaseRestorePressure != nil {
@@ -2836,6 +2855,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		app, acct, limits, err = e.resolveAppAccount(ctx, appID)
 	} else {
 		app, acct, limits, dep, err = e.resolveApp(ctx, appID)
+	}
+	ctx = forgetWakeApp(ctx)
+	if barrierErr := <-barrier; barrierErr != nil {
+		release()
+		return WakeResult{}, barrierErr
 	}
 	if err != nil {
 		release()
@@ -8129,12 +8153,15 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 // deployment's immutable pin. Loading a desired head first would also change
 // historical deployments without a pin, before the next revision is deployed.
 func (e *Engine) resolveAppAccount(ctx context.Context, appID string) (state.App, state.Account, api.Limits, error) {
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil {
-		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
-	}
-	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
-		return state.App{}, state.Account{}, api.Limits{}, err
+	app, reused := wakeAppFrom(ctx, appID)
+	if !reused {
+		var err error
+		if app, err = e.store.AppByID(ctx, appID); err != nil {
+			return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
+		}
+		if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+			return state.App{}, state.Account{}, api.Limits{}, err
+		}
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
