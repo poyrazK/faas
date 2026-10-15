@@ -47,7 +47,7 @@ type customerOperationCommand struct {
 
 func cmdCustomerOperations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|bindings|start|list|get|milestones|outcomes|outcome-summary|attention|attention-summary|events|executions|watch|download|cancel|approve|recover|delivery|delivery-attempts|retry-delivery|types|inspect>", "customer-operations")
+		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|bindings|start|list|get|milestones|outcomes|outcome-summary|attention|attention-summary|events|executions|watch|download|cancel|signal|approve|recover|delivery|delivery-attempts|retry-delivery|types|inspect>", "customer-operations")
 		return 1
 	}
 	if args[0] == "outcomes" {
@@ -67,6 +67,9 @@ func cmdCustomerOperations(args []string) int {
 	}
 	if args[0] == "bindings" {
 		return cmdCustomerOperationBindings(args[1:])
+	}
+	if args[0] == "signal" {
+		return cmdCustomerOperationSignal(args[1:])
 	}
 	if len(args) > 0 && (args[0] == "delivery" || args[0] == "delivery-attempts" || args[0] == "retry-delivery") {
 		return cmdCustomerOperationDelivery(args)

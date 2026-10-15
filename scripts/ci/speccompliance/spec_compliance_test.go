@@ -1309,8 +1309,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
-		filepath.Join(root, "pkg", "api", "operation_limits.go"), // ADR-1196 operation limit DTOs
-		filepath.Join(root, "pkg", "api", "operation_waits.go"), // ADR-1194 operation wait and approval DTOs
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),  // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"), // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),   // ADR-1194 operation wait and approval DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

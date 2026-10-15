@@ -7,7 +7,7 @@ import type { OperationWorkflowStep } from './generated/models/OperationWorkflow
 
 export type OperationState = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
 /** ADR-1194: why a waiting operation holds no execution, and until when. */
-export interface OperationWaitingState { kind: 'timer' | 'approval'; step: string; since: string; until?: string; approver?: 'account' | 'customer' }
+export interface OperationWaitingState { kind: 'timer' | 'approval' | 'event'; step: string; since: string; until?: string; approver?: 'account' | 'customer'; event?: string }
 /** ADR-1196: bounds fixed onto an accepted Operation, and what it has used. */
 export interface OperationLimits { deadline_seconds?: number; max_attempts?: number; max_execution_seconds?: number }
 export interface OperationUsage { execution_ms: number; attempts: number }

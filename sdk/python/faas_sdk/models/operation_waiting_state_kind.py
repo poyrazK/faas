@@ -1,9 +1,10 @@
 from typing import Literal
 
-OperationWaitingStateKind = Literal["approval", "timer"]
+OperationWaitingStateKind = Literal["approval", "event", "timer"]
 
 OPERATION_WAITING_STATE_KIND_VALUES: set[OperationWaitingStateKind] = {
     "approval",
+    "event",
     "timer",
 }
 

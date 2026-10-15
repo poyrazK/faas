@@ -154,9 +154,48 @@ decision conflicts. Rejection settles the operation `failed` with
 `approval_rejected`; a passed approval timeout settles `approval_expired`. Waits
 never require reconciliation, and cancelling a waiting operation settles it
 `cancelled`. Generic workflow callback completion is refused for operation runs,
-so only the approval endpoints can resume an approval. Event waits, condition
-checks and branches remain unavailable to operations. See
+so only the approval endpoints can resume an approval. Condition checks and
+branches remain unavailable to operations. See
 [ADR-1194](adr/1194-operation-waits-and-approvals.md).
+
+### Event waits and signals
+
+A step can also wait for something outside the app, such as a payment provider
+confirming a charge:
+
+```yaml
+      - {name: payment, wait_for_event: payment.succeeded, timeout: 24h, depends_on: [validate]}
+      - {name: ship, path: /orders/ship, depends_on: [payment], input: {charge: '{{steps.payment.output.charge}}'}}
+```
+
+An event wait needs a `timeout`. While parked, the operation is `waiting` with
+`waiting.kind: event` and `waiting.event`. Deliver the event with a signal:
+
+```sh
+gregale customer-operations signal OP_ID --app shop --event payment.succeeded \
+  --signal-id evt_3Nx --payload '{"charge":"ch_1"}'
+# Or reach every active operation about one business subject:
+gregale customer-operations signal --app shop --scope production --operation fulfil \
+  --subject order:ord_42 --event payment.succeeded --signal-id evt_3Nx
+```
+
+The API routes are `POST /v1/apps/{slug}/operations/{id}/signals` and
+`POST /v1/apps/{slug}/operation-signals`. Both take deploy-write scope and MFA.
+The payload becomes the wait step's output. `signal_id` makes delivery
+idempotent: repeating a signal returns its original receipt, and reusing the ID
+with a different event or payload is `409 operation_signal_conflict`.
+
+- An event the workflow never waits for is `422 operation_signal_unexpected`.
+- A settled operation takes no new signals (`409 operation_not_active`).
+- A signal that arrives before its wait is held and used when the wait starts.
+- A subject signal reaches at most 16 active operations of that definition,
+  matched by the [subject](#business-references) fixed at acceptance.
+- History records each delivery as a `signal_received` event.
+- A wait that times out settles `failed` with `event_timeout`.
+- Native workflow event injection is refused for operation runs, so every event
+  appears in the operation's history.
+
+See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
 
 ## Deadlines and budgets
 

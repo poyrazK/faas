@@ -11098,6 +11098,24 @@ Request cancellation at an observed generation
 | `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
 | `--self` | use authenticated tenant routes; omit --app |  |
 
+### customer-operations signal
+
+Deliver a named event to a waiting operation, by ID or by business subject
+
+`gregale customer-operations signal --app <SLUG> [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [<id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--event <NAME>` | event the operation waits for | required |
+| `--signal-id <ID>` | stable idempotency key; repeat it to retry safely | required |
+| `--payload <JSON>` | JSON payload |  |
+| `--payload-file <PATH>` | file holding the JSON payload |  |
+| `--scope <SCOPE>` | environment, for a subject signal |  |
+| `--operation <NAME>` | operation name, for a subject signal |  |
+| `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
+
 ### customer-operations approve
 
 Decide a declared approval on a waiting operation (ADR-1194)

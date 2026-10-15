@@ -46615,6 +46615,91 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/signals:
+    post:
+      tags:
+      - operations
+      operationId: signalOperation
+      summary: Deliver a named event to an operation that waits for it.
+      description: Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for. signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns the original receipt, a different event or payload under it conflicts. A signal that arrives before its wait is held until the wait starts. Settled operations take no new signals.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationSignalRequest'
+      responses:
+        '200':
+          description: The delivery receipt; duplicate marks a repeat of an earlier signal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSignalReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operation-signals:
+    post:
+      tags:
+      - operations
+      operationId: signalOperationsBySubject
+      summary: Deliver a named event to every active operation about one business subject.
+      description: Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named definition in the scope whose subject matches, oldest first; more is a limit error. Operations that settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationSubjectSignalRequest'
+      responses:
+        '200':
+          description: One receipt per operation reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSubjectSignalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/operations/{id}/cancel:
     post:
       tags:
@@ -56166,11 +56251,54 @@ components:
       type: object
       required: [kind, step, since]
       properties:
-        kind: { type: string, enum: [timer, approval] }
+        kind: { type: string, enum: [timer, approval, event] }
         step: { type: string }
         since: { type: string, format: date-time }
         until: { type: string, format: date-time }
         approver: { type: string, enum: [account, customer] }
+        event: { type: string, maxLength: 63, description: The event an event wait expects (ADR-1197). }
+    OperationSignalRequest:
+      description: One named event for an operation (ADR-1197).
+      type: object
+      additionalProperties: false
+      required: [signal_id, event]
+      properties:
+        signal_id: { type: string, minLength: 1, maxLength: 128, description: Idempotency key for this delivery, per operation. }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+        payload: { description: 'JSON delivered as the wait step''s output; at most 64 KiB.' }
+    OperationSubjectSignalRequest:
+      description: One named event for every active operation of a definition about one business subject (ADR-1197).
+      type: object
+      additionalProperties: false
+      required: [scope, operation, subject, signal_id, event]
+      properties:
+        scope: { type: string }
+        operation: { type: string, maxLength: 64 }
+        subject: { $ref: '#/components/schemas/OperationSubject' }
+        signal_id: { type: string, minLength: 1, maxLength: 128 }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+        payload: { description: 'JSON each reached operation''s wait step receives as its output; at most 64 KiB.' }
+    OperationSignalReceipt:
+      description: One signal delivery. waiting reports whether the operation was waiting for this event; otherwise the run holds it for a later wait.
+      type: object
+      additionalProperties: false
+      required: [operation_id, signal_id, event, duplicate, waiting]
+      properties:
+        operation_id: { type: string, format: uuid }
+        signal_id: { type: string }
+        event: { type: string }
+        duplicate: { type: boolean }
+        waiting: { type: boolean }
+    OperationSubjectSignalResponse:
+      description: Receipts for the operations a subject signal reached.
+      type: object
+      additionalProperties: false
+      required: [delivered]
+      properties:
+        delivered:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/OperationSignalReceipt' }
     OperationApprovalRequest:
       description: One approval decision for the operation's current generation.
       type: object

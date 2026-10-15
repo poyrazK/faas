@@ -26,6 +26,8 @@ class OperationWaitingState:
     since: datetime.datetime
     until: datetime.datetime | Unset = UNSET
     approver: OperationWaitingStateApprover | Unset = UNSET
+    event: str | Unset = UNSET
+    """The event an event wait expects (ADR-1197)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +45,8 @@ class OperationWaitingState:
         if not isinstance(self.approver, Unset):
             approver = self.approver
 
+        event = self.event
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,6 +60,8 @@ class OperationWaitingState:
             field_dict["until"] = until
         if approver is not UNSET:
             field_dict["approver"] = approver
+        if event is not UNSET:
+            field_dict["event"] = event
 
         return field_dict
 
@@ -82,12 +88,15 @@ class OperationWaitingState:
         else:
             approver = check_operation_waiting_state_approver(_approver)
 
+        event = d.pop("event", UNSET)
+
         operation_waiting_state = cls(
             kind=kind,
             step=step,
             since=since,
             until=until,
             approver=approver,
+            event=event,
         )
 
         operation_waiting_state.additional_properties = d

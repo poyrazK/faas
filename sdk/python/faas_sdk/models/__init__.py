@@ -2414,8 +2414,12 @@ from .operation_report_request import OperationReportRequest
 from .operation_response import OperationResponse
 from .operation_response_state import OperationResponseState
 from .operation_result_artifact import OperationResultArtifact
+from .operation_signal_receipt import OperationSignalReceipt
+from .operation_signal_request import OperationSignalRequest
 from .operation_start_request import OperationStartRequest
 from .operation_subject import OperationSubject
+from .operation_subject_signal_request import OperationSubjectSignalRequest
+from .operation_subject_signal_response import OperationSubjectSignalResponse
 from .operation_subject_spec import OperationSubjectSpec
 from .operation_submission_lookup_request import OperationSubmissionLookupRequest
 from .operation_submission_lookup_response import OperationSubmissionLookupResponse
@@ -6965,8 +6969,12 @@ __all__ = (
     "OperationResponse",
     "OperationResponseState",
     "OperationResultArtifact",
+    "OperationSignalReceipt",
+    "OperationSignalRequest",
     "OperationStartRequest",
     "OperationSubject",
+    "OperationSubjectSignalRequest",
+    "OperationSubjectSignalResponse",
     "OperationSubjectSpec",
     "OperationSubmissionLookupRequest",
     "OperationSubmissionLookupResponse",
