@@ -988,6 +988,19 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  subObsBundle,
+				Short: "Export sanitized incident evidence, related context, and source health",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "output", Short: "new owner-only JSON file (required; - for stdout)"},
+					{Name: "limit", Short: "maximum related resources (1..100; default 25)"},
+					{Name: "history-limit", Short: "maximum entries per evidence/timeline section (1..100; default 25)"},
+					{Name: "json", Short: "emit JSON file receipt; stdout exports always contain the bundle"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "total collection timeout (default 30s; maximum 1m)"},
+				},
+			},
+			{
 				Name:  subObsContext,
 				Short: "Inspect current incident exposure and related evidence",
 				Flags: []cliFlag{

@@ -355,6 +355,40 @@ null counts and an explicit reason. The 24-hour timeline window stays fixed
 while paging; cursors expire after fifteen minutes. Database failures return
 503, and retained alert context works without contacting Prometheus.
 
+### Portable incident bundles
+
+Capture evidence, one related-resource page, and observability health for an
+operator handoff or postmortem:
+
+```bash
+gregalectl obs bundle --incident deployment/DEPLOYMENT_UUID --output incident.json
+gregalectl obs bundle --incident platform_alert/EPISODE_HASH --limit 100 --history-limit 100 --timeout 45s --output alert.json --json
+```
+
+The versioned JSON includes per-section source and collection timestamps,
+coverage, redaction exclusions, and limitations. It keeps unavailable sources,
+unknown scope/null counts, telemetry freshness, and alert-collection health
+visible. Inspect `coverage` before drawing conclusions. Numeric fallback zeros
+are unusable when their telemetry signal lacks healthy observation metadata.
+
+This is three separate reads, with current relationships and bounded history;
+it does not establish historical impact or causation. No resource pagination or
+trace/runbook fetching occurs. Resource/history limits default to 25 and cap
+at 100. Truncation is reported separately for evidence history, related resources,
+and the related timeline. Alert series aliases are pinned to one episode.
+
+The total collection timeout defaults to 30 seconds and caps at one minute.
+Each response is capped at 1 MiB and the final artifact at 4 MiB. Failed reads,
+invalid responses, and exceeded limits abort without creating the destination.
+Explicitly degraded API snapshots remain exportable with their coverage gaps.
+
+`--output` is required. Files are published owner-only and existing files or
+symlinks are never overwritten. Publication requires hard-link support in the
+destination directory. `--json` returns a file receipt; `--output -` instead
+streams the complete JSON bundle to stdout. All existing admin/MFA/allowlist
+gates apply. Credentials, raw payloads, and local configuration are excluded;
+resource identifiers remain, so control access to the exported artifact.
+
 ### Fleet overview and capacity
 
 Read the provider-wide KPI and placement snapshots without querying the
@@ -619,7 +653,7 @@ The API is `GET /v1/admin/obs/incidents/{kind}/{id}/evidence?limit=25`.
 Supported kinds are `deployment`, `job_run`, `compute_node`, and `platform_alert`;
 alerts use the full 64-character hash from their inbox ID. All existing admin,
 MFA, and email-allowlist gates apply. Resource evidence remains readable after
-recovery. A missing/deleted resource or a no-longer-firing alert returns 404;
+recovery. A missing/deleted resource or an unretained alert ID returns 404;
 an unavailable required source returns 503.
 
 `history` contains the last 24 hours of exact-resource event, deployment-audit,
@@ -631,9 +665,13 @@ means more matching history exists in that window; increase the limit or use
 the existing event/audit inspection routes. Trace links use the existing
 `/v1/admin/obs/traces/{trace_id}` lookup.
 
-Platform alerts retain their activation time and ID while gaining rule-specific
-runbook links and validated resource links. `prometheus_alert_metadata` in
-`unavailable_sources` means annotations could not be loaded: the firing signal
-is still present, with a generic runbook fallback. This does not block database
-resource evidence. Alert evidence is a current snapshot; it does not retain
-resolved alert history.
+Platform-alert episodes retain firing and resolution transitions for 30 days,
+with immutable episode IDs, rule-specific runbooks, and validated resource
+links. A legacy series ID resolves to its latest retained episode. These
+transitions use the episode's activation window rather than the resource
+history's 24-hour window. Retained evidence remains readable during a
+Prometheus outage; unresolved episodes become `unknown` when collection is
+unhealthy, while resolved episodes retain their historical state.
+`platform_alert_history` in `unavailable_sources` identifies collection gaps.
+Before the first successful history collection, the compatibility view uses
+live alerts; `prometheus_alert_metadata` means annotations were unavailable.

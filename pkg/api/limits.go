@@ -8866,6 +8866,13 @@ const (
 	ObsIncidentContextCursorTTL     = 15 * time.Minute
 	ObsIncidentContextBudget        = 5 * time.Second
 
+	// A portable operator bundle captures three bounded responses under one
+	// deadline. It never follows resource pagination or diagnostic links.
+	ObsIncidentBundleTimeoutDefault   = 30 * time.Second
+	ObsIncidentBundleTimeoutMax       = time.Minute
+	ObsIncidentBundleResponseMaxBytes = 1 << 20
+	ObsIncidentBundleMaxBytes         = 4 << 20
+
 	// Operator health has one shared Prometheus budget, including freshness
 	// reads, so an outage cannot multiply the per-query timeout by six.
 	ObsHealthPrometheusBudget    = 3 * time.Second

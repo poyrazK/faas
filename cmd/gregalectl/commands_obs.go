@@ -11,6 +11,7 @@
 //	gregalectl obs incidents — fetch the bounded, read-only incident inbox
 //	                           (deployment/job/node/alert correlation).
 //	gregalectl obs evidence  — inspect current state and exact-resource history.
+//	gregalectl obs bundle    — export bounded incident evidence and source health.
 //	gregalectl obs overview  — fetch the bounded fleet/account KPI snapshot.
 //	gregalectl obs capacity  — fetch the bounded fleet capacity snapshot.
 //
@@ -63,6 +64,8 @@ const subObsEvidence = "evidence"
 
 const subObsContext = "context"
 
+const subObsBundle = "bundle"
+
 const subObsOverview = "overview"
 
 const subObsCapacity = "capacity"
@@ -82,7 +85,7 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|evidence|context|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|evidence|context|bundle|overview|capacity")
 		return 2
 	}
 	switch args[0] {
@@ -94,6 +97,8 @@ func cmdObsDispatch(args []string) int {
 		return cmdObsEvidence(args[1:])
 	case subObsContext:
 		return cmdObsContext(args[1:])
+	case subObsBundle:
+		return cmdObsBundle(args[1:])
 	case subObsOverview:
 		return cmdObsOverview(args[1:])
 	case subObsCapacity:
