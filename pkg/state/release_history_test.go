@@ -170,7 +170,7 @@ func TestReleaseMigrationDatabasesPG(t *testing.T) {
 			t.Fatal(err)
 		}
 		if deleted {
-			if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET deleted_at = now() WHERE id = $1`, id); err != nil {
+			if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET state = 'deleted', deleted_at = now() WHERE id = $1`, id); err != nil {
 				t.Fatal(err)
 			}
 		}

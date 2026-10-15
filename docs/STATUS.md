@@ -7,6 +7,20 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Releases that change the database — 2026-10-15
+
+[ADR-1331](adr/1331-releases-that-change-the-database.md): a rollback whose
+target has not served since a later release command ran is refused with
+`rollback_crosses_release` unless acknowledged (`--acknowledge-releases`, a
+typed confirmation at a terminal, or `acknowledge_releases` in the API). The
+refusal lists the crossed releases and, for managed PostgreSQL databases the
+release commands can migrate, the `gregale postgres restore` command for the
+moment before the earliest of them. The usual rollback to the previous release
+crosses nothing; automated rollbacks never acknowledge. Deployment reads report
+the release run as `release`. Verified on the n2 node: apidserver rollback,
+state, CLI and spec tests pass, and the full safe-release drill passed with
+leakcheck clean.
+
 ## Evidence-paced default rollouts — 2026-10-15
 
 [ADR-1321](adr/1321-evidence-paced-default-rollouts.md) makes the default

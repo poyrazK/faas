@@ -1,6 +1,6 @@
 # ADR-1331 · Releases that change the database
 
-- **Status:** proposed
+- **Status:** proposed; verified on n2 2026-10-15 (see Rollout)
 - **Date:** 2026-10-15
 - **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (rollback targets), [ADR-122](122-safe-releases.md) (rollback)
 - **Follows:** the release phase (release commands run as app tasks before a candidate boots), managed PostgreSQL migration bindings and restore-to-new-database
@@ -47,4 +47,6 @@ Managed PostgreSQL restores any point inside its restore window into a new datab
 
 ## Rollout
 
-Ship the guard, the problem fields, the CLI prompt and the `release` field together. apidserver tests cover the crossing rule (the release that replaced the target is not crossed, older releases are, a failed release task counts), acknowledgement, the checked path, and the 5xx worker's skip. Postgres tests cover the two state queries.
+Ship the guard, the problem fields, the CLI prompt and the `release` field together. apidserver tests cover the crossing rule (the release that replaced the target is not crossed, an older target is, and the refusal leaves the target untouched), acknowledgement and its audit row, the checked path, and the `release` field. The store tests cover the crossing query on MemStore and Postgres (a failed release counts; another scope, the target's own release and releases before it do not; the cut-off moves to `serving_ended_at` once the target served) and the migratable-database query on Postgres. The CLI tests cover the explanation, `--acknowledge-releases`, and a script getting the refusal back.
+
+Verified on the n2 node on 2026-10-15: the apidserver rollback tests (new and existing, including the checked, dashboard, alert-historical and 5xx paths), the state, CLI, unit and spec tests pass. The full safe-release drill passed with leakcheck clean; its manual rollback goes through the guard and recovered in 10.4 s.
