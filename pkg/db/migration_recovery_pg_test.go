@@ -364,7 +364,9 @@ func TestApplicationStandardLedgerRecoveryCanceledReceiptRollsBackEvents(t *test
 		t.Fatal(err)
 	}
 	recoveryAssertStillMissing(t, pool, versions)
-	retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Second)
+	// The retry is a full verified apply, including pg_dump; on CI that alone
+	// takes about five seconds, so it gets the first apply's budget.
+	retryCtx, retryCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer retryCancel()
 	if _, err := db.ApplyApplicationStandardLedgerRecovery(retryCtx, pool, plan.ApprovalHash); err != nil {
 		t.Fatalf("retry after transaction rollback: %v", err)
