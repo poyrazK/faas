@@ -259,3 +259,9 @@ pruning can omit rows from a traversal; periodically start from an empty cursor.
 Pagination is not a durable work checkpoint, total count, or historical snapshot.
 For an existing outbox, explicitly re-run the opt-in DDL to add
 `gregale_event_outbox_unresolved`; existing columns and constraints do not change.
+
+## Recovery health and alerts
+
+Use `GetEventOutboxHealth` for bounded counts and eligibility ages, and
+`WatchEventOutboxHealth` for sustained local backlog, stall, blocked and expiry
+notifications. See [coverage, freshness and alert semantics](event-outbox-health.md).

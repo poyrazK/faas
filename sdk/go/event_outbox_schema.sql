@@ -33,3 +33,7 @@ CREATE INDEX IF NOT EXISTS gregale_event_outbox_due
 CREATE INDEX IF NOT EXISTS gregale_event_outbox_unresolved
  ON public.gregale_event_outbox(account_id,app_id,producer_key COLLATE "C")
  WHERE state IN ('blocked','unconfirmed');
+-- Health excludes published history and bounds reads by oldest unresolved rows.
+CREATE INDEX IF NOT EXISTS gregale_event_outbox_health
+ ON public.gregale_event_outbox(account_id,app_id,created_at,producer_key COLLATE "C")
+ WHERE state IN ('pending','unconfirmed','blocked');

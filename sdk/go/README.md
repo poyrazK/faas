@@ -1259,3 +1259,8 @@ Use `ReconcileEventOutbox` to confirm a saved request from retained matching
 acceptance without publishing, `ResumeEventOutbox` for explicit guarded control
 within the original deadline, and `ListEventOutbox` for paginated unresolved
 metadata. Unavailable verification never automatically resumes publication.
+
+`GetEventOutboxHealth` summarizes retained unpublished work and
+`WatchEventOutboxHealth` emits sustained local backlog, stall, blocked and expiry
+alerts. See [the health guide](../../docs/event-outbox-health.md) for completeness,
+freshness and existing-installation index requirements.

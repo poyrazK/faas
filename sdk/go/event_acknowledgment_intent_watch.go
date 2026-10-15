@@ -126,7 +126,19 @@ func WatchEventAcknowledgmentIntentHealth(ctx context.Context, db *sql.DB, accou
 		}
 	}
 }
+
+// eventRecoveryHealthObservation contains only the evidence needed by both watches.
+type eventRecoveryHealthObservation struct {
+	ObservedAt  time.Time
+	Complete    bool
+	Truncated   bool
+	InvalidRows int64
+}
+
 func eventIntentWatchEvidence(h EventAcknowledgmentIntentHealth, err error, previousObserved, previousPoll, now time.Time, maxAge time.Duration) string {
+	return eventRecoveryHealthEvidence(eventRecoveryHealthObservation{ObservedAt: h.ObservedAt, Complete: h.Complete, Truncated: h.Truncated, InvalidRows: h.InvalidRows}, err, previousObserved, previousPoll, now, maxAge)
+}
+func eventRecoveryHealthEvidence(h eventRecoveryHealthObservation, err error, previousObserved, previousPoll, now time.Time, maxAge time.Duration) string {
 	if err != nil {
 		return "read_failed"
 	}
