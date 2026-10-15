@@ -126,7 +126,7 @@ func (h *Handler) runModeration(ctx context.Context, accountID string, policy ap
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
 	request := routeAttemptRequest(&http.Request{Method: http.MethodPost, Header: http.Header{"Content-Type": {"application/json"}}},
-		integration.ID, attempt.path, attempt.rawQuery, attempt.body, true).WithContext(callCtx)
+		integration.ID, attempt.path, attempt.rawQuery, attempt.body, true).WithContext(callCtx) //nolint:contextcheck // the check must not inherit the caller's request values; AfterFunc carries its cancellation.
 	recorder := &replayRecorder{header: make(http.Header), now: time.Now}
 	serveReplay(h, recorder, request, attempt.translator)
 	if recorder.aborted || recorder.status < 200 || recorder.status > 299 {
