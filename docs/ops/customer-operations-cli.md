@@ -286,6 +286,8 @@ The account routes added by the operator and developer slices are:
 | GET | /v1/apps/{slug}/operations/{id}/delivery | Account read and MFA |
 | GET | /v1/apps/{slug}/operations/{id}/delivery-attempts | Account read and MFA |
 | POST | /v1/apps/{slug}/operations/{id}/delivery-retries | Account deploy write and MFA |
+| POST | /v1/apps/{slug}/operations/{id}/signals | Account deploy write and MFA |
+| POST | /v1/apps/{slug}/operation-signals | Account deploy write and MFA |
 | POST | /v1/apps/{slug}/operations/{id}/retry-delivery | Legacy account deploy write and MFA |
 
 Existing account get, download, cancel and recover routes supply the other

@@ -441,6 +441,10 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
+	// ADR-1194: the decision payload delivered to the workflow, not an apid request or response.
+	"OperationApprovalPayload":  true,
+	"OperationApprovalDecision": true,
+	"OperationApprovalActor":    true,
 	// ADR-1193: the operation input delivered to the app, not an apid request or response.
 	"OperationWebhookInput":                  true,
 	"OperationWebhookEvent":                  true,
@@ -1338,6 +1342,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),   // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"),  // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),    // ADR-1194 operation wait and approval DTOs
 		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),

@@ -355,7 +355,7 @@ func insertOperationPG(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, op Opera
 			return err
 		}
 	}
-	if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{ID: id, AccountID: account, AppID: app, TenantID: tenant, DefinitionID: definition, InvocationID: invocation, WorkflowRunID: workflowID, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}}); err != nil {
+	if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{ID: id, AccountID: account, AppID: app, TenantID: tenant, DefinitionID: definition, InvocationID: invocation, WorkflowRunID: workflowID, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}, DeadlineAt: operationPGTime(op.DeadlineAt)}); err != nil {
 		return fmt.Errorf("state: insert operation: %w", err)
 	}
 	if op.WorkflowRunID != "" {

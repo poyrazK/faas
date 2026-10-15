@@ -119,6 +119,123 @@ described in the [workflow export starter](../examples/customer-operation-workfl
 See [ADR-672](adr/672-customer-workflow-operation-starter.md) and
 [ADR-676](adr/676-workflow-customer-operations.md). Admission remains closed.
 
+## Waits and approvals
+
+A workflow operation can pause without holding an app instance. Besides HTTP
+actions, its linear chain may contain a `wait_for_duration` timer or a
+`wait_for_callback` step that the definition declares as an approval:
+
+```yaml
+workflows:
+  - name: refund-chain
+    steps:
+      - {name: validate, path: /refunds/validate}
+      - {name: manager-approval, wait_for_callback: true, timeout: 72h, depends_on: [validate]}
+      - {name: cooling-off, wait_for_duration: 24h, depends_on: [manager-approval]}
+      - {name: refund, path: /refunds/execute, depends_on: [cooling-off]}
+operations:
+  - name: refund
+    workflow: refund-chain
+    progress_stages: [validate, manager-approval, cooling-off, refund]
+    approvals:
+      - {step: manager-approval, approver: account}
+```
+
+While parked, the operation is `waiting` with `waiting: {kind, step, since,
+until, approver}`; history records `waiting` and `resumed` events. The declared
+approver decides with `POST /v1/apps/{slug}/operations/{id}/approvals/{step}`
+(account) or `POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}`
+(customer), sending `expected_generation`, `decision` (`approved` or `rejected`)
+and an optional comment, or run `gregale customer-operations approve OP_ID --app
+SLUG --expected-generation N --step STEP --decision approved` (`--self` with a
+customer token). The decision and the deciding key or token are recorded as an
+`approval_decided` event. Repeating a decision is idempotent; a different
+decision conflicts. Rejection settles the operation `failed` with
+`approval_rejected`; a passed approval timeout settles `approval_expired`. Waits
+never require reconciliation, and cancelling a waiting operation settles it
+`cancelled`. Generic workflow callback completion is refused for operation runs,
+so only the approval endpoints can resume an approval. Condition checks and
+branches remain unavailable to operations. See
+[ADR-1194](adr/1194-operation-waits-and-approvals.md).
+
+### Event waits and signals
+
+A step can also wait for something outside the app, such as a payment provider
+confirming a charge:
+
+```yaml
+      - {name: payment, wait_for_event: payment.succeeded, timeout: 24h, depends_on: [validate]}
+      - {name: ship, path: /orders/ship, depends_on: [payment], input: {charge: '{{steps.payment.output.charge}}'}}
+```
+
+An event wait needs a `timeout`. While parked, the operation is `waiting` with
+`waiting.kind: event` and `waiting.event`. Deliver the event with a signal:
+
+```sh
+gregale customer-operations signal OP_ID --app shop --event payment.succeeded \
+  --signal-id evt_3Nx --payload '{"charge":"ch_1"}'
+# Or reach every active operation about one business subject:
+gregale customer-operations signal --app shop --scope production --operation fulfil \
+  --subject order:ord_42 --event payment.succeeded --signal-id evt_3Nx
+```
+
+The API routes are `POST /v1/apps/{slug}/operations/{id}/signals` and
+`POST /v1/apps/{slug}/operation-signals`. Both take deploy-write scope and MFA.
+The payload becomes the wait step's output. `signal_id` makes delivery
+idempotent: repeating a signal returns its original receipt, and reusing the ID
+with a different event or payload is `409 operation_signal_conflict`.
+
+- An event the workflow never waits for is `422 operation_signal_unexpected`.
+- A settled operation takes no new signals (`409 operation_not_active`).
+- A signal that arrives before its wait is held and used when the wait starts.
+- A subject signal reaches at most 16 active operations of that definition,
+  matched by the [subject](#business-references) fixed at acceptance.
+- History records each delivery as a `signal_received` event.
+- A wait that times out settles `failed` with `event_timeout`.
+- Native workflow event injection is refused for operation runs, so every event
+  appears in the operation's history.
+
+See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
+
+## Deadlines and budgets
+
+A definition can bound each Operation it accepts:
+
+```yaml
+operations:
+  - name: refund
+    # ...contract fields...
+    limits:
+      deadline_seconds: 3600       # wall clock from acceptance, waits included
+      max_attempts: 5              # automatic attempts of one HTTP execution
+      max_execution_seconds: 300   # attempt runtime summed across generations
+```
+
+Each field is optional and bounded by the plan (see [Limits](#limits)). Limits
+are fixed when an Operation is accepted; a later definition does not change
+accepted work.
+
+- **Deadline.** The Operation settles `failed` with `failure_code:
+  deadline_exceeded` when its deadline passes, whether it is queued, retrying,
+  running or waiting for a timer or approval. Its completion callback fires.
+  An HTTP attempt still running at the deadline is cut. Unless the definition
+  declares `recovery: safe_to_retry`, that attempt needs reconciliation,
+  because Gregale cannot know whether it took effect. Workflow Operations
+  settle within one minute of the deadline.
+- **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
+- **Execution budget.** HTTP attempts are cut when the summed runtime reaches
+  `max_execution_seconds`; a retry that would start with no budget left settles
+  the Operation `failed` with `budget_exhausted`.
+- **Recovery** with `safe_to_retry` is refused (`409 operation_limit_exceeded`)
+  once a deadline has passed or the budget is spent. Recording an outcome is
+  still allowed.
+
+Workflow definitions accept only `deadline_seconds`; their steps carry their own
+retries and timeouts. Job definitions accept no limits. Reads return `limits`,
+`deadline_at` and `usage {execution_ms, attempts}`, and
+`gregale customer-operations get` prints the deadline and budget. See
+[ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
+
 ## Contract
 
 `OperationDefinitionSpec` captures an HTTP target or named workflow, platform-tenant ownership,
@@ -291,6 +408,9 @@ allowance. The following are contract bounds, not a rollout announcement.
 | Artifacts per operation | 8 | 16 | 32 |
 | Bytes per artifact | 8 MiB | 32 MiB | 64 MiB |
 | Total artifact bytes per operation | 32 MiB | 128 MiB | 256 MiB |
+| Maximum `deadline_seconds` | 1 day | 7 days | 30 days |
+| Maximum `max_attempts` | 3 | 10 | 25 |
+| Maximum `max_execution_seconds` | 1 hour | 1 day | 7 days |
 
 Schemas are capped at 64 KiB, submission JSON at 1 MiB, and idempotency keys at
 128 bytes. Retained idempotency receipts outlive results. A replay during that

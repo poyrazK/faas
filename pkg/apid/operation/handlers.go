@@ -42,6 +42,14 @@ func WriteOperationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_state_conflict", "Operation state changed", "refresh the operation before submitting this change"))
 	case errors.Is(err, state.ErrOperationQuota):
 		api.WriteProblem(w, api.OperationLimitProblem(err))
+	case errors.Is(err, state.ErrOperationSignalUnexpected):
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "operation_signal_unexpected", "Operation does not wait for this event", "the operation's workflow declares no event wait with this name"))
+	case errors.Is(err, state.ErrOperationSignalConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_signal_conflict", "Signal ID reused", "this signal_id was already delivered with a different event or payload"))
+	case errors.Is(err, state.ErrOperationNotActive):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_not_active", "Operation has settled", "a settled operation takes no signals"))
+	case errors.Is(err, state.ErrOperationLimitExceeded):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_limit_exceeded", "Operation limit exceeded", "the operation's deadline has passed or its execution budget is spent; record an outcome instead of retrying"))
 	case errors.Is(err, state.ErrPlatformTenantSuspended):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Customer suspended", "resume this customer before accepting new execution"))
 	case errors.Is(err, state.ErrInvalidArgument):

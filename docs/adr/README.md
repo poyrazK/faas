@@ -1065,6 +1065,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-1197 · Operation event waits and signals](1197-operation-event-waits-and-signals.md)
+- [ADR-1196 · Operation deadlines and budgets](1196-operation-deadlines-and-budgets.md)
+- [ADR-1194 · Operation waits and approvals](1194-operation-waits-and-approvals.md)
 - [ADR-1193 · Webhook-submitted customer Operations](1193-webhook-submitted-customer-operations.md)
 
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)

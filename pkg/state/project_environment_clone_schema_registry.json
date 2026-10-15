@@ -2488,6 +2488,7 @@
       "created_at",
       "current_execution_id",
       "current_invocation_id",
+      "deadline_at",
       "definition_id",
       "execution_generation",
       "execution_kind",

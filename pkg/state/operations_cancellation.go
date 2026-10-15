@@ -54,7 +54,7 @@ func (m *MemStore) CancelOperation(_ context.Context, accountID, tenantID, opera
 	case InvocationPending:
 		reserved := inv.QuotaReserved
 		inv.State, inv.QuotaReserved, inv.CompletedAt = InvocationCancelled, false, &now
-		if err := m.operationTransitionLocked(inv, false); err != nil {
+		if err := m.operationTransitionLocked(&inv, false); err != nil {
 			return Operation{}, err
 		}
 		m.invocations[inv.ID] = inv

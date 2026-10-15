@@ -23345,7 +23345,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'waiting'::text, 'resumed'::text, 'approval_decided'::text, 'signal_received'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -23570,6 +23570,7 @@ CREATE TABLE public.customer_operations (
     execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
     workflow_run_id uuid,
     job_run_id uuid,
+    deadline_at timestamp with time zone,
     CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
     CONSTRAINT customer_operation_subject_valid CHECK (((NOT (record ? 'subject'::text)) OR COALESCE(((jsonb_typeof((record -> 'subject'::text)) = 'object'::text) AND ((((record -> 'subject'::text) - 'type'::text) - 'id'::text) = '{}'::jsonb) AND (jsonb_typeof(((record -> 'subject'::text) -> 'type'::text)) = 'string'::text) AND (((record -> 'subject'::text) ->> 'type'::text) ~ '^[a-z][a-z0-9-]{0,63}$'::text) AND (jsonb_typeof(((record -> 'subject'::text) -> 'id'::text)) = 'string'::text) AND ((octet_length(((record -> 'subject'::text) ->> 'id'::text)) >= 1) AND (octet_length(((record -> 'subject'::text) ->> 'id'::text)) <= 256)) AND (((record -> 'subject'::text) ->> 'id'::text) !~ '[\x01-\x1f\x7f]'::text)), false))),
     CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
@@ -23583,7 +23584,7 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
     CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
-    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
     CONSTRAINT customer_operations_workflow_record_check CHECK (((workflow_run_id IS NULL) OR (NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (workflow_run_id)::text))))
 );
 
@@ -47717,7 +47718,7 @@ CREATE INDEX customer_operations_definition_retention_idx ON public.customer_ope
 -- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'requires_reconciliation'::text]));
 
 
 --
