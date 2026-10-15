@@ -24,6 +24,44 @@ SELECT (SELECT count(*) FROM apps owned WHERE owned.account_id = sqlc.arg(target
         WHERE a.account_id = sqlc.arg(target_account_id) AND a.status <> 'deleted'
           AND d.status = 'live' AND d.deleted_at IS NULL)::bigint AS deployments_live_count;
 
+-- name: OperatorTenantApps :many
+SELECT a.id::text AS id, a.slug, a.status,
+       count(d.id)::bigint AS deployments_live
+FROM apps a
+LEFT JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL
+WHERE a.account_id = sqlc.arg(target_account_id)::uuid AND a.status <> 'deleted'
+GROUP BY a.id, a.slug, a.status, a.created_at
+ORDER BY a.created_at DESC, a.id DESC;
+
+-- name: OperatorCapacityProfiles :many
+-- The API catalog is the single source of named shapes. Unmatched shapes
+-- share one custom bucket, keeping the result bounded as the fleet grows.
+-- Aggregate instances before joining so app reservations are counted once.
+WITH catalog AS (
+    SELECT p.value->>'name' AS name,
+           (p.value->>'memory_mb')::integer AS memory_mb,
+           (p.value->>'cpu_millicores')::integer AS cpu_millicores,
+           (p.value->>'sort_order')::integer AS sort_order
+    FROM jsonb_array_elements(sqlc.arg(resource_profiles)::jsonb) AS p(value)
+), live AS (
+    SELECT app_id, count(*)::bigint AS instances_live
+    FROM instances WHERE state IN ('running', 'waking', 'cold_booting')
+    GROUP BY app_id
+)
+SELECT coalesce(c.name, 'custom')::text AS resource_profile,
+       coalesce(c.memory_mb, 0)::integer AS memory_mb,
+       coalesce(c.cpu_millicores, 0)::integer AS cpu_millicores,
+       count(*)::bigint AS apps,
+       coalesce(sum(l.instances_live), 0)::bigint AS live_instances,
+       sum(a.ram_mb)::bigint AS reserved_memory_mb,
+       sum(a.cpu_millicores)::bigint AS reserved_cpu_millicores
+FROM apps a
+LEFT JOIN catalog c ON c.memory_mb = a.ram_mb AND c.cpu_millicores = a.cpu_millicores
+LEFT JOIN live l ON l.app_id = a.id
+WHERE a.status <> 'deleted'
+GROUP BY c.name, c.memory_mb, c.cpu_millicores, c.sort_order
+ORDER BY c.sort_order NULLS LAST, resource_profile;
+
 -- name: OperatorIncidents :many
 WITH signals AS (
     SELECT ('deployment/' || d.id::text)::text AS id, 'deployment'::text AS type,

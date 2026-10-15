@@ -133,7 +133,7 @@ func TestObsRegressionIncidentCap(t *testing.T) {
 
 type obsFailedApps struct{ Store state.Store }
 
-func (f *obsFailedApps) ListApps(context.Context, string) ([]state.App, error) {
+func (f *obsFailedApps) OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error) {
 	return nil, errors.New("database unavailable")
 }
 

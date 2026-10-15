@@ -279,7 +279,6 @@ var BuildDebugDependencyComparisonBetween = buildDebugDependencyComparisonBetwee
 var BuildDebugDependencyDeploymentComparison = buildDebugDependencyDeploymentComparison
 var BuildDebugDependencyLatencyHistory = buildDebugDependencyLatencyHistory
 var BuildEnvDiffResponse = buildEnvDiffResponse
-var BuildObsCapacityProfiles = buildObsCapacityProfiles
 var BuildObsTenantUsageProfiles = buildObsTenantUsageProfiles
 var BuildSourceRefTarGz = buildSourceRefTarGz
 var BuildTestAlertEvent = buildTestAlertEvent

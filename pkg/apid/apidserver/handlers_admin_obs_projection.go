@@ -372,33 +372,9 @@ func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, inc
 	if err != nil {
 		return api.ObsTenantDetailResponse{}, err
 	}
-	apps, err := st.ListApps(ctx, a.ID)
+	appRows, err := st.OperatorTenantApps(ctx, a.ID)
 	if err != nil {
 		return api.ObsTenantDetailResponse{}, err
-	}
-	appRows := make([]api.ObsTenantApp, 0, len(apps))
-	for _, app := range apps {
-		// ListDeploymentsForApp is paginated; the operator's
-		// per-tenant view renders the live count, so a single
-		// over-read of 1000 is fine (the customer cap is far
-		// lower; the over-read is bounded by the per-tenant
-		// app count).
-		deps, err := st.ListDeploymentsForApp(ctx, app.ID, 1000, 0)
-		if err != nil {
-			return api.ObsTenantDetailResponse{}, err
-		}
-		live := 0
-		for _, d := range deps {
-			if d.Status == state.DeployLive {
-				live++
-			}
-		}
-		appRows = append(appRows, api.ObsTenantApp{
-			ID:          app.ID,
-			Slug:        app.Slug,
-			Status:      string(app.Status),
-			Deployments: live,
-		})
 	}
 	orgs, err := st.ListOrgsForAccount(ctx, a.ID)
 	if err != nil {

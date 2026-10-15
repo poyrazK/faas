@@ -291,6 +291,15 @@ environment values, and log-spool locations. These actions use the existing
 deployment queue state machine; they do not require direct SQL and do not
 change the deployment hot path.
 
+### Tenant and capacity summaries
+
+Tenant detail and tenant 360 count live deployments directly, including live
+releases older than 1,000 newer deployment history rows. Deleted apps and
+soft-deleted deployments are excluded. Capacity resource profiles aggregate in
+the database and retain the named-profile order, with arbitrary resource shapes
+combined into `custom`. Reserved resources count each app once, even when it has
+multiple live instances. Store read failures return 503 rather than zero totals.
+
 ### Telemetry health
 
 Run `gregalectl obs health` to inspect each audit counter and the firing-alert

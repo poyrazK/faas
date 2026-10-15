@@ -74,6 +74,12 @@ type OperatorObservabilityReader interface {
 	OperatorAuditTraceCoverage(context.Context, time.Time) (float64, error)
 	OperatorOverviewActivity(context.Context, time.Time, time.Time) (OperatorOverviewActivity, error)
 	OperatorTenantCounts(context.Context, string) (int, int, error)
+	// OperatorTenantApps counts live, non-deleted deployments without reading
+	// deployment history or issuing a separate query for each tenant app.
+	OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error)
+	// OperatorCapacityProfiles returns at most the named profiles plus custom;
+	// aggregation happens in the store rather than loading fleet workload rows.
+	OperatorCapacityProfiles(context.Context) ([]api.ObsCapacityProfile, error)
 	ListOperatorIncidents(context.Context, OperatorIncidentFilter) ([]api.ObsIncident, error)
 	OperatorIncidentEvidence(context.Context, string, time.Time, int) ([]api.ObsIncidentEvidenceEntry, error)
 }

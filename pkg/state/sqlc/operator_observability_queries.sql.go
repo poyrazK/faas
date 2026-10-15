@@ -23,6 +23,74 @@ func (q *Queries) OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since
 	return ratio, err
 }
 
+const operatorCapacityProfiles = `-- name: OperatorCapacityProfiles :many
+WITH catalog AS (
+    SELECT p.value->>'name' AS name,
+           (p.value->>'memory_mb')::integer AS memory_mb,
+           (p.value->>'cpu_millicores')::integer AS cpu_millicores,
+           (p.value->>'sort_order')::integer AS sort_order
+    FROM jsonb_array_elements($1::jsonb) AS p(value)
+), live AS (
+    SELECT app_id, count(*)::bigint AS instances_live
+    FROM instances WHERE state IN ('running', 'waking', 'cold_booting')
+    GROUP BY app_id
+)
+SELECT coalesce(c.name, 'custom')::text AS resource_profile,
+       coalesce(c.memory_mb, 0)::integer AS memory_mb,
+       coalesce(c.cpu_millicores, 0)::integer AS cpu_millicores,
+       count(*)::bigint AS apps,
+       coalesce(sum(l.instances_live), 0)::bigint AS live_instances,
+       sum(a.ram_mb)::bigint AS reserved_memory_mb,
+       sum(a.cpu_millicores)::bigint AS reserved_cpu_millicores
+FROM apps a
+LEFT JOIN catalog c ON c.memory_mb = a.ram_mb AND c.cpu_millicores = a.cpu_millicores
+LEFT JOIN live l ON l.app_id = a.id
+WHERE a.status <> 'deleted'
+GROUP BY c.name, c.memory_mb, c.cpu_millicores, c.sort_order
+ORDER BY c.sort_order NULLS LAST, resource_profile
+`
+
+type OperatorCapacityProfilesRow struct {
+	ResourceProfile       string
+	MemoryMb              int32
+	CpuMillicores         int32
+	Apps                  int64
+	LiveInstances         int64
+	ReservedMemoryMb      int64
+	ReservedCpuMillicores int64
+}
+
+// The API catalog is the single source of named shapes. Unmatched shapes
+// share one custom bucket, keeping the result bounded as the fleet grows.
+// Aggregate instances before joining so app reservations are counted once.
+func (q *Queries) OperatorCapacityProfiles(ctx context.Context, db DBTX, resourceProfiles []byte) ([]OperatorCapacityProfilesRow, error) {
+	rows, err := db.Query(ctx, operatorCapacityProfiles, resourceProfiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorCapacityProfilesRow{}
+	for rows.Next() {
+		var i OperatorCapacityProfilesRow
+		if err := rows.Scan(
+			&i.ResourceProfile,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.Apps,
+			&i.LiveInstances,
+			&i.ReservedMemoryMb,
+			&i.ReservedCpuMillicores,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorIncidentEvidence = `-- name: OperatorIncidentEvidence :many
 WITH history AS (
     (SELECT e.id::text AS id, 'event'::text AS source, e.kind::text AS kind,
@@ -273,6 +341,48 @@ func (q *Queries) OperatorRecentFailureCounts(ctx context.Context, db DBTX, sinc
 	for rows.Next() {
 		var i OperatorRecentFailureCountsRow
 		if err := rows.Scan(&i.Kind, &i.Hits); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorTenantApps = `-- name: OperatorTenantApps :many
+SELECT a.id::text AS id, a.slug, a.status,
+       count(d.id)::bigint AS deployments_live
+FROM apps a
+LEFT JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL
+WHERE a.account_id = $1::uuid AND a.status <> 'deleted'
+GROUP BY a.id, a.slug, a.status, a.created_at
+ORDER BY a.created_at DESC, a.id DESC
+`
+
+type OperatorTenantAppsRow struct {
+	ID              string
+	Slug            string
+	Status          string
+	DeploymentsLive int64
+}
+
+func (q *Queries) OperatorTenantApps(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) ([]OperatorTenantAppsRow, error) {
+	rows, err := db.Query(ctx, operatorTenantApps, targetAccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorTenantAppsRow{}
+	for rows.Next() {
+		var i OperatorTenantAppsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Status,
+			&i.DeploymentsLive,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

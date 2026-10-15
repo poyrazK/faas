@@ -65,3 +65,27 @@ unavailable rather than healthy zeroes. Real Prometheus 2.54.1 fixtures pin
 underlying timestamps, stopped scrapes, mixed fresh/stale series, missing rule
 heartbeats, and the freshness boundary. Domain, HTTP, and CLI tests cover
 partial failures, zero activity, missing samples, deadlines, and recovery.
+
+Tenant and capacity projection refinement, 2026-10-15: tenant detail and tenant
+360 read a single SQLC app summary with exact live deployment counts. Counts
+exclude soft-deleted deployments and deleted apps, match the tenant headline,
+and retain an older live deployment even after more than 1,000 newer history
+rows. The app list remains newest first, with an ID tie-breaker. The response
+fields and tenant authorization boundary are unchanged.
+
+Capacity profiles now aggregate inside the store. SQL receives only the shared
+`api.ResourceProfiles` catalog and returns at most one row per named profile
+plus one `custom` row, in catalog order with custom last. Arbitrary resource
+pairs do not increase response cardinality. App reservations are summed once
+per non-deleted app, independently of instance multiplicity. The existing
+profile live-instance definition remains running, waking, and cold booting;
+node capacity accounting retains its separate resident-state definition.
+The in-memory store follows the same rules without copying fleet workload rows.
+
+Both projections preserve empty arrays and surface store failures as 503.
+PostgreSQL and in-memory contract tests cover long histories, tenant isolation,
+deleted apps, profile ordering, custom shapes, instance states, reservations,
+empty results, and cancellation. HTTP tests reject legacy full-row reads and
+exercise failure propagation through tenant detail, tenant 360, and capacity.
+The existing live-deployment and instance indexes support these reads; this
+refinement changes no schema, placement, admission, or lifecycle ownership.

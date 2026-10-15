@@ -2322,6 +2322,10 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"ListAllApps":                                   true,
+	"ListAllInstances":                              true,
+	"OperatorTenantApps":                            true,
+	"OperatorCapacityProfiles":                      true,
 	"OperatorAuditTraceCoverage":                    true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
@@ -2888,4 +2892,40 @@ func (s *Store) MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, app
 		return source.MCPPolicyConvergenceSnapshot(ctx, accountID, appID)
 	}
 	return api.MCPPolicyConvergenceSnapshot{}, state.ErrNotFound
+}
+
+func (s *Store) OperatorTenantApps(ctx context.Context, accountID string) ([]api.ObsTenantApp, error) {
+	if o, ok := s.over.(interface {
+		OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error)
+	}); ok {
+		return o.OperatorTenantApps(ctx, accountID)
+	}
+	return s.Store.OperatorTenantApps(ctx, accountID)
+}
+
+func (s *Store) OperatorCapacityProfiles(ctx context.Context) ([]api.ObsCapacityProfile, error) {
+	if o, ok := s.over.(interface {
+		OperatorCapacityProfiles(context.Context) ([]api.ObsCapacityProfile, error)
+	}); ok {
+		return o.OperatorCapacityProfiles(ctx)
+	}
+	return s.Store.OperatorCapacityProfiles(ctx)
+}
+
+func (s *Store) ListAllApps(ctx context.Context) ([]state.App, error) {
+	if o, ok := s.over.(interface {
+		ListAllApps(context.Context) ([]state.App, error)
+	}); ok {
+		return o.ListAllApps(ctx)
+	}
+	return s.Store.ListAllApps(ctx)
+}
+
+func (s *Store) ListAllInstances(ctx context.Context) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListAllInstances(context.Context) ([]state.Instance, error)
+	}); ok {
+		return o.ListAllInstances(ctx)
+	}
+	return s.Store.ListAllInstances(ctx)
 }
