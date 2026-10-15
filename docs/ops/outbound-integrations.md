@@ -1077,8 +1077,8 @@ to the content policy (ADR-1340).
 
   A passed check sends `X-Gregale-AI-Moderation: passed`.
 - **Failures:** a check that fails (timeout, provider error, a reply without a
-  verdict, a deleted check integration) sends `X-Gregale-AI-Moderation:
-  error`. `--moderation-on-error block` then refuses the call with `503
+  verdict, a deleted check integration, a body over 4 MiB the gateway cannot
+  read) sends `X-Gregale-AI-Moderation: error`. `--moderation-on-error block` then refuses the call with `503
   outbound_ai_moderation_unavailable`; the default `allow` lets it through.
 - **What is checked:** the text of user, tool and input content, never system,
   developer or assistant turns, and at most 32 KiB of it, latest first.
