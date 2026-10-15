@@ -3294,6 +3294,22 @@
     "kind": "operational"
   },
   {
+    "table": "event_delivery_acknowledgments",
+    "columns": [
+      "attempt",
+      "completion_digest",
+      "deadline_at",
+      "invocation_id",
+      "lease_seconds",
+      "max_attempts",
+      "phase",
+      "replay_generation",
+      "retry_delay_ms",
+      "token_digest"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_delivery_capacity",
     "columns": [
       "account_id",
@@ -3789,6 +3805,7 @@
     "table": "event_subscriptions",
     "columns": [
       "account_id",
+      "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
       "enabled",
