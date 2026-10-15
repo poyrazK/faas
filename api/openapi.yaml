@@ -4685,6 +4685,99 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/ai-routes/{route}/canary:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose model canary is read or changed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRouteCanary
+      summary: Read an AI route's model canary with both targets' counts.
+      description: >-
+        Requires MFA and read scope. Returns the canary with the route's first target's and the canary target's settled
+        attempts over the canary's window (ADR-1340). A route without a canary is not found.
+      responses:
+        '200':
+          description: The canary and its counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteCanaryStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIRouteCanary
+      summary: Start or replace an AI route's model canary.
+      description: >-
+        Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls first and is
+        rolled back by outboundd when its error rate or time to first byte is worse than the first target's by more than
+        the margins (ADR-1340). Replacing a canary clears its counts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIRouteCanaryRequest' }
+      responses:
+        '200':
+          description: The canary, active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIRouteCanary
+      summary: Stop an AI route's model canary.
+      description: Requires MFA and deploy-write scope. The route keeps its targets in order.
+      responses:
+        '204': { description: Canary stopped. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-routes/{route}/canary/promote:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose canary target becomes its first target.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [outbound]
+      operationId: promoteOutboundAIRouteCanary
+      summary: Promote an AI route's model canary.
+      description: >-
+        Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the other targets in
+        order, and ends the canary (ADR-1340).
+      responses:
+        '200':
+          description: The route with its new order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRoute' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/runs:
     parameters:
       - name: integration
@@ -60835,6 +60928,9 @@ components:
           type: boolean
           description: Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
         ai_content_policy: { $ref: '#/components/schemas/OutboundAIContentPolicy' }
+        ai_log_export:
+          type: boolean
+          description: Whether each settled app call writes one metadata line to the app's log drains (ADR-1340).
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -60914,6 +61010,9 @@ components:
         request_log_content:
           type: boolean
           description: Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled.
+        log_export:
+          type: boolean
+          description: Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -61223,6 +61322,69 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        canary:
+          description: The route's model canary, or null (ADR-1340).
+          oneOf:
+          - $ref: '#/components/schemas/OutboundAIRouteCanary'
+          - type: 'null'
+    OutboundAIRouteCanary:
+      type: object
+      description: >-
+        A route's model canary (ADR-1340). target is the 1-based route position tried first by percent of the route's
+        calls, chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. outboundd rolls the canary back when,
+        after min_calls canary attempts in the window, its error rate exceeds the first target's by more than
+        max_error_rate_increase percentage points, or its mean time to first byte by more than max_latency_increase_percent.
+      required: [target, percent, max_error_rate_increase, max_latency_increase_percent, min_calls, window_minutes, state, reason, started_at, decided_at]
+      properties:
+        target: { type: integer, minimum: 2, maximum: 5 }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: [integer, 'null'], minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+        state: { type: string, enum: [active, rolled_back] }
+        reason:
+          oneOf:
+          - type: string
+            enum: [error_rate, latency]
+          - type: 'null'
+        started_at: { type: string, format: date-time }
+        decided_at: { type: [string, 'null'], format: date-time }
+    PutOutboundAIRouteCanaryRequest:
+      type: object
+      description: >-
+        Start or replace a route's model canary. Omitted margins take their defaults: 5 error-rate points, 50 calls,
+        30 minutes, and no latency margin.
+      required: [target, percent]
+      properties:
+        target: { type: integer, minimum: 2, maximum: 5, description: The 1-based route position tried first. }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: integer, minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+    OutboundAIRouteTargetStats:
+      type: object
+      description: >-
+        One target's settled attempts in a canary's window. Errors are attempts with a provider status of 400 or above;
+        mean_ttfb_ms averages successful attempts that received a first byte, or is null.
+      required: [target, calls, errors, error_rate, mean_ttfb_ms, cost_millicents]
+      properties:
+        target: { type: integer, minimum: 1, maximum: 5 }
+        calls: { type: integer, format: int64, minimum: 0 }
+        errors: { type: integer, format: int64, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        mean_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+    OutboundAIRouteCanaryStatus:
+      type: object
+      description: A canary with the route's first target's and its own counts since window_start.
+      required: [canary, window_start, baseline, canary_stats]
+      properties:
+        canary: { $ref: '#/components/schemas/OutboundAIRouteCanary' }
+        window_start: { type: string, format: date-time }
+        baseline: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
+        canary_stats: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
     OutboundAIRouteList:
       type: object
       description: The account's AI routes.
@@ -61372,6 +61534,26 @@ components:
           type: array
           maxItems: 32
           items: { type: string, minLength: 1, maxLength: 128 }
+        moderation: { $ref: '#/components/schemas/OutboundAIModeration' }
+    OutboundAIModeration:
+      type: object
+      description: >-
+        A model-based check of the request's user, tool and input text before the provider call (ADR-1340). It runs
+        through another of the account's AI integrations and is billed by that integration's provider: openai_moderation
+        calls OpenAI's /v1/moderations on an OpenAI integration; classifier asks a chat model which categories apply. flag
+        lets the call through and names the categories in X-Gregale-AI-Moderation; block refuses it with 400
+        outbound_ai_content_flagged. on_error decides what a failed check does; block answers 503
+        outbound_ai_moderation_unavailable.
+      properties:
+        action: { type: string, enum: ['', 'off', flag, block] }
+        kind: { type: string, enum: [openai_moderation, classifier] }
+        integration_id: { type: string, format: uuid }
+        model: { type: string, minLength: 1, maxLength: 128, description: Required for classifier. }
+        categories:
+          type: array
+          maxItems: 7
+          items: { type: string, enum: [prompt_injection, harassment, hate, self_harm, sexual, violence, illicit] }
+        on_error: { type: string, enum: ['', allow, block] }
     OutboundAIReplayTarget:
       type: object
       description: One integration a captured call is replayed on; a target on another provider than the captured call's needs a model.

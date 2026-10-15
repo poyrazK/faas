@@ -1527,6 +1527,7 @@ export type { OutboundAIBudgetAlertList } from './models/OutboundAIBudgetAlertLi
 export type { OutboundAIBudgetThresholdWebhookPayload } from './models/OutboundAIBudgetThresholdWebhookPayload.js';
 export type { OutboundAIContentBody } from './models/OutboundAIContentBody.js';
 export type { OutboundAIContentPolicy } from './models/OutboundAIContentPolicy.js';
+export type { OutboundAIModeration } from './models/OutboundAIModeration.js';
 export type { OutboundAIPriceCatalogResponse } from './models/OutboundAIPriceCatalogResponse.js';
 export type { OutboundAIPriceEntry } from './models/OutboundAIPriceEntry.js';
 export type { OutboundAIPriceListResponse } from './models/OutboundAIPriceListResponse.js';
@@ -1538,8 +1539,11 @@ export type { OutboundAIRequestContent } from './models/OutboundAIRequestContent
 export type { OutboundAIRequestLogEntry } from './models/OutboundAIRequestLogEntry.js';
 export type { OutboundAIRequestLogList } from './models/OutboundAIRequestLogList.js';
 export type { OutboundAIRoute } from './models/OutboundAIRoute.js';
+export type { OutboundAIRouteCanary } from './models/OutboundAIRouteCanary.js';
+export type { OutboundAIRouteCanaryStatus } from './models/OutboundAIRouteCanaryStatus.js';
 export type { OutboundAIRouteList } from './models/OutboundAIRouteList.js';
 export type { OutboundAIRouteTarget } from './models/OutboundAIRouteTarget.js';
+export type { OutboundAIRouteTargetStats } from './models/OutboundAIRouteTargetStats.js';
 export type { OutboundAIUsageItem } from './models/OutboundAIUsageItem.js';
 export type { OutboundAIUsageResponse } from './models/OutboundAIUsageResponse.js';
 export type { OutboundAIUserUsageExportRow } from './models/OutboundAIUserUsageExportRow.js';
@@ -1801,6 +1805,7 @@ export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js'
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
 export type { PutOutboundAIPricesRequest } from './models/PutOutboundAIPricesRequest.js';
+export type { PutOutboundAIRouteCanaryRequest } from './models/PutOutboundAIRouteCanaryRequest.js';
 export type { PutOutboundAIRouteTargetsRequest } from './models/PutOutboundAIRouteTargetsRequest.js';
 export type { PutOutboundBindingAIBudgetRequest } from './models/PutOutboundBindingAIBudgetRequest.js';
 export type { PutOutboundBindingAIGuardrailsRequest } from './models/PutOutboundBindingAIGuardrailsRequest.js';

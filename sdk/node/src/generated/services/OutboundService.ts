@@ -14,6 +14,8 @@ import type { OutboundAIReplay } from '../models/OutboundAIReplay.js';
 import type { OutboundAIRequestContent } from '../models/OutboundAIRequestContent.js';
 import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
 import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
+import type { OutboundAIRouteCanary } from '../models/OutboundAIRouteCanary.js';
+import type { OutboundAIRouteCanaryStatus } from '../models/OutboundAIRouteCanaryStatus.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
@@ -29,6 +31,7 @@ import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegra
 import type { Problem } from '../models/Problem.js';
 import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRequest.js';
 import type { PutOutboundAIPricesRequest } from '../models/PutOutboundAIPricesRequest.js';
+import type { PutOutboundAIRouteCanaryRequest } from '../models/PutOutboundAIRouteCanaryRequest.js';
 import type { PutOutboundAIRouteTargetsRequest } from '../models/PutOutboundAIRouteTargetsRequest.js';
 import type { PutOutboundBindingAIBudgetRequest } from '../models/PutOutboundBindingAIBudgetRequest.js';
 import type { PutOutboundBindingAIGuardrailsRequest } from '../models/PutOutboundBindingAIGuardrailsRequest.js';
@@ -1088,6 +1091,143 @@ export class OutboundService {
         402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
         403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
         404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an AI route's model canary with both targets' counts.
+   * Requires MFA and read scope. Returns the canary with the route's first target's and the canary target's settled attempts over the canary's window (ADR-1340). A route without a canary is not found.
+   * @returns OutboundAIRouteCanaryStatus The canary and its counts.
+   * @throws ApiError
+   */
+  public static getOutboundAiRouteCanary({
+    route,
+  }: {
+    /**
+     * UUID of the AI route whose model canary is read or changed.
+     */
+    route: string,
+  }): CancelablePromise<OutboundAIRouteCanaryStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-routes/{route}/canary',
+      path: {
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Start or replace an AI route's model canary.
+   * Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls first and is rolled back by outboundd when its error rate or time to first byte is worse than the first target's by more than the margins (ADR-1340). Replacing a canary clears its counts.
+   * @returns OutboundAIRouteCanary The canary, active.
+   * @throws ApiError
+   */
+  public static setOutboundAiRouteCanary({
+    route,
+    requestBody,
+  }: {
+    /**
+     * UUID of the AI route whose model canary is read or changed.
+     */
+    route: string,
+    requestBody: PutOutboundAIRouteCanaryRequest,
+  }): CancelablePromise<OutboundAIRouteCanary> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/ai-routes/{route}/canary',
+      path: {
+        'route': route,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Stop an AI route's model canary.
+   * Requires MFA and deploy-write scope. The route keeps its targets in order.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOutboundAiRouteCanary({
+    route,
+  }: {
+    /**
+     * UUID of the AI route whose model canary is read or changed.
+     */
+    route: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/ai-routes/{route}/canary',
+      path: {
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Promote an AI route's model canary.
+   * Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the other targets in order, and ends the canary (ADR-1340).
+   * @returns OutboundAIRoute The route with its new order.
+   * @throws ApiError
+   */
+  public static promoteOutboundAiRouteCanary({
+    route,
+  }: {
+    /**
+     * UUID of the AI route whose canary target becomes its first target.
+     */
+    route: string,
+  }): CancelablePromise<OutboundAIRoute> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/ai-routes/{route}/canary/promote',
+      path: {
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

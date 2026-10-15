@@ -3005,6 +3005,11 @@ from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
 from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
 from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
 from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
+from .outbound_ai_moderation import OutboundAIModeration
+from .outbound_ai_moderation_action import OutboundAIModerationAction
+from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
+from .outbound_ai_moderation_kind import OutboundAIModerationKind
+from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
@@ -3018,9 +3023,14 @@ from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
 from .outbound_ai_route import OutboundAIRoute
+from .outbound_ai_route_canary import OutboundAIRouteCanary
+from .outbound_ai_route_canary_reason_type_0 import OutboundAIRouteCanaryReasonType0
+from .outbound_ai_route_canary_state import OutboundAIRouteCanaryState
+from .outbound_ai_route_canary_status import OutboundAIRouteCanaryStatus
 from .outbound_ai_route_format import OutboundAIRouteFormat
 from .outbound_ai_route_list import OutboundAIRouteList
 from .outbound_ai_route_target import OutboundAIRouteTarget
+from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -3515,6 +3525,7 @@ from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
+from .put_outbound_ai_route_canary_request import PutOutboundAIRouteCanaryRequest
 from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
@@ -7458,6 +7469,11 @@ __all__ = (
     "OutboundAIContentPolicyIban",
     "OutboundAIContentPolicyPaymentCard",
     "OutboundAIContentPolicySecret",
+    "OutboundAIModeration",
+    "OutboundAIModerationAction",
+    "OutboundAIModerationCategoriesItem",
+    "OutboundAIModerationKind",
+    "OutboundAIModerationOnError",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
@@ -7471,9 +7487,14 @@ __all__ = (
     "OutboundAIRequestLogEntryOutcome",
     "OutboundAIRequestLogList",
     "OutboundAIRoute",
+    "OutboundAIRouteCanary",
+    "OutboundAIRouteCanaryReasonType0",
+    "OutboundAIRouteCanaryState",
+    "OutboundAIRouteCanaryStatus",
     "OutboundAIRouteFormat",
     "OutboundAIRouteList",
     "OutboundAIRouteTarget",
+    "OutboundAIRouteTargetStats",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",
@@ -7922,6 +7943,7 @@ __all__ = (
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
+    "PutOutboundAIRouteCanaryRequest",
     "PutOutboundAIRouteTargetsRequest",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingAIGuardrailsRequest",

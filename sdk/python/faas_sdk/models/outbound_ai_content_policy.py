@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -19,6 +19,11 @@ from ..models.outbound_ai_content_policy_secret import (
     OutboundAIContentPolicySecret,
     check_outbound_ai_content_policy_secret,
 )
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.outbound_ai_moderation import OutboundAIModeration
+
 
 T = TypeVar("T", bound="OutboundAIContentPolicy")
 
@@ -37,6 +42,13 @@ class OutboundAIContentPolicy:
     secret: OutboundAIContentPolicySecret
     """API keys, tokens and private keys."""
     blocked_terms: list[str]
+    moderation: OutboundAIModeration | Unset = UNSET
+    """A model-based check of the request's user, tool and input text before the provider call (ADR-1340). It runs
+    through another of the account's AI integrations and is billed by that integration's provider: openai_moderation
+    calls OpenAI's /v1/moderations on an OpenAI integration; classifier asks a chat model which categories apply.
+    flag lets the call through and names the categories in X-Gregale-AI-Moderation; block refuses it with 400
+    outbound_ai_content_flagged. on_error decides what a failed check does; block answers 503
+    outbound_ai_moderation_unavailable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +62,10 @@ class OutboundAIContentPolicy:
 
         blocked_terms = self.blocked_terms
 
+        moderation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.moderation, Unset):
+            moderation = self.moderation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,11 +77,15 @@ class OutboundAIContentPolicy:
                 "blocked_terms": blocked_terms,
             }
         )
+        if moderation is not UNSET:
+            field_dict["moderation"] = moderation
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_ai_moderation import OutboundAIModeration
+
         d = dict(src_dict)
         email = check_outbound_ai_content_policy_email(d.pop("email"))
 
@@ -77,12 +97,20 @@ class OutboundAIContentPolicy:
 
         blocked_terms = cast(list[str], d.pop("blocked_terms"))
 
+        _moderation = d.pop("moderation", UNSET)
+        moderation: OutboundAIModeration | Unset
+        if isinstance(_moderation, Unset):
+            moderation = UNSET
+        else:
+            moderation = OutboundAIModeration.from_dict(_moderation)
+
         outbound_ai_content_policy = cls(
             email=email,
             payment_card=payment_card,
             iban=iban,
             secret=secret,
             blocked_terms=blocked_terms,
+            moderation=moderation,
         )
 
         outbound_ai_content_policy.additional_properties = d

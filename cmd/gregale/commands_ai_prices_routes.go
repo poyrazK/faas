@@ -165,7 +165,7 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 	return entry, nil
 }
 
-const aiRoutesUsage = "usage: gregale ai routes <list|create|set|rm> ... (targets as <integration-id>[:<model>])"
+const aiRoutesUsage = "usage: gregale ai routes <list|create|set|rm|canary> ... (targets as <integration-id>[:<model>])"
 
 func cmdAIRoutes(args []string) int {
 	if len(args) == 0 {
@@ -182,6 +182,8 @@ func cmdAIRoutes(args []string) int {
 		return cmdAIRoutesCreate(client, args[1:])
 	case "set":
 		return cmdAIRoutesSet(client, args[1:])
+	case "canary":
+		return cmdAIRoutesCanary(client, args[1:])
 	case "rm":
 		if len(args) != 2 {
 			return printErr("Invalid ai routes rm arguments", errors.New("usage: gregale ai routes rm <route-id>"))
@@ -214,6 +216,9 @@ func cmdAIRoutesList(client *api.Client) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s  %s  [%s]  %s\n  call: $GREGALE_OUTBOUND_URL/r/%s/%s\n", route.ID, route.Name, route.Format,
 			strings.Join(targets, " -> "), route.ID, aiRouteCallPath(route.Format))
+		if canary := route.Canary; canary != nil {
+			_, _ = fmt.Fprintf(osStdout, "  canary: target %d, %d%% of calls, %s\n", canary.Target, canary.Percent, canary.State)
+		}
 	}
 	return 0
 }

@@ -782,6 +782,8 @@ var cliCommands = []cliCommand{
 			"gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv",
 			"gregale ai catalog openai --model gpt-4o-mini",
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
+			"gregale ai routes canary <route-id> --position 2 --percent 10 --max-latency-increase 50",
+			"gregale ai content-policy <integration-id> --moderation block --moderation-kind classifier --moderation-integration <id> --moderation-model gpt-5-nano --moderation-categories prompt_injection,harassment",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
 			"gregale ai logs show <integration-id> <request-id>",
@@ -798,6 +800,7 @@ var cliCommands = []cliCommand{
 				{Name: "request-log-content", Short: "also keep the first 32 KiB of each logged call's bodies for 3 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "user-daily-tokens", Short: "each end user's UTC-day token limit (X-Gregale-AI-User), or none", Value: "N"},
 				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
+				{Name: "log-export", Short: "send each app call's metadata to the app's log drains", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
 			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
@@ -806,6 +809,12 @@ var cliCommands = []cliCommand{
 				{Name: "secrets", Short: "API keys, tokens and private keys", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
 				{Name: "block-term", Short: "block requests containing this term, ignoring case (repeat)", Value: "TERM"},
 				{Name: "clear-terms", Short: "remove every blocked term first", Bool: true},
+				{Name: "moderation", Short: "check requests with a model: off, flag or block", Value: "ACTION", ClosedSet: []string{"off", "flag", "block"}},
+				{Name: "moderation-kind", Short: "openai_moderation or classifier", Value: "KIND", ClosedSet: []string{"openai_moderation", "classifier"}},
+				{Name: "moderation-integration", Short: "the AI integration that runs the check", Value: "ID"},
+				{Name: "moderation-model", Short: "the check's model (required for classifier)", Value: "MODEL"},
+				{Name: "moderation-categories", Short: "comma-separated categories to check", Value: "LIST"},
+				{Name: "moderation-on-error", Short: "when the check fails", Value: "allow|block", ClosedSet: []string{"allow", "block"}},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
@@ -835,10 +844,16 @@ var cliCommands = []cliCommand{
 				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
 				{Name: "format", Short: "export format", Value: "csv|ndjson", ClosedSet: []string{"csv", "ndjson"}},
 			}},
-			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes", Positionals: []string{"<list|create|set|rm>", "[<route-id>]"}, Flags: []cliFlag{
+			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes, or run a model canary on one", Positionals: []string{"<list|create|set|rm|canary>", "[<route-id>]", "[status|promote|stop]"}, Flags: []cliFlag{
 				{Name: "name", Short: "route name for create", Value: "NAME"},
 				{Name: "format", Short: "route format for create: native or openai (translates OpenAI chat completions)", Value: "FORMAT", ClosedSet: []string{"native", "openai"}},
 				{Name: "target", Short: "<integration-id>[:<model>] in fallback order (repeat)", Value: "TARGET"},
+				{Name: "position", Short: "canary: the route target (2 to 5) tried first", Value: "N"},
+				{Name: "percent", Short: "canary: share of calls sent to it first, 1 to 50", Value: "N"},
+				{Name: "max-error-increase", Short: "canary: roll back past this many error-rate points worse (default 5)", Value: "N"},
+				{Name: "max-latency-increase", Short: "canary: roll back past this many percent slower time to first byte", Value: "N"},
+				{Name: "min-calls", Short: "canary: calls needed before judging (default 50)", Value: "N"},
+				{Name: "window", Short: "canary: minutes of calls to judge (default 30)", Value: "N"},
 			}},
 			{Name: "keys", Short: "List, add (value from stdin) or remove (rm) extra provider keys", Positionals: []string{"<list|add|rm>", "<integration-id>", "[<key-id>]"}, Flags: []cliFlag{
 				{Name: "label", Short: "key label for add", Value: "LABEL"},

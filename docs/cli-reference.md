@@ -2137,6 +2137,8 @@ gregale ai users <integration-id> --limit 20
 gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv
 gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
+gregale ai routes canary <route-id> --position 2 --percent 10 --max-latency-increase 50
+gregale ai content-policy <integration-id> --moderation block --moderation-kind classifier --moderation-integration <id> --moderation-model gpt-5-nano --moderation-categories prompt_injection,harassment
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
 gregale ai logs show <integration-id> <request-id>
@@ -2148,7 +2150,7 @@ gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-s
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] [--log-export <on|off>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2160,12 +2162,13 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--request-log-content <on|off>` | also keep the first 32 KiB of each logged call&#39;s bodies for 3 days | one of `on` · `off` |
 | `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
 | `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
+| `--log-export <on|off>` | send each app call&#39;s metadata to the app&#39;s log drains | one of `on` · `off` |
 
 ### ai content-policy
 
 Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)
 
-`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] <integration-id>`
+`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] [--moderation <ACTION>] [--moderation-kind <KIND>] [--moderation-integration <ID>] [--moderation-model <MODEL>] [--moderation-categories <LIST>] [--moderation-on-error <allow|block>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2175,6 +2178,12 @@ Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets
 | `--secrets <ACTION>` | API keys, tokens and private keys | one of `off` · `redact` · `block` |
 | `--block-term <TERM>` | block requests containing this term, ignoring case (repeat) |  |
 | `--clear-terms` | remove every blocked term first |  |
+| `--moderation <ACTION>` | check requests with a model: off, flag or block | one of `off` · `flag` · `block` |
+| `--moderation-kind <KIND>` | openai_moderation or classifier | one of `openai_moderation` · `classifier` |
+| `--moderation-integration <ID>` | the AI integration that runs the check |  |
+| `--moderation-model <MODEL>` | the check&#39;s model (required for classifier) |  |
+| `--moderation-categories <LIST>` | comma-separated categories to check |  |
+| `--moderation-on-error <allow|block>` | when the check fails | one of `allow` · `block` |
 
 ### ai app-limit
 
@@ -2248,15 +2257,21 @@ Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first,
 
 ### ai routes
 
-List, create, update (set) or delete (rm) AI fallback routes
+List, create, update (set) or delete (rm) AI fallback routes, or run a model canary on one
 
-`gregale ai routes [--name <NAME>] [--format <FORMAT>] [--target <TARGET>] <list|create|set|rm> [<route-id>]`
+`gregale ai routes [--name <NAME>] [--format <FORMAT>] [--target <TARGET>] [--position <N>] [--percent <N>] [--max-error-increase <N>] [--max-latency-increase <N>] [--min-calls <N>] [--window <N>] <list|create|set|rm|canary> [<route-id>] [status|promote|stop]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | route name for create |  |
 | `--format <FORMAT>` | route format for create: native or openai (translates OpenAI chat completions) | one of `native` · `openai` |
 | `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] in fallback order (repeat) |  |
+| `--position <N>` | canary: the route target (2 to 5) tried first |  |
+| `--percent <N>` | canary: share of calls sent to it first, 1 to 50 |  |
+| `--max-error-increase <N>` | canary: roll back past this many error-rate points worse (default 5) |  |
+| `--max-latency-increase <N>` | canary: roll back past this many percent slower time to first byte |  |
+| `--min-calls <N>` | canary: calls needed before judging (default 50) |  |
+| `--window <N>` | canary: minutes of calls to judge (default 30) |  |
 
 ### ai keys
 

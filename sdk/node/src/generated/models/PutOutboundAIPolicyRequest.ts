@@ -19,6 +19,10 @@ export type PutOutboundAIPolicyRequest = {
    */
   request_log_content?: boolean;
   /**
+   * Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider.
+   */
+  log_export?: boolean;
+  /**
    * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_token_limit?: number | null;

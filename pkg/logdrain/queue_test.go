@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestQueueResumesPendingRecordAndSourceCursorAfterRestart(t *testing.T) {
 		t.Fatalf("Enqueue: %v", err)
 	}
 	item, ok, err := queue.Next()
-	if err != nil || !ok || item.Record != record || !item.EnqueuedAt.Equal(enqueuedAt) {
+	if err != nil || !ok || !reflect.DeepEqual(item.Record, record) || !item.EnqueuedAt.Equal(enqueuedAt) {
 		t.Fatalf("Next = (%+v, %v, %v), want queued record", item, ok, err)
 	}
 	if err := queue.MarkAttempt(item, 2); err != nil {

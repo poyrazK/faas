@@ -63,7 +63,8 @@ func newPhase8Fixture(t *testing.T, configure func(map[string]*Integration)) *ph
 			return
 		}
 		content := "Hello"
-		if strings.Contains(string(body), classifierTextStart) {
+		// json.Marshal escapes the marker's angle brackets.
+		if strings.Contains(string(body), "TEXT TO CLASSIFY") {
 			content = verdict
 		}
 		reply, _ := json.Marshal(map[string]any{"id": "c1", "object": "chat.completion", "model": request.Model,
@@ -402,8 +403,8 @@ func TestModerationText(t *testing.T) {
 			t.Errorf("%s: moderationText = %q, want %q", tc.name, got, tc.want)
 		}
 	}
-	long := `{"input":"` + strings.Repeat("a", api.OutboundAIModerationTextMaxBytes) + `bcd"}`
-	if got := moderationText([]byte(long)); len(got) != api.OutboundAIModerationTextMaxBytes || !strings.HasSuffix(got, "bcd") {
+	long := `{"input":"` + strings.Repeat("some words ", api.OutboundAIModerationTextMaxBytes/10) + `the end"}`
+	if got := moderationText([]byte(long)); len(got) != api.OutboundAIModerationTextMaxBytes || !strings.HasSuffix(got, "the end") {
 		t.Fatalf("long text kept %d bytes", len(got))
 	}
 }

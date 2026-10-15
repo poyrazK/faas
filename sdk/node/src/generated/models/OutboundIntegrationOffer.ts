@@ -61,6 +61,10 @@ export type OutboundIntegrationOffer = {
   ai_request_log_content?: boolean;
   ai_content_policy?: OutboundAIContentPolicy;
   /**
+   * Whether each settled app call writes one metadata line to the app's log drains (ADR-1340).
+   */
+  ai_log_export?: boolean;
+  /**
    * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_token_limit?: number | null;

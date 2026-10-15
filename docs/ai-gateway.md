@@ -21,13 +21,23 @@ account during the preview; contact support to have it turned on for yours.
 - **Content guardrails.** Redact or block e-mail addresses, payment card
   numbers, IBANs and API keys or tokens before a request leaves Gregale, and
   block requests containing your own terms.
+- **Moderation.** Check requests for prompt injection, harassment, hate,
+  self-harm, sexual content, violence or illicit instructions with OpenAI's
+  moderation endpoint or any chat model you choose, then flag or block them.
 - **Fallback routes.** Try targets in order across providers. An
   OpenAI-format route translates chat completions, the Responses API and
   embeddings for Anthropic, Gemini, Bedrock and Vertex.
+- **Model canaries.** Send a share of a route's calls to a new model first and
+  compare errors, latency and cost with the current one. Gregale rolls the
+  canary back on its own when the new model does worse; promote it when it
+  does not.
 - **Key pools.** Extra provider keys with per-key cooldown after a 429.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **Log export.** Send each call's metadata to your app's log drains, HTTP or
+  OpenTelemetry, as one JSON line. Prompts and completions are never
+  exported.
 - **Media.** Image generation, transcription and speech are metered and capped
   like chat.
 
@@ -67,6 +77,10 @@ gregale ai policy <id> --daily-tokens 2000000 --daily-cost 25 --request-log on
 gregale ai policy <id> --user-daily-tokens 200000      # per end user (X-Gregale-AI-User)
 gregale ai guardrails <id> --app my-api --rpm 60 --max-output-tokens 2048
 gregale ai content-policy <id> --email redact --secrets block
+gregale ai content-policy <id> --moderation block --moderation-kind classifier \
+  --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
+gregale ai policy <id> --log-export on                  # to the app's log drains
+gregale ai routes canary <route-id> --position 2 --percent 10
 gregale ai usage <id>
 ```
 
@@ -82,6 +96,8 @@ not an e-mail address) to get per-user usage and limits.
 | `402 plan_feature_gated` | Your plan does not include the AI gateway. |
 | `403 outbound_ai_gateway_unavailable` | The AI gateway is not enabled for your account yet. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
+| `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
+| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. |
 
 Request bodies a content policy must inspect are limited to 4 MiB. Usage,
 alerts, the request log and captures each have their own retention; see the
@@ -101,5 +117,7 @@ catalog, used for budgets and reports.
   are better spread across integrations.
 - Captured content is redacted and kept for 3 days; turn capture on only for
   traffic you may store.
+- A moderation check costs one call of the check integration before each
+  checked call; the provider bills it to that integration's key.
 - Feedback and incidents: contact support with the integration ID and request
   ID from `gregale ai logs`.

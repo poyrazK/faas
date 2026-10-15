@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,7 +47,7 @@ func TestSenderHTTPJSONDelivery(t *testing.T) {
 		if request.method != http.MethodPost || request.contentType != "application/json" || request.auth != "Bearer token" {
 			t.Fatalf("request metadata = %+v", request)
 		}
-		if request.body != record {
+		if !reflect.DeepEqual(request.body, record) {
 			t.Fatalf("body = %+v, want %+v", request.body, record)
 		}
 	case <-time.After(time.Second):

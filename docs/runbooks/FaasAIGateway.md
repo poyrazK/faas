@@ -76,6 +76,29 @@ gateway is usually not the cause:
 Act only if errors come from the gateway itself, such as
 `outbound_ai_translation_unsupported` after a release.
 
+## Canaries, log export and moderation
+
+These ADR-1340 features are customer settings; none pages.
+
+- **Canary rollbacks.** `outbound_ai_route_canary_rollbacks_total` rising
+  means customers' new models did worse than their current ones. The
+  customer sees the reason in `gregale ai routes canary <route-id>`.
+  Investigate only if every canary on the platform rolls back at once: that
+  points at the gateway, not the models.
+- **Moderation errors.** `outbound_ai_moderation_total{result="error"}` counts
+  checks that failed. They usually come from the customer's check
+  integration: a cap reached, a provider outage, or a deleted integration.
+  - With `on_error: block`, the customer's calls get
+    `503 outbound_ai_moderation_unavailable`. Point them at the check
+    integration's usage and caps.
+  - Errors on many unrelated accounts at once point at the in-process path.
+    Read the outboundd logs.
+- **Export lag.** Lines reach drains through the gateways' drain workers.
+  - A customer missing lines: check the app's drain health
+    (`gregale log-drains`), as for runtime logs.
+  - Lines pile up when no gateway owns the app (an app with no owner node).
+    They expire after 24 hours, so a longer outage loses them.
+
 ## Failure drills
 
 `pkg/outbound/ai_gateway_drills_test.go` runs these against Postgres on every

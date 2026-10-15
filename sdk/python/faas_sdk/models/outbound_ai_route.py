@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.outbound_ai_route_format import OutboundAIRouteFormat, check_outbound_ai_route_format
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.outbound_ai_route_canary import OutboundAIRouteCanary
     from ..models.outbound_ai_route_target import OutboundAIRouteTarget
 
 
@@ -31,9 +33,13 @@ class OutboundAIRoute:
     targets: list[OutboundAIRouteTarget]
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    canary: None | OutboundAIRouteCanary | Unset = UNSET
+    """The route's model canary, or null (ADR-1340)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.outbound_ai_route_canary import OutboundAIRouteCanary
+
         id = str(self.id)
 
         name = self.name
@@ -49,6 +55,14 @@ class OutboundAIRoute:
 
         updated_at = self.updated_at.isoformat()
 
+        canary: dict[str, Any] | None | Unset
+        if isinstance(self.canary, Unset):
+            canary = UNSET
+        elif isinstance(self.canary, OutboundAIRouteCanary):
+            canary = self.canary.to_dict()
+        else:
+            canary = self.canary
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,11 +75,14 @@ class OutboundAIRoute:
                 "updated_at": updated_at,
             }
         )
+        if canary is not UNSET:
+            field_dict["canary"] = canary
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_ai_route_canary import OutboundAIRouteCanary
         from ..models.outbound_ai_route_target import OutboundAIRouteTarget
 
         d = dict(src_dict)
@@ -86,6 +103,23 @@ class OutboundAIRoute:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        def _parse_canary(data: object) -> None | OutboundAIRouteCanary | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                canary_type_0 = OutboundAIRouteCanary.from_dict(data)
+
+                return canary_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | OutboundAIRouteCanary | Unset, data)
+
+        canary = _parse_canary(d.pop("canary", UNSET))
+
         outbound_ai_route = cls(
             id=id,
             name=name,
@@ -93,6 +127,7 @@ class OutboundAIRoute:
             targets=targets,
             created_at=created_at,
             updated_at=updated_at,
+            canary=canary,
         )
 
         outbound_ai_route.additional_properties = d

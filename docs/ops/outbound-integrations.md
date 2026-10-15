@@ -998,6 +998,99 @@ reads a replay again. The API is
 - **Limits:** at most 100 replays per integration per UTC day
   (`429 outbound_ai_replay_limit`). Replays are kept for 3 days.
 
+## AI model canaries
+
+`gregale ai routes canary <route-id> --position 2 --percent 10
+--max-latency-increase 50` (or `PUT /v1/outbound/ai-routes/{route}/canary`)
+sends 10% of the route's calls to its second target first (ADR-1340). The rest
+of the route's order is unchanged, so a failing canary call still falls back.
+
+- **Choice:** a call with `X-Gregale-AI-Session`, or else `X-Gregale-AI-User`,
+  always gets the same answer for the route, so one conversation stays on one
+  model. Other calls are chosen at random. A canary call carries
+  `X-Gregale-AI-Route-Canary: 1`.
+- **Counts:** while the canary is active, every settled attempt of the route
+  adds to a per-minute row for its target: calls, errors (provider status 400
+  or above), time to first byte of successful attempts, and cost. Gateway
+  refusals (caps, open breakers, cooldowns) are not counted.
+- **Rollback:** every 30 seconds outboundd compares the canary with the first
+  target over the window (default 30 minutes), once the canary has `min_calls`
+  attempts (default 50). It rolls the canary back when:
+  - its error rate is worse by more than `max_error_rate_increase` points
+    (default 5); or
+  - its mean time to first byte is worse by more than
+    `max_latency_increase_percent` (unset by default).
+
+  A rolled-back canary keeps its settings and receives no more calls.
+- **Commands:** `gregale ai routes canary <route-id>` shows both targets'
+  counts; `promote` moves the canary target to the front of the route; `stop`
+  ends the canary. Replacing a route's targets also ends its canary.
+
+`outbound_ai_route_canary_calls_total` counts calls by the target tried first;
+`outbound_ai_route_canary_rollbacks_total` counts rollbacks by reason.
+Per-minute rows are kept for 48 hours.
+
+## AI log export
+
+`gregale ai policy <id> --log-export on` (or `"log_export": true` in the AI
+policy) sends each settled call of an app to that app's log drains (ADR-1340).
+Calls of Runs, replays and moderation checks are not exported.
+
+- **Line:** one JSON line on stream `ai_gateway`, with the model, status,
+  outcome, tokens, cost, duration, time to first byte, attempts, route and
+  canary, end user and moderation result. It never holds prompts or
+  completions.
+- **OTLP:** OTLP drains also get `gen_ai.system`, `gen_ai.response.model`,
+  `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` as attributes.
+- **Path:** settlement writes the line to `outbound_ai_log_exports` in the
+  transaction it already sends. The gateway that delivers the app's runtime
+  logs reads lines at least 15 seconds old and queues them in each drain's
+  durable sender, as source `ai-gateway` with the row ID as its sequence.
+- **Delivery:** drain health, retries and dead letters cover these lines like
+  runtime lines. A drain new to a gateway starts 30 seconds back, so an
+  ownership handoff can repeat or skip that interval.
+- **Retention:** lines are kept for 24 hours; a drain down for longer loses
+  the older ones.
+
+`outbound_ai_log_exports_total` counts lines written by integration.
+
+## AI moderation
+
+`gregale ai content-policy <id> --moderation block --moderation-kind
+classifier --moderation-integration <check-id> --moderation-model gpt-5-nano
+--moderation-categories prompt_injection,harassment` adds a model-based check
+to the content policy (ADR-1340).
+
+- **Kinds:**
+  - `openai_moderation` calls OpenAI's `/v1/moderations` (default model
+    `omni-moderation-latest`) on an OpenAI integration.
+  - `classifier` asks any chat model, through the route translators, which
+    categories apply.
+- **Categories:** `prompt_injection`, `harassment`, `hate`, `self_harm`,
+  `sexual`, `violence` and `illicit`. `openai_moderation` cannot check
+  `prompt_injection`.
+- **Actions:**
+  - `flag` lets the call through with `X-Gregale-AI-Moderation:
+    flagged=<categories>`.
+  - `block` refuses it with `400 outbound_ai_content_flagged`, which names the
+    categories but never the content.
+
+  A passed check sends `X-Gregale-AI-Moderation: passed`.
+- **Failures:** a check that fails (timeout, provider error, a reply without a
+  verdict, a deleted check integration) sends `X-Gregale-AI-Moderation:
+  error`. `--moderation-on-error block` then refuses the call with `503
+  outbound_ai_moderation_unavailable`; the default `allow` lets it through.
+- **What is checked:** the text of user, tool and input content, never system,
+  developer or assistant turns, and at most 32 KiB of it, latest first.
+  Responses are not checked.
+- **When:** after admission, so a call the caps refuse never pays for a check,
+  and before the provider call.
+- **Cost:** the check runs through the check integration in process, so its
+  caps, rate limits and price list apply. It appears in usage under the caller
+  `moderation`. Moderation and replay calls are never moderated.
+
+`outbound_ai_moderation_total` counts checks by integration and result.
+
 **Dashboard.** `deploy/grafana/ai-gateway.json` charts:
 
 - calls, tokens and cost;
