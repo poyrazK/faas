@@ -38,6 +38,19 @@ func TestDocumentedBackendLoadsThroughTheRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load the documented native backend: %v", err)
 	}
+	// So does the example operators copy (docs/managed-postgres.md).
+	example, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "managed-postgres.native.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	examplePath := filepath.Join(t.TempDir(), "managed-postgres.json")
+	if err := os.WriteFile(examplePath, example, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exampleEnv := map[string]string{"FAAS_MANAGED_POSTGRES_CONFIG": examplePath, "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY": env["FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"]}
+	if _, err := managedpostgres.Load(func(k string) string { return exampleEnv[k] }, map[string]managedpostgres.Factory{Driver: Factory(pool)}); err != nil {
+		t.Fatalf("load deploy/managed-postgres.native.example.json: %v", err)
+	}
 	backend, err := registry.Default("eu-central")
 	if err != nil || backend.Driver != Driver {
 		t.Fatalf("default backend = %+v, %v; want the native backend", backend, err)
