@@ -74,6 +74,9 @@ import type { EventSubscriptionCapacityCommands } from '../models/EventSubscript
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
+import type { EventSubscriptionRateCommandReceipt } from '../models/EventSubscriptionRateCommandReceipt.js';
+import type { EventSubscriptionRateCommands } from '../models/EventSubscriptionRateCommands.js';
+import type { EventSubscriptionRateRequest } from '../models/EventSubscriptionRateRequest.js';
 import type { EventSubscriptionResumeRequest } from '../models/EventSubscriptionResumeRequest.js';
 import type { EventSubscriptionSchemaVersionsRequest } from '../models/EventSubscriptionSchemaVersionsRequest.js';
 import type { EventSubscriptionSchemaVersionsResponse } from '../models/EventSubscriptionSchemaVersionsResponse.js';
@@ -2890,6 +2893,131 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * Configure rate bucket.
+   * Configure rate bucket: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing.
+   * @returns EventSubscriptionRateCommandReceipt Configure rate bucket: Retained rate command evidence; inspect outcome for applied or rejected.
+   * @throws ApiError
+   */
+  public static setEventSubscriptionRateLimit({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Configure rate bucket: Application slug owning this subscription rate policy.
+     */
+    slug: string,
+    /**
+     * Configure rate bucket: Application subscription UUID for rate controls.
+     */
+    subscriptionId: string,
+    requestBody: EventSubscriptionRateRequest,
+  }): CancelablePromise<EventSubscriptionRateCommandReceipt> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Configure rate bucket: Invalid rate control input.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Configure rate bucket: Command UUID inputs changed or database clock moved behind the refill anchor.`,
+        429: `Configure rate bucket: 128 unexpired receipts retained; known repeats remain available.`,
+        504: `Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+      },
+    });
+  }
+  /**
+   * List rate history.
+   * List rate history: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing.
+   * @returns EventSubscriptionRateCommands List rate history: Retained rate command evidence; inspect outcome for applied or rejected.
+   * @throws ApiError
+   */
+  public static listEventSubscriptionRateCommands({
+    slug,
+    subscriptionId,
+    after,
+  }: {
+    /**
+     * List rate history: Application slug owning this subscription rate policy.
+     */
+    slug: string,
+    /**
+     * List rate history: Application subscription UUID for rate controls.
+     */
+    subscriptionId: string,
+    /**
+     * List rate history: Exclusive increasing history sequence; pages contain at most 50 retained receipts and do not freeze history.
+     */
+    after?: number,
+  }): CancelablePromise<EventSubscriptionRateCommands> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'after': after,
+      },
+      errors: {
+        400: `List rate history: Invalid rate control input.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+      },
+    });
+  }
+  /**
+   * Look up rate command.
+   * Look up rate command: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing.
+   * @returns EventSubscriptionRateCommandReceipt Look up rate command: Retained rate command evidence; inspect outcome for applied or rejected.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionRateCommand({
+    slug,
+    subscriptionId,
+    commandId,
+  }: {
+    /**
+     * Look up rate command: Application slug owning this subscription rate policy.
+     */
+    slug: string,
+    /**
+     * Look up rate command: Application subscription UUID for rate controls.
+     */
+    subscriptionId: string,
+    /**
+     * Look up rate command: Nonzero UUID of a retained rate command.
+     */
+    commandId: string,
+  }): CancelablePromise<EventSubscriptionRateCommandReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands/{commandID}',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'commandID': commandId,
+      },
+      errors: {
+        400: `Look up rate command: Invalid rate control input.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
       },
     });
   }

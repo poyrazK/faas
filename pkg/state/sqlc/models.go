@@ -3331,6 +3331,13 @@ type EventSubscriptionCircuitBreaker struct {
 }
 
 type EventSubscriptionDeliveryControl struct {
+	RateEnabled          bool
+	RateIntervalMs       int64
+	RateBurst            int64
+	RateCreditMs         int64
+	RateRefilledAt       pgtype.Timestamptz
+	RateRevision         int64
+	RateSequence         int64
 	SubscriptionID       pgtype.UUID
 	AccountID            pgtype.UUID
 	AppID                pgtype.UUID
@@ -3341,6 +3348,18 @@ type EventSubscriptionDeliveryControl struct {
 	UpdatedAt            pgtype.Timestamptz
 	PausedAt             pgtype.Timestamptz
 	MaxPendingDeliveries int32
+}
+
+type EventSubscriptionRateCommand struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	Sequence       int64
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
 }
 
 type EventSubscriptionWorkBinding struct {

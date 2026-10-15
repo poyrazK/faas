@@ -1296,3 +1296,9 @@ rate-limited polls spend no attempts. Configuration uses revision guards and
 replayable command receipts. Health exposes throttled work separately from due or
 stalled work. Install the opt-in schema and replace older workers before relying
 on enforcement. See [rate limits](../../docs/event-outbox-rate-limit.md).
+
+For consumer admission, `SetEventSubscriptionRateLimit` configures a durable
+per-subscription interval/burst bucket. Revision-guarded UUID commands return
+applied or rejected receipts; lookup and bounded history support uncertain retries.
+Existing pause, circuit and per-second caps remain in force. See
+[consumer rate controls](../../docs/event-subscription-rate-limits.md).

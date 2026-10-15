@@ -220,6 +220,7 @@ type MemStore struct {
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
+	eventSubscriptionRateCommands     map[string]memSubscriptionRateCommand
 	eventSubscriptionCapacityCommands map[string]memSubscriptionCapacityCommand
 	eventRecoveryJobs                 map[string]*memEventRecoveryJob
 	workflowCodePins                  map[string]time.Time

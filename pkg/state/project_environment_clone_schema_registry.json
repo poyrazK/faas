@@ -3836,11 +3836,33 @@
       "max_pending_deliveries",
       "paused",
       "paused_at",
+      "rate_burst",
+      "rate_credit_ms",
+      "rate_enabled",
+      "rate_interval_ms",
       "rate_per_second",
+      "rate_refilled_at",
+      "rate_revision",
+      "rate_sequence",
       "subscription_id",
       "updated_at",
       "window_count",
       "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_rate_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "sequence",
+      "subscription_id"
     ],
     "kind": "operational"
   },

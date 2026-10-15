@@ -1419,6 +1419,11 @@ from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
+from .event_subscription_rate_command_receipt import EventSubscriptionRateCommandReceipt
+from .event_subscription_rate_command_receipt_outcome import EventSubscriptionRateCommandReceiptOutcome
+from .event_subscription_rate_commands import EventSubscriptionRateCommands
+from .event_subscription_rate_limit import EventSubscriptionRateLimit
+from .event_subscription_rate_request import EventSubscriptionRateRequest
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
@@ -6064,6 +6069,11 @@ __all__ = (
     "EventSubscriptionCapacityRequest",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
+    "EventSubscriptionRateCommandReceipt",
+    "EventSubscriptionRateCommandReceiptOutcome",
+    "EventSubscriptionRateCommands",
+    "EventSubscriptionRateLimit",
+    "EventSubscriptionRateRequest",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",

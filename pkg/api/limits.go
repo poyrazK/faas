@@ -11170,3 +11170,14 @@ const EventAcknowledgmentWriterCapabilityVersion = 1
 
 const EventAcknowledgmentFailureReasonMaxBytes = 128
 const EventAcknowledgmentFailureRequestMaxBytes = 4096
+
+// Subscription token-bucket configuration bounds; independent of plan quotas.
+const (
+	EventSubscriptionRateIntervalMinMillis  int64 = 10
+	EventSubscriptionRateIntervalMaxMillis  int64 = 3600000
+	EventSubscriptionRateBurstMax           int64 = 100
+	EventSubscriptionRateCommandRetention         = 30 * 24 * time.Hour
+	EventSubscriptionRateCommandMaxReceipts       = 128
+	EventSubscriptionRateCommandPageSize          = 50
+	EventSubscriptionRateRequestMaxBytes          = 4 << 10
+)

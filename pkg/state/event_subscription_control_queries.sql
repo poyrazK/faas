@@ -82,3 +82,38 @@ SELECT count(*)::bigint AS retained_receipts,min(retain_until)::timestamptz AS e
 FROM event_subscription_capacity_commands
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid
  AND retain_until>sqlc.arg(observed_at)::timestamptz;
+
+-- name: EventSubscriptionRateClock :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: EventSubscriptionRateInitialize :exec
+INSERT INTO event_subscription_delivery_controls(account_id,app_id,subscription_id) VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(subscription_id)::uuid) ON CONFLICT(subscription_id) DO NOTHING;
+
+-- name: EventSubscriptionRateConfigure :one
+UPDATE event_subscription_delivery_controls SET
+ rate_enabled=CASE WHEN sqlc.arg(applied)::boolean THEN sqlc.arg(enabled)::boolean ELSE rate_enabled END,
+ rate_interval_ms=CASE WHEN sqlc.arg(applied)::boolean THEN sqlc.arg(interval_ms)::bigint ELSE rate_interval_ms END,
+ rate_burst=CASE WHEN sqlc.arg(applied)::boolean THEN sqlc.arg(burst)::bigint ELSE rate_burst END,
+ rate_credit_ms=CASE WHEN sqlc.arg(applied)::boolean THEN sqlc.arg(credit_ms)::bigint ELSE rate_credit_ms END,
+ rate_refilled_at=CASE WHEN sqlc.arg(applied)::boolean THEN sqlc.arg(now_at)::timestamptz ELSE rate_refilled_at END,
+ rate_revision=rate_revision+CASE WHEN sqlc.arg(applied)::boolean THEN 1 ELSE 0 END,
+ rate_sequence=rate_sequence+1,updated_at=CASE WHEN sqlc.arg(applied)::boolean THEN sqlc.arg(now_at)::timestamptz ELSE updated_at END
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid RETURNING *;
+
+-- name: EventSubscriptionRateConsume :exec
+UPDATE event_subscription_delivery_controls SET rate_credit_ms=sqlc.arg(credit_ms)::bigint,rate_refilled_at=sqlc.arg(refilled_at)::timestamptz WHERE subscription_id=sqlc.arg(subscription_id)::uuid;
+
+-- name: EventSubscriptionRateCommandGet :one
+SELECT * FROM event_subscription_rate_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND command_id=sqlc.arg(command_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionRateCommandsExpire :exec
+DELETE FROM event_subscription_rate_commands WHERE subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until<=sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionRateCommandsCount :one
+SELECT count(*)::bigint FROM event_subscription_rate_commands WHERE subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionRateCommandInsert :exec
+INSERT INTO event_subscription_rate_commands(account_id,app_id,subscription_id,command_id,sequence,request,receipt,recorded_at,retain_until) VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(subscription_id)::uuid,sqlc.arg(command_id)::uuid,sqlc.arg(sequence)::bigint,sqlc.arg(request)::jsonb,sqlc.arg(receipt)::jsonb,sqlc.arg(now_at)::timestamptz,sqlc.arg(retain_until)::timestamptz);
+
+-- name: EventSubscriptionRateCommandsList :many
+SELECT receipt FROM event_subscription_rate_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND sequence>sqlc.arg(after_sequence)::bigint AND retain_until>sqlc.arg(now_at)::timestamptz ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;

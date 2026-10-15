@@ -39892,6 +39892,145 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit:
+    put:
+      tags: [events]
+      operationId: setEventSubscriptionRateLimit
+      summary: Configure rate bucket.
+      description: "Configure rate bucket: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Configure rate bucket: Application slug owning this subscription rate policy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Configure rate bucket: Application subscription UUID for rate controls."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionRateRequest' }
+      responses:
+        '200':
+          description: "Configure rate bucket: Retained rate command evidence; inspect outcome for applied or rejected."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRateCommandReceipt' }
+        '400':
+          description: "Configure rate bucket: Invalid rate control input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "Configure rate bucket: Command UUID inputs changed or database clock moved behind the refill anchor."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: "Configure rate bucket: 128 unexpired receipts retained; known repeats remain available."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptionRateCommands
+      summary: List rate history.
+      description: "List rate history: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "List rate history: Application slug owning this subscription rate policy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "List rate history: Application subscription UUID for rate controls."
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: "List rate history: Exclusive increasing history sequence; pages contain at most 50 retained receipts and do not freeze history."
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: "List rate history: Retained rate command evidence; inspect outcome for applied or rejected."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRateCommands' }
+        '400':
+          description: "List rate history: Invalid rate control input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands/{commandID}:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionRateCommand
+      summary: Look up rate command.
+      description: "Look up rate command: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Look up rate command: Application slug owning this subscription rate policy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Look up rate command: Application subscription UUID for rate controls."
+          schema: { type: string, format: uuid }
+        - name: commandID
+          in: path
+          required: true
+          description: "Look up rate command: Nonzero UUID of a retained rate command."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Look up rate command: Retained rate command evidence; inspect outcome for applied or rejected."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRateCommandReceipt' }
+        '400':
+          description: "Look up rate command: Invalid rate control input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity:
     put:
       tags: [events]
@@ -73225,12 +73364,63 @@ components:
         recorded_at: { type: string, format: date-time }
         retain_until: { type: string, format: date-time }
 
+    EventSubscriptionRateRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit guarded command for per-subscription token-bucket pacing. Disabled retains configuration without enforcing the bucket.
+      required: [command_id, expected_revision, enabled, interval_millis, burst]
+      properties:
+        command_id: { type: string, format: uuid, description: "Nonzero command UUID; retained for 30 days, at most 128 per subscription." }
+        expected_revision: { type: integer, format: int64, minimum: 0, description: "Current bucket revision, initially zero. Mismatch records a rejected receipt." }
+        enabled: { type: boolean }
+        interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
+        burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+    EventSubscriptionRateLimit:
+      type: object
+      additionalProperties: false
+      description: Projected token-bucket capacity at observed_at. Read-only metadata reserves no tokens. Missing rate_limit on older responses means unknown.
+      required: [enabled, revision, interval_millis, burst, available_tokens, rate_limited, observed_at]
+      properties:
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64, minimum: 0 }
+        interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
+        burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+        available_tokens: { type: integer, format: int64, minimum: 0 }
+        rate_limited: { type: boolean }
+        next_available_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+    EventSubscriptionRateCommandReceipt:
+      type: object
+      additionalProperties: false
+      description: Historical idempotent command outcome; rejected commands preserve configuration. Look up after an uncertain mutation before submitting a new UUID.
+      required: [command_id, app_id, subscription_id, sequence, outcome, result, recorded_at, retain_until]
+      properties:
+        command_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        sequence: { type: integer, format: int64, minimum: 1 }
+        outcome: { type: string, enum: [applied, rejected] }
+        result: { $ref: '#/components/schemas/EventSubscriptionRateLimit' }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventSubscriptionRateCommands:
+      type: object
+      additionalProperties: false
+      description: Bounded retained rate command history in increasing sequence order; expiry can leave sequence gaps. Pages are fresh observations.
+      required: [receipts]
+      properties:
+        receipts:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventSubscriptionRateCommandReceipt' }
+        next_after: { type: integer, format: int64, minimum: 1, description: "Exclusive cursor for the next page when another retained receipt exists." }
     EventSubscriptionDeliveryControl:
       type: object
       additionalProperties: false
       description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
       required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, max_pending_deliveries, effective_max_pending_deliveries, live_deliveries]
       properties:
+        rate_limit: { $ref: '#/components/schemas/EventSubscriptionRateLimit', description: 'Optional token-bucket observation; absent on older responses.' }
         capacity_command_budget: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandBudget', description: "Optional complete receipt budget in read-only delivery-control status. Mutation responses may omit it; absence means unknown." }
         capacity_command_receipt: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Configured live-delivery ceiling; zero uses the current plan limit. }

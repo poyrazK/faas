@@ -563,3 +563,11 @@ type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityComma
 type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
 
 type EventDeliveryHealthConfirmation = api.EventDeliveryHealthConfirmation
+
+// Subscription token-bucket controls and retained command evidence.
+type (
+	EventSubscriptionRateRequest        = api.EventSubscriptionRateRequest
+	EventSubscriptionRateLimit          = api.EventSubscriptionRateLimit
+	EventSubscriptionRateCommandReceipt = api.EventSubscriptionRateCommandReceipt
+	EventSubscriptionRateCommands       = api.EventSubscriptionRateCommands
+)
