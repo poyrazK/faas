@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -133,6 +134,28 @@ func TestCampaignRecoveryCoordinatorCrash(t *testing.T) {
 			after, _ := os.ReadFile(filepath.Join(f.directory, "checkpoint.json"))
 			if string(before) != string(after) {
 				t.Fatal("blocked recovery changed checkpoint")
+			}
+			if mode == "worker_alive" {
+				if err := worker.Signal(syscall.SIGSTOP); err != nil {
+					t.Fatal(err)
+				}
+				deadline = time.Now().Add(5 * time.Second)
+				for {
+					state, _ := probeTestCampaignProcess(*record.Process)
+					if state == "stopped" {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("worker did not stop")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				if code := cmdTestPolicy(append(append([]string{}, args...), "--execute")); code != 2 {
+					t.Fatal("stopped worker permitted lock recovery")
+				}
+				if err := worker.Signal(syscall.SIGCONT); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if mode == "worker_killed" {
 				if err := worker.Kill(); err != nil {

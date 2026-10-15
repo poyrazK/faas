@@ -229,7 +229,7 @@ func buildTestCampaignRecoveryAssessment(ctx context.Context, plan testCampaignP
 		Batches: []testCampaignRecoveryAssessmentBatch{}, Commands: []testCampaignRecoveryCommand{}, Notes: []string{
 			"Assessment never deploys, executes commands, deletes resources, acquires locks or rewrites campaign state.",
 			"Recorded identities are cleanup candidates; only live matching app IDs verify resources. Cleanup rechecks ownership and identities when invoked.",
-			"Lock presence does not prove liveness. Establish that its owner is inactive before repairing a stale lock manually.",
+			"Lock presence does not prove liveness. Use test policy recover-lock to inspect recorded coordinator and worker identities; unverifiable legacy locks still require manual investigation.",
 			"POSIX shell commands are displayed only; argv arrays are the authoritative machine-readable form.",
 			"Missing reports, fixture/consumer cleanup failures and uncertain provisioning outcomes cannot be waived by this assessment.",
 		}}
@@ -240,7 +240,7 @@ func buildTestCampaignRecoveryAssessment(ctx context.Context, plan testCampaignP
 	if status.LockPresent {
 		permitted = false
 		result.Recommendation = "wait"
-		result.Blockers = append(result.Blockers, "Runner lock is present. Wait for the owner to stop before cleanup or reconciliation.")
+		result.Blockers = append(result.Blockers, "Runner lock is present. Inspect it with test policy recover-lock; all recorded processes must be verified terminated before explicit lock recovery.")
 	}
 	if resolver != nil {
 		result.Ownership = "inspection_only"
