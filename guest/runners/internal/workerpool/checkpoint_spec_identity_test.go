@@ -39,15 +39,14 @@ func checkpointSpecFixture(t *testing.T) Spec {
 	if err := os.WriteFile(marker, []byte("# "+protocolMarker+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return Spec{
-		Executable: os.Args[0],
-		Args:       []string{"-test.run=^TestCheckpointSpecProcessHelper$"},
-		Env: append(os.Environ(),
-			"GO_WANT_CHECKPOINT_SPEC_HELPER=1",
-			"GREGALE_CHECKPOINT_SPEC_TEST_VALUE=source",
-		),
-		HandlerPath: marker,
-	}
+	spec := Spec{Executable: os.Args[0]}
+	spec.Args = []string{"-test.run=^TestCheckpointSpecProcessHelper$"}
+	spec.Env = append(os.Environ(),
+		"GO_WANT_CHECKPOINT_SPEC_HELPER=1",
+		"GREGALE_CHECKPOINT_SPEC_TEST_VALUE=source",
+	)
+	spec.HandlerPath = marker
+	return spec
 }
 
 func TestCheckpointSpecReplacementUsesTargetEnvironmentAfterRecycle(t *testing.T) {
