@@ -7266,9 +7266,9 @@ func (m *Manager) applyOneInstancePatch(
 		family string // "v4" or "v6"
 		argv   []string
 	}
-	// The accept rule is rewritten in place (`nft replace rule … handle`)
-	// so it keeps its position before the DNS gate, SMTP and terminal
-	// allowlist drops; delete-then-add appended it after them (H10-36).
+	// The accept rule is swapped at its position before the DNS gate, SMTP
+	// and terminal allowlist drops; delete-then-add appended it after them
+	// (H10-36). See swapRuleArgv for why it is not `nft replace rule`.
 	// A family emptied while the other keeps entries is deleted: the
 	// terminal drop then rightly blocks that family.
 	var ops []familyOp
@@ -7281,7 +7281,7 @@ func (m *Manager) applyOneInstancePatch(
 			ops = append(ops, familyOp{family: family, argv: nx("delete", "rule", nftFamily, "faas", "forward", "handle", h)})
 			return
 		}
-		ops = append(ops, familyOp{family: family, argv: replaceRuleArgv(next, nftFamily, h)})
+		ops = append(ops, familyOp{family: family, argv: swapRuleArgv(next, nftFamily, h)})
 	}
 	addFamily("v4", "ip", handleV4, v4New)
 	addFamily("v6", "ip6", handleV6, v6New)
@@ -7353,16 +7353,22 @@ func egressAllowlistNeedsRestart(prior, next []netip.Prefix, handleV4, handleV6 
 	return false
 }
 
-// replaceRuleArgv turns a rendered `… nft add rule <family> faas forward
-// <spec>` argv into `… nft replace rule <family> faas forward handle <h>
-// <spec>`, which swaps the rule atomically at its current position.
-func replaceRuleArgv(addArgv []string, nftFamily, handle string) []string {
+// swapRuleArgv turns a rendered `… nft add rule <family> faas forward
+// <spec>` argv into one nft transaction, `… nft insert rule <family> faas
+// forward handle <h> <spec> ; delete rule <family> faas forward handle <h>`:
+// the new rule lands at the old one's position and the old one goes, or
+// neither happens. `nft replace rule` would be the direct form, but nftables
+// 1.0.9 (Ubuntu 24.04, production) aborts on replace with an anonymous set
+// ("BUG: unhandled op 2 … interval_set_eval"), so every live allowlist edit
+// failed on prod after rc.263 shipped H10-36.
+func swapRuleArgv(addArgv []string, nftFamily, handle string) []string {
 	prefix := []string{"add", "rule", nftFamily, "faas", "forward"}
 	for i := 0; i+len(prefix) <= len(addArgv); i++ {
 		if slices.Equal(addArgv[i:i+len(prefix)], prefix) {
 			out := append([]string{}, addArgv[:i]...)
-			out = append(out, "replace", "rule", nftFamily, "faas", "forward", "handle", handle)
-			return append(out, addArgv[i+len(prefix):]...)
+			out = append(out, "insert", "rule", nftFamily, "faas", "forward", "handle", handle)
+			out = append(out, addArgv[i+len(prefix):]...)
+			return append(out, ";", "delete", "rule", nftFamily, "faas", "forward", "handle", handle)
 		}
 	}
 	return addArgv
