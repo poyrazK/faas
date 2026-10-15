@@ -7,6 +7,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,7 +41,7 @@ type Spec struct {
 
 var (
 	supportCache sync.Map // handler path -> bool
-	pools        sync.Map // command identity -> *pool
+	pools        sync.Map // worker specification digest -> *pool
 )
 
 // InvokeIfSupported invokes a marked, newline-framed adapter through a reused
@@ -116,7 +118,12 @@ func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error
 }
 
 func poolFor(spec Spec) *pool {
-	key := strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00")
+	// A recycled pool retains its specification. Configuration changes must
+	// select a distinct pool instead of reusing captured environment or handler
+	// discovery policy. Keep configuration values out of map key text.
+	encoded, _ := json.Marshal(spec)
+	digest := sha256.Sum256(encoded)
+	key := hex.EncodeToString(digest[:])
 	value, _ := pools.LoadOrStore(key, newPool(spec))
 	return value.(*pool)
 }
@@ -178,7 +185,11 @@ type pool struct {
 	generation uint64
 }
 
-func newPool(spec Spec) *pool { return &pool{spec: spec, changed: make(chan struct{})} }
+func newPool(spec Spec) *pool {
+	spec.Args = append([]string(nil), spec.Args...)
+	spec.Env = append([]string(nil), spec.Env...)
+	return &pool{spec: spec, changed: make(chan struct{})}
+}
 
 // Recycle closes every worker started before the call, in every pool, and
 // returns how many it closed. Later invocations start fresh workers. A
