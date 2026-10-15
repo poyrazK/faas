@@ -292,7 +292,7 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		if resumes != 1 || successes != 1 {
 			t.Fatalf("duplicate lifecycle events: %+v", events.Events)
 		}
-		// ADR-1157: one run spans both generations; its step attempts appear once.
+		// ADR-1195: one run spans both generations; its step attempts appear once.
 		var steps []string
 		for _, e := range readOperationTimeline(t, store.(state.OperationTimelineStore), f.account.ID, op.ID, 2) {
 			if e.Kind == api.OperationTimelineKindStep {

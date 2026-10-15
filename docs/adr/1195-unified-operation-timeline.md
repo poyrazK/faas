@@ -1,4 +1,4 @@
-# ADR-1157 · Unified operation timeline
+# ADR-1195 · Unified operation timeline
 
 - **Status:** accepted for implementation
 - **Date:** 2026-10-14

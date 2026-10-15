@@ -1,4 +1,4 @@
--- ADR-1157: each timeline source is read after its own durable position.
+-- ADR-1195: each timeline source is read after its own durable position.
 
 -- name: OperationTimelineAttempts :many
 -- Operation invocations never replay, so replay generation zero is the

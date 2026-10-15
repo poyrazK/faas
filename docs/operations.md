@@ -543,7 +543,7 @@ instance window, not request-exact correlation. Workflow step attempts carry
 timing and outcome only, because the gateway chooses their instance. When event
 history has expired, `events_expired` is set and attempts and deliveries remain.
 Attempt history is kept for at most 30 days. See
-[ADR-1157](adr/1157-unified-operation-timeline.md).
+[ADR-1195](adr/1195-unified-operation-timeline.md).
 
 ## Bounded preview admission
 

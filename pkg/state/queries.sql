@@ -8844,7 +8844,7 @@ DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest
 UPDATE invocations SET state='cancelled',quota_reserved=false,completed_at=sqlc.arg(now)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND state='pending';
 
--- The placement shares the fenced stamp (ADR-1157); an attempt keeps its first.
+-- The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 -- name: StampCustomerOperationExecutionAttempt :execrows
 WITH stamped AS (
   UPDATE invocations SET instance_id=sqlc.arg(instance_id)::uuid

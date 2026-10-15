@@ -14,7 +14,7 @@ import (
 )
 
 // OperationTimelineCursor is the wire form of every source's position
-// (ADR-1157). It is bound to one Operation and must round-trip canonically.
+// (ADR-1195). It is bound to one Operation and must round-trip canonically.
 type OperationTimelineCursor struct {
 	OperationID string                      `json:"operation_id"`
 	Event       int64                       `json:"event"`
@@ -84,7 +84,7 @@ func operationTimelineQuery(r *http.Request, id string) (int, state.OperationTim
 }
 
 // GetOperationTimeline merges an Operation's events, attempts and completion
-// deliveries into one chronological page (ADR-1157). Account-only: attempts,
+// deliveries into one chronological page (ADR-1195). Account-only: attempts,
 // errors and log windows are owner diagnostics.
 func (s *Service) GetOperationTimeline(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	op, store, ok := s.ownedOperation(w, r, acct)

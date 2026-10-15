@@ -13,7 +13,7 @@ import (
 )
 
 // OperationTimelineCursor holds the last consumed position of every timeline
-// source (ADR-1157). Each source advances independently, so a page never
+// source (ADR-1195). Each source advances independently, so a page never
 // skips or repeats a record while the Operation keeps writing.
 type OperationTimelineCursor struct {
 	Event    int64

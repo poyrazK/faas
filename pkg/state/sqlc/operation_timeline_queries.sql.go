@@ -43,7 +43,7 @@ type OperationTimelineAttemptsRow struct {
 	InstanceID    string
 }
 
-// ADR-1157: each timeline source is read after its own durable position.
+// ADR-1195: each timeline source is read after its own durable position.
 // Operation invocations never replay, so replay generation zero is the
 // complete attempt history of an HTTP execution.
 func (q *Queries) OperationTimelineAttempts(ctx context.Context, db DBTX, arg OperationTimelineAttemptsParams) ([]OperationTimelineAttemptsRow, error) {

@@ -116,7 +116,7 @@ def sync_detailed(
     """Read one chronological history of an operation.
 
      Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step
-    attempts and completion delivery attempts by time (ADR-1157). Each source pages after its own
+    attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own
     position, so pages never skip or repeat a record while the operation runs. Attempt entries are
     snapshots at read time. HTTP attempts carry an instance log window for the archived log route;
     workflow step attempts do not. Platform tenants read events instead.
@@ -160,7 +160,7 @@ def sync(
     """Read one chronological history of an operation.
 
      Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step
-    attempts and completion delivery attempts by time (ADR-1157). Each source pages after its own
+    attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own
     position, so pages never skip or repeat a record while the operation runs. Attempt entries are
     snapshots at read time. HTTP attempts carry an instance log window for the archived log route;
     workflow step attempts do not. Platform tenants read events instead.
@@ -199,7 +199,7 @@ async def asyncio_detailed(
     """Read one chronological history of an operation.
 
      Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step
-    attempts and completion delivery attempts by time (ADR-1157). Each source pages after its own
+    attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own
     position, so pages never skip or repeat a record while the operation runs. Attempt entries are
     snapshots at read time. HTTP attempts carry an instance log window for the archived log route;
     workflow step attempts do not. Platform tenants read events instead.
@@ -241,7 +241,7 @@ async def asyncio(
     """Read one chronological history of an operation.
 
      Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step
-    attempts and completion delivery attempts by time (ADR-1157). Each source pages after its own
+    attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own
     position, so pages never skip or repeat a record while the operation runs. Attempt entries are
     snapshots at read time. HTTP attempts carry an instance log window for the archived log route;
     workflow step attempts do not. Platform tenants read events instead.

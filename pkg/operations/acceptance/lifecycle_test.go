@@ -292,7 +292,7 @@ func testOperationLifecycle(t *testing.T, s operationLifecycleStore) {
 	if got := read(delivered); got.State != api.OperationSucceeded || got.CompletionDelivery.State != "succeeded" {
 		t.Fatalf("completion delivered: %+v", got)
 	}
-	// ADR-1157: callback attempts follow the business outcome on the timeline.
+	// ADR-1195: callback attempts follow the business outcome on the timeline.
 	timeline := readOperationTimeline(t, s.(state.OperationTimelineStore), acct.ID, delivered.ID, 2)
 	var outcomes []string
 	succeededAt := -1

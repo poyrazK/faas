@@ -1,4 +1,4 @@
--- ADR-1157: the instance that ran each HTTP operation attempt. The
+-- ADR-1195: the instance that ran each HTTP operation attempt. The
 -- invocation row keeps only the latest instance and instance rows are reaped
 -- after parking, so the timeline needs its own durable placement record to
 -- point an attempt at its runtime logs. Rows follow their execution.

@@ -75885,7 +75885,7 @@ type StampCustomerOperationExecutionAttemptParams struct {
 	Now        pgtype.Timestamptz
 }
 
-// The placement shares the fenced stamp (ADR-1157); an attempt keeps its first.
+// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 func (q *Queries) StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error) {
 	result, err := db.Exec(ctx, stampCustomerOperationExecutionAttempt,
 		arg.InstanceID,

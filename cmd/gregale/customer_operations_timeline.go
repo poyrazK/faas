@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-1157: one chronological history of an Operation, optionally with the
+// ADR-1195: one chronological history of an Operation, optionally with the
 // archived log lines of each HTTP attempt's instance window.
 type customerOperationTimelineClient interface {
 	GetOperationTimeline(context.Context, string, string, int, string) (api.OperationTimelineResponse, error)

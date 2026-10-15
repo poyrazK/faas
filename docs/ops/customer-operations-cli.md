@@ -214,7 +214,7 @@ archived logs of the instance that ran each HTTP attempt and prints the lines
 written during that attempt. Lines from other requests on the same instance can
 interleave, and archives lag the live log ring. `--json` prints one page per
 line and cannot be combined with `--logs`. See
-[ADR-1157](../adr/1157-unified-operation-timeline.md).
+[ADR-1195](../adr/1195-unified-operation-timeline.md).
 
 `watch` polls the durable status API and prints only changed snapshots. `--json`
 emits one OperationResponse per line (NDJSON). Its exit code follows business

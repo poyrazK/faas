@@ -1,4 +1,4 @@
-// ADR-1157: one chronological history of an Operation, merged from the
+// ADR-1195: one chronological history of an Operation, merged from the
 // records that already own each fact.
 package api
 
