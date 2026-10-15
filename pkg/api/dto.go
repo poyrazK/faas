@@ -571,12 +571,16 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                   `json:"max_retries,omitempty"`
-	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string                `json:"stop_signal,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never. Empty selects the default for
+	// the app's type.
+	Pause            string           `json:"pause,omitempty"`
+	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int              `json:"max_retries,omitempty"`
+	StopGracePeriodS int              `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string           `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app's request wall-clock budget in
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
@@ -970,12 +974,14 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                  `json:"max_retries,omitempty"`
-	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
-	StopSignal       *string               `json:"stop_signal,omitempty"`
+	// Pause replaces the declared pause value; "" restores the default.
+	Pause            *string          `json:"pause,omitempty"`
+	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	StopGracePeriodS *int             `json:"stop_grace_period_s,omitempty"`
+	StopSignal       *string          `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app request wall-clock budget in
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.

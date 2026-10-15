@@ -193,6 +193,7 @@ from .app_manifest_execution_mode_type_1 import AppManifestExecutionModeType1
 from .app_manifest_execution_mode_type_2_type_1 import AppManifestExecutionModeType2Type1
 from .app_manifest_execution_mode_type_3_type_1 import AppManifestExecutionModeType3Type1
 from .app_manifest_healthcheck import AppManifestHealthcheck
+from .app_manifest_pause import AppManifestPause
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
@@ -551,6 +552,7 @@ from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
+from .create_app_request_pause import CreateAppRequestPause
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
@@ -4212,6 +4214,7 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_pause import UpdateAppRequestPause
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -4796,6 +4799,7 @@ __all__ = (
     "AppManifestExecutionModeType2Type1",
     "AppManifestExecutionModeType3Type1",
     "AppManifestHealthcheck",
+    "AppManifestPause",
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
@@ -5119,6 +5123,7 @@ __all__ = (
     "CreateAppRequestCrawlerPolicy",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
+    "CreateAppRequestPause",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestServiceBindingPolicy",
@@ -8508,6 +8513,7 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestPause",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
