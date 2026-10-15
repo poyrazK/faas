@@ -32998,6 +32998,93 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Endpoint whose future verified events start a customer operation.
+    put:
+      tags: [inbound_webhooks]
+      operationId: putOperationWebhookBinding
+      summary: Route a verified endpoint to a customer operation (ADR-1193).
+      description: |
+        One binding per endpoint, owned by the same app. The platform tenant is
+        the operation owner; it must be active and linked to the app through an
+        active tenant surface, and it is never derived from provider payload.
+        The named operation must exist on the environment's live deployment;
+        every event resolves it again and admission pins it. expected_version is
+        zero for creation and the returned version for updates.
+        take_over_delivery must be true. Automation and managed exclusive
+        operation bindings must be removed first. An empty event_types list
+        admits every verified event; other types are acknowledged as ignored.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        description: Explicit delivery takeover, operation, owner and event selection.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOperationWebhookBindingRequest' }
+      responses:
+        '200':
+          description: Saved operation binding with its new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationWebhookBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'The platform tenant is suspended.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Binding revision (operation_webhook_binding_conflict) or routing mode conflict (inbound_webhook_routing_conflict).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { description: 'Request body exceeds 4 KiB.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [inbound_webhooks]
+      operationId: getOperationWebhookBinding
+      summary: Inspect an endpoint's customer operation binding.
+      description: Returns the bound operation, owner, event selection and revision.
+      responses:
+        '200':
+          description: Current operation binding for this endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationWebhookBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [inbound_webhooks]
+      operationId: deleteOperationWebhookBinding
+      summary: Stop starting customer operations from future webhook events.
+      description: Operations already admitted through the endpoint, and their event receipts, are retained.
+      parameters:
+        - name: expected_version
+          description: Current operation binding revision returned by a previous read or update.
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204': { description: Operation binding removed; future events use ordinary delivery. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Binding revision conflict (operation_webhook_binding_conflict).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}:
     get:
       tags: [inbound_webhooks]
@@ -33053,6 +33140,11 @@ paths:
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
+        An operation-bound endpoint (ADR-1193) admits one customer operation per
+        provider event, owned by the binding's platform tenant, with input
+        {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+        preview admission or an unavailable operation returns 503 with
+        Retry-After so the provider retries.
       security: []
       parameters:
         - name: Stripe-Signature
@@ -91015,6 +91107,37 @@ components:
         filter: { type: object, additionalProperties: true }
         version: { type: integer, format: int64, minimum: 1 }
         updated_at: { type: string, format: date-time }
+    PutOperationWebhookBindingRequest:
+      description: Bind a verified provider endpoint to a customer operation with revision control (ADR-1193).
+      type: object
+      additionalProperties: false
+      required: [expected_version, operation, platform_tenant_id, take_over_delivery]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        scope: { type: string, minLength: 1, maxLength: 64, description: Environment scope; defaults to default. }
+        operation: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$', description: Operation name resolved on the scope's live deployment for each event. }
+        platform_tenant_id: { type: string, format: uuid, description: Operation owner fixed by this binding. }
+        event_types:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          description: Exact event types to admit; empty admits every verified event.
+          items: { type: string, pattern: '^[a-z][a-z0-9_.]{0,255}$' }
+        take_over_delivery: { type: boolean, enum: [true] }
+    OperationWebhookBindingResponse:
+      description: Bound operation, owner, event selection and current endpoint binding revision.
+      type: object
+      required: [endpoint_id, app_id, scope, operation, platform_tenant_id, event_types, version, created_at, updated_at]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        operation: { type: string }
+        platform_tenant_id: { type: string, format: uuid }
+        event_types: { type: array, items: { type: string } }
+        version: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     WebhookAutomationReceiptResponse:
       description: Durable provider event routing decision and automation admission progress.
       type: object
@@ -91034,11 +91157,15 @@ components:
 
     InboundWebhookReceiptResponse:
       type: object
-      description: Returned only after the verified event has a committed durable invocation row.
+      description: |
+        Returned only after the verified event has a committed durable invocation
+        row or, for an operation-bound endpoint, a committed operation and event
+        receipt; receipt_id is then the operation ID. ignored means a verified
+        event outside the operation binding's event_types created no work.
       required: [receipt_id, status, duplicate, accepted_at]
       properties:
         receipt_id: { type: string, format: uuid }
-        status: { type: string, enum: [accepted] }
+        status: { type: string, enum: [accepted, ignored] }
         duplicate: { type: boolean, description: True when this endpoint already accepted the same provider event ID. }
         accepted_at: { type: string, format: date-time }
 

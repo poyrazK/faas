@@ -110,6 +110,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"customer_operation_milestones":             CloneSchemaOperational,
 		"customer_operation_events":                 CloneSchemaOperational,
 		"customer_operation_delivery_retries":       CloneSchemaOperational,
+		"customer_operation_webhook_bindings":       CloneSchemaConfiguration,
+		"customer_operation_webhook_receipts":       CloneSchemaOperational,
 		"customer_operation_executions":             CloneSchemaOperational,
 		"customer_operation_idempotency":            CloneSchemaOperational,
 		"customer_operation_job_executions":         CloneSchemaOperational,

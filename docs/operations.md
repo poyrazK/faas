@@ -598,6 +598,45 @@ conflicts fail, expired unconfirmed receipts cannot apply, and preview never
 creates receipts. See the [operator examples](ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response)
 and [ADR-662](adr/662-operation-recovery-decision-receipts.md).
 
+## Webhook-submitted Operations
+
+A signed provider event can start an Operation directly. Create an inbound
+webhook endpoint (ADR-212), then bind it to an operation and the customer that
+owns the resulting work:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/billing/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"invoice-paid","platform_tenant_id":"'$TENANT'",
+       "event_types":["invoice.paid"],"take_over_delivery":true}'
+```
+
+The owner is fixed by the binding; Gregale never reads a customer from the
+provider payload. The tenant must be active and linked to the app through an
+active tenant surface. The operation must exist on the environment's live
+deployment when you bind; each event resolves it again and admission pins the
+definition exactly as for a customer submission.
+
+Each verified event becomes this input, so the definition's input schema and
+`subject.id_from` pointer describe the envelope:
+
+```json
+{"webhook": {"endpoint": "stripe-invoices", "provider": "stripe",
+             "event_id": "evt_123", "event_type": "invoice.paid"},
+ "payload": {"id": "evt_123", "type": "invoice.paid", "data": {"object": {}}}}
+```
+
+The same input reaches HTTP, workflow and Job adapters. A provider retry returns
+the original operation with `duplicate: true`, even after the binding changes;
+the same event ID with a different body returns 409. Event types outside a
+non-empty `event_types` list are acknowledged as `ignored` and create no work.
+Closed preview admission, a missing definition or capacity limits return 503
+with `Retry-After`, so the provider keeps the event and retries. Deleting the
+binding with its `expected_version` returns the endpoint to ordinary delivery;
+admitted operations and their receipts are retained. An endpoint has one
+delivery mode: remove an automation or exclusive operation binding first. See
+[ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
+
 ## Batch Job Operations (closed preview)
 
 `gregale init --template customer-operation-job-export --path exports` creates

@@ -727,6 +727,9 @@ const (
 	OperationWorkflowLabelMaxBytes                           = 128
 	OperationPathMaxBytes                                    = 2048
 	OperationIdempotencyKeyMaxBytes                          = 128
+	OperationWebhookEventTypesMax                            = 32 // ADR-1193 event types one binding may admit
+	OperationWebhookReceiptCleanupBatch                      = 16 // expired receipts removed per admission
+	OperationWebhookBindingMaxBytes                          = 4096
 	OperationReportIDMaxBytes                                = 128
 	OperationRecoveryEvidenceMaxBytes                        = 4096
 	OperationEventsPageMax                                   = 100
