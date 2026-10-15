@@ -275,3 +275,62 @@ Reads exclude expired buckets immediately. Scheduler ticks prune bounded batches
 physical cleanup can lag during outages. App/account deletion cascades metric
 removal. A deleted subscription does not prevent an already accepted delivery
 from completing: metric rows deliberately have no subscription foreign key.
+
+## Local alerts over recorded minute windows
+
+Delivery-health watches can now select two additional conditions:
+`processing_renewal_rejection_fraction` and
+`processing_lease_expiry_rate_per_second`. These are local watch notifications,
+not a hosted notification service. The CLI accepts:
+
+- `--renewal-rejection-threshold FRACTION`: greater than zero through one;
+  `0.05` means at least 5% of recorded renewal operations were rejected.
+- `--renewal-min-samples N`: recorded renewal attempts required in every eligible
+  window; defaults to 10 when the renewal alert is enabled.
+- `--lease-expiry-rate-threshold RATE`: positive expiry transitions per second;
+  this is a frequency, not a failed-delivery percentage.
+- `--processing-window-sustain DURATION`: breach and recovery confirmation,
+  at least one minute, default one minute.
+- `--processing-metrics-recording-since RFC3339`: required assertion that all
+  acknowledgment writers have recorded continuously since this timestamp.
+
+Zero thresholds disable their conditions. These flags require `--watch`.
+The corresponding Go SDK options are `ProcessingRenewalRejectionFraction`,
+`ProcessingRenewalMinimumSamples`, `ProcessingLeaseExpiryRate`,
+`ProcessingWindowSustain`, and `ProcessingMetricsRecordingSince` (a `*time.Time`).
+The existing callback, alert JSON, durable outbox, checkpoint and acknowledgement
+mechanisms apply to these conditions.
+
+The recording-since timestamp is an **operator assertion**, not automatic rollout
+verification. Confirm that the bucket migration and every relevant apid/scheduler
+writer are upgraded before choosing it. Do not infer it from a first bucket or
+absence of events. No window crossing this boundary is eligible. After rollback,
+restore, data loss or another recording gap, stop the watch and begin a new one
+with a newly confirmed boundary and a fresh checkpoint. A prior assertion cannot
+prove that recording remained continuous through a later deployment change.
+
+The watch checks scope, exact effective window bounds, minute width, retention,
+coverage label, saturation, bounded counts, denominator consistency and reported
+rates. Its `MaxAge` applies to the database observation clock. Insufficient renewal
+samples, unsupported/missing summaries, stale/repeated/out-of-order observations,
+invalid evidence and missing window coverage produce `unknown`, not healthy or
+recovered. Expiry zero is eligible only under the explicit coverage assertion;
+renewal zero samples cannot resolve a renewal incident.
+
+Both opening and recovery need at least two distinct consecutive completed-minute
+windows and the configured local elapsed duration. Fresh polls of one unchanged
+window maintain liveness but do not add confirmation samples. A breach/clear
+change caused by a delayed commit resets the opposite confirmation even within
+the same window. Skipped completed windows or excessive polling gaps lose
+confirmation. Windows overlap, so these are sustained observations, not independent
+statistical samples. The default timeout may need increasing to cover warm-up
+and multiple windows.
+
+A confirmed incident remains firing while recovery is pending. Recovery requires
+sustained eligible values strictly below the threshold. Lost evidence emits
+`confirmation_lost`, not `resolved`; renewed proof can open a new incident.
+Checkpoints preserve `metric_recording_since`, thresholds, minimum request samples,
+sustain and recovery policy, but do not preserve live confirmation. Resume requires
+matching options and fresh windows, and rejects a changed recording boundary.
+These conditions use checkpoint version 2; older clients reject the unknown
+metrics rather than silently reinterpret them. Existing conditions are unchanged.

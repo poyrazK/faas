@@ -94,6 +94,20 @@ type deliveryHealthWatchFlags struct {
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f := &deliveryHealthWatchFlags{}
+	fs.Float64Var(&f.options.ProcessingRenewalRejectionFraction, "renewal-rejection-threshold", 0, "recorded rejected renewal fraction (0..1); zero disables")
+	fs.Float64Var(&f.options.ProcessingLeaseExpiryRate, "lease-expiry-rate-threshold", 0, "recorded expiry transitions per second; zero disables")
+	fs.Int64Var(&f.options.ProcessingRenewalMinimumSamples, "renewal-min-samples", 0, "minimum recorded renewals per window (default 10 when enabled)")
+	fs.DurationVar(&f.options.ProcessingWindowSustain, "processing-window-sustain", 0, "breach and recovery sustain, at least 1m (default 1m)")
+	fs.Func("processing-metrics-recording-since", "RFC3339 assertion of continuous recording by all writers; required for rate alerts", func(raw string) error {
+		at, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return fmt.Errorf("recording-since must be RFC3339: %w", err)
+		}
+		at = at.UTC()
+		f.options.ProcessingMetricsRecordingSince = &at
+		return nil
+	})
+
 	fs.DurationVar(&f.options.ProcessingOldest, "processing-oldest-threshold", 0, "active processing attempt age threshold; fresh breach must persist 30s")
 	fs.DurationVar(&f.options.ProcessingLeaseRisk, "processing-lease-risk-threshold", 0, "sustained nonzero leases in their final third (capped at 30s)")
 	fs.DurationVar(&f.options.ProcessingExpired, "processing-expired-threshold", 0, "sustained nonzero expired processing leases")

@@ -11154,3 +11154,7 @@ const EventAcknowledgmentHistoryCursorLifetime = time.Hour
 const EventAcknowledgmentMetricBucket = time.Minute
 const EventAcknowledgmentMetricRetention = 48 * time.Hour
 const EventAcknowledgmentMetricCountMax int64 = 1<<31 - 1
+
+const EventProcessingWindowAlertMinimumSamples int64 = 10
+const EventProcessingWindowAlertSustain = time.Minute
+const EventProcessingWindowAlertMinimumWindows = 2

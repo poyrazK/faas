@@ -14,14 +14,19 @@ import (
 // EventDeliveryHealthWatchOptions selects opt-in conditions. Zero disables a
 // threshold. Circuit/capacity durations measure consecutive local fresh reads.
 type EventDeliveryHealthWatchOptions struct {
-	ProcessingOldest, ProcessingLeaseRisk, ProcessingExpired time.Duration
-	Window                                                   string
-	Interval, Timeout, MaxAge                                time.Duration
-	OldestPending, Paused, CircuitBlocked, CapacityBlocked   time.Duration
-	Retrying, DeadLetters                                    int64
-	LineageStalled, LineageRetentionRisk                     int64
-	LineagePaused                                            time.Duration
-	ReceiptBudgetFull                                        time.Duration
+	// RecordingSince is an operator assertion of continuous recording by all writers.
+	ProcessingMetricsRecordingSince                               *time.Time
+	ProcessingRenewalRejectionFraction, ProcessingLeaseExpiryRate float64
+	ProcessingRenewalMinimumSamples                               int64
+	ProcessingWindowSustain                                       time.Duration
+	ProcessingOldest, ProcessingLeaseRisk, ProcessingExpired      time.Duration
+	Window                                                        string
+	Interval, Timeout, MaxAge                                     time.Duration
+	OldestPending, Paused, CircuitBlocked, CapacityBlocked        time.Duration
+	Retrying, DeadLetters                                         int64
+	LineageStalled, LineageRetentionRisk                          int64
+	LineagePaused                                                 time.Duration
+	ReceiptBudgetFull                                             time.Duration
 	// ReceiptBudgetRemaining warns below this many slots; zero disables it.
 	ReceiptBudgetRemaining  int
 	ReceiptBudgetLowSustain time.Duration
@@ -40,33 +45,35 @@ type EventDeliveryHealthWatchOptions struct {
 }
 
 type EventDeliveryHealthAlert struct {
-	RecoveryThreshold      float64   `json:"recovery_threshold,omitempty"`
-	RecoverySustainSeconds float64   `json:"recovery_sustain_seconds,omitempty"`
-	AppID                  string    `json:"app_id"`
-	SubscriptionID         string    `json:"subscription_id"`
-	Sequence               uint64    `json:"sequence"`
-	IncidentID             string    `json:"incident_id"`
-	Metric                 string    `json:"metric"`
-	Transition             string    `json:"transition"`
-	Reason                 string    `json:"reason"`
-	At                     time.Time `json:"at"`
-	Value                  float64   `json:"value"`
-	Threshold              float64   `json:"threshold"`
-	MinimumSamples         int64     `json:"minimum_samples,omitempty"`
-	SustainSeconds         float64   `json:"sustain_seconds,omitempty"`
+	MetricRecordingSince   *time.Time `json:"metric_recording_since,omitempty"`
+	RecoveryThreshold      float64    `json:"recovery_threshold,omitempty"`
+	RecoverySustainSeconds float64    `json:"recovery_sustain_seconds,omitempty"`
+	AppID                  string     `json:"app_id"`
+	SubscriptionID         string     `json:"subscription_id"`
+	Sequence               uint64     `json:"sequence"`
+	IncidentID             string     `json:"incident_id"`
+	Metric                 string     `json:"metric"`
+	Transition             string     `json:"transition"`
+	Reason                 string     `json:"reason"`
+	At                     time.Time  `json:"at"`
+	Value                  float64    `json:"value"`
+	Threshold              float64    `json:"threshold"`
+	MinimumSamples         int64      `json:"minimum_samples,omitempty"`
+	SustainSeconds         float64    `json:"sustain_seconds,omitempty"`
 }
 
 type EventDeliveryHealthCondition struct {
-	RecoveryThreshold      float64   `json:"recovery_threshold,omitempty"`
-	RecoverySustainSeconds float64   `json:"recovery_sustain_seconds,omitempty"`
-	Metric                 string    `json:"metric"`
-	State                  string    `json:"state"`
-	Value                  float64   `json:"value"`
-	Threshold              float64   `json:"threshold"`
-	IncidentID             string    `json:"incident_id,omitempty"`
-	ObservedAt             time.Time `json:"observed_at"`
-	MinimumSamples         int64     `json:"minimum_samples,omitempty"`
-	SustainSeconds         float64   `json:"sustain_seconds,omitempty"`
+	MetricRecordingSince   *time.Time `json:"metric_recording_since,omitempty"`
+	RecoveryThreshold      float64    `json:"recovery_threshold,omitempty"`
+	RecoverySustainSeconds float64    `json:"recovery_sustain_seconds,omitempty"`
+	Metric                 string     `json:"metric"`
+	State                  string     `json:"state"`
+	Value                  float64    `json:"value"`
+	Threshold              float64    `json:"threshold"`
+	IncidentID             string     `json:"incident_id,omitempty"`
+	ObservedAt             time.Time  `json:"observed_at"`
+	MinimumSamples         int64      `json:"minimum_samples,omitempty"`
+	SustainSeconds         float64    `json:"sustain_seconds,omitempty"`
 }
 
 type EventDeliveryHealthWatchResult struct {
@@ -89,6 +96,7 @@ type EventDeliveryHealthWatchResult struct {
 type deliveryHealthCondition struct {
 	EventDeliveryHealthCondition
 	first, localLast, observedAt time.Time
+	windowEnd                    time.Time
 	samples                      int
 	sustained                    bool
 	resuming                     bool
@@ -108,7 +116,10 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 	if o.Interval < EventDeliveryHealthWatchIntervalMin || o.Interval > EventDeliveryHealthWatchIntervalMax || o.Timeout <= 0 || o.Timeout > EventDeliveryHealthWatchTimeoutMax || o.MaxAge < EventDeliveryHealthWatchAgeMin || o.MaxAge > EventDeliveryHealthWatchAgeMax {
 		return ErrValidation("invalid delivery health watch interval, timeout or max age")
 	}
-	enabled := false
+	if err := validateProcessingWindowWatch(o); err != nil {
+		return err
+	}
+	enabled := o.ProcessingRenewalRejectionFraction > 0 || o.ProcessingLeaseExpiryRate > 0
 	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused, o.ReceiptBudgetFull, o.ProcessingOldest, o.ProcessingLeaseRisk, o.ProcessingExpired} {
 		if d < 0 || d > EventDeliveryHealthWatchThresholdMax || (d > 0 && d < EventDeliveryHealthWatchThresholdMin) {
 			return ErrValidation("invalid delivery health duration threshold")
@@ -154,7 +165,7 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 }
 
 func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryHealthCondition {
-	out := []*deliveryHealthCondition{}
+	out := newProcessingWindowConditions(o)
 	for _, v := range []struct {
 		metric    string
 		threshold float64
@@ -299,6 +310,10 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 		out.AppID = appID
 		binding = binding && strings.EqualFold(appID, health.Routing.AppID)
 		for _, condition := range conditions {
+			if processingWindowMetric(condition.Metric) {
+				updateProcessingWindowCondition(&out, condition, health, o, binding, now)
+				continue
+			}
 			value, valid, observed := deliveryHealthValue(health, condition.Metric)
 			if strings.HasPrefix(condition.Metric, "slo.") {
 				for _, v := range out.SLO {
@@ -450,10 +465,11 @@ func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deli
 	c.State, c.IncidentID, c.Value = "unknown", "", 0
 	c.first, c.localLast, c.samples = time.Time{}, time.Time{}, 0
 	c.recoveryFirst, c.recoverySamples = time.Time{}, 0
+	c.windowEnd = time.Time{}
 }
 
 func appendDeliveryHealthAlert(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, transition, reason string) {
-	alert := EventDeliveryHealthAlert{RecoveryThreshold: c.RecoveryThreshold, RecoverySustainSeconds: c.RecoverySustainSeconds, AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold, MinimumSamples: c.MinimumSamples, SustainSeconds: c.SustainSeconds}
+	alert := EventDeliveryHealthAlert{MetricRecordingSince: c.MetricRecordingSince, RecoveryThreshold: c.RecoveryThreshold, RecoverySustainSeconds: c.RecoverySustainSeconds, AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold, MinimumSamples: c.MinimumSamples, SustainSeconds: c.SustainSeconds}
 	out.Alerts = append(out.Alerts, alert)
 	if out.Checkpoint != nil {
 		out.Checkpoint.Pending = append(out.Checkpoint.Pending, alert)
