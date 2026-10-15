@@ -72,7 +72,7 @@ func persistTestCampaignProcess(path string, value any) error {
 	if err := writeTestCampaignJSON(path, value); err != nil {
 		return err
 	}
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
