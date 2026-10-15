@@ -28421,24 +28421,26 @@ func scanSession(s rowScanner) (Session, error) {
 // the accounts row delete — atomicity is the load-bearing property
 // of the post-deletion evidence story.
 //
-// Raw SQL (not sqlc-generated) to match the local convention in
-// AppendEvent / ListEvents and in the rest of DeleteAccount's
-// children-walk. Bypassing the sqlc-check CI gate keeps the PR
-// small and avoids regenerating pkg/state/sqlc/*.go.
+// The standalone insertion uses sqlc and preserves explicit trace IDs in the
+// existing JSON payload so the durable coverage read observes them.
 func (s *PgStore) InsertAuditLog(ctx context.Context, entry AuditLog) error {
-	_, err := s.pool.Exec(ctx,
-		`insert into audit_log
-		    (id, kind, account_id, account_email, actor, received_at, data)
-		 values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-		entry.ID,
-		entry.Kind,
-		entry.AccountID,
-		entry.AccountEmail,
-		entry.Actor,
-		entry.ReceivedAt,
-		[]byte(entry.Data),
-	)
-	return err
+	accountID := pgtype.UUID{}
+	if entry.AccountID != nil {
+		accountID = pgtype.UUID{Bytes: *entry.AccountID, Valid: true}
+	}
+	data, err := auditLogDataWithTrace(entry)
+	if err != nil {
+		return err
+	}
+	err = sqlc.New().OperatorInsertAuditLog(ctx, s.pool, sqlc.OperatorInsertAuditLogParams{
+		ID: pgtype.UUID{Bytes: entry.ID, Valid: true}, Kind: entry.Kind, AccountID: accountID,
+		AccountEmail: pgtype.Text{String: entry.AccountEmail, Valid: true}, Actor: pgtype.Text{String: entry.Actor, Valid: true},
+		ReceivedAt: pgtype.Timestamptz{Time: entry.ReceivedAt, Valid: true}, Data: []byte(data),
+	})
+	if err != nil {
+		return fmt.Errorf("insert audit log: %w", err)
+	}
+	return nil
 }
 
 // AppendDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)

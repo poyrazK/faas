@@ -128,7 +128,11 @@ func (s *server) obsTenant360(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 
-	detail := buildTenantDetail(r.Context(), s.store, target, includePII)
+	detail, err := buildTenantDetail(r.Context(), s.store, target, includePII)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load tenant detail"))
+		return
+	}
 	usage, err := projectObsTenantUsage(r, s.store, target, month, monthText)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load tenant usage"))

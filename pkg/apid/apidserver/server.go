@@ -395,8 +395,11 @@ type server struct {
 	interactiveAppTasksEnabled bool
 	// imageRunsEnabled is the operator gate for POST /v1/image-runs
 	// (ADR-1161, FAAS_IMAGE_RUNS).
-	imageRunsEnabled        bool
-	outboundProbeGatewayURL string
+	imageRunsEnabled bool
+	// interactiveImageRunsEnabled admits `interactive: true` image runs
+	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
+	interactiveImageRunsEnabled bool
+	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -802,6 +805,13 @@ func (s *server) WithInteractiveAppTasksEnabled(enabled bool) *server {
 // WithImageRunsEnabled attaches the image-run gate (ADR-1161).
 func (s *server) WithImageRunsEnabled(enabled bool) *server {
 	s.imageRunsEnabled = enabled
+	return s
+}
+
+// WithInteractiveImageRunsEnabled attaches the interactive image-run gate
+// (ADR-1330).
+func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
+	s.interactiveImageRunsEnabled = enabled
 	return s
 }
 
@@ -4839,7 +4849,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) {
+		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
 			_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
 		}
 	}
@@ -4854,11 +4864,13 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 // 24 h replay window: after paying, verifying the email, or waiting out the
 // hourly deploy limit, `gregale deploy` still got the old 402/403/429. A
 // cached 404 did the same: `gregale deliver` to a webhook registered after
-// the first attempt kept answering "no webhook registered" (H10-54).
+// the first attempt kept answering "no webhook registered" (H10-54). A 501
+// is an operator gate that is not enabled yet (interactive sessions,
+// ADR-1037 and ADR-1330); it clears when the operator enables it.
 func idempotencyReplayable(status int) bool {
 	switch status {
 	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound,
-		http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		http.StatusTooManyRequests, http.StatusNotImplemented, http.StatusServiceUnavailable:
 		return false
 	}
 	return true
@@ -4970,7 +4982,9 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
 		ctx := context.WithoutCancel(r.Context())
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) {
+		// A response with a one-time credential (httpkit.SkipIdempotentReplay)
+		// releases the key: a retry runs the operation again.
+		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
 			_ = s.store.PutIdempotent(ctx, acct.ID, key, cap.status, cap.body.Bytes())
 			return
 		}
@@ -5017,7 +5031,13 @@ type captureWriter struct {
 	http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	// skipReplay is set by httpkit.SkipIdempotentReplay for a response that
+	// carries a one-time credential.
+	skipReplay bool
 }
+
+// SkipIdempotentReplay implements httpkit.IdempotentReplaySkipper.
+func (c *captureWriter) SkipIdempotentReplay() { c.skipReplay = true }
 
 func (c *captureWriter) WriteHeader(status int) {
 	c.status = status

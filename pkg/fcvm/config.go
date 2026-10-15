@@ -361,6 +361,8 @@ type JobColdBootSpec struct {
 	AccountID string
 	RunID     string
 	TaskIndex int
+	// Interactive holds the command until one client attaches (ADR-1330).
+	Interactive *JobInteractive
 }
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is

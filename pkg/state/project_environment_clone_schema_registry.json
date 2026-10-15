@@ -5287,6 +5287,17 @@
     "kind": "configuration"
   },
   {
+    "table": "job_run_attach_sessions",
+    "columns": [
+      "attach_timeout_s",
+      "attach_token_sha256",
+      "created_at",
+      "run_id",
+      "tty"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "job_runs",
     "columns": [
       "account_id",

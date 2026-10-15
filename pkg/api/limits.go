@@ -8952,8 +8952,12 @@ const (
 	// operator incident inbox. The inbox composes several already-bounded
 	// read paths, so its page stays small enough for a terminal or console
 	// poll while leaving the larger fleet list caps unchanged.
-	ObsIncidentLimitDefault = 50
-	ObsIncidentLimitMax     = 200
+	ObsIncidentLimitDefault  = 50
+	ObsIncidentLimitMax      = 200
+	ObsIncidentStuckAfter    = 5 * time.Minute
+	ObsOverviewTopN          = 5
+	ObsOverviewAuditWindow   = 24 * time.Hour
+	ObsOverviewFailureWindow = time.Hour
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.

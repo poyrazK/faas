@@ -466,6 +466,9 @@ type Instance struct {
 	// JobStartGateEnabled marks a held Job whose command can only begin after
 	// the scheduler publishes runtime identity and calls ReleaseJobStart.
 	JobStartGateEnabled bool
+	// JobInteractive marks a Job whose guest holds its command for one
+	// attached session (ADR-1330).
+	JobInteractive bool
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
@@ -3992,6 +3995,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		AccountID:      req.AccountID,
 		RunID:          req.RunID,
 		TaskIndex:      req.TaskIndex,
+		Interactive:    req.Interactive,
 	}
 	if err = m.vmm.BootColdBootForJob(bootCtx, lease, spec); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: vmm boot: %w", req.Instance, err)
@@ -4007,6 +4011,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		Net:                 nc,
 		Method:              WakeColdBoot, // jobs are always cold-boot
 		IsJob:               true,
+		JobInteractive:      req.Interactive != nil,
 		JobStartGateEnabled: req.StartHeld,
 		QualificationOnly:   qualificationOnly,
 		AppID:               qualification.Execution.AppID,
@@ -4121,6 +4126,8 @@ type JobBootRequest struct {
 	TaskTimeoutSec   int
 	StartHeld        bool
 	LeaseToken       string
+	// Interactive holds the command until one client attaches (ADR-1330).
+	Interactive *JobInteractive
 }
 
 // Wake prefers snapshot restore with cold-boot fallback. Failed attempts unwind;

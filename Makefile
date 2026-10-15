@@ -254,7 +254,7 @@ test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated p
 	@$(MAKE) check-state-coverage COVERFILE=$(COVERAGE_DIR)/state.out
 
 .PHONY: check-state-coverage
-check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
+check-state-coverage: ## Assert exact pkg/state package coverage ≥ STATE_EXACT_FLOOR (.claude/ci/coverage_floor.py) from existing profile (default: coverage/cover.out) without re-running tests
 	@COVERFILE="$${COVERFILE:-$(COVERAGE_DIR)/cover.out}" ; \
 	test -f "$$COVERFILE" || (echo "Coverage file $$COVERFILE not found — run tests with -coverprofile first" ; exit 1) ; \
 	python3 .claude/ci/coverage_floor.py --state-only "$$COVERFILE"
@@ -411,7 +411,9 @@ grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e
 
 .PHONY: grafana-mirror-check
 grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → deploy/ansible/roles/grafana/files/ mirror. PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
-	@for f in faas-fleet.json warm-snapshot.json dev-loop.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json loki-pipeline.json ai-gateway.json; do \
+	@for source in deploy/grafana/*.json; do \
+	  f=$$(basename "$$source"); \
+	  test -f "deploy/ansible/roles/grafana/files/$$f" || { echo "grafana-mirror-check: $$f is missing its Ansible mirror"; exit 1; }; \
 	  if [ -f "deploy/grafana/$$f" ] && [ -f "deploy/ansible/roles/grafana/files/$$f" ]; then \
 	    a=$$(shasum -a 256 "deploy/grafana/$$f" | awk '{print $$1}'); \
 	    b=$$(shasum -a 256 "deploy/ansible/roles/grafana/files/$$f" | awk '{print $$1}'); \

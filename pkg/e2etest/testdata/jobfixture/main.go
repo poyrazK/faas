@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/jobresult"
@@ -16,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow")
+		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow|interactive")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -68,10 +70,32 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "interactive":
+		os.Exit(runInteractive())
 	default:
 		fmt.Fprintf(os.Stderr, "unknown job fixture mode %q\n", os.Args[1])
 		os.Exit(2)
 	}
+}
+
+// runInteractive (ADR-1330) reports whether stdin is a terminal, echoes each
+// stdin line as "got:<line>", and exits with N on "exit N" (0 at EOF).
+func runInteractive() int {
+	info, err := os.Stdin.Stat()
+	fmt.Printf("tty:%v\n", err == nil && info.Mode()&os.ModeCharDevice != 0)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if code, ok := strings.CutPrefix(line, "exit "); ok {
+			n, err := strconv.Atoi(code)
+			if err != nil {
+				return 2
+			}
+			return n
+		}
+		fmt.Printf("got:%s\n", line)
+	}
+	return 0
 }
 
 func runContract() {
