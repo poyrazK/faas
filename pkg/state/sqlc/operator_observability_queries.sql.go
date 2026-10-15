@@ -319,6 +319,256 @@ func (q *Queries) OperatorOverviewActivity(ctx context.Context, db DBTX, auditSi
 	return i, err
 }
 
+const operatorOverviewFailures = `-- name: OperatorOverviewFailures :many
+WITH counts AS (
+    SELECT kind, count(*)::bigint AS hits FROM events
+    WHERE at >= $1::timestamptz AND at <= $2::timestamptz
+      AND (kind LIKE '%.failed' OR kind LIKE '%.failure' OR kind LIKE '%.error')
+    GROUP BY kind
+), ranked AS (
+    SELECT kind, hits, row_number() OVER (ORDER BY hits DESC, kind) AS position FROM counts
+), buckets AS (
+    SELECT kind, hits, position FROM ranked WHERE position <= $3::integer
+    UNION ALL
+    SELECT 'other'::text, sum(hits)::bigint, $3::bigint + 1
+    FROM ranked WHERE position > $3::integer HAVING count(*) > 0
+)
+SELECT kind, hits FROM buckets ORDER BY position
+`
+
+type OperatorOverviewFailuresParams struct {
+	Since      pgtype.Timestamptz
+	ObservedAt pgtype.Timestamptz
+	TopN       int32
+}
+
+type OperatorOverviewFailuresRow struct {
+	Kind string
+	Hits int64
+}
+
+func (q *Queries) OperatorOverviewFailures(ctx context.Context, db DBTX, arg OperatorOverviewFailuresParams) ([]OperatorOverviewFailuresRow, error) {
+	rows, err := db.Query(ctx, operatorOverviewFailures, arg.Since, arg.ObservedAt, arg.TopN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorOverviewFailuresRow{}
+	for rows.Next() {
+		var i OperatorOverviewFailuresRow
+		if err := rows.Scan(&i.Kind, &i.Hits); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorOverviewFunnel = `-- name: OperatorOverviewFunnel :one
+WITH cohort AS MATERIALIZED (
+    SELECT id, created_at,
+           email_verified_at IS NOT NULL AND email_verified_at <= $1::timestamptz AS verified
+    FROM accounts
+    WHERE created_at >= $2::timestamptz
+      AND created_at <= $1::timestamptz
+), workloads AS (
+    SELECT a.account_id, bool_or(d.id IS NOT NULL) AS with_live
+    FROM cohort c JOIN apps a ON a.account_id = c.id AND a.status <> 'deleted'
+    LEFT JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL
+    WHERE c.verified
+    GROUP BY a.account_id
+), successes AS (
+    SELECT a.account_id, min(i.last_request_at) AS first_success
+    FROM cohort c JOIN workloads w ON w.account_id = c.id AND w.with_live
+    JOIN apps a ON a.account_id = c.id
+    JOIN instances i ON i.app_id = a.id
+    WHERE i.last_request_at >= c.created_at AND i.last_request_at <= $1::timestamptz
+    GROUP BY a.account_id
+), samples AS (
+    SELECT c.verified, w.account_id IS NOT NULL AS with_app,
+           coalesce(w.with_live, false) AS with_live,
+           trunc(extract(epoch FROM s.first_success - c.created_at))::bigint AS latency_seconds
+    FROM cohort c LEFT JOIN workloads w ON w.account_id = c.id
+    LEFT JOIN successes s ON s.account_id = c.id
+)
+SELECT count(*)::bigint AS accounts_created,
+       count(*) FILTER (WHERE verified)::bigint AS email_verified,
+       count(*) FILTER (WHERE with_app)::bigint AS with_app,
+       count(*) FILTER (WHERE with_live)::bigint AS with_live_deployment,
+       count(latency_seconds)::bigint AS with_successful_request,
+       coalesce(percentile_disc(0.50) WITHIN GROUP (ORDER BY latency_seconds), 0)::bigint AS p50_seconds,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_seconds), 0)::bigint AS p95_seconds
+FROM samples
+`
+
+type OperatorOverviewFunnelParams struct {
+	ObservedAt  pgtype.Timestamptz
+	CohortSince pgtype.Timestamptz
+}
+
+type OperatorOverviewFunnelRow struct {
+	AccountsCreated       int64
+	EmailVerified         int64
+	WithApp               int64
+	WithLiveDeployment    int64
+	WithSuccessfulRequest int64
+	P50Seconds            int64
+	P95Seconds            int64
+}
+
+// last_request_at retains successful-request evidence, including terminal
+// instances and deleted apps. It is not an immutable first-ever timestamp.
+func (q *Queries) OperatorOverviewFunnel(ctx context.Context, db DBTX, arg OperatorOverviewFunnelParams) (OperatorOverviewFunnelRow, error) {
+	row := db.QueryRow(ctx, operatorOverviewFunnel, arg.ObservedAt, arg.CohortSince)
+	var i OperatorOverviewFunnelRow
+	err := row.Scan(
+		&i.AccountsCreated,
+		&i.EmailVerified,
+		&i.WithApp,
+		&i.WithLiveDeployment,
+		&i.WithSuccessfulRequest,
+		&i.P50Seconds,
+		&i.P95Seconds,
+	)
+	return i, err
+}
+
+const operatorOverviewNodes = `-- name: OperatorOverviewNodes :many
+SELECT name, active, last_heartbeat_at FROM compute_nodes ORDER BY name, id
+`
+
+type OperatorOverviewNodesRow struct {
+	Name            string
+	Active          pgtype.Bool
+	LastHeartbeatAt pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorOverviewNodes(ctx context.Context, db DBTX) ([]OperatorOverviewNodesRow, error) {
+	rows, err := db.Query(ctx, operatorOverviewNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorOverviewNodesRow{}
+	for rows.Next() {
+		var i OperatorOverviewNodesRow
+		if err := rows.Scan(&i.Name, &i.Active, &i.LastHeartbeatAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorOverviewRateLimited = `-- name: OperatorOverviewRateLimited :many
+SELECT coalesce(subject, '00000000-0000-0000-0000-000000000000'::uuid)::text AS account_id,
+       count(*)::bigint AS hits
+FROM events
+WHERE kind = 'auth.rate_limited' AND at >= $1::timestamptz
+  AND at <= $2::timestamptz
+GROUP BY coalesce(subject, '00000000-0000-0000-0000-000000000000'::uuid)
+ORDER BY hits DESC, max(at) DESC, account_id
+LIMIT $3::integer
+`
+
+type OperatorOverviewRateLimitedParams struct {
+	Since      pgtype.Timestamptz
+	ObservedAt pgtype.Timestamptz
+	TopN       int32
+}
+
+type OperatorOverviewRateLimitedRow struct {
+	AccountID string
+	Hits      int64
+}
+
+func (q *Queries) OperatorOverviewRateLimited(ctx context.Context, db DBTX, arg OperatorOverviewRateLimitedParams) ([]OperatorOverviewRateLimitedRow, error) {
+	rows, err := db.Query(ctx, operatorOverviewRateLimited, arg.Since, arg.ObservedAt, arg.TopN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorOverviewRateLimitedRow{}
+	for rows.Next() {
+		var i OperatorOverviewRateLimitedRow
+		if err := rows.Scan(&i.AccountID, &i.Hits); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorOverviewTotals = `-- name: OperatorOverviewTotals :one
+WITH accounts_summary AS (
+    SELECT count(*) FILTER (WHERE status = 'active')::bigint AS accounts_active,
+           count(*) FILTER (WHERE status = 'past_due')::bigint AS accounts_past_due,
+           count(*) FILTER (WHERE status = 'suspended')::bigint AS accounts_suspended
+    FROM accounts
+), instances_summary AS (
+    SELECT count(*) FILTER (WHERE state = 'running')::bigint AS instances_live,
+           count(*) FILTER (WHERE state IN ('waking', 'cold_booting'))::bigint AS instances_waking
+    FROM instances
+), nodes_summary AS (
+    SELECT count(*) FILTER (WHERE active)::bigint AS nodes_active,
+           count(*) FILTER (WHERE NOT active)::bigint AS nodes_inactive
+    FROM compute_nodes
+)
+SELECT a.accounts_active, a.accounts_past_due, a.accounts_suspended,
+       i.instances_live, i.instances_waking, n.nodes_active, n.nodes_inactive,
+       (SELECT count(*) FROM apps WHERE status <> 'deleted')::bigint AS apps_total,
+       (SELECT count(*) FROM orgs)::bigint AS orgs_total,
+       (SELECT count(*) FROM audit_log
+        WHERE received_at >= $1::timestamptz
+          AND received_at <= $2::timestamptz)::bigint AS audit_events_24h
+FROM accounts_summary a CROSS JOIN instances_summary i CROSS JOIN nodes_summary n
+`
+
+type OperatorOverviewTotalsParams struct {
+	AuditSince pgtype.Timestamptz
+	ObservedAt pgtype.Timestamptz
+}
+
+type OperatorOverviewTotalsRow struct {
+	AccountsActive    int64
+	AccountsPastDue   int64
+	AccountsSuspended int64
+	InstancesLive     int64
+	InstancesWaking   int64
+	NodesActive       int64
+	NodesInactive     int64
+	AppsTotal         int64
+	OrgsTotal         int64
+	AuditEvents24h    int64
+}
+
+func (q *Queries) OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error) {
+	row := db.QueryRow(ctx, operatorOverviewTotals, arg.AuditSince, arg.ObservedAt)
+	var i OperatorOverviewTotalsRow
+	err := row.Scan(
+		&i.AccountsActive,
+		&i.AccountsPastDue,
+		&i.AccountsSuspended,
+		&i.InstancesLive,
+		&i.InstancesWaking,
+		&i.NodesActive,
+		&i.NodesInactive,
+		&i.AppsTotal,
+		&i.OrgsTotal,
+		&i.AuditEvents24h,
+	)
+	return i, err
+}
+
 const operatorRecentFailureCounts = `-- name: OperatorRecentFailureCounts :many
 SELECT kind, count(*)::bigint AS hits
 FROM events

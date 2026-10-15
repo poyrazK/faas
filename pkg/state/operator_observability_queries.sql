@@ -1,3 +1,94 @@
+-- name: OperatorOverviewTotals :one
+WITH accounts_summary AS (
+    SELECT count(*) FILTER (WHERE status = 'active')::bigint AS accounts_active,
+           count(*) FILTER (WHERE status = 'past_due')::bigint AS accounts_past_due,
+           count(*) FILTER (WHERE status = 'suspended')::bigint AS accounts_suspended
+    FROM accounts
+), instances_summary AS (
+    SELECT count(*) FILTER (WHERE state = 'running')::bigint AS instances_live,
+           count(*) FILTER (WHERE state IN ('waking', 'cold_booting'))::bigint AS instances_waking
+    FROM instances
+), nodes_summary AS (
+    SELECT count(*) FILTER (WHERE active)::bigint AS nodes_active,
+           count(*) FILTER (WHERE NOT active)::bigint AS nodes_inactive
+    FROM compute_nodes
+)
+SELECT a.accounts_active, a.accounts_past_due, a.accounts_suspended,
+       i.instances_live, i.instances_waking, n.nodes_active, n.nodes_inactive,
+       (SELECT count(*) FROM apps WHERE status <> 'deleted')::bigint AS apps_total,
+       (SELECT count(*) FROM orgs)::bigint AS orgs_total,
+       (SELECT count(*) FROM audit_log
+        WHERE received_at >= sqlc.arg(audit_since)::timestamptz
+          AND received_at <= sqlc.arg(observed_at)::timestamptz)::bigint AS audit_events_24h
+FROM accounts_summary a CROSS JOIN instances_summary i CROSS JOIN nodes_summary n;
+
+-- name: OperatorOverviewFunnel :one
+-- last_request_at retains successful-request evidence, including terminal
+-- instances and deleted apps. It is not an immutable first-ever timestamp.
+WITH cohort AS MATERIALIZED (
+    SELECT id, created_at,
+           email_verified_at IS NOT NULL AND email_verified_at <= sqlc.arg(observed_at)::timestamptz AS verified
+    FROM accounts
+    WHERE created_at >= sqlc.arg(cohort_since)::timestamptz
+      AND created_at <= sqlc.arg(observed_at)::timestamptz
+), workloads AS (
+    SELECT a.account_id, bool_or(d.id IS NOT NULL) AS with_live
+    FROM cohort c JOIN apps a ON a.account_id = c.id AND a.status <> 'deleted'
+    LEFT JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL
+    WHERE c.verified
+    GROUP BY a.account_id
+), successes AS (
+    SELECT a.account_id, min(i.last_request_at) AS first_success
+    FROM cohort c JOIN workloads w ON w.account_id = c.id AND w.with_live
+    JOIN apps a ON a.account_id = c.id
+    JOIN instances i ON i.app_id = a.id
+    WHERE i.last_request_at >= c.created_at AND i.last_request_at <= sqlc.arg(observed_at)::timestamptz
+    GROUP BY a.account_id
+), samples AS (
+    SELECT c.verified, w.account_id IS NOT NULL AS with_app,
+           coalesce(w.with_live, false) AS with_live,
+           trunc(extract(epoch FROM s.first_success - c.created_at))::bigint AS latency_seconds
+    FROM cohort c LEFT JOIN workloads w ON w.account_id = c.id
+    LEFT JOIN successes s ON s.account_id = c.id
+)
+SELECT count(*)::bigint AS accounts_created,
+       count(*) FILTER (WHERE verified)::bigint AS email_verified,
+       count(*) FILTER (WHERE with_app)::bigint AS with_app,
+       count(*) FILTER (WHERE with_live)::bigint AS with_live_deployment,
+       count(latency_seconds)::bigint AS with_successful_request,
+       coalesce(percentile_disc(0.50) WITHIN GROUP (ORDER BY latency_seconds), 0)::bigint AS p50_seconds,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_seconds), 0)::bigint AS p95_seconds
+FROM samples;
+
+-- name: OperatorOverviewNodes :many
+SELECT name, active, last_heartbeat_at FROM compute_nodes ORDER BY name, id;
+
+-- name: OperatorOverviewFailures :many
+WITH counts AS (
+    SELECT kind, count(*)::bigint AS hits FROM events
+    WHERE at >= sqlc.arg(since)::timestamptz AND at <= sqlc.arg(observed_at)::timestamptz
+      AND (kind LIKE '%.failed' OR kind LIKE '%.failure' OR kind LIKE '%.error')
+    GROUP BY kind
+), ranked AS (
+    SELECT kind, hits, row_number() OVER (ORDER BY hits DESC, kind) AS position FROM counts
+), buckets AS (
+    SELECT kind, hits, position FROM ranked WHERE position <= sqlc.arg(top_n)::integer
+    UNION ALL
+    SELECT 'other'::text, sum(hits)::bigint, sqlc.arg(top_n)::bigint + 1
+    FROM ranked WHERE position > sqlc.arg(top_n)::integer HAVING count(*) > 0
+)
+SELECT kind, hits FROM buckets ORDER BY position;
+
+-- name: OperatorOverviewRateLimited :many
+SELECT coalesce(subject, '00000000-0000-0000-0000-000000000000'::uuid)::text AS account_id,
+       count(*)::bigint AS hits
+FROM events
+WHERE kind = 'auth.rate_limited' AND at >= sqlc.arg(since)::timestamptz
+  AND at <= sqlc.arg(observed_at)::timestamptz
+GROUP BY coalesce(subject, '00000000-0000-0000-0000-000000000000'::uuid)
+ORDER BY hits DESC, max(at) DESC, account_id
+LIMIT sqlc.arg(top_n)::integer;
+
 -- name: OperatorOverviewActivity :one
 SELECT (SELECT count(*) FROM orgs)::bigint AS orgs_total,
        (SELECT count(*) FROM audit_log WHERE received_at >= sqlc.arg(audit_since))::bigint AS audit_events_24h;

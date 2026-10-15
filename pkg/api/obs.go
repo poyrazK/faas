@@ -62,7 +62,7 @@ type ObsBetaFunnel struct {
 }
 
 // ObsOverviewTotals is the headline KPI block. The numbers are
-// point-in-time counts derived from existing store methods; nothing
+// point-in-time counts read from one store snapshot; nothing
 // here is sampled, weighted, or extrapolated. The cardinality is
 // intentionally small (10 fields) so a frontend dashboard tile
 // renders without scrolling.
@@ -82,7 +82,7 @@ type ObsOverviewTotals struct {
 // ObsOverviewRateLimited is one row of the top-N rate-limited
 // accounts tile on the overview. AccountID is a UUID string;
 // Hits is the count over the 24h window. Cap of 5 entries is
-// pinned in the handler (ADR-091 §"Label cardinality" — the top-N
+// pinned in the store (ADR-091 §"Label cardinality" — the top-N
 // is bounded so a future Prometheus gauge can't blow up label
 // cardinality if this view is scraped).
 type ObsOverviewRateLimited struct {
@@ -102,8 +102,8 @@ type ObsOverviewNodeHealth struct {
 	Stale           bool      `json:"stale"`
 }
 
-// ObsOverviewFailureKind is the failure-bucket rollup. The handler
-// scans the audit_log table over a 1h window and groups by kind;
+// ObsOverviewFailureKind is the failure-bucket rollup. The store
+// aggregates events over a 1h window and groups by kind;
 // anything past the top-5 (per ADR-091 §"Label cardinality")
 // aggregates to a single "other" row.
 type ObsOverviewFailureKind struct {

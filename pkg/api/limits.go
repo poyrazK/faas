@@ -8838,12 +8838,14 @@ const (
 	// operator incident inbox. The inbox composes several already-bounded
 	// read paths, so its page stays small enough for a terminal or console
 	// poll while leaving the larger fleet list caps unchanged.
-	ObsIncidentLimitDefault  = 50
-	ObsIncidentLimitMax      = 200
-	ObsIncidentStuckAfter    = 5 * time.Minute
-	ObsOverviewTopN          = 5
-	ObsOverviewAuditWindow   = 24 * time.Hour
-	ObsOverviewFailureWindow = time.Hour
+	ObsIncidentLimitDefault   = 50
+	ObsIncidentLimitMax       = 200
+	ObsIncidentStuckAfter     = 5 * time.Minute
+	ObsOverviewTopN           = 5
+	ObsOverviewAuditWindow    = 24 * time.Hour
+	ObsOverviewFailureWindow  = time.Hour
+	ObsOverviewCohortWindow   = 14 * 24 * time.Hour
+	ObsOverviewNodeStaleAfter = time.Minute
 
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25

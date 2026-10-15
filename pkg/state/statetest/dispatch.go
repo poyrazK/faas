@@ -2324,6 +2324,7 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 var storeDispatched = map[string]bool{
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
+	"OperatorOverview":                              true,
 	"OperatorTenantApps":                            true,
 	"OperatorCapacityProfiles":                      true,
 	"OperatorAuditTraceCoverage":                    true,
@@ -2928,4 +2929,13 @@ func (s *Store) ListAllInstances(ctx context.Context) ([]state.Instance, error) 
 		return o.ListAllInstances(ctx)
 	}
 	return s.Store.ListAllInstances(ctx)
+}
+
+func (s *Store) OperatorOverview(ctx context.Context, now time.Time) (api.ObsOverviewResponse, error) {
+	if o, ok := s.over.(interface {
+		OperatorOverview(context.Context, time.Time) (api.ObsOverviewResponse, error)
+	}); ok {
+		return o.OperatorOverview(ctx, now)
+	}
+	return s.Store.OperatorOverview(ctx, now)
 }

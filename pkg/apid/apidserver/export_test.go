@@ -585,7 +585,6 @@ var StoreAsAuthenticator = storeAsAuthenticator
 var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
-var SummariseBetaFunnel = summariseBetaFunnel
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus

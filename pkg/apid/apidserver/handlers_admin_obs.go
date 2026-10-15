@@ -78,42 +78,19 @@ const (
 	obsHeartbeatsLimitMax     = 2000
 )
 
-// obsOverview handles GET /v1/admin/obs/overview. A single
-// object response (not a list) because the overview is a KPI
-// bundle, not a paginated collection. Counts are point-in-time
-// — no sampling, no weighting, no extrapolation. The handler
-// is bounded by existing store methods so a future PR can swap
-// the underlying reads for a single aggregate view without
-// changing the wire contract.
+// obsOverview handles GET /v1/admin/obs/overview using aggregate reads
+// from one consistent store snapshot.
 func (s *server) obsOverview(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
 		return
 	}
-	now := time.Now().UTC()
-	snapshot, err := loadObsOverviewSnapshot(r.Context(), s.store, now)
+	snapshot, err := s.store.OperatorOverview(r.Context(), time.Now().UTC())
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load observability overview"))
 		return
 	}
-	totals := summariseAccounts(snapshot.accounts)
-	totals.AppsTotal = len(snapshot.apps)
-	// Live + waking instance counts come from the canonical fleet
-	// read; schedd is the writer of record (CLAUDE.md ownership
-	// rules) and the obs read is a snapshot. The numbers are
-	// point-in-time; the operator UI re-polls every 30s.
-	totals.InstancesLive, totals.InstancesWaking = summariseInstances(snapshot.instances)
-	totals.NodesActive, totals.NodesInactive = summariseNodes(snapshot.nodes)
-	totals.OrgsTotal = snapshot.activity.OrgsTotal
-	totals.AuditEvents24h = snapshot.activity.AuditEvents24h
-	writeJSON(w, http.StatusOK, api.ObsOverviewResponse{
-		GeneratedAt:               now,
-		Totals:                    totals,
-		BetaFunnel14d:             summariseBetaFunnel(now, snapshot.accounts, snapshot.apps, snapshot.deployments, snapshot.firstSuccessByAcct),
-		TopRateLimitedAccounts24h: snapshot.rateLimited,
-		NodeHealth:                toNodeHealthRows(snapshot.nodes, now),
-		RecentFailures1h:          summariseRecentFailures(snapshot.activity.Failures),
-	})
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 // obsListTenants handles GET /v1/admin/obs/tenants. Cursor

@@ -213,6 +213,33 @@ header to `/v1/compute-nodes*` and the routes 410 Gone in a later
 cleanup PR. The dual-ship window is the migration path for any
 existing dashboard consumers.
 
+### 3.10 Overview aggregates and snapshot consistency
+
+`OperatorOverview` reads totals, the 14-day beta funnel, node health,
+recent failures and rate limits in one read-only, repeatable-read PostgreSQL
+transaction. MemStore holds one lock for the equivalent read. SQLC queries
+return scalar aggregates, the top five rate-limited accounts, the top five
+failure kinds plus an `other` bucket, and narrow per-node health rows.
+The API does not load fleet account, app, deployment or instance records.
+
+The funnel includes accounts created between `generated_at - 14 days` and
+`generated_at`, inclusive. Its stages are cumulative: verified email,
+non-deleted app, live non-deleted deployment, then a retained successful
+request. Accounts count once per stage even with multiple apps or instances.
+The first-success source remains the earliest retained instance
+`last_request_at` on any app owned by the account, including deleted apps
+and terminal instances. Only timestamps between signup and `generated_at`
+are eligible. This is retained evidence, not immutable first-ever history.
+P50 and P95 use nearest-rank percentiles of whole seconds, truncated before
+aggregation; an empty sample has zero percentiles and zero samples.
+
+Audit and rate-limit windows cover the preceding 24 hours, and failures
+the preceding hour, with both endpoints inclusive and future observations
+excluded. Node staleness remains strictly greater than one minute; a zero
+heartbeat is not marked stale. Time windows and result limits are defined
+in `pkg/api/limits.go`. Any failed snapshot read returns 503 without partial
+overview data. The response fields and admin authorization remain unchanged.
+
 ## 4. Sensitive fields (never exposed)
 
 Projection helpers in `cmd/apid/handlers_admin_obs_projection.go`
