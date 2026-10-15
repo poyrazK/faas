@@ -3987,6 +3987,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/saved-views", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSavedViewHandler))))
 	mux.Handle("GET /oauth/linear/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.linearOAuthCallback))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerHealthHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageActionHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationsHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationPolicyHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-review", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerReviewHandler))))

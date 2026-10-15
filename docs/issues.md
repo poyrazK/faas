@@ -1546,3 +1546,27 @@ Notification payloads include version, incident identity, kind (`paused`, `closu
 consecutive failure count/threshold, captured team/recipient IDs, and `issue_path`
 and `health_path`. App webhook receivers can route using these IDs. There are no
 credentials, raw provider diagnostics or occurrence payloads in these notifications.
+
+### Acknowledge and claim tracker incidents
+
+In **Tracker sync notifications**, acknowledgment and claimant labels show who has
+seen an incident and who is investigating. Open **Triage and handling history** to:
+
+- **Acknowledge** the incident. The first acknowledgment remains recorded.
+- **Claim for me** to tell the team you are investigating. Claiming does not also
+  acknowledge the incident.
+- **Release claim** when handing it off. The claimant or app owner can release it;
+  another person must release an existing claim before they can claim it.
+
+All notices for the same incident share handling state. Triage does not resolve
+an issue, resume automatic sync, contact a provider or suppress notifications.
+The app owner and captured recipients with current org/team membership can act;
+being an org or team member alone is insufficient. Session CSRF and normal MFA
+checks apply. Simultaneous edits return a conflict: reload to see who claimed it.
+
+Recovery and notification settings changes make old incidents read-only. New
+incidents start unacknowledged and unclaimed. A former member's claim remains
+visible as recorded handling state, and grants no access; ask the app owner to
+release it. The handling page retains the latest 20 actions per incident while
+its notifications remain retained. Pruning the final notice removes that handling
+history too.

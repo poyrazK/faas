@@ -121,10 +121,15 @@ DELETE FROM issue_tracker_sync_notifications n WHERE n.link_id=sqlc.arg(link_id)
  SELECT old.id FROM issue_tracker_sync_notifications old WHERE old.link_id=sqlc.arg(link_id) ORDER BY old.created_at DESC,old.id DESC OFFSET sqlc.arg(retained_count));
 -- name: IssueTrackerNotificationList :many
 SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
- i.id AS issue_id,i.title AS issue_title
+ i.id AS issue_id,i.title AS issue_title,
+ COALESCE(tr.revision,0)::bigint AS triage_revision,tr.acknowledged_by,tr.claimed_by,
+ COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 JOIN issue_tracker_links l ON l.id=n.link_id JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
 LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=n.incident_id
+LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by
+LEFT JOIN accounts claim ON claim.id=tr.claimed_by
 WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND (sqlc.narg(team_filter)::uuid IS NULL OR n.team_id=sqlc.narg(team_filter))
 AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
@@ -146,3 +151,33 @@ AND a.deleted_at IS NULL AND a.status<>'deleted' AND (a.account_id=sqlc.arg(acto
  AND sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
  AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id))))));
+
+-- name: IssueTrackerTriageScope :one
+SELECT n.incident_id,n.link_id,
+ COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
+FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
+LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
+LEFT JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id
+WHERE n.id=sqlc.arg(notification_id) AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
+AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+ sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))));
+-- name: IssueTrackerTriageGet :one
+SELECT tr.*, COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name
+FROM issue_tracker_sync_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts claim ON claim.id=tr.claimed_by
+WHERE tr.incident_id=$1;
+-- name: IssueTrackerTriagePut :exec
+INSERT INTO issue_tracker_sync_triage(incident_id,link_id,revision,acknowledged_by,claimed_by) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(incident_id) DO UPDATE SET revision=excluded.revision,acknowledged_by=excluded.acknowledged_by,claimed_by=excluded.claimed_by;
+-- name: IssueTrackerTriageActivityAdd :exec
+INSERT INTO issue_tracker_sync_triage_activity(id,incident_id,actor_id,action,revision) VALUES($1,$2,$3,$4,$5);
+-- name: IssueTrackerTriageActivityList :many
+SELECT h.*,COALESCE(a.email::text,'')::text AS actor_name FROM issue_tracker_sync_triage_activity h LEFT JOIN accounts a ON a.id=h.actor_id
+WHERE h.incident_id=$1 ORDER BY h.revision DESC LIMIT $2;
+-- name: IssueTrackerTriageActivityPrune :exec
+DELETE FROM issue_tracker_sync_triage_activity h WHERE h.incident_id=sqlc.arg(incident_id) AND h.id IN (
+ SELECT old.id FROM issue_tracker_sync_triage_activity old WHERE old.incident_id=sqlc.arg(incident_id) ORDER BY old.revision DESC OFFSET sqlc.arg(retained_count));
+-- name: IssueTrackerTriagePrune :exec
+DELETE FROM issue_tracker_sync_triage tr WHERE tr.link_id=$1 AND NOT EXISTS(SELECT 1 FROM issue_tracker_sync_notifications n WHERE n.incident_id=tr.incident_id);

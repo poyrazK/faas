@@ -139,7 +139,10 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 			return err
 		}
 	}
-	return q.IssueTrackerNotificationPrune(ctx, tx, sqlc.IssueTrackerNotificationPruneParams{LinkID: issueUUID(r.Policy.LinkID), RetainedCount: api.IssueTrackerSyncNotificationsMax})
+	if err = q.IssueTrackerNotificationPrune(ctx, tx, sqlc.IssueTrackerNotificationPruneParams{LinkID: issueUUID(r.Policy.LinkID), RetainedCount: api.IssueTrackerSyncNotificationsMax}); err != nil {
+		return err
+	}
+	return q.IssueTrackerTriagePrune(ctx, tx, issueUUID(r.Policy.LinkID))
 }
 
 func (s *PgStore) ListIssueTrackerSyncNotifications(ctx context.Context, app, owner, actor, team string, cur IssueCursor) (IssueTrackerNotificationPage, error) {
@@ -165,7 +168,7 @@ func (s *PgStore) ListIssueTrackerSyncNotifications(ctx context.Context, app, ow
 			out.NextCursor = EncodeIssueCursor(IssueCursor{Time: last.CreatedAt, ID: last.ID, FilterHash: hash})
 			break
 		}
-		out.Items = append(out.Items, IssueTrackerSyncNotification{ID: issueID(r.ID), LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, Kind: r.Kind, Outcome: r.Outcome, Reason: r.Reason, TeamID: issueID(r.TeamID), TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time})
+		out.Items = append(out.Items, IssueTrackerSyncNotification{ID: issueID(r.ID), LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, Kind: r.Kind, Outcome: r.Outcome, Reason: r.Reason, TeamID: issueID(r.TeamID), TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time, AcknowledgedBy: issueID(r.AcknowledgedBy), ClaimedBy: issueID(r.ClaimedBy), AcknowledgedName: r.AcknowledgedName, ClaimedName: r.ClaimedName})
 	}
 	return out, nil
 }

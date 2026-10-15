@@ -1714,6 +1714,13 @@ type Querier interface {
 	IssueTrackerSyncHistoryAdd(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryAddParams) error
 	IssueTrackerSyncHistoryList(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryListParams) ([]IssueTrackerSyncHistory, error)
 	IssueTrackerSyncHistoryPrune(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryPruneParams) error
+	IssueTrackerTriageActivityAdd(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityAddParams) error
+	IssueTrackerTriageActivityList(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityListParams) ([]IssueTrackerTriageActivityListRow, error)
+	IssueTrackerTriageActivityPrune(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityPruneParams) error
+	IssueTrackerTriageGet(ctx context.Context, db DBTX, incidentID pgtype.UUID) (IssueTrackerTriageGetRow, error)
+	IssueTrackerTriagePrune(ctx context.Context, db DBTX, linkID pgtype.UUID) error
+	IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueTrackerTriagePutParams) error
+	IssueTrackerTriageScope(ctx context.Context, db DBTX, arg IssueTrackerTriageScopeParams) (IssueTrackerTriageScopeRow, error)
 	IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error)
 	IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error)
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)

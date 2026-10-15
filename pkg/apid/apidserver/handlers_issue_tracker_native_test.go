@@ -2309,6 +2309,162 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if out := getAs(outsider, pageURL); out.Code != 404 {
 		t.Fatal("unrelated member opened inbox", out.Code)
 	}
+	// Triage is shared by incident, with revision checks and no lifecycle effects.
+	notice := inbox(member.ID, team.ID).Items[0].ID
+	triageGet := func(actor string) state.IssueTrackerTriage {
+		t.Helper()
+		v, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, actor, notice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	triageAct := func(actor string, revision int64, action string) error {
+		return st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, actor, notice, revision, action)
+	}
+	beforeTriage, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := triageGet(member.ID); !v.Active || v.Revision != 0 || len(v.History) != 0 {
+		t.Fatal(v)
+	}
+	if _, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, outsider.ID, notice); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("unrelated member read triage", err)
+	}
+	if err := triageAct(outsider.ID, 0, "claim"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("unrelated member claimed", err)
+	}
+	if err := triageAct(member.ID, 0, "acknowledge"); err != nil {
+		t.Fatal(err)
+	}
+	if err := triageAct(member.ID, 0, "claim"); err == nil {
+		t.Fatal("stale triage revision accepted")
+	}
+	claims := make(chan error, 2)
+	for _, actor := range []string{member.ID, app.AccountID} {
+		go func(actor string) { claims <- triageAct(actor, 1, "claim") }(actor)
+	}
+	wins := 0
+	for range 2 {
+		if <-claims == nil {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatal("concurrent claims", wins)
+	}
+	v := triageGet(member.ID)
+	if v.Revision != 2 || v.AcknowledgedBy != member.ID || v.ClaimedBy == "" || len(v.History) != 2 {
+		t.Fatal(v)
+	}
+
+	otherClaimant := app.AccountID
+	if v.ClaimedBy == app.AccountID {
+		otherClaimant = member.ID
+	}
+	if triageAct(otherClaimant, 2, "claim") == nil {
+		t.Fatal("existing claim was overwritten")
+	}
+	if v.ClaimedBy == app.AccountID && triageAct(member.ID, 2, "release") == nil {
+		t.Fatal("member released another account's claim")
+	}
+	if err := triageAct(app.AccountID, 2, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if err := triageAct(member.ID, 3, "claim"); err != nil {
+		t.Fatal(err)
+	}
+	// A history write failure must not leave a partially changed claim.
+	if _, err := (*e.Pool()).Exec(t.Context(), `CREATE FUNCTION reject_tracker_triage() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'history unavailable'; END $$; CREATE TRIGGER reject_tracker_triage BEFORE INSERT ON issue_tracker_sync_triage_activity FOR EACH ROW EXECUTE FUNCTION reject_tracker_triage()`); err != nil {
+		t.Fatal(err)
+	}
+	if triageAct(app.AccountID, 4, "release") == nil {
+		t.Fatal("triage committed without history")
+	}
+	if v := triageGet(member.ID); v.Revision != 4 || v.ClaimedBy != member.ID || len(v.History) != 4 {
+		t.Fatal("partial triage", v)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "DROP TRIGGER reject_tracker_triage ON issue_tracker_sync_triage_activity; DROP FUNCTION reject_tracker_triage()"); err != nil {
+		t.Fatal(err)
+	}
+	if err := triageAct(app.AccountID, 4, "release"); err != nil {
+		t.Fatal(err)
+	}
+	// Acknowledgment is idempotent and records the first actor.
+	if err := triageAct(app.AccountID, 5, "acknowledge"); err != nil {
+		t.Fatal(err)
+	}
+	if v := triageGet(app.AccountID); v.Revision != 5 || v.AcknowledgedBy != member.ID {
+		t.Fatal(v)
+	}
+	triageURL := pageURL + "/triage/" + notice
+	triagePage := getAs(member, triageURL)
+	if triagePage.Code != 200 || !strings.Contains(triagePage.Body.String(), "Claim for me") || !strings.Contains(triagePage.Body.String(), member.Email) {
+		t.Fatal("member triage page", triagePage.Code, triagePage.Body.String())
+	}
+	if out := getAs(outsider, triageURL); out.Code != 404 {
+		t.Fatal("unrelated triage read", out.Code)
+	}
+	var triageCSRF *http.Cookie
+	for _, c := range triagePage.Result().Cookies() {
+		if c.Name == apidserver.DashboardIssueCookie {
+			triageCSRF = c
+		}
+	}
+	if triageCSRF == nil {
+		t.Fatal("missing triage CSRF")
+	}
+	triagePost := func(valid bool, revision int64) *httptest.ResponseRecorder {
+		form := url.Values{"action": {"claim"}, "expected_revision": {fmt.Sprint(revision)}}
+		if valid {
+			form.Set("csrf_token", triageCSRF.Value)
+		}
+		req := httptest.NewRequest("POST", triageURL, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if valid {
+			req.AddCookie(triageCSRF)
+		}
+		saved := *e.Acct()
+		*e.Acct() = member
+		e.AddAdminSession(t, req)
+		*e.Acct() = saved
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	if out := triagePost(false, 5); out.Code != 400 {
+		t.Fatal("triage CSRF bypass", out.Code)
+	}
+	if out := triagePost(true, 5); out.Code != 303 {
+		t.Fatal("member triage write", out.Code, out.Body.String())
+	}
+	if out := triagePost(true, 5); out.Code != 409 {
+		t.Fatal("stale HTTP triage", out.Code)
+	}
+
+	// Bound history independently of the number of ownership handoffs.
+	finalTriageRevision := triageGet(member.ID).Revision
+	for range api.IssueTrackerSyncTriageHistoryMax {
+		if err := triageAct(app.AccountID, finalTriageRevision, "release"); err != nil {
+			t.Fatal(err)
+		}
+		finalTriageRevision++
+		if err := triageAct(member.ID, finalTriageRevision, "claim"); err != nil {
+			t.Fatal(err)
+		}
+		finalTriageRevision++
+	}
+	if v := triageGet(member.ID); len(v.History) != api.IssueTrackerSyncTriageHistoryMax || v.History[0].Revision != finalTriageRevision {
+		t.Fatal("unbounded triage history", v)
+	}
+	afterTriage, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil || afterTriage.Policy.Revision != beforeTriage.Policy.Revision || afterTriage.Policy.Outcome != beforeTriage.Policy.Outcome || afterTriage.Policy.PendingState != beforeTriage.Policy.PendingState || len(inbox(member.ID, team.ID).Items) != 1 {
+		t.Fatal("triage changed sync lifecycle", afterTriage, err)
+	}
+	if v := inbox(member.ID, team.ID).Items[0]; v.ClaimedBy != member.ID || v.AcknowledgedBy != member.ID {
+		t.Fatal("inbox handling state", v)
+	}
 	if err = full.RemoveOrgMember(t.Context(), org.ID, member.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -2317,6 +2473,13 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	}
 	if _, err := st.GetIssueTrackerNotificationHealth(t.Context(), app.ID, app.AccountID, member.ID, accepted.IssueID, link.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("removed member retained health read", err)
+	}
+
+	if _, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed member retained triage", err)
+	}
+	if err := triageAct(member.ID, finalTriageRevision, "release"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed member wrote triage", err)
 	}
 
 	inviteToken := []byte(strings.Repeat("n", 32))
@@ -2333,11 +2496,25 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if len(inbox(member.ID, "").Items) != 0 {
 		t.Fatal("removed team member retained inbox access")
 	}
+
+	if _, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed team member retained triage", err)
+	}
+	if err := triageAct(member.ID, finalTriageRevision, "release"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed team member changed triage", err)
+	}
 	complete("matched", "")
 	p := inbox(app.AccountID, team.ID)
 	if len(p.Items) != 2 || p.Items[0].Kind != "recovered" {
 		t.Fatal("recovery routing", p)
 	}
+	if v := triageGet(app.AccountID); v.Active || v.ClaimedBy != member.ID || len(v.History) != api.IssueTrackerSyncTriageHistoryMax {
+		t.Fatal("recovery lost triage history", v)
+	}
+	if triageAct(app.AccountID, finalTriageRevision, "release") == nil {
+		t.Fatal("recovered incident accepted action")
+	}
+
 	if _, err = st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -2346,10 +2523,22 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if p := inbox(app.AccountID, ""); len(p.Items) != 3 || p.Items[0].TeamID != "" {
 		t.Fatal("owner fallback", p)
 	}
+
+	freshNotice := inbox(app.AccountID, "").Items[0].ID
+	if fresh, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice); err != nil || !fresh.Active || fresh.Revision != 0 || fresh.ClaimedBy != "" {
+		t.Fatal("new incident inherited handling", fresh, err)
+	}
 	policy.Enabled = false
 	policy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, policy)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if err := st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice, 0, "claim"); err == nil {
+		t.Fatal("disabled notification policy allowed triage")
+	}
+	if fresh, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice); err != nil || fresh.Active {
+		t.Fatal("opt-out retained active triage", fresh, err)
 	}
 	complete("matched", "")
 	if len(inbox(app.AccountID, "").Items) != 3 {
@@ -2373,6 +2562,14 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	var retained int
 	if err = (*e.Pool()).QueryRow(t.Context(), "SELECT count(*) FROM issue_tracker_sync_notifications WHERE link_id=$1", link.ID).Scan(&retained); err != nil || retained != api.IssueTrackerSyncNotificationsMax {
 		t.Fatal("unbounded notices", retained, err)
+	}
+
+	if _, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, notice); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("pruned notice retained triage access", err)
+	}
+	var triageRetained int
+	if err := (*e.Pool()).QueryRow(t.Context(), "SELECT count(*) FROM issue_tracker_sync_triage WHERE link_id=$1", link.ID).Scan(&triageRetained); err != nil || triageRetained != 0 {
+		t.Fatal("orphaned triage retention", triageRetained, err)
 	}
 	other, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, accepted.IssueID, app.AccountID, api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/43"}, time.Now())
 	if err != nil {

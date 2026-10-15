@@ -633,10 +633,15 @@ func (q *Queries) IssueTrackerNotificationInsert(ctx context.Context, db DBTX, a
 
 const issueTrackerNotificationList = `-- name: IssueTrackerNotificationList :many
 SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
- i.id AS issue_id,i.title AS issue_title
+ i.id AS issue_id,i.title AS issue_title,
+ COALESCE(tr.revision,0)::bigint AS triage_revision,tr.acknowledged_by,tr.claimed_by,
+ COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 JOIN issue_tracker_links l ON l.id=n.link_id JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
 LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=n.incident_id
+LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by
+LEFT JOIN accounts claim ON claim.id=tr.claimed_by
 WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND ($3::uuid IS NULL OR n.team_id=$3)
 AND (a.account_id=$4::uuid OR (
@@ -658,16 +663,21 @@ type IssueTrackerNotificationListParams struct {
 }
 
 type IssueTrackerNotificationListRow struct {
-	ID         pgtype.UUID
-	LinkID     pgtype.UUID
-	Kind       string
-	Outcome    string
-	Reason     string
-	CreatedAt  pgtype.Timestamptz
-	TeamID     pgtype.UUID
-	TeamName   string
-	IssueID    pgtype.UUID
-	IssueTitle string
+	ID               pgtype.UUID
+	LinkID           pgtype.UUID
+	Kind             string
+	Outcome          string
+	Reason           string
+	CreatedAt        pgtype.Timestamptz
+	TeamID           pgtype.UUID
+	TeamName         string
+	IssueID          pgtype.UUID
+	IssueTitle       string
+	TriageRevision   int64
+	AcknowledgedBy   pgtype.UUID
+	ClaimedBy        pgtype.UUID
+	AcknowledgedName string
+	ClaimedName      string
 }
 
 func (q *Queries) IssueTrackerNotificationList(ctx context.Context, db DBTX, arg IssueTrackerNotificationListParams) ([]IssueTrackerNotificationListRow, error) {
@@ -698,6 +708,11 @@ func (q *Queries) IssueTrackerNotificationList(ctx context.Context, db DBTX, arg
 			&i.TeamName,
 			&i.IssueID,
 			&i.IssueTitle,
+			&i.TriageRevision,
+			&i.AcknowledgedBy,
+			&i.ClaimedBy,
+			&i.AcknowledgedName,
+			&i.ClaimedName,
 		); err != nil {
 			return nil, err
 		}
@@ -1121,4 +1136,193 @@ type IssueTrackerSyncHistoryPruneParams struct {
 func (q *Queries) IssueTrackerSyncHistoryPrune(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryPruneParams) error {
 	_, err := db.Exec(ctx, issueTrackerSyncHistoryPrune, arg.LinkID, arg.RetainedCount)
 	return err
+}
+
+const issueTrackerTriageActivityAdd = `-- name: IssueTrackerTriageActivityAdd :exec
+INSERT INTO issue_tracker_sync_triage_activity(id,incident_id,actor_id,action,revision) VALUES($1,$2,$3,$4,$5)
+`
+
+type IssueTrackerTriageActivityAddParams struct {
+	ID         pgtype.UUID
+	IncidentID pgtype.UUID
+	ActorID    pgtype.UUID
+	Action     string
+	Revision   int64
+}
+
+func (q *Queries) IssueTrackerTriageActivityAdd(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityAddParams) error {
+	_, err := db.Exec(ctx, issueTrackerTriageActivityAdd,
+		arg.ID,
+		arg.IncidentID,
+		arg.ActorID,
+		arg.Action,
+		arg.Revision,
+	)
+	return err
+}
+
+const issueTrackerTriageActivityList = `-- name: IssueTrackerTriageActivityList :many
+SELECT h.id, h.incident_id, h.actor_id, h.action, h.revision, h.created_at,COALESCE(a.email::text,'')::text AS actor_name FROM issue_tracker_sync_triage_activity h LEFT JOIN accounts a ON a.id=h.actor_id
+WHERE h.incident_id=$1 ORDER BY h.revision DESC LIMIT $2
+`
+
+type IssueTrackerTriageActivityListParams struct {
+	IncidentID pgtype.UUID
+	Limit      int32
+}
+
+type IssueTrackerTriageActivityListRow struct {
+	ID         pgtype.UUID
+	IncidentID pgtype.UUID
+	ActorID    pgtype.UUID
+	Action     string
+	Revision   int64
+	CreatedAt  pgtype.Timestamptz
+	ActorName  string
+}
+
+func (q *Queries) IssueTrackerTriageActivityList(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityListParams) ([]IssueTrackerTriageActivityListRow, error) {
+	rows, err := db.Query(ctx, issueTrackerTriageActivityList, arg.IncidentID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerTriageActivityListRow{}
+	for rows.Next() {
+		var i IssueTrackerTriageActivityListRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.IncidentID,
+			&i.ActorID,
+			&i.Action,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.ActorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerTriageActivityPrune = `-- name: IssueTrackerTriageActivityPrune :exec
+DELETE FROM issue_tracker_sync_triage_activity h WHERE h.incident_id=$1 AND h.id IN (
+ SELECT old.id FROM issue_tracker_sync_triage_activity old WHERE old.incident_id=$1 ORDER BY old.revision DESC OFFSET $2)
+`
+
+type IssueTrackerTriageActivityPruneParams struct {
+	IncidentID    pgtype.UUID
+	RetainedCount int32
+}
+
+func (q *Queries) IssueTrackerTriageActivityPrune(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityPruneParams) error {
+	_, err := db.Exec(ctx, issueTrackerTriageActivityPrune, arg.IncidentID, arg.RetainedCount)
+	return err
+}
+
+const issueTrackerTriageGet = `-- name: IssueTrackerTriageGet :one
+SELECT tr.incident_id, tr.link_id, tr.revision, tr.acknowledged_by, tr.claimed_by, COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name
+FROM issue_tracker_sync_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts claim ON claim.id=tr.claimed_by
+WHERE tr.incident_id=$1
+`
+
+type IssueTrackerTriageGetRow struct {
+	IncidentID       pgtype.UUID
+	LinkID           pgtype.UUID
+	Revision         int64
+	AcknowledgedBy   pgtype.UUID
+	ClaimedBy        pgtype.UUID
+	AcknowledgedName string
+	ClaimedName      string
+}
+
+func (q *Queries) IssueTrackerTriageGet(ctx context.Context, db DBTX, incidentID pgtype.UUID) (IssueTrackerTriageGetRow, error) {
+	row := db.QueryRow(ctx, issueTrackerTriageGet, incidentID)
+	var i IssueTrackerTriageGetRow
+	err := row.Scan(
+		&i.IncidentID,
+		&i.LinkID,
+		&i.Revision,
+		&i.AcknowledgedBy,
+		&i.ClaimedBy,
+		&i.AcknowledgedName,
+		&i.ClaimedName,
+	)
+	return i, err
+}
+
+const issueTrackerTriagePrune = `-- name: IssueTrackerTriagePrune :exec
+DELETE FROM issue_tracker_sync_triage tr WHERE tr.link_id=$1 AND NOT EXISTS(SELECT 1 FROM issue_tracker_sync_notifications n WHERE n.incident_id=tr.incident_id)
+`
+
+func (q *Queries) IssueTrackerTriagePrune(ctx context.Context, db DBTX, linkID pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueTrackerTriagePrune, linkID)
+	return err
+}
+
+const issueTrackerTriagePut = `-- name: IssueTrackerTriagePut :exec
+INSERT INTO issue_tracker_sync_triage(incident_id,link_id,revision,acknowledged_by,claimed_by) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(incident_id) DO UPDATE SET revision=excluded.revision,acknowledged_by=excluded.acknowledged_by,claimed_by=excluded.claimed_by
+`
+
+type IssueTrackerTriagePutParams struct {
+	IncidentID     pgtype.UUID
+	LinkID         pgtype.UUID
+	Revision       int64
+	AcknowledgedBy pgtype.UUID
+	ClaimedBy      pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueTrackerTriagePutParams) error {
+	_, err := db.Exec(ctx, issueTrackerTriagePut,
+		arg.IncidentID,
+		arg.LinkID,
+		arg.Revision,
+		arg.AcknowledgedBy,
+		arg.ClaimedBy,
+	)
+	return err
+}
+
+const issueTrackerTriageScope = `-- name: IssueTrackerTriageScope :one
+SELECT n.incident_id,n.link_id,
+ COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
+FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
+LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
+LEFT JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id
+WHERE n.id=$1 AND a.id=$2 AND a.account_id=$3
+AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND (a.account_id=$4::uuid OR (
+ $4::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
+`
+
+type IssueTrackerTriageScopeParams struct {
+	NotificationID pgtype.UUID
+	AppID          pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	ActorAccountID pgtype.UUID
+}
+
+type IssueTrackerTriageScopeRow struct {
+	IncidentID pgtype.UUID
+	LinkID     pgtype.UUID
+	Active     bool
+}
+
+func (q *Queries) IssueTrackerTriageScope(ctx context.Context, db DBTX, arg IssueTrackerTriageScopeParams) (IssueTrackerTriageScopeRow, error) {
+	row := db.QueryRow(ctx, issueTrackerTriageScope,
+		arg.NotificationID,
+		arg.AppID,
+		arg.OwnerAccountID,
+		arg.ActorAccountID,
+	)
+	var i IssueTrackerTriageScopeRow
+	err := row.Scan(&i.IncidentID, &i.LinkID, &i.Active)
+	return i, err
 }

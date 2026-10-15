@@ -58909,3 +58909,21 @@ CREATE TABLE public.issue_tracker_sync_notifications (
 );
 CREATE INDEX issue_tracker_sync_notifications_page_idx ON public.issue_tracker_sync_notifications(app_id,created_at DESC,id DESC);
 CREATE INDEX issue_tracker_sync_notifications_link_idx ON public.issue_tracker_sync_notifications(link_id,created_at DESC,id DESC);
+
+CREATE TABLE public.issue_tracker_sync_triage (
+ incident_id uuid PRIMARY KEY,
+ link_id uuid NOT NULL REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
+ revision bigint NOT NULL CHECK(revision>0),
+ acknowledged_by uuid,
+ claimed_by uuid
+);
+CREATE INDEX issue_tracker_sync_triage_link_idx ON public.issue_tracker_sync_triage(link_id);
+CREATE TABLE public.issue_tracker_sync_triage_activity (
+ id uuid PRIMARY KEY,
+ incident_id uuid NOT NULL REFERENCES public.issue_tracker_sync_triage(incident_id) ON DELETE CASCADE,
+ actor_id uuid NOT NULL,
+ action text NOT NULL CHECK(action IN ('acknowledge','claim','release')),
+ revision bigint NOT NULL CHECK(revision>0),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(incident_id,revision)
+);

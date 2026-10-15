@@ -4166,6 +4166,23 @@ type IssueTrackerSyncNotificationPolicy struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type IssueTrackerSyncTriage struct {
+	IncidentID     pgtype.UUID
+	LinkID         pgtype.UUID
+	Revision       int64
+	AcknowledgedBy pgtype.UUID
+	ClaimedBy      pgtype.UUID
+}
+
+type IssueTrackerSyncTriageActivity struct {
+	ID         pgtype.UUID
+	IncidentID pgtype.UUID
+	ActorID    pgtype.UUID
+	Action     string
+	Revision   int64
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Job struct {
 	ID                                pgtype.UUID
 	AccountID                         pgtype.UUID

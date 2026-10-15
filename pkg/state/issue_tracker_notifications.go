@@ -11,6 +11,8 @@ import (
 )
 
 type IssueTrackerNotificationStore interface {
+	GetIssueTrackerTriage(context.Context, string, string, string, string) (IssueTrackerTriage, error)
+	ActOnIssueTrackerTriage(context.Context, string, string, string, string, int64, string) error
 	CanReadIssueTrackerNotifications(context.Context, string, string, string, string) (bool, error)
 	GetIssueTrackerNotificationHealth(context.Context, string, string, string, string, string) (IssueTrackerSyncHealth, error)
 	GetIssueTrackerNotificationPolicy(context.Context, string, string) (IssueTrackerNotificationPolicy, error)
@@ -30,6 +32,7 @@ type IssueTrackerNotificationPage struct {
 type IssueTrackerSyncNotification struct {
 	ID, LinkID, IssueID, IssueTitle, Kind, Outcome, Reason, TeamID, TeamName string
 	CreatedAt                                                                time.Time
+	AcknowledgedBy, ClaimedBy, AcknowledgedName, ClaimedName                 string
 }
 
 type trackerSyncIncident struct {
@@ -84,4 +87,17 @@ func trackerSyncNotificationTransition(prev trackerSyncIncident, policy IssueTra
 func trackerSyncNotificationCursorHash(app, owner, actor, team string) string {
 	h := sha256.Sum256([]byte("tracker_sync_notifications/" + app + "/" + owner + "/" + actor + "/" + team))
 	return hex.EncodeToString(h[:])
+}
+
+// Triage is local handling state, independent of issue and provider lifecycle.
+type IssueTrackerTriage struct {
+	IncidentID, AcknowledgedBy, ClaimedBy, AcknowledgedName, ClaimedName string
+	Revision                                                             int64
+	Active                                                               bool
+	History                                                              []IssueTrackerTriageActivity
+}
+type IssueTrackerTriageActivity struct {
+	ActorID, ActorName, Action string
+	Revision                   int64
+	CreatedAt                  time.Time
 }
