@@ -6401,6 +6401,7 @@ const (
 	AutomationLiveCLIPollMin                       = time.Second
 	AutomationLiveCLIPollMax                       = time.Minute
 	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
+	AutomationLiveSuiteComparisonMaxCases          = 2 * AutomationLiveSuiteMaxCases
 	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
 	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
 	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10

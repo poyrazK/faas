@@ -204,8 +204,12 @@ export type { AutomationLiveExpectation } from './models/AutomationLiveExpectati
 export type { AutomationLiveReport } from './models/AutomationLiveReport.js';
 export type { AutomationLiveSuite } from './models/AutomationLiveSuite.js';
 export type { AutomationLiveSuiteCase } from './models/AutomationLiveSuiteCase.js';
+export type { AutomationLiveSuiteCaseComparison } from './models/AutomationLiveSuiteCaseComparison.js';
+export type { AutomationLiveSuiteComparison } from './models/AutomationLiveSuiteComparison.js';
+export type { AutomationLiveSuiteComparisonCounts } from './models/AutomationLiveSuiteComparisonCounts.js';
 export type { AutomationLiveSuiteCounts } from './models/AutomationLiveSuiteCounts.js';
 export type { AutomationLiveSuiteMember } from './models/AutomationLiveSuiteMember.js';
+export type { AutomationLiveSuiteObservation } from './models/AutomationLiveSuiteObservation.js';
 export type { AutomationLiveSuiteSummary } from './models/AutomationLiveSuiteSummary.js';
 export type { AutomationLiveTest } from './models/AutomationLiveTest.js';
 export type { AutomationLiveVerification } from './models/AutomationLiveVerification.js';

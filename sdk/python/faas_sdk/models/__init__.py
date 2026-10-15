@@ -387,9 +387,15 @@ from .automation_live_expectation_state import AutomationLiveExpectationState
 from .automation_live_report import AutomationLiveReport
 from .automation_live_suite import AutomationLiveSuite
 from .automation_live_suite_case import AutomationLiveSuiteCase
+from .automation_live_suite_case_comparison import AutomationLiveSuiteCaseComparison
+from .automation_live_suite_case_comparison_change import AutomationLiveSuiteCaseComparisonChange
 from .automation_live_suite_case_outcome import AutomationLiveSuiteCaseOutcome
+from .automation_live_suite_comparison import AutomationLiveSuiteComparison
+from .automation_live_suite_comparison_counts import AutomationLiveSuiteComparisonCounts
 from .automation_live_suite_counts import AutomationLiveSuiteCounts
 from .automation_live_suite_member import AutomationLiveSuiteMember
+from .automation_live_suite_observation import AutomationLiveSuiteObservation
+from .automation_live_suite_observation_result import AutomationLiveSuiteObservationResult
 from .automation_live_suite_outcome import AutomationLiveSuiteOutcome
 from .automation_live_suite_summary import AutomationLiveSuiteSummary
 from .automation_live_test import AutomationLiveTest
@@ -4986,9 +4992,15 @@ __all__ = (
     "AutomationLiveReport",
     "AutomationLiveSuite",
     "AutomationLiveSuiteCase",
+    "AutomationLiveSuiteCaseComparison",
+    "AutomationLiveSuiteCaseComparisonChange",
     "AutomationLiveSuiteCaseOutcome",
+    "AutomationLiveSuiteComparison",
+    "AutomationLiveSuiteComparisonCounts",
     "AutomationLiveSuiteCounts",
     "AutomationLiveSuiteMember",
+    "AutomationLiveSuiteObservation",
+    "AutomationLiveSuiteObservationResult",
     "AutomationLiveSuiteOutcome",
     "AutomationLiveSuiteSummary",
     "AutomationLiveTest",

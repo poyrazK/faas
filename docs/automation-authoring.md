@@ -365,6 +365,42 @@ receipts are protected for the creation window so history churn cannot erase
 recovery identity while the original creation request can still be admitted.
 When all slots are protected, new creation waits rather than displacing them.
 
+### Compare suites between deployments
+
+Open a retained suite under **Shared live verification suites**, then use
+**Compare live suites** to choose a baseline. The selected suite is the candidate;
+**Swap baseline and candidate** reverses the direction. Each side shows its saved
+revision, deployment and original verification run links. Comparison works for
+dashboard suites and shared CLI suites.
+
+Matching case names need equal frozen definition and saved-case hashes to compare
+results. Pass-to-fail is a **regression**, fail-to-pass a **recovery**, and equal
+passing or failing results are **unchanged**. Changes to definitions, inputs,
+mocks or assertions are **incompatible**, even if the name stayed the same.
+**Added** and **removed** describe which cases each suite selected.
+
+Older deployments are labelled historical without discarding valid recorded
+results. Pending, unstarted, missing, unchecked or stale reports are **unknown**;
+resuming a run invalidates its old report until explicitly checked again.
+Expired evidence keeps its original run link but cannot establish pass/fail.
+Zero regressions alone does not mean the candidate passed.
+
+Comparison and refresh only read retained records. They never execute handlers,
+check assertions, resume workflows or continue a suite. The dashboard's separate
+GET form sends only the automation and suite selectors. Clients can call:
+
+```text
+GET /v1/apps/{slug}/automations/{name}/live-suites/{candidate_id}/compare/{baseline_id}
+```
+
+Go `CompareAutomationLiveSuites`, Node `compareAutomationLiveSuites`, and Python
+`compare_automation_live_suites` expose the same read. Both suites and their
+linked runs are observed in one database snapshot. The response contains safe
+per-case observations and disjoint counts, with at most 64 case rows; no inputs,
+outputs, assertion values or admission keys are returned. Suite and verification
+retention still apply, so a removed suite returns not found. This feature does
+not enforce a CI or release gate.
+
 ### Share suite results with your team
 
 Add `--share` when creating a new CLI suite to retain its selection and run links

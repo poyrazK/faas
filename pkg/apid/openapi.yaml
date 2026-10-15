@@ -48489,6 +48489,54 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/compare/{baseline_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation owning both retained suites.
+    - name: suite_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Candidate suite UUID; direction is baseline to candidate.
+    - name: baseline_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Baseline suite UUID within the same app and automation.
+    get:
+      tags:
+      - workflows
+      operationId: compareAutomationLiveSuites
+      summary: Compare recorded results in one read-only snapshot without executing or checking runs.
+      description: Cases match by name and require equal frozen definition/input/assertion hashes for regression or recovery classification. Historical target drift alone does not invalidate a report. Pending, missing, unchecked and stale reports are unknown. Added and removed refer to the suite selection. No release approval or CI gate is implied.
+      responses:
+        '200':
+          description: Safe comparison of retained evidence, ordered by candidate cases followed by removed baseline cases.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuiteComparison'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
   /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -69634,6 +69682,117 @@ components:
           type: string
           format: uuid
       description: One saved live case and its optional existing verification run identity.
+    AutomationLiveSuiteComparison:
+      type: object
+      additionalProperties: false
+      required:
+      - baseline
+      - candidate
+      - baseline_outdated
+      - candidate_outdated
+      - observed_at
+      - summary
+      - cases
+      properties:
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        candidate:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        baseline_outdated:
+          type: boolean
+        candidate_outdated:
+          type: boolean
+        observed_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/AutomationLiveSuiteComparisonCounts'
+        cases:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteCaseComparison'
+      description: Read-only evidence comparison. Outdated identifies target drift, independently of recorded result validity. Contains no inputs, outputs, assertions or admission keys.
+    AutomationLiveSuiteComparisonCounts:
+      type: object
+      additionalProperties: false
+      required:
+      - total
+      - regressions
+      - recoveries
+      - unchanged
+      - added
+      - removed
+      - incompatible
+      - unknown
+      properties:
+        total:
+          type: integer
+          minimum: 0
+          maximum: 64
+        regressions:
+          type: integer
+          minimum: 0
+          maximum: 32
+        recoveries:
+          type: integer
+          minimum: 0
+          maximum: 32
+        unchanged:
+          type: integer
+          minimum: 0
+          maximum: 32
+        added:
+          type: integer
+          minimum: 0
+          maximum: 32
+        removed:
+          type: integer
+          minimum: 0
+          maximum: 32
+        incompatible:
+          type: integer
+          minimum: 0
+          maximum: 32
+        unknown:
+          type: integer
+          minimum: 0
+          maximum: 32
+      description: Disjoint case classifications; all categories sum to total. Zero regressions alone is not evidence that the candidate passed.
+    AutomationLiveSuiteCaseComparison:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - change
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        change:
+          type: string
+          enum: [regression, recovery, unchanged, added, removed, incompatible, unknown]
+          description: Equal hashes and current terminal reports are required for regression, recovery or unchanged. Hash mismatch is incompatible even when a report is pending; absent evidence is unknown. Added and removed take precedence when only one suite selected the case.
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveSuiteObservation'
+        candidate:
+          $ref: '#/components/schemas/AutomationLiveSuiteObservation'
+      description: A missing side means the case was not selected in that suite. A selected case without a run has a not_started observation.
+    AutomationLiveSuiteObservation:
+      type: object
+      additionalProperties: false
+      required:
+      - result
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        result:
+          type: string
+          enum: [passed, failed, pending, not_started, unavailable]
+          description: Result of the original run independently of target drift. Unavailable includes missing runs and terminal runs without a current assertion report.
+      description: Safe original run identity and recorded result only.
     AutomationLiveSuiteSummary:
       type: object
       additionalProperties: false

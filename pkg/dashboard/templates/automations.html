@@ -36,6 +36,7 @@ fieldset{border:1px solid #8885;border-radius:6px;margin:1rem 0;padding:.5rem 1r
 <p>Automatic starts: {{if .Data.FailurePaused}}paused after failures; inspect the failure policy before resuming{{else if .Data.Enabled}}enabled{{else}}paused{{end}}. Scheduled starters remain paused until you enable them.</p>
 <div class="actions">{{if not .Data.FailurePaused}}{{if .Data.Enabled}}<button type="submit" name="enabled" value="false" formaction="{{.Data.BaseURL}}/enabled">Pause automatic starts</button>{{else}}<button type="submit" name="enabled" value="true" formaction="{{.Data.BaseURL}}/enabled">Enable automatic starts</button>{{end}}{{end}}</div></section>{{end}}
 </form>
+{{template "automation-live-suite-comparison" .}}
 {{template "automation-webhook-panel" .}}
 {{template "automation-setup-checks" .}}
 {{if .Data.HealthError}}<p role="status">{{.Data.HealthError}}</p>{{end}}

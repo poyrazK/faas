@@ -26,6 +26,7 @@ type Scope struct {
 type Operation struct {
 	Kind, Name, RunID, Key, Step string
 	EndpointID, EventID          string
+	BaselineID                   string
 	Version                      int64
 	Body                         any
 }

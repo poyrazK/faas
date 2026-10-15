@@ -34,6 +34,8 @@ type AutomationConsoleData struct {
 	LiveSuiteProgress                                        *AutomationLiveProgress
 	LiveSuites                                               *api.ListAutomationLiveSuitesResponse
 	LiveSuite                                                *api.AutomationLiveSuite
+	LiveSuiteBaselineID, LiveSuiteComparisonError            string
+	LiveSuiteComparison                                      *api.AutomationLiveSuiteComparison
 	LiveProgress                                             *AutomationLiveProgress
 	TestEditorMode                                           string
 	TestCaseIndex, TestAssertionIndex                        int

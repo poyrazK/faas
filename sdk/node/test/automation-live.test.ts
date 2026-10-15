@@ -4,6 +4,23 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { FaaSClient, WorkflowsService } from '../src/index.js';
 
+test('suite comparison is an authenticated read with explicit candidate and baseline identities', async t => {
+  const calls: string[] = [];
+  const view = { baseline: { id: 'baseline' }, candidate: { id: 'candidate' }, baseline_outdated: true, candidate_outdated: false, summary: { regressions: 1, unknown: 1 }, cases: [{ name: 'same-case', change: 'regression', baseline: { result: 'passed' }, candidate: { result: 'failed' } }] };
+  const server = createServer((req, res) => {
+    calls.push(req.method + ' ' + req.url);
+    assert.equal(req.headers.authorization, 'Bearer token');
+    assert.equal(req.headers['content-length'], undefined);
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(view));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
+  assert.deepEqual(await WorkflowsService.compareAutomationLiveSuites({ slug: 'billing', name: 'case/report', suiteId: 'candidate', baselineId: 'baseline' }), view);
+  assert.deepEqual(calls, ['GET /v1/apps/billing/automations/case%2Freport/live-suites/candidate/compare/baseline']);
+});
+
 test('managed suites preserve route identity and require explicit continuation authorization', async t => {
   const suiteId = '0199e820-0000-7000-8000-000000000010';
   const request = { expected_version: 7, expected_published_version: 4, expected_deployment_id: '00000000-0000-4000-8000-000000000002', cases: ['first', 'second'], confirm_real_actions: true };

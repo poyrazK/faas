@@ -116,6 +116,56 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
     assert AutomationLiveSuite.from_dict(view).to_dict() == view
 
 
+def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
+    from uuid import UUID
+
+    from faas_sdk.api.workflows.compare_automation_live_suites import _get_kwargs
+    from faas_sdk.models.automation_live_suite_comparison import AutomationLiveSuiteComparison
+
+    candidate = UUID("00000000-0000-4000-8000-000000000001")
+    baseline = UUID("00000000-0000-4000-8000-000000000002")
+    kwargs = _get_kwargs("billing", "case/report", candidate, baseline)
+    assert kwargs["method"] == "get" and "json" not in kwargs
+    assert kwargs["url"] == f"/v1/apps/billing/automations/case%2Freport/live-suites/{candidate}/compare/{baseline}"
+    summary = {
+        "id": str(baseline),
+        "name": "report",
+        "version": 7,
+        "published_version": 4,
+        "deployment_id": "00000000-0000-4000-8000-000000000003",
+        "created_at": "2026-10-15T10:00:00+00:00",
+        "updated_at": "2026-10-15T10:00:00+00:00",
+        "case_count": 1,
+        "linked_runs": 0,
+    }
+    view = {
+        "baseline": summary,
+        "candidate": {**summary, "id": str(candidate)},
+        "baseline_outdated": True,
+        "candidate_outdated": False,
+        "observed_at": "2026-10-15T10:00:00+00:00",
+        "summary": {
+            "total": 1,
+            "regressions": 0,
+            "recoveries": 0,
+            "unchanged": 0,
+            "added": 0,
+            "removed": 0,
+            "incompatible": 0,
+            "unknown": 1,
+        },
+        "cases": [
+            {
+                "name": "same-case",
+                "change": "unknown",
+                "baseline": {"result": "not_started"},
+                "candidate": {"result": "unavailable"},
+            }
+        ],
+    }
+    assert AutomationLiveSuiteComparison.from_dict(view).to_dict() == view
+
+
 def test_managed_suites_preserve_target_and_explicit_continuation():
     from uuid import UUID
 

@@ -37,4 +37,5 @@ func (s *Service) inspectLiveSuites(r *http.Request, scope Scope, data *dashboar
 		return
 	}
 	data.LiveSuite = &selected
+	s.inspectLiveSuiteComparison(r, scope, data)
 }
