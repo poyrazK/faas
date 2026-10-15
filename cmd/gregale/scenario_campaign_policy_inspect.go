@@ -22,6 +22,7 @@ type testCampaignPolicyUsage struct {
 }
 
 type testCampaignPolicyInspection struct {
+	RequiredEnvironments []testRequiredEnvironmentResult `json:"required_environments,omitempty"`
 	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage,omitempty"`
 	SchemaVersion int                            `json:"schema_version"`
 	Informational bool                           `json:"informational"`
@@ -72,6 +73,14 @@ func cmdTestPolicy(args []string) int {
 	}
 	inspection := inspectTestCampaignPolicy(policy, before, after, *from != "")
 	if *baseline != "" {
+		inspection.RequiredEnvironments = evaluateTestRequiredEnvironments(policy, before, after)
+		for _, requirement := range inspection.RequiredEnvironments {
+			if !requirement.Passed {
+				inspection.Diagnostics = append(inspection.Diagnostics, testCampaignPolicyDiagnostic{
+					Code: "required_environment_failed", Rule: requirement.Name, Message: requirement.Reason,
+				})
+			}
+		}
 		inspection.RequiredCoverage = evaluateTestCampaignRequiredCoverage(policy, before, after)
 		for _, coverage := range inspection.RequiredCoverage {
 			if !coverage.Passed {

@@ -518,3 +518,80 @@ policy system-out includes environment comparisons and decisions.
 Legacy, local, and simulated reports remain readable with unknown metadata.
 This change does not add network version probes, infer equivalence from missing
 fields, or alter original application test verdicts.
+
+## Required environment expectations
+
+Compatibility alone cannot detect two equally incorrect setups. Add independent
+expectations to a version 1 policy:
+
+```yaml
+required_environments:
+  - name: checkout-resources
+    match:
+      scenario: checkout
+      engine: real-vm
+    expect:
+      workloads:
+        checkout:
+          type: function
+          runtime: go124
+          ram_mb: 256
+          vcpu: 1
+          cpu_millicores: 500
+          postgres: true
+        database: {}
+  - name: platform-version-evidence
+    match:
+      scenario: checkout
+    expect:
+      require_platform_version: true
+```
+
+Workload keys are the manifest's logical project/service names. An empty workload
+expectation (`database: {}`) requires that workload to be present. Fixture
+expectations must use the exact fixture label recorded in the snapshot; use
+presence alone for application-owned database services.
+
+Each requirement needs a unique nonempty name, a nonempty scenario selector,
+and at least one expectation. Selectors support configuration SHA-256, scenario,
+profile, engine, and case; step/phase/assertion selectors are invalid. At most
+100 requirements and 32 workload expectations per requirement are accepted.
+
+Expectation values use exact equality. Supported workload fields are type,
+runtime, runtime_version, ram_mb, vcpu, cpu_millicores, max_concurrency,
+concurrency_per_vm, min_instances, postgres, fixture, fail_first, and tcp_ports.
+Resource values must be positive; minimum-instance/failure counts may be zero.
+Explicit false, zero, empty fixture strings, and empty port arrays are checked.
+Port order does not matter; duplicate or out-of-range expected ports are invalid.
+Omitted fields are unconstrained. Additional workloads are allowed.
+
+Use platform_version or a workload's runtime_version for an exact version,
+or require_platform_version / require_runtime_version to require known metadata
+without pinning its value. Current native snapshots cannot supply precise
+platform/runtime binary versions, so requiring those fields intentionally fails
+until evidence is available. Runtime labels such as go124 are captured separately
+and can be required today. No missing version is inferred from the CLI host.
+
+Every passed or failed executed leaf in each matching configuration/context
+must satisfy the expectations, and each side must contain at least one matching
+executed leaf. Skipped entries do not count. Missing scenarios in both reports,
+missing snapshots, unknown configuration identities, missing required workloads,
+and unavailable required versions fail explicitly. Complete version 1 snapshots
+with valid basic workload resources are required before checking expectations.
+These requirements cannot be waived by compatibility actions, scoped exceptions,
+or sample/coverage ignore settings. They do not replace sample-count requirements.
+
+Policy JSON and preview include all required_environments results, executed and
+satisfied counts, zero-based supporting receipt indexes, and per-run expected
+versus observed issues. Issues include run IDs and source receipt indexes where
+available. Display is capped at 50 issues per side/context, with omitted counts;
+satisfaction counts always reflect every run. No snapshot secrets or transient
+identifiers are added.
+
+Failures use rule required_environment and policy rule
+required_environments/<name>. JUnit retains the full requirement result in each
+failure, and accepted policy system-out includes successful requirements.
+Lint with both reports emits required_environment_failed warnings and results;
+without both reports it validates definitions only. Preview remains informational.
+Gated comparisons return 2 for unmet requirements, even when the two environments
+are compatible. Existing policies without this section retain their behavior.

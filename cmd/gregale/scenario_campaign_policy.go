@@ -15,6 +15,7 @@ import (
 )
 
 type testCampaignPolicy struct {
+	RequiredEnvironments []testRequiredEnvironment `yaml:"required_environments,omitempty"`
 	Environment *testCampaignEnvironmentPolicy `yaml:"environment,omitempty"`
 	RequiredCoverage []testCampaignCoverageRequirement `yaml:"required_coverage,omitempty"`
 	Rules []testCampaignScopedRule `yaml:"rules,omitempty"`
@@ -69,10 +70,14 @@ func readTestCampaignPolicy(path string) (testCampaignPolicy, error) {
 	if err := validateTestCampaignEnvironmentPolicy(policy.Environment); err != nil {
 		return policy, err
 	}
+	if err := validateTestRequiredEnvironments(policy.RequiredEnvironments); err != nil {
+		return policy, err
+	}
 	return policy, nil
 }
 
 type testCampaignPolicyViolation struct {
+	EnvironmentRequirement *testRequiredEnvironmentResult `json:"environment_requirement,omitempty"`
 	Environment *testEnvironmentComparison `json:"environment,omitempty"`
 	Requirement *testCampaignRequiredCoverageResult `json:"requirement,omitempty"`
 	PolicyRule string `json:"policy_rule"`
@@ -87,6 +92,7 @@ type testCampaignPolicyViolation struct {
 }
 
 type testCampaignPolicyResult struct {
+	RequiredEnvironments []testRequiredEnvironmentResult `json:"required_environments"`
 	EnvironmentDecisions []testCampaignEnvironmentDecision `json:"environment_decisions"`
 	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
 	Decisions []testCampaignPolicyDecision `json:"decisions"`
@@ -275,6 +281,20 @@ func evaluateTestCampaignPolicy(policy testCampaignPolicy, before, after []testR
 			Reason: coverage.Reason, Configuration: coverage.Configuration, Context: coverage.Context,
 			BeforeRuns: coverage.Baseline.CoveredRuns, AfterRuns: coverage.Current.CoveredRuns,
 			EffectivePolicy: &settings, Requirement: &requirement,
+		})
+	}
+	result.RequiredEnvironments = evaluateTestRequiredEnvironments(policy, before, after)
+	for _, requirement := range result.RequiredEnvironments {
+		if requirement.Passed {
+			continue
+		}
+		copy := requirement
+		settings := testCampaignSettings(policy)
+		result.Violations = append(result.Violations, testCampaignPolicyViolation{
+			Rule: "required_environment", PolicyRule: "required_environments/" + requirement.Name,
+			Reason: requirement.Reason, Context: requirement.Context, Configuration: requirement.Configuration,
+			BeforeRuns: requirement.Baseline.ExecutedRuns, AfterRuns: requirement.Current.ExecutedRuns,
+			EffectivePolicy: &settings, EnvironmentRequirement: &copy,
 		})
 	}
 	result.Passed = len(result.Violations) == 0
