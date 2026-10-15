@@ -64,8 +64,8 @@ committed `deploy/ansible/host_vars` files.
 
 Hosts with role `database` are native managed-PostgreSQL nodes (ADR-1027).
 Each carries a `database` block (`admission_ceiling_mb`,
-`volume_capacity_bytes`, optional `boot_slots` and `postgres_majors`), and
-the fleet then needs a `managed_postgres` section:
+`volume_capacity_bytes`, optional `boot_slots`, `postgres_majors` and
+`lifecycle`), and the fleet then needs a `managed_postgres` section:
 
 ```yaml
 fleet:
@@ -80,6 +80,7 @@ managed_postgres:
   host_suffix: db.gregale.dev    # clients connect to <database-id>.<suffix>
   shared_archive: true           # every dbbackupd shares one bucket
   app_route: true                # guests reach pgproxyd at 198.18.0.1:5432
+  evacuate_draining: true        # move databases off draining nodes
 ```
 
 The generator renders the `database_nodes` inventory group and each node's
@@ -90,7 +91,19 @@ table. With `app_route`, compute nodes get the route to every pgproxyd.
 pgproxyd's control-plane DSN is derived from the Vault variable
 `faas_pgproxyd_postgres_password`. Still per deployment: pgproxyd's
 `*.<host_suffix>` certificate, that password, and each node's PKI bundle
-(see `deploy/ansible/database_node.yml`).
+(see `deploy/ansible/database_node.yml`). Control-plane Prometheus scrapes
+every database node (runbook `docs/runbooks/FaasDatabaseNodes.md`).
+
+A node's `lifecycle` drives schedd. Set it, re-render, and converge the
+control plane, which restarts schedd:
+- `draining`: the node takes no new databases. With `evacuate_draining`
+  (which needs `shared_archive`), schedd moves its databases off one at a
+  time.
+- `unavailable`: the node is lost. schedd fails its production-class
+  databases over and restores the rest elsewhere from the bucket. The
+  generator also drops it from the `database_nodes` group, the scrape
+  targets, the other nodes' cancel peers and the app route. Converge the
+  compute and database nodes too. Its pgproxyd instance id stays reserved.
 
 `public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
 customer custom domains. It renders `faas_custom_domain_*` for the control

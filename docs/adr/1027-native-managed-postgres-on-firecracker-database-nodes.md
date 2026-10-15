@@ -459,6 +459,19 @@ A database node has no shared role identity in the private hosts map:
 schedd binds its vmmd certificate to `<name>.faas`. A fleet without
 database hosts renders exactly as before.
 
+**Lifecycle.** A host's `database.lifecycle` (`active`, `draining`,
+`unavailable`) and `managed_postgres.evacuate_draining` (which needs
+`shared_archive`) render into schedd's `[database_scheduler]`. schedd
+upserts node lifecycles at startup, and rendering the file restarts it.
+A lost (`unavailable`) node stays in the scheduler, which fails over or
+restores its databases. The generator drops it from everything else: the
+`database_nodes` group (a lost node is not converged), the scrape targets
+(its down alerts resolve once it is marked), the other nodes' cancel
+peers and the app route's upstreams. If every node is lost, the route
+keeps them all: gatewayd-internal refuses a route without upstreams.
+Cancel instance ids follow the full manifest order, so marking a node
+renumbers nothing.
+
 pgproxyd's DSN is derived too: `postgres://faas_pgproxyd:…@<control
 plane>:5432/faas`, with the password taken from the Vault variable
 `faas_pgproxyd_postgres_password`, which `database_node.yml` also uses

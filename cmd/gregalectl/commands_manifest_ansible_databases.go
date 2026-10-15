@@ -21,6 +21,10 @@ import (
 //   - monitoring: control-plane Prometheus scrapes each database node's
 //     node_exporter, vmmd, pgproxyd and dbbackupd on its overlay address,
 //     which the node's firewall opens to the control plane only.
+//
+// A node marked lifecycle: unavailable (lost) stays in schedd's scheduler,
+// which fails over or restores its databases, but leaves the inventory,
+// the scrape targets, the cancel peers and the app route.
 
 // manifestDatabasePort is pgproxyd's listener on every database node.
 const manifestDatabasePort = 5432
@@ -96,6 +100,9 @@ func (d manifestDatabases) controlPlaneVars() string {
 	b.WriteString("# ADR-1027: schedd's database scheduler, from the manifest's database hosts.\n")
 	b.WriteString("faas_schedd_database_scheduler:\n")
 	fmt.Fprintf(&b, "  shared_archive: %t\n", d.config.SharedArchive)
+	if d.config.EvacuateDraining {
+		b.WriteString("  evacuate_draining: true\n")
+	}
 	b.WriteString("  nodes:\n")
 	var cidrs []string
 	for _, n := range d.nodes {
@@ -106,6 +113,9 @@ func (d manifestDatabases) controlPlaneVars() string {
 		fmt.Fprintf(&b, "      volume_capacity_bytes: %d\n", db.VolumeCapacityBytes)
 		if db.BootSlots > 0 {
 			fmt.Fprintf(&b, "      boot_slots: %d\n", db.BootSlots)
+		}
+		if db.Lifecycle != "" && db.Lifecycle != manifest.DatabaseNodeActive {
+			fmt.Fprintf(&b, "      lifecycle: %q\n", db.Lifecycle)
 		}
 		if len(db.PostgresMajors) > 0 {
 			majors := make([]string, len(db.PostgresMajors))
@@ -120,9 +130,13 @@ func (d manifestDatabases) controlPlaneVars() string {
 	fmt.Fprintf(&b, "faas_postgres_pgproxyd_cidrs: [%s]\n", quotedYAMLList(cidrs))
 	// Database nodes are schedd's, not compute-registry rows, so
 	// Prometheus scrapes them from this static list.
-	b.WriteString("prom_database_targets:\n")
-	for _, n := range d.nodes {
-		fmt.Fprintf(&b, "  - node: %q\n    host: %q\n", n.host.Name, urlHost(n.address))
+	if serving := d.serving(); len(serving) == 0 {
+		b.WriteString("prom_database_targets: []\n")
+	} else {
+		b.WriteString("prom_database_targets:\n")
+		for _, n := range serving {
+			fmt.Fprintf(&b, "  - node: %q\n    host: %q\n", n.host.Name, urlHost(n.address))
+		}
 	}
 	return b.String()
 }
@@ -150,15 +164,19 @@ func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) str
 	fmt.Fprintf(&b, "pgproxyd_instance_id: %d\n", self.instanceID)
 	fmt.Fprintf(&b, "database_node_metrics_host: %q\n", urlHost(self.address))
 	fmt.Fprintf(&b, "database_node_metrics_cidrs: [%s]\n", quotedYAMLList(appendHostCIDR(nil, d.controlPlane, d.overlayCIDR)))
-	if len(d.nodes) == 1 {
+	var peers []manifestDatabase
+	for _, n := range d.serving() {
+		if n.host.Name != host.Name {
+			peers = append(peers, n)
+		}
+	}
+	if len(peers) == 0 {
 		b.WriteString("pgproxyd_cancel_peers: {}\n")
 		return b.String()
 	}
 	b.WriteString("pgproxyd_cancel_peers:\n")
-	for _, n := range d.nodes {
-		if n.host.Name != host.Name {
-			fmt.Fprintf(&b, "  %d: %q\n", n.instanceID, net.JoinHostPort(n.address, strconv.Itoa(manifestDatabasePort)))
-		}
+	for _, n := range peers {
+		fmt.Fprintf(&b, "  %d: %q\n", n.instanceID, net.JoinHostPort(n.address, strconv.Itoa(manifestDatabasePort)))
 	}
 	return b.String()
 }
@@ -171,9 +189,26 @@ func urlHost(address string) string {
 	return address
 }
 
+// serving is the nodes not marked lost, in manifest order. Instance ids
+// stay those of the full list, so marking a node lost renumbers nothing.
+func (d manifestDatabases) serving() []manifestDatabase {
+	var out []manifestDatabase
+	for _, n := range d.nodes {
+		if n.host.Database.Serving() {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func (d manifestDatabases) computeVars() string {
-	upstreams := make([]string, len(d.nodes))
-	for i, n := range d.nodes {
+	nodes := d.serving()
+	if len(nodes) == 0 {
+		// gatewayd-internal refuses a route without upstreams.
+		nodes = d.nodes
+	}
+	upstreams := make([]string, len(nodes))
+	for i, n := range nodes {
 		upstreams[i] = net.JoinHostPort(n.address, strconv.Itoa(manifestDatabasePort))
 	}
 	var b strings.Builder

@@ -126,6 +126,53 @@ func TestRenderManifestAnsibleFiles_DatabaseNodesWithoutAppRoute(t *testing.T) {
 	}
 }
 
+// A lost node stays in schedd's scheduler, which fails its databases over,
+// but nothing else converges, scrapes or routes to it; a draining one is
+// still served.
+func TestRenderManifestAnsibleFiles_DatabaseNodeLifecycle(t *testing.T) {
+	m := databaseManifest(t, "managed_postgres:\n  host_suffix: db.gregale.dev\n  shared_archive: true\n  app_route: true\n  evacuate_draining: true\n")
+	m.Fleet.Hosts[2].Database.Lifecycle = manifest.DatabaseNodeDraining
+	m.Fleet.Hosts[3].Database.Lifecycle = manifest.DatabaseNodeUnavailable
+	files := renderedFiles(t, m)
+	if !strings.Contains(files["hosts.ini"], "[database_nodes]\ndb-1\n") || strings.Contains(files["hosts.ini"], "db-2") {
+		t.Fatalf("inventory:\n%s", files["hosts.ini"])
+	}
+	cp := files["fsn-1.yml"]
+	for _, want := range []string{
+		"  shared_archive: true\n  evacuate_draining: true\n",
+		"      boot_slots: 8\n      lifecycle: \"draining\"\n",
+		"      volume_capacity_bytes: 1000000000000\n      lifecycle: \"unavailable\"\n",
+		"prom_database_targets:\n  - node: \"db-1\"\n    host: \"10.42.0.5\"\n",
+	} {
+		if !strings.Contains(cp, want) {
+			t.Errorf("control plane vars lack %q:\n%s", want, cp)
+		}
+	}
+	if strings.Contains(cp, `host: "10.42.0.6"`) {
+		t.Errorf("the lost node is still scraped:\n%s", cp)
+	}
+	if db1 := files["db-1.yml"]; !strings.Contains(db1, "pgproxyd_cancel_peers: {}\n") {
+		t.Errorf("db-1 still forwards cancels to the lost node:\n%s", db1)
+	}
+	if db2 := files["db-2.yml"]; !strings.Contains(db2, "pgproxyd_instance_id: 2\n") {
+		t.Errorf("marking a node lost renumbered it:\n%s", db2)
+	}
+	if compute := files["fsn-2.yml"]; !strings.Contains(compute, `gatewayd_database_route_upstreams: ["10.42.0.5:5432"]`) {
+		t.Errorf("the app route still dials the lost node:\n%s", compute)
+	}
+
+	// With every node lost the route keeps its upstreams: gatewayd-internal
+	// refuses a route without any.
+	m.Fleet.Hosts[2].Database.Lifecycle = manifest.DatabaseNodeUnavailable
+	files = renderedFiles(t, m)
+	if compute := files["fsn-2.yml"]; !strings.Contains(compute, `gatewayd_database_route_upstreams: ["10.42.0.5:5432", "10.42.0.6:5432"]`) {
+		t.Errorf("app route with every node lost:\n%s", compute)
+	}
+	if cp := files["fsn-1.yml"]; !strings.Contains(cp, "prom_database_targets: []\n") || strings.Contains(files["hosts.ini"], "database_nodes") {
+		t.Errorf("every node lost:\n%s\n%s", cp, files["hosts.ini"])
+	}
+}
+
 // A fleet without database hosts renders exactly as before: no database
 // group, no scheduler and no route.
 func TestRenderManifestAnsibleFiles_NoDatabaseNodes(t *testing.T) {

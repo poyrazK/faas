@@ -189,7 +189,10 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		case roleComputeOnly:
 			computeOnly = append(computeOnly, host.Name)
 		case manifest.RoleDatabase:
-			databaseNodes = append(databaseNodes, host.Name)
+			// A lost node is not converged.
+			if host.Database.Serving() {
+				databaseNodes = append(databaseNodes, host.Name)
+			}
 		default:
 			return nil, fmt.Errorf("host %s has unsupported production role %q; use control-plane, compute-only or database", host.Name, host.Role)
 		}

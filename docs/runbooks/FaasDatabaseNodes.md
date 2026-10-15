@@ -45,12 +45,20 @@ minutes.
 **Node loss.** Running production-class databases fail over to their
 synchronized standbys by themselves once the node has not answered schedd
 for `auto_failover_after` (default 30 s). Parked ones fail over the same
-way. Every other database waits for the operator. Mark the node
-`lifecycle = "unavailable"` in schedd's `[database_scheduler]` and
-restart schedd. schedd then fails over what it can and parks the rest
-with `node_lost`. With `shared_archive`, they restore onto another node
-from the bucket. Each loses at most what its archive had not shipped (see
-the stale alert below).
+way. Every other database waits for the operator. Set the host's
+`database.lifecycle: unavailable` in the manifest, run `make
+manifest-ansible`, and converge the control plane. Rendering schedd's
+`[database_scheduler]` restarts schedd. schedd then fails over what it
+can and parks the rest with `node_lost`. With `shared_archive`, they
+restore onto another node from the bucket. Each loses at most what its
+archive had not shipped (see the stale alert below). Then converge the
+compute and database nodes, which drops the lost node from the app route
+and the cancel peers. Prometheus stops scraping it, so this alert
+resolves.
+
+To retire a node that still works, set `lifecycle: draining` with
+`managed_postgres.evacuate_draining`. schedd moves its databases off one at
+a time.
 
 ## FaasDatabaseArchiveKeeperDown (warn)
 

@@ -13,6 +13,19 @@ import "fmt"
 // RoleDatabase is the fleet role of a native managed-database node.
 const RoleDatabase = "database"
 
+// A database node's lifecycle in schedd's database scheduler.
+const (
+	// DatabaseNodeActive takes new databases (the default).
+	DatabaseNodeActive = "active"
+	// DatabaseNodeDraining takes none; with evacuate_draining its
+	// databases move off it.
+	DatabaseNodeDraining = "draining"
+	// DatabaseNodeUnavailable marks a lost node: schedd fails its
+	// databases over or restores them elsewhere, and the generated
+	// configuration stops converging, scraping and routing to it.
+	DatabaseNodeUnavailable = "unavailable"
+)
+
 // ManagedPostgres is the fleet's native managed PostgreSQL.
 type ManagedPostgres struct {
 	// HostSuffix is the DNS suffix after a database id: clients and app
@@ -25,6 +38,9 @@ type ManagedPostgres struct {
 	// AppRoute gives app guests on compute nodes the private route to
 	// pgproxyd (198.18.0.1:5432 through gatewayd-internal).
 	AppRoute bool `yaml:"app_route,omitempty"`
+	// EvacuateDraining moves databases off draining nodes, one at a time
+	// (needs shared_archive).
+	EvacuateDraining bool `yaml:"evacuate_draining,omitempty"`
 }
 
 // DatabaseHost is a database node's place in schedd's database scheduler.
@@ -40,6 +56,13 @@ type DatabaseHost struct {
 	BootSlots int `yaml:"boot_slots,omitempty"`
 	// PostgresMajors the node offers; empty means every supported one.
 	PostgresMajors []int `yaml:"postgres_majors,omitempty"`
+	// Lifecycle is active (default), draining or unavailable.
+	Lifecycle string `yaml:"lifecycle,omitempty"`
+}
+
+// Serving reports whether the node is not marked lost.
+func (d *DatabaseHost) Serving() bool {
+	return d != nil && d.Lifecycle != DatabaseNodeUnavailable
 }
 
 // DatabaseHosts returns the fleet's database nodes in manifest order.
@@ -77,6 +100,11 @@ func (m *Manifest) validateManagedPostgres() Errors {
 		if h.Database.BootSlots < 0 || h.Database.BootSlots > 256 {
 			errs = append(errs, Error{path + ".boot_slots", "must be between 0 (schedd's default) and 256"})
 		}
+		switch h.Database.Lifecycle {
+		case "", DatabaseNodeActive, DatabaseNodeDraining, DatabaseNodeUnavailable:
+		default:
+			errs = append(errs, Error{path + ".lifecycle", fmt.Sprintf("lifecycle %q is not one of active, draining, unavailable", h.Database.Lifecycle)})
+		}
 		for _, major := range h.Database.PostgresMajors {
 			if major < 14 || major > 18 {
 				errs = append(errs, Error{path + ".postgres_majors", fmt.Sprintf("major %d is not one of 14-18", major)})
@@ -98,6 +126,10 @@ func (m *Manifest) validateManagedPostgres() Errors {
 		errs = append(errs, Error{"managed_postgres", "needs at least one database host"})
 	case mp != nil && !looksLikeHostname(mp.HostSuffix):
 		errs = append(errs, Error{"managed_postgres.host_suffix", fmt.Sprintf("host_suffix %q must be a valid hostname (e.g. db.gregale.dev)", mp.HostSuffix)})
+	}
+	// A move hands the archive over through the shared bucket.
+	if mp != nil && mp.EvacuateDraining && !mp.SharedArchive {
+		errs = append(errs, Error{"managed_postgres.evacuate_draining", "needs shared_archive: moves hand the archive over through the shared bucket"})
 	}
 	return errs
 }
