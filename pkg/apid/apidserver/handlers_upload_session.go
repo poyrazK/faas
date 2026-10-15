@@ -524,6 +524,14 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 // its deployment (outcome, session state, response read).
 const uploadCommitFinishTimeout = 15 * time.Second
 
+// uploadCommitProcessTimeout bounds a commit's archive processing: a 60 s
+// floor plus 2 MiB/s for the scans, hashing and publish, about three
+// minutes for the largest source a plan allows.
+func uploadCommitProcessTimeout(bytes int64) time.Duration {
+	const floor, bytesPerSecond = 60 * time.Second, 2 << 20
+	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
+}
+
 func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	// Serialize per-upload_id upload/file critical sections to
@@ -572,6 +580,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
 		return
 	}
+	// The rest of the commit unpacks, scans, hashes and publishes the whole
+	// archive before it records the deployment. For a 240 MiB source that
+	// outran the 30 s deploy-submission ceiling on production-us, and every
+	// store call after the scans failed with "context deadline exceeded", so
+	// no retry could succeed (hunt #10, H10-26). It runs under a size-scaled
+	// bound instead; the outcome is recorded idempotently (H9-127), so a client
+	// that stops waiting recovers the deployment on its retry.
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
+	defer cancel()
+	r = r.WithContext(ctx)
 
 	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
 	if err != nil {
