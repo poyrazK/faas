@@ -3322,6 +3322,33 @@
     "kind": "operational"
   },
   {
+    "table": "event_acknowledgment_recording_coverage",
+    "columns": [
+      "continuous_since",
+      "inventory_revision",
+      "singleton",
+      "updated_at",
+      "verified_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_writers",
+    "columns": [
+      "capability_version",
+      "continuous_since",
+      "expires_at",
+      "inventory",
+      "inventory_revision",
+      "role",
+      "seen_at",
+      "session_id",
+      "slot",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_delivery_acknowledgments",
     "columns": [
       "attempt",
