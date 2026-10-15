@@ -44,3 +44,45 @@ the halted checkpoint during portable handoff; the request file itself is local.
 
 Validation is deferred: the managed execution environment was unavailable when
 this implementation was prepared.
+
+
+## Live run identity journals
+
+Campaign workers now create a private `batch-<id>.journal/` directory with a
+plan/side/revision/batch binding and one atomic, synced JSON snapshot per native
+run. The initial snapshot precedes provisioning; every API provisioning attempt
+is marked `creating` before the request. Returned app IDs are saved before
+further workload work. Native cleanup records `cleanup_started`, then
+`deleted` or `cleanup_failed` for each workload. Secrets, tokens, response
+bodies and assertion payloads are excluded.
+
+When a worker dies before its final report is readable:
+
+```sh
+gregale test policy cleanup --plan plan.json --policy campaign.yaml \
+  --manifest gregale-test.yaml --directory campaign-current \
+  --batch batch-id --journal
+```
+
+Inspection remains the default. Add `--execute` for verified session deletion.
+The directory must be inactive and owned, just as for receipt-based cleanup.
+Journal mode is explicit and cannot bypass an already finalized checkpoint
+report. Every snapshot must match the saved plan, side, revision, batch, scenario,
+profile and workload projects. Returned IDs are checked against live sessions;
+pending workloads are excluded. An unresolved `creating` state means the API
+outcome is unknown and requires manual inspection. The unavoidable crash window
+between remote creation and persisting its response cannot safely be guessed.
+
+Cleanup observations include the journal snapshot digest; successful journal
+cleanup updates its resource progress. Reconciliation reads available journals
+for cleanup diagnostics when reports are missing or invalid, and
+`--check-cleanup` performs read-only live checks. Journals never produce
+assertion receipts, coverage credit, budget refunds or proof that a batch ended.
+A missing execution report therefore remains blocking after resource cleanup.
+
+This first journal format is local-only. Bundle export refuses unresolved
+journal-bearing batches rather than discarding recovery identities. Finish
+local recovery before handoff. Completed batches retain their finalized receipt
+evidence for existing portable export. Existing campaigns without journals still
+use receipt recovery. Standalone test invocations outside campaign workers do
+not create journals.

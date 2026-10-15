@@ -1101,6 +1101,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	receipt.RunID = hex.EncodeToString(random)
+ journal,journalErr:=newTestCampaignRunJournal(os.Getenv(testCampaignJournalEnv),name,profile,receipt.RunID,scenario)
+ if journalErr!=nil{receipt.Error="create durable run journal: "+journalErr.Error();return}
 	runSecretBytes := make([]byte, 32)
 	if _, err := rand.Read(runSecretBytes); err != nil {
 		receipt.Error = fmt.Sprintf("create test run secret: %v", err)
@@ -1127,7 +1129,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.Error = fmt.Sprintf("detect app shape: %v", err)
 		return
 	}
-	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
+	if err:=journal.update(scenario.Project,"","creating");err!=nil{receipt.Error="persist provisioning intent: "+err.Error();return}
+ session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create isolated test environment: %v", err)
 		return
@@ -1147,10 +1150,15 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		defer cleanupCancel()
 		allDestroyed := true
 		for i := len(workloads) - 1; i >= 0; i-- {
-			if err := client.DestroyDevSession(cleanupCtx, workloads[i].project, receipt.RunID); err != nil {
-				receipt.addCleanupError(fmt.Sprintf("destroy test workload %s: %v", workloads[i].name, err))
-				allDestroyed = false
-			}
+			// Cleanup proceeds even if journaling fails; failures remain explicit.
+            if err:=journal.update(workloads[i].name,workloads[i].session.App.ID,"cleanup_started");err!=nil{receipt.addCleanupError("persist cleanup intent: "+err.Error())}
+            state:="deleted"
+            if err := client.DestroyDevSession(cleanupCtx, workloads[i].project, receipt.RunID); err != nil {
+                receipt.addCleanupError(fmt.Sprintf("destroy test workload %s: %v", workloads[i].name, err))
+                allDestroyed = false
+                state="cleanup_failed"
+            }
+            if err:=journal.update(workloads[i].name,workloads[i].session.App.ID,state);err!=nil{receipt.addCleanupError("persist cleanup result: "+err.Error())}
 		}
 		if registered && allDestroyed {
 			if err := client.DeleteScenarioTest(cleanupCtx, receipt.RunID); err != nil {
@@ -1158,7 +1166,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			}
 		}
 	}()
-	diagnosticSecrets := append(testDiagnosticScenarioSecrets(scenario), client.Token(), runSecret)
+ if err:=journal.update(scenario.Project,session.App.ID,"provisioned");err!=nil{receipt.Error="persist workload identity: "+err.Error();return}
+ diagnosticSecrets := append(testDiagnosticScenarioSecrets(scenario), client.Token(), runSecret)
 	defer func() {
 		if receipt.Error == "" && receipt.CleanupError == "" {
 			return
@@ -1209,13 +1218,15 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		projectName := scenario.Project + "-" + serviceName
-		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
+		if err:=journal.update(serviceName,"","creating");err!=nil{receipt.Error="persist service provisioning intent: "+err.Error();return}
+ serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
 		if err != nil {
 			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
 			return
 		}
 		workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, sourceDir: serviceDir, config: serviceConfig, session: serviceSession})
 		receipt.WorkloadAppIDs[serviceName] = serviceSession.App.ID
+		if err:=journal.update(serviceName,serviceSession.App.ID,"provisioned");err!=nil{receipt.Error="persist service identity: "+err.Error();return}
 	}
 	members := make([]api.ScenarioTestWorkload, 0, len(workloads))
 	for _, workload := range workloads {

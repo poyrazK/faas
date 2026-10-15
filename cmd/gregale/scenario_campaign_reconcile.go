@@ -124,7 +124,8 @@ func cmdTestCampaignReconcile(args []string) int {
 		reportPath := filepath.Join(*directory,"batch-"+batch.ID+".json")
 		_,reportErr := os.Lstat(reportPath)
 		_,logErr := os.Lstat(filepath.Join(*directory,"batch-"+batch.ID+".log"))
-		if !started && os.IsNotExist(reportErr) && os.IsNotExist(logErr) {
+		_,journalErr:=os.Lstat(testCampaignJournalDirectory(*directory,batch.ID))
+		if !started && os.IsNotExist(reportErr) && os.IsNotExist(logErr) && os.IsNotExist(journalErr) {
 			reconciliation.Batches = append(reconciliation.Batches,testCampaignRecoveryBatch{ID:batch.ID,Status:"pending",Cleanup:"not_started",Reasons:[]string{}})
 			continue
 		}

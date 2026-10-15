@@ -26,7 +26,10 @@ func launchTestCampaignBatch(ctx context.Context, batch testCampaignCostBatch, m
 	command := exec.CommandContext(ctx,executable,"test","--manifest",manifest,"--scenario",batch.Scenario,
 		"--engine","real-vm","--profile",batch.Profile,"--repeat",fmt.Sprint(batch.Repetitions),
 		"--report",filepath.Join(directory,"batch-"+batch.ID+".json"))
-	command.Stdout,command.Stderr = log,log
+	journalDirectory,err:=prepareTestCampaignJournal(directory,batch)
+ if err!=nil{return err}
+ command.Env=append(os.Environ(),testCampaignJournalEnv+"="+journalDirectory)
+ command.Stdout,command.Stderr = log,log
 	// Let the native runner finish its cleanup after interruption. No forced
 	// kill deadline is added; active workers are always drained before return.
 	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
@@ -82,7 +85,8 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 				break
 			}
 			if _,err:=os.Lstat(filepath.Join(directory,"batch-"+batch.ID+".log"));!os.IsNotExist(err){stopped=errors.New("uncheckpointed batch log exists; reconcile it before repeating execution");break}
-			checkpoint.Batches[batch.ID] = testCampaignCheckpointBatch{Status:"running"}
+			if _,err:=os.Lstat(testCampaignJournalDirectory(directory,batch.ID));!os.IsNotExist(err){stopped=errors.New("uncheckpointed journal exists; inspect recovery before repeating execution");break}
+ checkpoint.Batches[batch.ID] = testCampaignCheckpointBatch{Status:"running"}
 			if err := writeTestCampaignJSON(path,checkpoint); err != nil { stopped = err; break }
 			active++
 			go func(batch testCampaignCostBatch) { results <- result{batch:batch,err:launch(ctx,batch,directory)} }(batch)

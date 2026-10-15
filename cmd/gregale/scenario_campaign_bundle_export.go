@@ -14,7 +14,16 @@ import (
 
 func collectTestCampaignBundle(plan testCampaignPolicyPlan,checkpoint testCampaignCheckpoint,policy testCampaignPolicy,
 	scenarios map[string]testScenario,directory,from,baseline,recovery string,resolver *testCampaignBundleResolver) (testCampaignBundle,error) {
-	bundle := testCampaignBundle{SchemaVersion:1,SourceFrozen:true,PlanSHA256:testCampaignJSONHash(plan),Side:checkpoint.Side,
+	for _,batch:=range plan.Batches{
+        if batch.Side!=checkpoint.Side{continue}
+        if _,err:=os.Lstat(testCampaignJournalDirectory(directory,batch.ID));err==nil{
+            saved:=checkpoint.Batches[batch.ID]
+            if saved.Status!="done"||saved.ReportSHA256==""{
+                return testCampaignBundle{},errors.New("unresolved local run journals cannot be handed off; inspect and recover locally")
+            }
+        }else if !os.IsNotExist(err){return testCampaignBundle{},err}
+    }
+    bundle := testCampaignBundle{SchemaVersion:1,SourceFrozen:true,PlanSHA256:testCampaignJSONHash(plan),Side:checkpoint.Side,
 		Revision:checkpoint.Revision,HistoryComplete:true,Nodes:[]testCampaignBundleNode{},Files:[]testCampaignBundleFile{}}
 	known := []string{}
 	for _,scenario := range scenarios {

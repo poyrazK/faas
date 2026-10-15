@@ -137,3 +137,22 @@ app ID, so a final lookup/deletion race remains bounded by the unique native
 run namespace. Shared import claims and runner locks protect normal campaign
 ownership. Raw receipts remain immutable; observations cannot waive fixture or
 consumer cleanup failures or refund execution cost.
+
+
+## Live native run identity journal (2026-10-15)
+
+Campaign subprocesses receive a private journal directory bound to their saved
+plan, batch, side and source revision. Before provisioning, each native run
+persists its ID and workload membership; provisioning intents precede API
+requests and returned app IDs precede further workload work. Atomic snapshots
+are synced with their containing directory. Cleanup records progress per
+resource and continues even when journal writes fail, retaining explicit errors.
+
+A provisioning intent without a returned identity is uncertain: recovery cannot
+infer ownership from a project name alone. Explicit journal cleanup uses the
+existing inactive-owner locks and live app-ID checks, never the default
+workspace. Reconciliation may expose journal cleanup diagnostics, but journals
+cannot substitute for terminal assertion evidence, waive cleanup failures,
+establish completion, refund attempted cost or grant coverage. Missing reports
+remain blocking. Unresolved local journals cannot be silently discarded by
+portable bundle export; journal transport is outside this initial format.

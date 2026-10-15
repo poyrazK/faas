@@ -48,7 +48,6 @@ type testCampaignCleanupAction struct {
 // No fixture commands, API consumer revocations, or scenario registrations are retried.
 func testCampaignRetryCleanup(ctx context.Context, client testCampaignCleanupClient, scenario testScenario,
  leaves []testRunReceipt, execute bool) ([]testCampaignCleanupAction,error) {
- actions := []testCampaignCleanupAction{}
  targets := map[string]testCampaignCleanupAction{}
  for _,leaf := range leaves {
   decoded,err := hex.DecodeString(leaf.RunID)
@@ -67,6 +66,11 @@ func testCampaignRetryCleanup(ctx context.Context, client testCampaignCleanupCli
    targets[key]=target
   }
  }
+ return testCampaignRetryCleanupTargets(ctx,client,targets,execute)
+}
+
+func testCampaignRetryCleanupTargets(ctx context.Context,client testCampaignCleanupClient,targets map[string]testCampaignCleanupAction,execute bool)([]testCampaignCleanupAction,error){
+ actions:=[]testCampaignCleanupAction{}
  if len(targets)==0 || len(targets)>1024 { return nil,errors.New("cleanup requires 1..1024 verified workload identities") }
  keys:=make([]string,0,len(targets))
  for key:=range targets { keys=append(keys,key) }
@@ -105,10 +109,11 @@ func cmdTestCampaignControl(mode string,args []string) int {
  directory:=fs.String("directory","","private campaign directory")
  handoff:=fs.String("handoff","","active portable import index")
  execute:=fs.Bool("execute",false,"retry verified workload session deletion (cleanup only)")
+ journalMode:=fs.Bool("journal",false,"inspect or clean saved run identities when no finalized report exists")
  batchID:=fs.String("batch","","single recorded batch to inspect or clean")
  if err:=fs.Parse(args);err!=nil { if errors.Is(err,flag.ErrHelp){return 0};return 1 }
  if rejectUnexpectedFlagArgs(fs)||fs.NArg()!=0||*planPath==""||*directory=="" ||
-  (mode=="cleanup" && (*policyPath==""||*batchID=="")) || (mode=="cancel"&&(*execute||*batchID!="")) {
+  (mode=="cleanup" && (*policyPath==""||*batchID=="")) || (mode=="cancel"&&(*execute||*batchID!=""||*journalMode)) {
   return printErr("Invalid campaign control options",errors.New("--plan and --directory required; cleanup also requires --policy and --batch"))
  }
  resolver,err:=loadTestCampaignBundleResolver(*handoff)
@@ -165,32 +170,49 @@ func cmdTestCampaignControl(mode string,args []string) int {
  saved,ok:=cp.Batches[*batchID]
  if selected==nil||!ok||(saved.Status!="done"&&saved.Status!="running"&&saved.Status!="uncertain"){return printErr("Unknown batch",errors.New("only recorded attempted batches may be inspected"))}
  path:=filepath.Join(*directory,"batch-"+selected.ID+".json")
- roots,hash,err:=readTestBaselineReport(path,nil)
- if err!=nil{return printErr("Incomplete cleanup evidence",err)}
- if saved.ReportSHA256!=""&&hash!=saved.ReportSHA256{return printErr("Changed batch evidence",errors.New("report hash mismatch"))}
- var leaves []testRunReceipt
- for _,root:=range roots{collectTestFailureLeaves(root,"",&leaves)}
  scenario:=manifest.Scenarios[selected.Scenario]
- seen:=map[string]bool{}
- for _,leaf:=range leaves {
-  if err:=testCampaignRecoverableLeaf(leaf,*selected,scenario,cp.Revision);err!=nil{return printErr("Unverified cleanup evidence",err)}
-  if seen[leaf.RunID]{return printErr("Duplicate run identity",errors.New("ambiguous cleanup evidence"))}
-  seen[leaf.RunID]=true
+ var leaves []testRunReceipt
+ hash,journalHash:="",""
+ var journalTargets map[string]testCampaignCleanupAction
+ if *journalMode {
+  if saved.Status=="done"||saved.ReportSHA256!=""{return printErr("Final report already bound",errors.New("use receipt cleanup; journal mode cannot bypass finalized evidence"))}
+  journalTargets,journalHash,err=readTestCampaignJournalTargets(*directory,testCampaignJSONHash(plan),cp,*selected,scenario)
+  if err!=nil{return printErr("Incomplete journal evidence",err)}
+ } else {
+  var roots []testRunReceipt
+  roots,hash,err=readTestBaselineReport(path,nil)
+  if err!=nil{return printErr("Incomplete cleanup evidence; use --journal for saved provisioning identities",err)}
+  if saved.ReportSHA256!=""&&hash!=saved.ReportSHA256{return printErr("Changed batch evidence",errors.New("report hash mismatch"))}
+  for _,root:=range roots{collectTestFailureLeaves(root,"",&leaves)}
+  seen:=map[string]bool{}
+  for _,leaf:=range leaves {
+   if err:=testCampaignRecoverableLeaf(leaf,*selected,scenario,cp.Revision);err!=nil{return printErr("Unverified cleanup evidence",err)}
+   if seen[leaf.RunID]{return printErr("Duplicate run identity",errors.New("ambiguous cleanup evidence"))}
+   seen[leaf.RunID]=true
+  }
  }
  client,err:=authedClient()
  if err!=nil{return printErr("Cleanup authentication failed",err)}
  ctx,cancel:=context.WithTimeout(context.Background(),2*time.Minute)
  defer cancel()
- actions,cleanupErr:=testCampaignRetryCleanup(ctx,client,scenario,leaves,*execute)
+ var actions []testCampaignCleanupAction
+ var cleanupErr error
+ if *journalMode { actions,cleanupErr=testCampaignRetryCleanupTargets(ctx,client,journalTargets,*execute) } else {
+  actions,cleanupErr=testCampaignRetryCleanup(ctx,client,scenario,leaves,*execute)
+ }
+ if *journalMode && *execute {
+  if err:=recordTestCampaignJournalCleanup(*directory,selected.ID,actions);err!=nil{return printErr("Could not record journal cleanup progress",err)}
+ }
  // Observations are separate from immutable receipts and cannot waive their
  // recorded fixture/consumer cleanup failures or refund attempted budget.
  result:=struct{
   SchemaVersion int `json:"schema_version"`
   PlanSHA256 string `json:"plan_sha256"`
-  ReportSHA256 string `json:"report_sha256"`
+  ReportSHA256 string `json:"report_sha256,omitempty"`
+  JournalSHA256 string `json:"journal_sha256,omitempty"`
   Executed bool `json:"executed"`
   Actions []testCampaignCleanupAction `json:"actions"`
- }{1,cp.PlanSHA256,hash,*execute,actions}
+ }{1,cp.PlanSHA256,hash,journalHash,*execute,actions}
  observationPath:=filepath.Join(*directory,fmt.Sprintf("cleanup-%d.json",time.Now().UTC().UnixNano()))
  if err:=writeTestCampaignJSON(observationPath,result);err!=nil{return printErr("Could not save cleanup observations",err)}
  if err:=json.NewEncoder(os.Stdout).Encode(result);err!=nil{return printErr("Could not write cleanup observations",err)}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -62,6 +63,7 @@ type testCampaignRecoveryBatch struct {
 	Status string `json:"status"`
 	ReportSHA256 string `json:"report_sha256,omitempty"`
 	RecoveredSHA256 string `json:"recovered_report_sha256,omitempty"`
+	JournalSHA256 string `json:"journal_sha256,omitempty"`
 	AdoptedRuns int `json:"adopted_runs"`
 	SkippedRuns int `json:"skipped_runs"`
 	Cleanup string `json:"cleanup"`
@@ -190,10 +192,34 @@ func testCampaignLiveCleanup(ctx context.Context,reader testCampaignCleanupReade
 // Recovered raw objects retain assertion/source evidence. Flattening partial
 // native hierarchies adds explicit original paths rather than fabricating runs.
 func inspectTestCampaignRecoveryReport(ctx context.Context,path string,batch testCampaignCostBatch,scenario testScenario,
-	checkpoint testCampaignCheckpoint, saved testCampaignCheckpointBatch,reader testCampaignCleanupReader) (testCampaignRecoveryBatch,[]json.RawMessage) {
-	result := testCampaignRecoveryBatch{ID:batch.ID,CheckpointStatus:saved.Status,Status:"blocked",Cleanup:"unknown",Reasons:[]string{}}
+	checkpoint testCampaignCheckpoint, saved testCampaignCheckpointBatch,reader testCampaignCleanupReader) (result testCampaignRecoveryBatch,recovered []json.RawMessage) {
+	result = testCampaignRecoveryBatch{ID:batch.ID,CheckpointStatus:saved.Status,Status:"blocked",Cleanup:"unknown",Reasons:[]string{}}
 	reasonSet := make(map[string]bool)
 	block := func(reason string) { if !reasonSet[reason] && len(result.Reasons) < 50 { reasonSet[reason] = true; result.Reasons = append(result.Reasons,reason) } }
+ // Missing reports stay blocked; journal observations never become receipt evidence.
+ defer func(){
+  if len(result.Reasons)==0 || saved.Status=="done"{return}
+  journalDirectory:=testCampaignJournalDirectory(filepath.Dir(path),batch.ID)
+  if _,err:=os.Lstat(journalDirectory);os.IsNotExist(err){return}
+  targets,hash,err:=readTestCampaignJournalTargets(filepath.Dir(path),checkpoint.PlanSHA256,checkpoint,batch,scenario)
+  if err!=nil{block("run journal is incomplete or uncertain; inspect locally");return}
+  result.JournalSHA256=hash
+  block("run journal provides cleanup identities only; missing execution evidence remains blocking")
+  if reader==nil{return}
+  keys:=make([]string,0,len(targets))
+  for key:=range targets{keys=append(keys,key)}
+  sort.Strings(keys)
+  for _,key:=range keys{
+   if len(result.Live)>=1024{block("journal inspection exceeds workload limit");return}
+   target:=targets[key]
+   observation:=testCampaignRecoveryObservation{Project:target.Project,RunID:target.RunID,Status:"unknown",ObservedAt:time.Now().UTC()}
+   session,err:=reader.GetDevSession(ctx,target.Project,target.RunID)
+   if isNotFound(err){observation.Status="absent"}else if err==nil{
+    if session.App.ID==target.AppID{observation.Status="present"}else{observation.Status="identity_changed"}
+   }
+   result.Live=append(result.Live,observation)
+  }
+ }()
 	file,err := openCustomerFile(path)
 	if err != nil { block("batch report is missing or unreadable"); return result,nil }
 	body,err := io.ReadAll(io.LimitReader(file,testBaselineReportLimit+1))
