@@ -184,3 +184,68 @@ writes only the requested export outside protected campaign/import/recovery
 directories, with input/output alias checks. Assessment returns zero for a valid
 informational report even when recovery is blocked; invalid inputs or failed
 inspection return one. Validation of this implementation remains deferred.
+
+
+## Recovery completion verification
+
+After cleanup, explicitly recheck completion with read-only live lookups:
+
+```sh
+gregale test policy recover --inspect --verify-completion --check-cleanup \
+  --plan plan.json --policy campaign.yaml --manifest gregale-test.yaml \
+  --directory campaign-current --json recovery-summary.json
+```
+
+The `completion` section of the exported assessment is a shareable recovery
+summary. It includes plan/checkpoint and evidence-snapshot digests, per-batch
+resource identities and current live status, execution status, cleanup blockers,
+and links to cleanup observations. The summary grants no ownership or execution
+authority and must be rechecked when evidence or ownership changes.
+
+Completion verification distinguishes:
+
+- `resource_evidence_complete`: every attempted batch has a verifiable resource
+  inventory, including all available journal identities. Uncertain provisioning,
+  orphaned artifacts, malformed journals and identity conflicts keep this false.
+- `known_sessions_absent`: fresh GET requests found all known workload sessions
+  absent. This can be true while the full inventory is still unresolved.
+- `test_execution_complete`: every batch on the selected revision side has
+  completed or recovered execution evidence according to verified status.
+- `recovery_complete`: all three conditions hold, campaign policy passes, the
+  snapshot is stable, ownership is available, no runner/shared claim lock blocks
+  verification, and no recorded cleanup errors remain.
+
+Journal-only recovery cannot satisfy test execution completion. Pending batches,
+missing reports and recorded fixture/consumer/workload cleanup errors remain
+blocking after sessions are deleted. Session absence does not verify that a
+fixture command, consumer revocation or namespace deregistration succeeded.
+
+New cleanup observations use version two and bind plan, checkpoint, batch, side,
+revision, evidence kind, resource identity digest and observation time. Journal
+cleanup records both the pre-cleanup and resulting journal digests. Verification
+automatically reads up to 256 local `cleanup-<timestamp>.json` files. To include
+a separately transferred observation, repeat `--cleanup-observation PATH`;
+this option requires `--verify-completion`. Observation files are not
+automatically added to campaign bundles. An imported checkpoint can link an
+external observation only if the original binding and current evidence still
+match.
+
+Observation links distinguish matching complete operations, partial operations,
+legacy unbound records, stale evidence, unrelated checkpoints/batches, identity
+mismatches and duplicate records. They provide provenance, not proof of current
+absence. Version-one observations remain readable but cannot establish a bound
+link. Repeated cleanup may change journal digests and make older observations
+stale; this never erases the original files.
+
+The verifier merges receipt identities with all journal identities, including
+diagnostic runs omitted from primary assertion leaves. It performs at most 1024
+additional GET requests within the assessment's existing 30-second deadline
+(the assessment phase itself permits at most 1024). Lookup failures, replacement
+apps and limit exhaustion never count as absence. Observation contents and their
+directory membership join the before/after snapshot checks; changes invalidate
+the completion claim and command suggestions. No locks are acquired or campaign
+files changed. Optional JSON export is the only requested write.
+
+A valid informational report still exits zero when recovery is incomplete.
+Invalid options, inputs or failed inspection exit one. Implementation tests and
+CI remain deferred.

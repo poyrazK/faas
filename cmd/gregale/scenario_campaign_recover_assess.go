@@ -46,6 +46,7 @@ type testCampaignRecoveryAssessment struct{
  Batches []testCampaignRecoveryAssessmentBatch `json:"batches"`
  Commands []testCampaignRecoveryCommand `json:"commands"`
  Notes []string `json:"notes"`
+ Completion *testCampaignRecoveryCompletion `json:"completion,omitempty"`
 }
 type testCampaignRecoveryAssessmentOptions struct{
  Plan,Policy,Manifest,Directory,Handoff,From,Baseline,OutputDirectory,RecoveryBundle string
@@ -63,7 +64,7 @@ func (o testCampaignRecoveryAssessmentOptions) base(command string)[]string{
 
 // This fingerprint covers local evidence read by the assessment, including
 // journal membership, so a concurrent worker cannot leave actionable advice.
-func testCampaignRecoveryAssessmentStamp(plan testCampaignPolicyPlan,o testCampaignRecoveryAssessmentOptions,resolver *testCampaignBundleResolver)(string,error){
+func testCampaignRecoveryAssessmentStamp(plan testCampaignPolicyPlan,o testCampaignRecoveryAssessmentOptions,resolver *testCampaignBundleResolver,extras ...string)(string,error){
  paths:=[]string{o.Plan,o.Policy,o.Manifest,o.From,o.Baseline,filepath.Join(o.Directory,"checkpoint.json"),
   filepath.Join(o.Directory,testCampaignRecoverySealName),filepath.Join(o.Directory,testCampaignHandoffName),
   filepath.Join(o.Directory,testCampaignCancelName),filepath.Join(o.Directory,"runner.lock"),
@@ -101,6 +102,7 @@ func testCampaignRecoveryAssessmentStamp(plan testCampaignPolicyPlan,o testCampa
   if err!=nil{return "",err}
   for _,entry:=range entries{if !entry.IsDir(){paths=append(paths,filepath.Join(o.RecoveryBundle,entry.Name()))}}
  }
+ paths=append(paths,extras...)
  if len(paths)>8192{return "",errors.New("assessment exceeds artifact count limit")}
  stamps:=map[string]string{}
  var total int64

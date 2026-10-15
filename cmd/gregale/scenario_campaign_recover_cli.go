@@ -13,6 +13,9 @@ import (
 
 func cmdTestCampaignRecover(args []string)int{
  fs:=newFlagSet("test policy recover",flag.ContinueOnError)
+ verify:=fs.Bool("verify-completion",false,"verify cleanup provenance and current recovery completion; requires --check-cleanup")
+ var explicitObservations testCampaignCleanupObservationPaths
+ fs.Var(&explicitObservations,"cleanup-observation","additional cleanup observation path (repeatable; verification only)")
  inspect:=fs.Bool("inspect",false,"read-only recovery assessment (required)")
  planPath:=fs.String("plan","","saved campaign plan")
  policyPath:=fs.String("policy","","bound campaign policy")
@@ -26,8 +29,8 @@ func cmdTestCampaignRecover(args []string)int{
  jsonPath:=fs.String("json","","optional assessment export outside campaign directories")
  live:=fs.Bool("check-cleanup",false,"inspect live sessions using read-only GET requests")
  if err:=fs.Parse(args);err!=nil{if errors.Is(err,flag.ErrHelp){return 0};return 1}
- if rejectUnexpectedFlagArgs(fs)||fs.NArg()!=0||!*inspect||*planPath==""||*policyPath==""||*directory==""{
-  return printErr("Invalid recovery assessment options",errors.New("--inspect, --plan, --policy and --directory are required"))
+ if rejectUnexpectedFlagArgs(fs)||fs.NArg()!=0||!*inspect||*planPath==""||*policyPath==""||*directory==""||(*verify&&!*live)||(!*verify&&len(explicitObservations)>0){
+  return printErr("Invalid recovery assessment options",errors.New("--inspect, --plan, --policy and --directory are required; --verify-completion requires --check-cleanup; observation paths require verification"))
  }
  resolver,err:=loadTestCampaignBundleResolver(*handoff)
  if err!=nil{return printErr("Invalid handoff",err)}
@@ -61,7 +64,13 @@ func cmdTestCampaignRecover(args []string)int{
    *input.receipts=receipts
   }
  }
+ var observationPaths []string
+ if *verify{
+  observationPaths,err=collectTestCampaignCleanupObservationPaths(*directory,explicitObservations)
+  if err!=nil{return printErr("Could not collect cleanup observations",err)}
+ }
  inputs:=[]string{*planPath,*policyPath,*manifestPath,*from,*baseline}
+ inputs=append(inputs,observationPaths...)
  for _,name:=range []string{"checkpoint.json",testCampaignRecoverySealName,testCampaignHandoffName,testCampaignCancelName,
   testCampaignImportName,testCampaignContinuationOwnerName,"runner.lock","policy-result.json","combined-current.json","combined-baseline.json"}{
   inputs=append(inputs,filepath.Join(*directory,name))
@@ -74,7 +83,7 @@ func cmdTestCampaignRecover(args []string)int{
  directories:=[]string{*directory,*recovery}
  if resolver!=nil{directories=append(directories,resolver.Index.Root);inputs=append(inputs,resolver.IndexPath,resolver.Index.ClaimPath,resolver.Index.ClaimPath+".lock")}
  if err:=protectTestCampaignStatusOutputs([]string{*jsonPath},inputs,directories);err!=nil{return printErr("Invalid assessment output",err)}
- stamp,err:=testCampaignRecoveryAssessmentStamp(plan,o,resolver)
+ stamp,err:=testCampaignRecoveryAssessmentStamp(plan,o,resolver,observationPaths...)
  if err!=nil{return printErr("Could not capture recovery evidence",err)}
  status,err:=buildTestCampaignStatus(plan,&cp,*directory,"",policy,manifest.Scenarios,before,after,resolver)
  if err!=nil{return printErr("Could not inspect campaign status",err)}
@@ -128,8 +137,17 @@ func cmdTestCampaignRecover(args []string)int{
    result.Commands=append(result.Commands,newTestCampaignRecoveryCommand("Inspect the verified continuation",false,command...))
   }
  }
- fresh,stampErr:=testCampaignRecoveryAssessmentStamp(plan,o,resolver)
- if stampErr!=nil||fresh!=stamp||!testCampaignRecoveryBindingsStable(o,plan,cp,policy,manifest.Scenarios){
+ if *verify{
+  completion:=buildTestCampaignRecoveryCompletion(ctx,result,plan,cp,manifest.Scenarios,*directory,stamp,observationPaths,reader,resolver)
+  result.Completion=&completion
+ }
+ fresh,stampErr:=testCampaignRecoveryAssessmentStamp(plan,o,resolver,observationPaths...)
+ observationSetStable:=true
+ if *verify{
+  freshPaths,err:=collectTestCampaignCleanupObservationPaths(*directory,explicitObservations)
+  observationSetStable=err==nil&&testCampaignJSONHash(freshPaths)==testCampaignJSONHash(observationPaths)
+ }
+ if stampErr!=nil||fresh!=stamp||!observationSetStable||!testCampaignRecoveryBindingsStable(o,plan,cp,policy,manifest.Scenarios){
   invalidateTestCampaignRecoveryAssessment(&result)
  }
  if *jsonPath!=""{if err:=writeTestCampaignJSON(*jsonPath,result);err!=nil{return printErr("Could not export assessment",err)}}
@@ -144,6 +162,7 @@ func testCampaignRecoveryPathContains(root,name string)bool{
 }
 func invalidateTestCampaignRecoveryAssessment(result *testCampaignRecoveryAssessment){
  result.SnapshotStable=false;result.Status.SnapshotStable=false
+ invalidateTestCampaignRecoveryCompletion(result.Completion)
  result.Recommendation="rerun_assessment"
  result.Commands=[]testCampaignRecoveryCommand{}
  for i:=range result.Batches{result.Batches[i].Commands=[]testCampaignRecoveryCommand{}}

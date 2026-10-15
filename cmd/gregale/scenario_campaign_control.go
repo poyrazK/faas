@@ -207,18 +207,25 @@ func cmdTestCampaignControl(mode string,args []string) int {
   actions,cleanupErr=testCampaignRetryCleanup(ctx,client,scenario,leaves,*execute)
  }
  if *journalMode && *execute {
-  if err:=recordTestCampaignJournalCleanup(*directory,selected.ID,actions);err!=nil{return printErr("Could not record journal cleanup progress",err)}
+  if err:=recordTestCampaignJournalCleanup(*directory,selected.ID,actions);err!=nil&&cleanupErr==nil{cleanupErr=errors.New("could not persist journal cleanup progress")}
  }
  // Observations are separate from immutable receipts and cannot waive their
  // recorded fixture/consumer cleanup failures or refund attempted budget.
- result:=struct{
-  SchemaVersion int `json:"schema_version"`
-  PlanSHA256 string `json:"plan_sha256"`
-  ReportSHA256 string `json:"report_sha256,omitempty"`
-  JournalSHA256 string `json:"journal_sha256,omitempty"`
-  Executed bool `json:"executed"`
-  Actions []testCampaignCleanupAction `json:"actions"`
- }{1,cp.PlanSHA256,hash,journalHash,*execute,actions}
+ targets:=journalTargets
+ if !*journalMode{
+  targets,err=testCampaignReceiptCleanupTargets(scenario,leaves)
+  if err!=nil&&cleanupErr==nil{cleanupErr=err}
+ }
+ result:=testCampaignCleanupObservation{SchemaVersion:2,PlanSHA256:cp.PlanSHA256,CheckpointSHA256:testCampaignJSONHash(cp),
+  BatchID:selected.ID,Side:cp.Side,Revision:cp.Revision,Evidence:"receipt",ReportSHA256:hash,
+  JournalSHA256:journalHash,TargetsSHA256:testCampaignCleanupTargetsSHA256(targets),ObservedAt:time.Now().UTC(),
+  Executed:*execute,Actions:actions}
+ if *journalMode{
+  result.Evidence="journal"
+  _,result.JournalAfterSHA256,err=readTestCampaignJournalTargets(*directory,testCampaignJSONHash(plan),cp,*selected,scenario)
+  if err!=nil&&cleanupErr==nil{cleanupErr=errors.New("could not verify journal cleanup progress")}
+ }
+ result.OperationComplete=cleanupErr==nil
  observationPath:=filepath.Join(*directory,fmt.Sprintf("cleanup-%d.json",time.Now().UTC().UnixNano()))
  if err:=writeTestCampaignJSON(observationPath,result);err!=nil{return printErr("Could not save cleanup observations",err)}
  if err:=json.NewEncoder(os.Stdout).Encode(result);err!=nil{return printErr("Could not write cleanup observations",err)}

@@ -194,3 +194,26 @@ Invalid/missing reports, uncertain provisioning and recorded fixture/consumer
 cleanup errors remain visible blockers. Bounded evidence fingerprints before and
 after inspection suppress commands if state changes. Informational reports do
 not grant coverage, refund budget or act as cleanup authorization.
+
+
+## Recovery completion verification (2026-10-15)
+
+Read-only recovery assessment may explicitly verify completion using fresh session
+GET requests. It separates complete resource inventory, known workload session
+absence, terminal execution evidence, policy and overall recovery completion.
+All available journal identities join receipt identities, including diagnostic
+runs; uncertain provisioning, missing evidence, conflicting identities and
+recorded fixture/consumer/workload cleanup errors remain independent blockers.
+
+Version-two cleanup observations bind the original checkpoint/batch, revision,
+evidence digests, resource identities and operation completion. Journal cleanup
+also records the resulting journal digest. Matching observations provide
+provenance only: legacy, partial, stale, unrelated or duplicate records cannot
+substitute for fresh absence checks or test evidence. Observations may be supplied
+separately after handoff; no authority follows from a saved summary.
+
+Bounded local/external observation files and membership participate in snapshot
+stability checks. Changing evidence invalidates the completion claim. Shared
+claims and runner locks are inspected without acquisition. The exported summary
+is informational, cannot waive recorded failures, grant coverage, refund budget,
+or reopen sealed or transferred work.
