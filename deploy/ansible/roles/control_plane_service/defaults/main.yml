@@ -1,4 +1,8 @@
 ---
+# ADR-1189: provision the Safe Deploy service-token pair when missing, so
+# canary progression, alert rollbacks and stuck-canary recovery run. Set false
+# before removing the tokens to switch Safe Deploy off.
+faas_safe_releases_enabled: true
 faas_dev_bridge_enabled: false
 # ADR-740 developer live source patches. Must match vmmd_service's value:
 # apid publishes patches and vmmd serves them to developer environments.

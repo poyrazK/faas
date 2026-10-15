@@ -104,6 +104,9 @@ func UnitSchedd() daemonunit.Unit {
 			// executor are both wired before the loop starts.
 			{Key: "FAAS_JOBS_DISPATCH", Value: "1"},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
+			// ADR-1189: fire the prewarm intents the API accepts (ADR-160);
+			// without the drain they would stay pending.
+			{Key: "FAAS_PREWARM_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
