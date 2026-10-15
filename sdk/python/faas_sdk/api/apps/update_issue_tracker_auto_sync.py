@@ -126,8 +126,9 @@ def sync_detailed(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateIssueTrackerAutoSyncRequest): Explicit automatic push delegation against a
-            known policy revision and aligned native/source lifecycle snapshot.
+        body (UpdateIssueTrackerAutoSyncRequest): Explicit direction delegation against a known
+            policy revision and aligned native/source lifecycle snapshot. Inbound closures are held
+            for fixing-deployment review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,8 +176,9 @@ def sync(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateIssueTrackerAutoSyncRequest): Explicit automatic push delegation against a
-            known policy revision and aligned native/source lifecycle snapshot.
+        body (UpdateIssueTrackerAutoSyncRequest): Explicit direction delegation against a known
+            policy revision and aligned native/source lifecycle snapshot. Inbound closures are held
+            for fixing-deployment review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -219,8 +221,9 @@ async def asyncio_detailed(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateIssueTrackerAutoSyncRequest): Explicit automatic push delegation against a
-            known policy revision and aligned native/source lifecycle snapshot.
+        body (UpdateIssueTrackerAutoSyncRequest): Explicit direction delegation against a known
+            policy revision and aligned native/source lifecycle snapshot. Inbound closures are held
+            for fixing-deployment review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -266,8 +269,9 @@ async def asyncio(
         slug (str):
         issue_id (UUID):
         link_id (UUID):
-        body (UpdateIssueTrackerAutoSyncRequest): Explicit automatic push delegation against a
-            known policy revision and aligned native/source lifecycle snapshot.
+        body (UpdateIssueTrackerAutoSyncRequest): Explicit direction delegation against a known
+            policy revision and aligned native/source lifecycle snapshot. Inbound closures are held
+            for fixing-deployment review.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

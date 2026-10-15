@@ -3,9 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Opt-in automatic Gregale-to-GitHub or Linear policy and latest durable worker outcome for a tracker reference.
+ * Opt-in tracker direction and latest durable worker outcome. Inbound resolutions require explicit fixing-deployment evidence.
  */
 export type IssueTrackerAutoSync = {
+  /**
+   * Outbound pushes Gregale lifecycle; inbound applies verified reopenings; both enables both behaviors.
+   */
+  direction?: 'outbound' | 'inbound' | 'both';
+  /**
+   * Last provider lifecycle observed by the worker including changes held for review.
+   */
+  observed_state?: 'open' | 'resolved';
   link_id: string;
   enabled: boolean;
   revision: number;

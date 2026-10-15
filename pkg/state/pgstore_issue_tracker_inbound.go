@@ -51,7 +51,7 @@ func (s *PgStore) ApplyIssueTrackerInbound(ctx context.Context, in IssueTrackerI
 	if err != nil {
 		return api.Issue{}, err
 	}
-	if issueID(root.ID) != r.Policy.SourceIssueID || root.State != current.Policy.SourceState || root.State != current.Baseline.State || (current.Policy.Outcome == "blocked" || current.Policy.Outcome == "conflict" && current.Policy.Reason != "provider_changed") {
+	if issueID(root.ID) != r.Policy.SourceIssueID || root.State != current.Policy.SourceState || root.State != current.Baseline.State || (current.Policy.Outcome == "blocked" && current.Policy.Reason != "fixing_deployment_required" || current.Policy.Outcome == "conflict" && current.Policy.Reason != "provider_changed") {
 		return api.Issue{}, IssueTrackerInboundChanged()
 	}
 	if !validInboundObservation(current, in.Observed) {

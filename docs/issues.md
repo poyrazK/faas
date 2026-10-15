@@ -1375,8 +1375,8 @@ connection/group, the preview explains why review is required.
 
 This preview does not apply inbound changes, enable inbound sync, resume a paused
 policy or advance its baseline. No matching baseline means review and alignment
-are needed first. Automatic inbound application remains a follow-up; it needs an
-atomic local snapshot check, deployment evidence and explicit per-link opt-in.
+are needed first. Automatic inbound reopenings require the per-link direction
+opt-in described below; provider resolutions still need explicit deployment evidence.
 
 ### Apply a reviewed inbound change
 
@@ -1395,10 +1395,43 @@ issue group does. The revision is shared by the app, so another issue's triage e
 can also require refreshing the preview.
 
 The local lifecycle action, fixing-deployment evidence, tracker audit metadata,
-baseline update and outbound pause commit together. A failed or duplicate
+baseline update and policy pause commit together. A failed or duplicate
 submission cannot partially apply them. Review the now-aligned lifecycle to
-re-enable outbound sync. A provider edit immediately after the final read can
+re-enable the selected sync direction. A provider edit immediately after the final read can
 require another review; Gregale cannot transact across the provider and its own
 database. If the response is interrupted, refresh the issue and policy to check
-whether the transaction committed before preparing another pull. Automatic inbound
-syncing remains disabled.
+whether the transaction committed before preparing another pull. The pull itself
+does not enable automatic inbound sync.
+
+
+### Opt in to automatic inbound reopenings
+
+Choose a direction in **Review tracker sync** after aligning both lifecycles:
+
+- **Outbound** pushes Gregale resolutions and reopenings to the linked ticket. This
+  remains the default when direction is omitted.
+- **Inbound** applies verified provider reopenings to Gregale. A provider closure
+  pauses for review and a selected fixing deployment; it never resolves Gregale
+  automatically.
+- **Both** supports both behaviors. An isolated local lifecycle edit can push when
+  the provider still matches its baseline. Edits on both sides pause for review.
+
+The CLI uses `gregale issues tickets auto-sync --app SLUG --issue UUID --link UUID
+--enable --direction inbound` (or `both`). Linear also needs `--provider linear`
+and the selected `--linear-open-state` and `--linear-resolved-state` workflow UUIDs.
+The API accepts the same `direction` on the existing auto-sync policy update.
+
+Enabling inbound or both saves a durable source intent baseline. Later assignment,
+lifecycle, grouping, reference or connection edits invalidate that authority,
+including edits that change away and back. Unrelated issues, polling, worker claims,
+ordinary occurrence counters and normal credential refresh do not invalidate it.
+Automatic reopenings advance their own baseline and record tracker evidence in
+issue history without repeating the action on the next poll.
+
+The policy reports its last `observed_state` separately from the saved provider
+baseline. A resolved observation with `fixing_deployment_required` is a hold: use
+**Review tracker sync** and the explicit fixing-deployment pull to resolve it, or
+align the lifecycles and explicitly re-enable. Conflicts and holds stay paused until
+review. Disable remains available without provider access. A both-direction write
+with an unknown outcome is observed without redispatch; inspect the ticket before
+resetting its policy. Already dispatched writes cannot be recalled by disabling.

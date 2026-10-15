@@ -254,3 +254,28 @@ def test_linear_oauth_metadata_is_typed_and_contains_no_provider_credentials():
     assert metadata.access_token_expires_at.isoformat() == "2026-10-14T12:00:00+00:00"
     assert "access_token" not in metadata.to_dict()
     assert "refresh_token" not in metadata.to_dict()
+
+
+def test_directional_policy_preserves_opt_in_and_observed_hold():
+    from faas_sdk.models.issue_tracker_auto_sync import IssueTrackerAutoSync
+    from faas_sdk.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+
+    request = UpdateIssueTrackerAutoSyncRequest.from_dict(
+        {"enabled": True, "expected_revision": 3, "direction": "inbound"}
+    )
+    assert request.to_dict()["direction"] == "inbound"
+    response = IssueTrackerAutoSync.from_dict(
+        {
+            "link_id": "55555555-5555-4555-8555-555555555555",
+            "source_issue_id": "33333333-3333-4333-8333-333333333333",
+            "enabled": True,
+            "revision": 4,
+            "outcome": "blocked",
+            "direction": "inbound",
+            "observed_state": "resolved",
+            "reason": "fixing_deployment_required",
+        }
+    )
+    assert response.direction == "inbound"
+    assert response.observed_state == "resolved"
+    assert response.to_dict()["reason"] == "fixing_deployment_required"

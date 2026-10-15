@@ -1646,6 +1646,8 @@ from .issue_state import IssueState
 from .issue_symbolication_result import IssueSymbolicationResult
 from .issue_team import IssueTeam
 from .issue_tracker_auto_sync import IssueTrackerAutoSync
+from .issue_tracker_auto_sync_direction import IssueTrackerAutoSyncDirection
+from .issue_tracker_auto_sync_observed_state import IssueTrackerAutoSyncObservedState
 from .issue_tracker_auto_sync_outcome import IssueTrackerAutoSyncOutcome
 from .issue_tracker_auto_sync_pending_state import IssueTrackerAutoSyncPendingState
 from .issue_tracker_auto_sync_provider_state import IssueTrackerAutoSyncProviderState
@@ -3851,6 +3853,7 @@ from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+from .update_issue_tracker_auto_sync_request_direction import UpdateIssueTrackerAutoSyncRequestDirection
 from .update_issue_tracker_auto_sync_request_expected_issue_state import (
     UpdateIssueTrackerAutoSyncRequestExpectedIssueState,
 )
@@ -5730,6 +5733,8 @@ __all__ = (
     "IssueSymbolicationResult",
     "IssueTeam",
     "IssueTrackerAutoSync",
+    "IssueTrackerAutoSyncDirection",
+    "IssueTrackerAutoSyncObservedState",
     "IssueTrackerAutoSyncOutcome",
     "IssueTrackerAutoSyncPendingState",
     "IssueTrackerAutoSyncProviderState",
@@ -7771,6 +7776,7 @@ __all__ = (
     "UpdateInboundWebhookEndpointRequest",
     "UpdateIssueImpactAlertPolicyRequest",
     "UpdateIssueTrackerAutoSyncRequest",
+    "UpdateIssueTrackerAutoSyncRequestDirection",
     "UpdateIssueTrackerAutoSyncRequestExpectedIssueState",
     "UpdateIssueTrackerLinearConnectionRequest",
     "UpdateJobRequest",

@@ -25,6 +25,14 @@ type IssueTrackerSyncPreview struct {
 
 func IssueTrackerSyncReason(reason string) string {
 	switch reason {
+	case "source_intent_changed":
+		return "Local issue intent changed since delegation. Review both lifecycles before re-enabling."
+	case "source_revision_required":
+		return "Review and re-enable this direction to establish a fresh source baseline."
+	case "fixing_deployment_required":
+		return "The provider resolved this ticket. Review the inbound change and select its fixing deployment to resolve Gregale."
+	case "provider_workflow_unmapped":
+		return "The provider workflow is outside the selected mapping. Review it before re-enabling."
 	case "provider_changed":
 		return "The linked ticket was edited. Review and align its lifecycle before re-enabling."
 	case "source_connection_or_provider_changed":

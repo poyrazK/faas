@@ -63,6 +63,9 @@ func (s *server) runIssueTrackerAutoSyncBatch(ctx context.Context) {
 			return
 		}
 		out := s.runIssueTrackerAutoSync(ctx, st, row)
+		if out.Completed {
+			continue
+		}
 		// Retain observations after a provider timeout; fencing refuses stale completions.
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(api.IssueTrackerRequestTimeoutSeconds)*time.Second)
 		_, err = st.FinishIssueTrackerAutoSync(finishCtx, out)

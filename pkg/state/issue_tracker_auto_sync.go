@@ -7,6 +7,8 @@ import (
 )
 
 type IssueTrackerAutoSyncRecord struct {
+	SourceRevision, PendingSourceRevision         int64
+	Completed                                     bool // The atomic inbound transaction already completed this claim.
 	AppID, AccountID, BindingFingerprint, ClaimID string
 	ClaimUntil                                    time.Time
 	Baseline                                      api.IssueTrackerProviderStatus

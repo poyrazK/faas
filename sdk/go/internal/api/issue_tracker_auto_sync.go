@@ -2,8 +2,10 @@ package api
 
 import "time"
 
-// IssueTrackerAutoSync reports the opt-in Gregale-to-tracker policy and durable worker outcome.
+// IssueTrackerAutoSync reports the opt-in tracker direction and durable worker outcome.
 type IssueTrackerAutoSync struct {
+	Direction             string     `json:"direction,omitempty"`
+	ObservedState         string     `json:"observed_state,omitempty"`
 	LinearOpenStateID     string     `json:"linear_open_state_id,omitempty"`
 	LinearResolvedStateID string     `json:"linear_resolved_state_id,omitempty"`
 	LinkID                string     `json:"link_id"`
@@ -21,6 +23,7 @@ type IssueTrackerAutoSync struct {
 
 // UpdateIssueTrackerAutoSyncRequest sets one policy against a known revision and aligned native snapshot.
 type UpdateIssueTrackerAutoSyncRequest struct {
+	Direction             string                          `json:"direction,omitempty"`
 	ExpectedLinearStatus  *NativeLinearIssueTrackerStatus `json:"expected_linear_status,omitempty"`
 	LinearOpenStateID     string                          `json:"linear_open_state_id,omitempty"`
 	LinearResolvedStateID string                          `json:"linear_resolved_state_id,omitempty"`

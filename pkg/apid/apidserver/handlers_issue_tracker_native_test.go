@@ -270,7 +270,7 @@ func TestNativeIssueTrackerAutoSyncScopesClaimsPushesAndPauses(t *testing.T) {
 		}
 	}
 	original := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path, nil, nil), 200)
-	if original.Enabled || original.Revision != 0 || original.Outcome != "disabled" {
+	if original.Enabled || original.Revision != 0 || original.Outcome != "disabled" || original.Direction != "outbound" {
 		t.Fatal("policy enabled by default", original)
 	}
 	store := apidserver.IssueNativeStore(e)
@@ -993,12 +993,18 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	}
 	provider.status.State, provider.status.StateID = "open", open
 	preview = post("/tracker-sync", previewForm(), true)
+	enable.Set("direction", "inbound")
 	enable.Set("expected_revision", "2")
 	enable.Set("expected", expected(preview))
 	if out := post("/tracker-sync", enable, true); out.Code != 303 {
 		t.Fatal("enable inbound fixture", out.Code, out.Body.String())
 	}
 	provider.status.State, provider.status.StateID = "resolved", resolved
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	held := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", issuePath+"/tracker-links/"+link.ID+"/auto-sync", nil, nil), 200)
+	if held.Outcome != "blocked" || held.Reason != "fixing_deployment_required" || held.ObservedState != "resolved" {
+		t.Fatal("inbound resolution was not held", held)
+	}
 	pullForm := func() url.Values {
 		reviewed := post("/tracker-sync", previewForm(), true)
 		if reviewed.Code != 200 || !strings.Contains(reviewed.Body.String(), `name="fixed_deployment_id"`) || !strings.Contains(reviewed.Body.String(), dep.ID) {
@@ -1459,5 +1465,311 @@ func TestNativeIssueInboundStoreIsAtomicAndScopesDeployment(t *testing.T) {
 	final, err := store.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
 	if err != nil || final.Policy.Enabled || final.Policy.Revision != 2 || final.Baseline != observed {
 		t.Fatal(final, err)
+	}
+}
+
+// adr: 1226
+func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
+	for _, providerName := range []string{"github", "linear"} {
+		t.Run(providerName, func(t *testing.T) {
+			e := apidserver.SetupPGHandler(t, api.PlanPro)
+			app := apidserver.SeedPGApp(t, e, "directional-"+providerName)
+			dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+			fixed := apidserver.IssueSeedDeployment(t, e, app, 2)
+			token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+			base := "/v1/apps/" + app.Slug
+			send := func(exception string) api.IssueEventResponse {
+				return apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: exception, Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+			}
+			accepted := send("DirectionalWorker")
+			issuePath := base + "/issues/" + accepted.IssueID
+			ticketURL := "https://github.com/owner/repo/issues/42"
+			if providerName == "linear" {
+				ticketURL = "https://linear.app/acme/issue/PAY-42"
+			}
+			link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: ticketURL}, nil), 200)
+			trackerPath := issuePath + "/tracker-links/" + link.ID
+			store := state.NewPgStore(*e.Pool())
+			ghProvider := &nativeStatusFake{status: issuetracker.Status{Provider: "github", URL: ticketURL, ID: "42", State: "resolved"}}
+			linearProvider := &nativeLinearLifecycleFake{}
+			openID, resolvedID := uuid.NewString(), uuid.NewString()
+			if providerName == "github" {
+				st := apidserver.IssueNativeStore(e)
+				acct := apidserver.IssueNativeAccount(e)
+				if err := st.UpsertGitHubInstall(t.Context(), state.GitHubInstall{AccountID: acct.ID, InstallationID: 42, DefaultBranch: "main", AuditGithubLogin: "owner", SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: app.ID, AccountID: acct.ID, BindingID: uuid.NewString(), InstallID: 42, RepoFullName: "Owner/Repo", OwnerID: 10, RepoID: 100, ProductionBranch: "main"}); err != nil {
+					t.Fatal(err)
+				}
+				apidserver.IssueNativeSetClients(e, &nativeGitHubFake{repoID: 100}, ghProvider)
+			} else {
+				identity, _ := age.GenerateX25519Identity()
+				oldRecipient, oldIDs := *apidserver.SetSecretRecipient, *apidserver.MfaIdentities
+				*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+				*apidserver.MfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+				t.Cleanup(func() { *apidserver.SetSecretRecipient = oldRecipient; *apidserver.MfaIdentities = oldIDs })
+				apidserver.IssueNativeSetLinearVerifier(e, &nativeLinearFake{})
+				conn := api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, TeamID: uuid.NewString(), APIKey: "lin_api_secret"}
+				apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", conn, nil), 200)
+				linearProvider.status = issuetracker.Status{Provider: "linear", URL: ticketURL, ID: uuid.NewString(), TeamID: conn.TeamID, StateID: resolvedID, State: "resolved"}
+				apidserver.IssueNativeSetClients(e, nil, linearProvider)
+			}
+			setRemote := func(life string) {
+				if providerName == "github" {
+					ghProvider.status.State = life
+				} else {
+					linearProvider.status.State = life
+					linearProvider.status.StateID = openID
+					if life == "resolved" {
+						linearProvider.status.StateID = resolvedID
+					}
+				}
+			}
+			writes := func() int {
+				if providerName == "github" {
+					return ghProvider.writes
+				}
+				return linearProvider.writes
+			}
+			configure := func(direction string, rev int64) {
+				detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", issuePath, nil, nil), 200)
+				in := api.UpdateIssueTrackerAutoSyncRequest{Direction: direction, Enabled: true, ExpectedRevision: rev, ExpectedIssueState: detail.Issue.State}
+				if providerName == "github" {
+					snap := apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", trackerPath+"/native-status", nil, nil), 200)
+					in.ExpectedStatus = &snap
+				} else {
+					snap := apidserver.IssueDecode[api.NativeLinearIssueTrackerStatus](t, e.Do(t, "GET", trackerPath+"/native-linear-status", nil, nil), 200)
+					in.ExpectedLinearStatus = &snap
+					in.LinearOpenStateID = openID
+					in.LinearResolvedStateID = resolvedID
+				}
+				out := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", trackerPath+"/auto-sync", in, nil), 200)
+				if out.Direction != direction || out.Revision != rev+1 {
+					t.Fatal(out)
+				}
+			}
+			act := func(in api.IssueActionRequest) {
+				apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", issuePath+"/actions", in, nil), 200)
+			}
+			policy := func() api.IssueTrackerAutoSync {
+				return apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", trackerPath+"/auto-sync", nil, nil), 200)
+			}
+			run := func() {
+				if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+					t.Fatal(err)
+				}
+				apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+			}
+			act(api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID})
+			if out := e.Do(t, "PUT", trackerPath+"/auto-sync", api.UpdateIssueTrackerAutoSyncRequest{Direction: "sideways"}, nil); out.Code != 400 {
+				t.Fatal("invalid direction accepted", out.Code)
+			}
+			configure("inbound", 0)
+			before, err := store.GetIssueTrackerSourceRevision(t.Context(), app.ID, app.AccountID, accepted.IssueID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// An unrelated group and its assignment do not invalidate this baseline.
+			other := send("UnrelatedWorkerIssue")
+			apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", base+"/issues/"+other.IssueID+"/actions", api.IssueActionRequest{Action: "assign", AssigneeAccountID: app.AccountID}, nil), 200)
+			after, err := store.GetIssueTrackerSourceRevision(t.Context(), app.ID, app.AccountID, accepted.IssueID)
+			if err != nil || before != after {
+				t.Fatal("unrelated issue invalidated source", before, after, err)
+			}
+			run()
+			if out := policy(); out.Outcome != "matched" {
+				t.Fatal("worker bookkeeping changed source intent", out)
+			}
+			setRemote("open")
+			run()
+			out := policy()
+			if out.Outcome != "applied" || out.SourceState != "open" || out.ProviderState != "open" || out.ObservedState != "open" || !out.Enabled || writes() != 0 {
+				t.Fatal("automatic reopening failed", out)
+			}
+			detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", issuePath, nil, nil), 200)
+			audits := 0
+			for _, a := range detail.Activity {
+				if a.Action == "reopened" && a.Details["tracker_mode"] == "automatic" {
+					audits++
+				}
+			}
+			if detail.Issue.State != "open" || detail.Issue.FixedDeploymentID != "" || audits != 1 {
+				t.Fatal("automatic audit/state missing", detail)
+			}
+			run()
+			if out := policy(); out.Outcome != "matched" || writes() != 0 {
+				t.Fatal("reopening loop", out)
+			}
+			// A local intent change away and back pauses inbound even if state matches.
+			act(api.IssueActionRequest{Action: "assign", AssigneeAccountID: app.AccountID})
+			act(api.IssueActionRequest{Action: "assign"})
+			run()
+			if out := policy(); out.Outcome != "conflict" || out.Reason != "source_intent_changed" {
+				t.Fatal("manual edit overwritten", out)
+			}
+			configure("both", 1)
+			act(api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID})
+			run()
+			if out := policy(); out.Outcome != "applied" || out.ProviderState != "resolved" || writes() != 1 {
+				t.Fatal("both direction local push failed", out, writes())
+			}
+			setRemote("open")
+			run()
+			if out := policy(); out.Outcome != "applied" || out.SourceState != "open" || writes() != 1 {
+				t.Fatal("both direction pull failed", out)
+			}
+			setRemote("resolved")
+			run()
+			held := policy()
+			if held.Outcome != "blocked" || held.Reason != "fixing_deployment_required" || held.ObservedState != "resolved" || held.ProviderState != "open" || held.SourceState != "open" {
+				t.Fatal("resolution was not held", held)
+			}
+			detail = apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", issuePath, nil, nil), 200)
+			if detail.Issue.State != "open" {
+				t.Fatal("provider closure resolved without deployment")
+			}
+			paused := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", trackerPath+"/auto-sync", api.UpdateIssueTrackerAutoSyncRequest{Enabled: false, ExpectedRevision: 2}, nil), 200)
+			if paused.Enabled || paused.Direction != "both" || writes() != 1 {
+				t.Fatal("pause failed", paused)
+			}
+		})
+	}
+}
+
+// adr: 1226
+func TestNativeIssueAutomaticReopenConsumesClaimAtomically(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "reopen-claims")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "ClaimReopen", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	path := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", path+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, nil), 200)
+	st := state.NewPgStore(*e.Pool())
+	baseline := api.IssueTrackerProviderStatus{Provider: "github", URL: link.URL, ID: "42", State: "resolved"}
+	if _, err := st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "resolve", FixedDeploymentID: dep.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	configure := func(rev int64) {
+		source, err := st.GetIssueTrackerSourceRevision(t.Context(), app.ID, app.AccountID, accepted.IssueID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{SourceRevision: source, BindingFingerprint: strings.Repeat("a", 64), Baseline: baseline, Policy: api.IssueTrackerAutoSync{Direction: "inbound", LinkID: link.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "resolved"}}, rev)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	configure(0)
+	claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := baseline
+	observed.State = "open"
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET claim_until=now()-interval '1 second' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApplyIssueTrackerAutoReopen(t.Context(), claim, observed); err == nil {
+		t.Fatal("expired claim applied")
+	}
+	configure(1)
+	claim, err = st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApplyIssueTrackerAutoReopen(t.Context(), claim, baseline); err == nil {
+		t.Fatal("automatic resolution/state no-op accepted")
+	}
+	// Duplicate workers with the same proof and claim can commit once only.
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			out, err := st.ApplyIssueTrackerAutoReopen(context.Background(), claim, observed)
+			if err == nil && !out.Completed {
+				err = errors.New("atomic receipt not marked completed")
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	winners := 0
+	for range 2 {
+		if err := <-results; err == nil {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatal("duplicate atomic reopen", winners)
+	}
+	if _, err := st.FinishIssueTrackerAutoSync(t.Context(), claim); !errors.Is(err, state.ErrIssueTrackerAutoSyncClaimLost) {
+		t.Fatal("stale finish replaced committed baseline", err)
+	}
+	current, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil || current.Baseline.State != "open" || current.ClaimID != "" || current.SourceRevision <= claim.SourceRevision {
+		t.Fatal(current, err)
+	}
+	detail, err := st.GetIssueDetail(t.Context(), app.ID, accepted.IssueID, time.Now().Add(-time.Hour), time.Now(), state.IssueDetailCursors{})
+	count := 0
+	for _, a := range detail.Activity {
+		if a.Details["tracker_mode"] == "automatic" {
+			count++
+		}
+	}
+	if err != nil || count != 1 || detail.Issue.State != "open" {
+		t.Fatal(detail, err)
+	}
+
+	// A non-API database writer (for example a foreign-key assignment cleanup)
+	// can hold the source fence without taking the app lock. The atomic reader
+	// must see its committed intent after waiting, not an older subquery snapshot.
+	if _, err := st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "resolve", FixedDeploymentID: dep.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	configure(2)
+	racingClaim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedTx, err := (*e.Pool()).Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = changedTx.Rollback(context.Background()) }()
+	if _, err := changedTx.Exec(t.Context(), "UPDATE app_issues SET assignee_account_id=$2 WHERE id=$1", accepted.IssueID, app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	raceCtx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	raceResult := make(chan error, 1)
+	go func() { _, err := st.ApplyIssueTrackerAutoReopen(raceCtx, racingClaim, observed); raceResult <- err }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		err := (*e.Pool()).QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%IssueTrackerSourceRevisionLock%')").Scan(&waiting)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("automatic source check never waited for its fence")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := changedTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-raceResult; err == nil {
+		t.Fatal("committed edit was hidden by the pre-lock snapshot")
+	}
+	afterRace, err := st.GetIssueDetail(t.Context(), app.ID, accepted.IssueID, time.Now().Add(-time.Hour), time.Now(), state.IssueDetailCursors{})
+	if err != nil || afterRace.Issue.State != "resolved" || afterRace.Issue.AssigneeAccountID != app.AccountID {
+		t.Fatal("waited edit overwritten", afterRace, err)
 	}
 }

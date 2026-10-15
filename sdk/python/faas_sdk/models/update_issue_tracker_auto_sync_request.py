@@ -6,6 +6,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.update_issue_tracker_auto_sync_request_direction import (
+    UpdateIssueTrackerAutoSyncRequestDirection,
+    check_update_issue_tracker_auto_sync_request_direction,
+)
 from ..models.update_issue_tracker_auto_sync_request_expected_issue_state import (
     UpdateIssueTrackerAutoSyncRequestExpectedIssueState,
     check_update_issue_tracker_auto_sync_request_expected_issue_state,
@@ -22,24 +26,33 @@ T = TypeVar("T", bound="UpdateIssueTrackerAutoSyncRequest")
 
 @_attrs_define
 class UpdateIssueTrackerAutoSyncRequest:
-    """Explicit automatic push delegation against a known policy revision and aligned native/source lifecycle snapshot."""
+    """Explicit direction delegation against a known policy revision and aligned native/source lifecycle snapshot. Inbound
+    closures are held for fixing-deployment review.
+
+    """
 
     enabled: bool
     expected_revision: int
+    direction: UpdateIssueTrackerAutoSyncRequestDirection | Unset = UNSET
+    """Defaults to outbound when omitted. Inbound and both require a fresh source intent baseline."""
     expected_status: NativeIssueTrackerStatus | Unset = UNSET
     """Verified native connection and observed status of a linked tracker issue."""
     expected_issue_state: UpdateIssueTrackerAutoSyncRequestExpectedIssueState | Unset = UNSET
     expected_linear_status: NativeLinearIssueTrackerStatus | Unset = UNSET
     """Credential-free Linear lifecycle preview pinned to the current issue group and owner connection."""
     linear_open_state_id: UUID | Unset = UNSET
-    """Active same-team open workflow required to enable Linear automatic pushes."""
+    """Active same-team open workflow required to enable Linear automatic sync."""
     linear_resolved_state_id: UUID | Unset = UNSET
-    """Active same-team completed workflow required to enable Linear automatic pushes."""
+    """Active same-team completed workflow required to enable Linear automatic sync."""
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
 
         expected_revision = self.expected_revision
+
+        direction: str | Unset = UNSET
+        if not isinstance(self.direction, Unset):
+            direction = self.direction
 
         expected_status: dict[str, Any] | Unset = UNSET
         if not isinstance(self.expected_status, Unset):
@@ -69,6 +82,8 @@ class UpdateIssueTrackerAutoSyncRequest:
                 "expected_revision": expected_revision,
             }
         )
+        if direction is not UNSET:
+            field_dict["direction"] = direction
         if expected_status is not UNSET:
             field_dict["expected_status"] = expected_status
         if expected_issue_state is not UNSET:
@@ -91,6 +106,13 @@ class UpdateIssueTrackerAutoSyncRequest:
         enabled = d.pop("enabled")
 
         expected_revision = d.pop("expected_revision")
+
+        _direction = d.pop("direction", UNSET)
+        direction: UpdateIssueTrackerAutoSyncRequestDirection | Unset
+        if isinstance(_direction, Unset):
+            direction = UNSET
+        else:
+            direction = check_update_issue_tracker_auto_sync_request_direction(_direction)
 
         _expected_status = d.pop("expected_status", UNSET)
         expected_status: NativeIssueTrackerStatus | Unset
@@ -132,6 +154,7 @@ class UpdateIssueTrackerAutoSyncRequest:
         update_issue_tracker_auto_sync_request = cls(
             enabled=enabled,
             expected_revision=expected_revision,
+            direction=direction,
             expected_status=expected_status,
             expected_issue_state=expected_issue_state,
             expected_linear_status=expected_linear_status,

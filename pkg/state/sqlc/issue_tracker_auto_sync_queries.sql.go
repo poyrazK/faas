@@ -11,6 +11,59 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const issueTrackerAutoReopenComplete = `-- name: IssueTrackerAutoReopenComplete :one
+UPDATE issue_tracker_auto_sync SET baseline=$1,source_state='open',source_revision=$2,
+ observed_state='open',pending_state='',pending_source_revision=0,outcome='applied',reason='',claim_id=NULL,claim_until=NULL,last_checked_at=clock_timestamp(),next_check_at=$3,updated_at=clock_timestamp()
+WHERE link_id=$4 AND enabled AND revision=$5 AND claim_id=$6 AND claim_until>clock_timestamp() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
+`
+
+type IssueTrackerAutoReopenCompleteParams struct {
+	Baseline       []byte
+	SourceRevision int64
+	NextCheckAt    pgtype.Timestamptz
+	LinkID         pgtype.UUID
+	Revision       int64
+	ClaimID        pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerAutoReopenComplete(ctx context.Context, db DBTX, arg IssueTrackerAutoReopenCompleteParams) (IssueTrackerAutoSync, error) {
+	row := db.QueryRow(ctx, issueTrackerAutoReopenComplete,
+		arg.Baseline,
+		arg.SourceRevision,
+		arg.NextCheckAt,
+		arg.LinkID,
+		arg.Revision,
+		arg.ClaimID,
+	)
+	var i IssueTrackerAutoSync
+	err := row.Scan(
+		&i.LinkID,
+		&i.AppID,
+		&i.AccountID,
+		&i.SourceIssueID,
+		&i.Enabled,
+		&i.Revision,
+		&i.BindingFingerprint,
+		&i.Baseline,
+		&i.SourceState,
+		&i.PendingState,
+		&i.Outcome,
+		&i.Reason,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.LastCheckedAt,
+		&i.NextCheckAt,
+		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
+	)
+	return i, err
+}
+
 const issueTrackerAutoSyncClaim = `-- name: IssueTrackerAutoSyncClaim :one
 WITH due AS (
  SELECT link_id FROM issue_tracker_auto_sync WHERE enabled AND outcome IN ('matched','pending','applied','error')
@@ -18,7 +71,7 @@ WITH due AS (
  ORDER BY next_check_at,link_id FOR UPDATE SKIP LOCKED LIMIT 1
 )
 UPDATE issue_tracker_auto_sync p SET claim_id=$1,claim_until=$2,next_check_at=$2
-FROM due WHERE p.link_id=due.link_id RETURNING p.linear_open_state_id, p.linear_resolved_state_id, p.link_id, p.app_id, p.account_id, p.source_issue_id, p.enabled, p.revision, p.binding_fingerprint, p.baseline, p.source_state, p.pending_state, p.outcome, p.reason, p.claim_id, p.claim_until, p.last_checked_at, p.next_check_at, p.updated_at
+FROM due WHERE p.link_id=due.link_id RETURNING p.link_id, p.app_id, p.account_id, p.source_issue_id, p.enabled, p.revision, p.binding_fingerprint, p.baseline, p.source_state, p.pending_state, p.outcome, p.reason, p.claim_id, p.claim_until, p.last_checked_at, p.next_check_at, p.updated_at, p.linear_open_state_id, p.linear_resolved_state_id, p.direction, p.source_revision, p.pending_source_revision, p.observed_state
 `
 
 type IssueTrackerAutoSyncClaimParams struct {
@@ -30,8 +83,6 @@ func (q *Queries) IssueTrackerAutoSyncClaim(ctx context.Context, db DBTX, arg Is
 	row := db.QueryRow(ctx, issueTrackerAutoSyncClaim, arg.ClaimID, arg.ClaimUntil)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -49,20 +100,24 @@ func (q *Queries) IssueTrackerAutoSyncClaim(ctx context.Context, db DBTX, arg Is
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncDisable = `-- name: IssueTrackerAutoSyncDisable :one
-UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,outcome='disabled',reason='',pending_state='',claim_id=NULL,claim_until=NULL,updated_at=now() WHERE link_id=$1 RETURNING linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at
+UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,outcome='disabled',reason='',pending_state='',pending_source_revision=0,claim_id=NULL,claim_until=NULL,updated_at=now() WHERE link_id=$1 RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
 `
 
 func (q *Queries) IssueTrackerAutoSyncDisable(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
 	row := db.QueryRow(ctx, issueTrackerAutoSyncDisable, linkID)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -80,16 +135,22 @@ func (q *Queries) IssueTrackerAutoSyncDisable(ctx context.Context, db DBTX, link
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncEnable = `-- name: IssueTrackerAutoSyncEnable :one
-INSERT INTO issue_tracker_auto_sync(link_id,app_id,account_id,source_issue_id,binding_fingerprint,baseline,source_state,linear_open_state_id,linear_resolved_state_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT(link_id) DO UPDATE SET app_id=excluded.app_id,account_id=excluded.account_id,enabled=true,revision=issue_tracker_auto_sync.revision+1,source_issue_id=excluded.source_issue_id,
+INSERT INTO issue_tracker_auto_sync(link_id,app_id,account_id,source_issue_id,binding_fingerprint,baseline,source_state,linear_open_state_id,linear_resolved_state_id,direction,source_revision,observed_state)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT(link_id) DO UPDATE SET direction=excluded.direction,source_revision=excluded.source_revision,pending_source_revision=0,observed_state=excluded.observed_state,app_id=excluded.app_id,account_id=excluded.account_id,enabled=true,revision=issue_tracker_auto_sync.revision+1,source_issue_id=excluded.source_issue_id,
  linear_open_state_id=excluded.linear_open_state_id,linear_resolved_state_id=excluded.linear_resolved_state_id, binding_fingerprint=excluded.binding_fingerprint,baseline=excluded.baseline,source_state=excluded.source_state,pending_state='',outcome='matched',reason='',claim_id=NULL,claim_until=NULL,next_check_at=now(),updated_at=now()
-RETURNING linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at
+RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
 `
 
 type IssueTrackerAutoSyncEnableParams struct {
@@ -102,6 +163,9 @@ type IssueTrackerAutoSyncEnableParams struct {
 	SourceState           string
 	LinearOpenStateID     string
 	LinearResolvedStateID string
+	Direction             string
+	SourceRevision        int64
+	ObservedState         string
 }
 
 func (q *Queries) IssueTrackerAutoSyncEnable(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncEnableParams) (IssueTrackerAutoSync, error) {
@@ -115,11 +179,12 @@ func (q *Queries) IssueTrackerAutoSyncEnable(ctx context.Context, db DBTX, arg I
 		arg.SourceState,
 		arg.LinearOpenStateID,
 		arg.LinearResolvedStateID,
+		arg.Direction,
+		arg.SourceRevision,
+		arg.ObservedState,
 	)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -137,30 +202,42 @@ func (q *Queries) IssueTrackerAutoSyncEnable(ctx context.Context, db DBTX, arg I
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncFinish = `-- name: IssueTrackerAutoSyncFinish :one
-UPDATE issue_tracker_auto_sync SET baseline=$1,source_state=$2,pending_state=$3,
- outcome=$4,reason=$5,last_checked_at=now(),next_check_at=$6,claim_id=NULL,claim_until=NULL,updated_at=now()
-WHERE link_id=$7 AND enabled AND revision=$8 AND claim_id=$9 RETURNING linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at
+UPDATE issue_tracker_auto_sync SET source_revision=$1,pending_source_revision=$2,observed_state=$3,baseline=$4,source_state=$5,pending_state=$6,
+ outcome=$7,reason=$8,last_checked_at=now(),next_check_at=$9,claim_id=NULL,claim_until=NULL,updated_at=now()
+WHERE link_id=$10 AND enabled AND revision=$11 AND claim_id=$12 RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
 `
 
 type IssueTrackerAutoSyncFinishParams struct {
-	Baseline     []byte
-	SourceState  string
-	PendingState string
-	Outcome      string
-	Reason       string
-	NextCheckAt  pgtype.Timestamptz
-	LinkID       pgtype.UUID
-	Revision     int64
-	ClaimID      pgtype.UUID
+	SourceRevision        int64
+	PendingSourceRevision int64
+	ObservedState         string
+	Baseline              []byte
+	SourceState           string
+	PendingState          string
+	Outcome               string
+	Reason                string
+	NextCheckAt           pgtype.Timestamptz
+	LinkID                pgtype.UUID
+	Revision              int64
+	ClaimID               pgtype.UUID
 }
 
 func (q *Queries) IssueTrackerAutoSyncFinish(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncFinishParams) (IssueTrackerAutoSync, error) {
 	row := db.QueryRow(ctx, issueTrackerAutoSyncFinish,
+		arg.SourceRevision,
+		arg.PendingSourceRevision,
+		arg.ObservedState,
 		arg.Baseline,
 		arg.SourceState,
 		arg.PendingState,
@@ -173,8 +250,6 @@ func (q *Queries) IssueTrackerAutoSyncFinish(ctx context.Context, db DBTX, arg I
 	)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -192,20 +267,24 @@ func (q *Queries) IssueTrackerAutoSyncFinish(ctx context.Context, db DBTX, arg I
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncGet = `-- name: IssueTrackerAutoSyncGet :one
-SELECT linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at FROM issue_tracker_auto_sync WHERE link_id=$1
+SELECT link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state FROM issue_tracker_auto_sync WHERE link_id=$1
 `
 
 func (q *Queries) IssueTrackerAutoSyncGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
 	row := db.QueryRow(ctx, issueTrackerAutoSyncGet, linkID)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -223,24 +302,32 @@ func (q *Queries) IssueTrackerAutoSyncGet(ctx context.Context, db DBTX, linkID p
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncPending = `-- name: IssueTrackerAutoSyncPending :one
-UPDATE issue_tracker_auto_sync SET pending_state=$1,outcome='pending',updated_at=now()
-WHERE link_id=$2 AND enabled AND revision=$3 AND claim_id=$4 AND claim_until>now() RETURNING linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at
+UPDATE issue_tracker_auto_sync SET pending_source_revision=$1,pending_state=$2,outcome='pending',updated_at=now()
+WHERE link_id=$3 AND enabled AND revision=$4 AND claim_id=$5 AND claim_until>now() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
 `
 
 type IssueTrackerAutoSyncPendingParams struct {
-	PendingState string
-	LinkID       pgtype.UUID
-	Revision     int64
-	ClaimID      pgtype.UUID
+	PendingSourceRevision int64
+	PendingState          string
+	LinkID                pgtype.UUID
+	Revision              int64
+	ClaimID               pgtype.UUID
 }
 
 func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncPendingParams) (IssueTrackerAutoSync, error) {
 	row := db.QueryRow(ctx, issueTrackerAutoSyncPending,
+		arg.PendingSourceRevision,
 		arg.PendingState,
 		arg.LinkID,
 		arg.Revision,
@@ -248,8 +335,6 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 	)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -267,12 +352,18 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
 }
 
 const issueTrackerInboundApplied = `-- name: IssueTrackerInboundApplied :exec
-UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,baseline=$2,source_state=$3,outcome='disabled',reason='',pending_state='',claim_id=NULL,claim_until=NULL,last_checked_at=now(),updated_at=now() WHERE link_id=$1
+UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,baseline=$2,source_state=$3,outcome='disabled',reason='',pending_state='',pending_source_revision=0,claim_id=NULL,claim_until=NULL,last_checked_at=now(),updated_at=now() WHERE link_id=$1
 `
 
 type IssueTrackerInboundAppliedParams struct {
@@ -363,15 +454,13 @@ func (q *Queries) IssueTrackerInboundGuardLock(ctx context.Context, db DBTX, app
 }
 
 const issueTrackerInboundPolicyLock = `-- name: IssueTrackerInboundPolicyLock :one
-SELECT linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at FROM issue_tracker_auto_sync WHERE link_id=$1 FOR UPDATE
+SELECT link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state FROM issue_tracker_auto_sync WHERE link_id=$1 FOR UPDATE
 `
 
 func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
 	row := db.QueryRow(ctx, issueTrackerInboundPolicyLock, linkID)
 	var i IssueTrackerAutoSync
 	err := row.Scan(
-		&i.LinearOpenStateID,
-		&i.LinearResolvedStateID,
 		&i.LinkID,
 		&i.AppID,
 		&i.AccountID,
@@ -389,6 +478,51 @@ func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, li
 		&i.LastCheckedAt,
 		&i.NextCheckAt,
 		&i.UpdatedAt,
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.Direction,
+		&i.SourceRevision,
+		&i.PendingSourceRevision,
+		&i.ObservedState,
 	)
 	return i, err
+}
+
+const issueTrackerSourceRevision = `-- name: IssueTrackerSourceRevision :one
+SELECT GREATEST(g.source_revision,COALESCE((SELECT max(s.revision) FROM issue_tracker_source_guards s
+ WHERE s.issue_id IN (SELECT i.id UNION ALL SELECT gl.issue_id FROM issue_group_links gl WHERE gl.canonical_issue_id=i.id)),0))::bigint AS source_revision FROM issue_tracker_inbound_guards g JOIN apps a ON a.id=g.app_id
+JOIN app_issues i ON i.app_id=a.id AND i.id=$1
+WHERE g.app_id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
+`
+
+type IssueTrackerSourceRevisionParams struct {
+	IssueID   pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerSourceRevision(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionParams) (int64, error) {
+	row := db.QueryRow(ctx, issueTrackerSourceRevision, arg.IssueID, arg.AppID, arg.AccountID)
+	var source_revision int64
+	err := row.Scan(&source_revision)
+	return source_revision, err
+}
+
+const issueTrackerSourceRevisionLock = `-- name: IssueTrackerSourceRevisionLock :one
+SELECT g.source_revision FROM issue_tracker_inbound_guards g JOIN app_issues i ON i.app_id=g.app_id AND i.id=$1
+WHERE g.app_id=$2 FOR UPDATE OF g
+`
+
+type IssueTrackerSourceRevisionLockParams struct {
+	IssueID pgtype.UUID
+	AppID   pgtype.UUID
+}
+
+// Acquire the fence only. Read the effective group revision in a new statement
+// after this lock returns, so a wait cannot preserve an older subquery snapshot.
+func (q *Queries) IssueTrackerSourceRevisionLock(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionLockParams) (int64, error) {
+	row := db.QueryRow(ctx, issueTrackerSourceRevisionLock, arg.IssueID, arg.AppID)
+	var source_revision int64
+	err := row.Scan(&source_revision)
+	return source_revision, err
 }

@@ -35,7 +35,15 @@ func (s Service) EnableAutoSync(ctx context.Context, store state.IssueTrackerAut
 	if in.ExpectedStatus == nil || (in.ExpectedIssueState != "open" && in.ExpectedIssueState != "resolved") || in.ExpectedRevision < 0 {
 		return api.IssueTrackerAutoSync{}, api.ErrValidation("enabling requires a native snapshot, open/resolved source state and nonnegative revision")
 	}
+	direction, err := api.NormalizeIssueTrackerSyncDirection(in.Direction)
+	if err != nil {
+		return api.IssueTrackerAutoSync{}, err
+	}
 	p, err := s.prepare(ctx)
+	if err != nil {
+		return api.IssueTrackerAutoSync{}, err
+	}
+	source, err := autoSyncSourceBaseline(ctx, store, p, direction)
 	if err != nil {
 		return api.IssueTrackerAutoSync{}, err
 	}
@@ -51,9 +59,9 @@ func (s Service) EnableAutoSync(ctx context.Context, store state.IssueTrackerAut
 		return api.IssueTrackerAutoSync{}, Changed()
 	}
 	if observed.Status.State != p.Issue.State {
-		return api.IssueTrackerAutoSync{}, api.NewProblem(409, "issue_tracker_auto_sync_requires_alignment", "Align lifecycle before enabling", "explicitly synchronize Gregale and GitHub before enabling automatic push")
+		return api.IssueTrackerAutoSync{}, api.NewProblem(409, "issue_tracker_auto_sync_requires_alignment", "Align lifecycle before enabling", "explicitly synchronize Gregale and GitHub before enabling automatic sync")
 	}
-	row, err := store.ConfigureIssueTrackerAutoSync(ctx, p.Issue.AppID, p.Connection.AccountID, issue, state.IssueTrackerAutoSyncRecord{BindingFingerprint: autoSyncFingerprint(p), Baseline: observed.Status, Policy: api.IssueTrackerAutoSync{LinkID: p.Link.ID, Enabled: true, SourceIssueID: p.Issue.ID, SourceState: p.Issue.State}}, in.ExpectedRevision)
+	row, err := store.ConfigureIssueTrackerAutoSync(ctx, p.Issue.AppID, p.Connection.AccountID, issue, state.IssueTrackerAutoSyncRecord{SourceRevision: source, BindingFingerprint: autoSyncFingerprint(p), Baseline: observed.Status, Policy: api.IssueTrackerAutoSync{Direction: direction, LinkID: p.Link.ID, Enabled: true, SourceIssueID: p.Issue.ID, SourceState: p.Issue.State}}, in.ExpectedRevision)
 	return row.Policy, err
 }
 
@@ -80,6 +88,9 @@ func (h autoSyncHost) Prepare(ctx context.Context) (Prepared, error) {
 // AutoSyncStep persists the pending intent and uses the same scoped native read/push safeguards.
 // The caller finishes the claimed record even after a canceled provider context.
 func AutoSyncStep(ctx context.Context, s Service, store state.IssueTrackerAutoSyncStore, r state.IssueTrackerAutoSyncRecord) state.IssueTrackerAutoSyncRecord {
+	if r.Policy.Direction == "inbound" || r.Policy.Direction == "both" {
+		return githubDirectionalSyncStep(ctx, s, store, r)
+	}
 	s.Host = autoSyncHost{Host: s.Host, store: store, record: r}
 	return autoSyncRun(ctx, s.prepare, func(ctx context.Context) (api.IssueTrackerProviderStatus, error) {
 		v, e := s.Read(ctx)
@@ -104,6 +115,7 @@ func autoSyncRun(ctx context.Context, prepare func(context.Context) (Prepared, e
 	if err != nil {
 		return autoSyncFailure(r, err)
 	}
+	r.Policy.ObservedState = observed.State
 	pending := r.Baseline
 	pending.State = r.Policy.PendingState
 	if pending.Provider == "linear" && pending.State != "" {
@@ -146,6 +158,7 @@ func autoSyncRun(ctx context.Context, prepare func(context.Context) (Prepared, e
 	if err != nil {
 		return autoSyncFailure(r, err)
 	}
+	r.Policy.ObservedState = out.State
 	r.Baseline = out
 	r.Policy.SourceState = p.Issue.State
 	r.Policy.PendingState = ""
@@ -167,6 +180,9 @@ func autoSyncFailure(r state.IssueTrackerAutoSyncRecord, err error) state.IssueT
 		case "issue_tracker_auto_sync_ineligible":
 			r.Policy.Outcome = "blocked"
 			r.Policy.Reason = "owner_or_entitlement_unavailable"
+		case "issue_tracker_inbound_changed":
+			r.Policy.Outcome = "conflict"
+			r.Policy.Reason = "source_intent_changed"
 		case "issue_tracker_connection_required":
 			r.Policy.Outcome = "blocked"
 			r.Policy.Reason = "connection_required"

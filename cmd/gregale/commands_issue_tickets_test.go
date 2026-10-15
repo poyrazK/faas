@@ -143,7 +143,7 @@ func TestIssueTicketAutoSyncCLIRequiresAlignmentAndPreservesPolicyRevision(t *te
 	issueID := "33333333-3333-4333-8333-333333333333"
 	linkID := "55555555-5555-4555-8555-555555555555"
 	snapshot := api.NativeIssueTrackerStatus{IssueID: issueID, LinkID: linkID, InstallationID: 42, Repository: "owner/repo", RepositoryID: 100, Status: api.IssueTrackerProviderStatus{Provider: "github", URL: "https://github.com/owner/repo/issues/42", ID: "42", State: "open"}}
-	policy := api.IssueTrackerAutoSync{LinkID: linkID, SourceIssueID: issueID, Outcome: "disabled"}
+	policy := api.IssueTrackerAutoSync{Direction: "outbound", LinkID: linkID, SourceIssueID: issueID, Outcome: "disabled"}
 	writes := 0
 	source := "open"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -165,13 +165,14 @@ func TestIssueTicketAutoSyncCLIRequiresAlignmentAndPreservesPolicyRevision(t *te
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedRevision != policy.Revision {
 				t.Error("policy revision lost", in, err)
 			}
-			if in.Enabled && (in.ExpectedStatus == nil || *in.ExpectedStatus != snapshot || in.ExpectedIssueState != "open") {
+			if in.Enabled && (in.Direction != "inbound" || in.ExpectedStatus == nil || *in.ExpectedStatus != snapshot || in.ExpectedIssueState != "open") {
 				t.Error("aligned snapshot lost")
 			}
 			policy.Enabled = in.Enabled
 			policy.Revision++
 			policy.Outcome = "disabled"
 			if in.Enabled {
+				policy.Direction = in.Direction
 				policy.Outcome = "matched"
 			}
 		}
@@ -186,7 +187,7 @@ func TestIssueTicketAutoSyncCLIRequiresAlignmentAndPreservesPolicyRevision(t *te
 	osStdout = &out
 	t.Cleanup(func() { osStdout = previousOut })
 	args := []string{"auto-sync", "--app", "payments", "--issue", issueID, "--link", linkID}
-	if cmdIssueTickets(append(args, "--enable")) != 0 || writes != 1 {
+	if cmdIssueTickets(append(args, "--enable", "--direction", "inbound")) != 0 || writes != 1 {
 		t.Fatal("native policy enable failed")
 	}
 	if cmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 {
@@ -386,5 +387,22 @@ func TestIssueTicketLinearConnectionCLIStoresWebhookSecretOnlyOnConnect(t *testi
 	}
 	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code == 0 || writes != 1 {
 		t.Fatal("credential flag allowed during inspection")
+	}
+}
+
+func TestIssueTicketInboundDirectionRefusesLegacyServerBeforeDelegation(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/auto-sync") {
+			t.Error("legacy server received a delegation")
+		}
+		_ = json.NewEncoder(w).Encode(api.IssueTrackerAutoSync{LinkID: "55555555-5555-4555-8555-555555555555", SourceIssueID: "33333333-3333-4333-8333-333333333333", Outcome: "disabled"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if cmdIssueTickets([]string{"auto-sync", "--app", "payments", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--enable", "--direction", "inbound"}) == 0 || calls != 1 {
+		t.Fatal("legacy server silently received outbound authority", calls)
 	}
 }

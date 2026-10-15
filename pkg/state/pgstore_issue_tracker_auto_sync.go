@@ -16,7 +16,7 @@ var ErrNoIssueTrackerAutoSyncWork = errors.New("no automatic tracker sync due")
 var ErrIssueTrackerAutoSyncClaimLost = errors.New("automatic tracker sync claim changed")
 
 func autoSyncRow(r sqlc.IssueTrackerAutoSync) (IssueTrackerAutoSyncRecord, error) {
-	out := IssueTrackerAutoSyncRecord{AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), BindingFingerprint: r.BindingFingerprint, ClaimID: issueID(r.ClaimID), ClaimUntil: r.ClaimUntil.Time, Policy: api.IssueTrackerAutoSync{LinearOpenStateID: r.LinearOpenStateID, LinearResolvedStateID: r.LinearResolvedStateID, LinkID: issueID(r.LinkID), Enabled: r.Enabled, Revision: r.Revision, SourceIssueID: issueID(r.SourceIssueID), SourceState: r.SourceState, PendingState: r.PendingState, Outcome: r.Outcome, Reason: r.Reason}}
+	out := IssueTrackerAutoSyncRecord{SourceRevision: r.SourceRevision, PendingSourceRevision: r.PendingSourceRevision, AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), BindingFingerprint: r.BindingFingerprint, ClaimID: issueID(r.ClaimID), ClaimUntil: r.ClaimUntil.Time, Policy: api.IssueTrackerAutoSync{Direction: r.Direction, ObservedState: r.ObservedState, LinearOpenStateID: r.LinearOpenStateID, LinearResolvedStateID: r.LinearResolvedStateID, LinkID: issueID(r.LinkID), Enabled: r.Enabled, Revision: r.Revision, SourceIssueID: issueID(r.SourceIssueID), SourceState: r.SourceState, PendingState: r.PendingState, Outcome: r.Outcome, Reason: r.Reason}}
 	if err := json.Unmarshal(r.Baseline, &out.Baseline); err != nil {
 		return out, ErrInvalidArgument
 	}
@@ -55,7 +55,7 @@ func (s *PgStore) GetIssueTrackerAutoSync(ctx context.Context, app, account, iss
 		return IssueTrackerAutoSyncRecord{}, err
 	}
 	row, err := q.IssueTrackerAutoSyncGet(ctx, tx, issueUUID(link))
-	out := IssueTrackerAutoSyncRecord{AppID: app, AccountID: account, Policy: api.IssueTrackerAutoSync{LinkID: link, SourceIssueID: issueID(root.ID), Outcome: "disabled"}}
+	out := IssueTrackerAutoSyncRecord{AppID: app, AccountID: account, Policy: api.IssueTrackerAutoSync{Direction: "outbound", LinkID: link, SourceIssueID: issueID(root.ID), Outcome: "disabled"}}
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	} else if err == nil {
@@ -84,7 +84,7 @@ func (s *PgStore) ConfigureIssueTrackerAutoSync(ctx context.Context, app, accoun
 	if err != nil {
 		return in, err
 	}
-	row, err := q.IssueTrackerAutoSyncGet(ctx, tx, issueUUID(in.Policy.LinkID))
+	row, err := q.IssueTrackerInboundPolicyLock(ctx, tx, issueUUID(in.Policy.LinkID))
 	revision := int64(0)
 	if err == nil {
 		revision = row.Revision
@@ -95,6 +95,25 @@ func (s *PgStore) ConfigureIssueTrackerAutoSync(ctx context.Context, app, accoun
 		return in, api.NewProblem(409, "issue_tracker_auto_sync_changed", "Automatic sync policy changed", "read the policy and native status again before configuring")
 	}
 	if in.Policy.Enabled {
+		direction, e := api.NormalizeIssueTrackerSyncDirection(in.Policy.Direction)
+		if e != nil {
+			return in, e
+		}
+		in.Policy.Direction = direction
+		if direction != "outbound" {
+			if row.PendingState != "" || row.ClaimUntil.Valid && row.ClaimUntil.Time.After(time.Now()) {
+				return in, IssueTrackerInboundChanged()
+			}
+			source, e := lockIssueTrackerSourceRevision(ctx, q, tx, app, account, issueID(root.ID))
+			if e != nil {
+				return in, e
+			}
+			if in.SourceRevision <= 0 || source != in.SourceRevision {
+				return in, IssueTrackerInboundChanged()
+			}
+		} else {
+			in.SourceRevision = 0
+		}
 		// Verify the source lifecycle in the configuration transaction as well.
 		if root.State != in.Policy.SourceState {
 			return in, api.NewProblem(409, "issue_tracker_auto_sync_changed", "Issue state changed", "preview again before enabling automatic sync")
@@ -103,11 +122,11 @@ func (s *PgStore) ConfigureIssueTrackerAutoSync(ctx context.Context, app, accoun
 		if e != nil {
 			return in, e
 		}
-		row, err = q.IssueTrackerAutoSyncEnable(ctx, tx, sqlc.IssueTrackerAutoSyncEnableParams{LinkID: issueUUID(in.Policy.LinkID), AppID: issueUUID(app), AccountID: issueUUID(account), SourceIssueID: root.ID, BindingFingerprint: in.BindingFingerprint, Baseline: data, SourceState: in.Policy.SourceState, LinearOpenStateID: in.Policy.LinearOpenStateID, LinearResolvedStateID: in.Policy.LinearResolvedStateID})
+		row, err = q.IssueTrackerAutoSyncEnable(ctx, tx, sqlc.IssueTrackerAutoSyncEnableParams{LinkID: issueUUID(in.Policy.LinkID), AppID: issueUUID(app), AccountID: issueUUID(account), SourceIssueID: root.ID, BindingFingerprint: in.BindingFingerprint, Baseline: data, SourceState: in.Policy.SourceState, LinearOpenStateID: in.Policy.LinearOpenStateID, LinearResolvedStateID: in.Policy.LinearResolvedStateID, Direction: in.Policy.Direction, SourceRevision: in.SourceRevision, ObservedState: in.Baseline.State})
 	} else if revision > 0 {
 		row, err = q.IssueTrackerAutoSyncDisable(ctx, tx, issueUUID(in.Policy.LinkID))
 	} else {
-		return IssueTrackerAutoSyncRecord{AppID: app, AccountID: account, Policy: api.IssueTrackerAutoSync{LinkID: in.Policy.LinkID, SourceIssueID: issueID(root.ID), Outcome: "disabled"}}, tx.Commit(ctx)
+		return IssueTrackerAutoSyncRecord{AppID: app, AccountID: account, Policy: api.IssueTrackerAutoSync{Direction: "outbound", LinkID: in.Policy.LinkID, SourceIssueID: issueID(root.ID), Outcome: "disabled"}}, tx.Commit(ctx)
 	}
 	if err != nil {
 		return in, err
@@ -142,7 +161,7 @@ func (s *PgStore) CheckIssueTrackerAutoSyncClaim(ctx context.Context, in IssueTr
 	return nil
 }
 func (s *PgStore) MarkIssueTrackerAutoSyncPending(ctx context.Context, in IssueTrackerAutoSyncRecord, wanted string) (IssueTrackerAutoSyncRecord, error) {
-	row, err := sqlc.New().IssueTrackerAutoSyncPending(ctx, s.pool, sqlc.IssueTrackerAutoSyncPendingParams{LinkID: issueUUID(in.Policy.LinkID), Revision: in.Policy.Revision, ClaimID: issueUUID(in.ClaimID), PendingState: wanted})
+	row, err := sqlc.New().IssueTrackerAutoSyncPending(ctx, s.pool, sqlc.IssueTrackerAutoSyncPendingParams{LinkID: issueUUID(in.Policy.LinkID), Revision: in.Policy.Revision, ClaimID: issueUUID(in.ClaimID), PendingState: wanted, PendingSourceRevision: in.PendingSourceRevision})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return in, ErrIssueTrackerAutoSyncClaimLost
 	}
@@ -156,7 +175,7 @@ func (s *PgStore) FinishIssueTrackerAutoSync(ctx context.Context, in IssueTracke
 	if err != nil {
 		return in, err
 	}
-	row, err := sqlc.New().IssueTrackerAutoSyncFinish(ctx, s.pool, sqlc.IssueTrackerAutoSyncFinishParams{LinkID: issueUUID(in.Policy.LinkID), Revision: in.Policy.Revision, ClaimID: issueUUID(in.ClaimID), Baseline: data, SourceState: in.Policy.SourceState, PendingState: in.Policy.PendingState, Outcome: in.Policy.Outcome, Reason: in.Policy.Reason, NextCheckAt: issueTime(time.Now().Add(api.IssueTrackerAutoSyncCheckInterval))})
+	row, err := sqlc.New().IssueTrackerAutoSyncFinish(ctx, s.pool, sqlc.IssueTrackerAutoSyncFinishParams{LinkID: issueUUID(in.Policy.LinkID), Revision: in.Policy.Revision, ClaimID: issueUUID(in.ClaimID), Baseline: data, SourceRevision: in.SourceRevision, PendingSourceRevision: in.PendingSourceRevision, ObservedState: in.Policy.ObservedState, SourceState: in.Policy.SourceState, PendingState: in.Policy.PendingState, Outcome: in.Policy.Outcome, Reason: in.Policy.Reason, NextCheckAt: issueTime(time.Now().Add(api.IssueTrackerAutoSyncCheckInterval))})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return in, ErrIssueTrackerAutoSyncClaimLost
 	}

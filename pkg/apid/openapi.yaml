@@ -13807,7 +13807,7 @@ paths:
       - name: link_id
         in: path
         required: true
-        description: Stored GitHub or Linear reference whose automatic push policy is inspected or configured.
+        description: Stored GitHub or Linear reference whose automatic sync policy is inspected or configured.
         schema: { type: string, format: uuid }
     get:
       tags: [apps]
@@ -13835,13 +13835,13 @@ paths:
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
-        description: Explicit delegation decision and observed policy/native snapshot for automatic push.
+        description: Explicit delegation decision and observed policy/native snapshot for automatic sync.
         content:
           application/json:
             schema: { $ref: '#/components/schemas/UpdateIssueTrackerAutoSyncRequest' }
       responses:
         '200':
-          description: Persisted automatic push policy with its new configuration revision.
+          description: Persisted automatic sync policy with its new configuration revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IssueTrackerAutoSync' }
@@ -82556,9 +82556,11 @@ components:
         webhook_secret: { type: string, minLength: 32, maxLength: 4096, writeOnly: true, description: Optional Linear webhook signing secret stored with the connection. Omission on replacement disables callbacks. Never returned or logged. }
     IssueTrackerAutoSync:
       type: object
-      description: Opt-in automatic Gregale-to-GitHub or Linear policy and latest durable worker outcome for a tracker reference.
+      description: Opt-in tracker direction and latest durable worker outcome. Inbound resolutions require explicit fixing-deployment evidence.
       required: [link_id, enabled, revision, source_issue_id, outcome]
       properties:
+        direction: { type: string, enum: [outbound, inbound, both], description: Outbound pushes Gregale lifecycle; inbound applies verified reopenings; both enables both behaviors. }
+        observed_state: { type: string, enum: [open, resolved], description: Last provider lifecycle observed by the worker including changes held for review. }
         link_id: { type: string, format: uuid }
         enabled: { type: boolean }
         revision: { type: integer, format: int64, minimum: 0 }
@@ -82574,17 +82576,18 @@ components:
         linear_resolved_state_id: { type: string, format: uuid, description: Selected resolved workflow destination for Linear policies. }
     UpdateIssueTrackerAutoSyncRequest:
       type: object
-      description: Explicit automatic push delegation against a known policy revision and aligned native/source lifecycle snapshot.
+      description: Explicit direction delegation against a known policy revision and aligned native/source lifecycle snapshot. Inbound closures are held for fixing-deployment review.
       additionalProperties: false
       required: [enabled, expected_revision]
       properties:
+        direction: { type: string, enum: [outbound, inbound, both], description: Defaults to outbound when omitted. Inbound and both require a fresh source intent baseline. }
         enabled: { type: boolean }
         expected_revision: { type: integer, format: int64, minimum: 0 }
         expected_status: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
         expected_issue_state: { type: string, enum: [open, resolved] }
         expected_linear_status: { $ref: '#/components/schemas/NativeLinearIssueTrackerStatus' }
-        linear_open_state_id: { type: string, format: uuid, description: Active same-team open workflow required to enable Linear automatic pushes. }
-        linear_resolved_state_id: { type: string, format: uuid, description: Active same-team completed workflow required to enable Linear automatic pushes. }
+        linear_open_state_id: { type: string, format: uuid, description: Active same-team open workflow required to enable Linear automatic sync. }
+        linear_resolved_state_id: { type: string, format: uuid, description: Active same-team completed workflow required to enable Linear automatic sync. }
 
     IssueTrackerProviderStatus:
       description: Observed lifecycle and identity of an external tracker issue.

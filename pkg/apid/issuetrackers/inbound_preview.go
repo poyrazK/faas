@@ -32,7 +32,7 @@ func inboundPreview(p Prepared, r state.IssueTrackerAutoSyncRecord, observed api
 		v.Reason = "policy_disabled"
 		return v
 	}
-	if r.Policy.Outcome == "blocked" || r.Policy.Outcome == "conflict" && r.Policy.Reason != "provider_changed" {
+	if r.Policy.Outcome == "blocked" && r.Policy.Reason != "fixing_deployment_required" || r.Policy.Outcome == "conflict" && r.Policy.Reason != "provider_changed" {
 		v.Reason = "policy_requires_review"
 		return v
 	}

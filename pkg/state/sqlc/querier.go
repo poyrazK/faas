@@ -1668,6 +1668,7 @@ type Querier interface {
 	IssueTeamMembers(ctx context.Context, db DBTX, teamID pgtype.UUID) ([]pgtype.UUID, error)
 	IssueTeamReferenced(ctx context.Context, db DBTX, teamID pgtype.UUID) (bool, error)
 	IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTokenStillValidParams) (bool, error)
+	IssueTrackerAutoReopenComplete(ctx context.Context, db DBTX, arg IssueTrackerAutoReopenCompleteParams) (IssueTrackerAutoSync, error)
 	IssueTrackerAutoSyncClaim(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncClaimParams) (IssueTrackerAutoSync, error)
 	IssueTrackerAutoSyncDisable(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error)
 	IssueTrackerAutoSyncEnable(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncEnableParams) (IssueTrackerAutoSync, error)
@@ -1694,6 +1695,10 @@ type Querier interface {
 	IssueTrackerLinearGet(ctx context.Context, db DBTX, arg IssueTrackerLinearGetParams) (IssueTrackerLinearConnection, error)
 	IssueTrackerLinearOwner(ctx context.Context, db DBTX, arg IssueTrackerLinearOwnerParams) (pgtype.UUID, error)
 	IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueTrackerLinearPutParams) (IssueTrackerLinearConnection, error)
+	IssueTrackerSourceRevision(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionParams) (int64, error)
+	// Acquire the fence only. Read the effective group revision in a new statement
+	// after this lock returns, so a wait cannot preserve an older subquery snapshot.
+	IssueTrackerSourceRevisionLock(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionLockParams) (int64, error)
 	IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error)
 	IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error)
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)

@@ -8,6 +8,14 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.issue_tracker_auto_sync_direction import (
+    IssueTrackerAutoSyncDirection,
+    check_issue_tracker_auto_sync_direction,
+)
+from ..models.issue_tracker_auto_sync_observed_state import (
+    IssueTrackerAutoSyncObservedState,
+    check_issue_tracker_auto_sync_observed_state,
+)
 from ..models.issue_tracker_auto_sync_outcome import IssueTrackerAutoSyncOutcome, check_issue_tracker_auto_sync_outcome
 from ..models.issue_tracker_auto_sync_pending_state import (
     IssueTrackerAutoSyncPendingState,
@@ -28,13 +36,20 @@ T = TypeVar("T", bound="IssueTrackerAutoSync")
 
 @_attrs_define
 class IssueTrackerAutoSync:
-    """Opt-in automatic Gregale-to-GitHub or Linear policy and latest durable worker outcome for a tracker reference."""
+    """Opt-in tracker direction and latest durable worker outcome. Inbound resolutions require explicit fixing-deployment
+    evidence.
+
+    """
 
     link_id: UUID
     enabled: bool
     revision: int
     source_issue_id: UUID
     outcome: IssueTrackerAutoSyncOutcome
+    direction: IssueTrackerAutoSyncDirection | Unset = UNSET
+    """Outbound pushes Gregale lifecycle; inbound applies verified reopenings; both enables both behaviors."""
+    observed_state: IssueTrackerAutoSyncObservedState | Unset = UNSET
+    """Last provider lifecycle observed by the worker including changes held for review."""
     source_state: IssueTrackerAutoSyncSourceState | Unset = UNSET
     provider_state: IssueTrackerAutoSyncProviderState | Unset = UNSET
     pending_state: IssueTrackerAutoSyncPendingState | Unset = UNSET
@@ -57,6 +72,14 @@ class IssueTrackerAutoSync:
         source_issue_id = str(self.source_issue_id)
 
         outcome: str = self.outcome
+
+        direction: str | Unset = UNSET
+        if not isinstance(self.direction, Unset):
+            direction = self.direction
+
+        observed_state: str | Unset = UNSET
+        if not isinstance(self.observed_state, Unset):
+            observed_state = self.observed_state
 
         source_state: str | Unset = UNSET
         if not isinstance(self.source_state, Unset):
@@ -99,6 +122,10 @@ class IssueTrackerAutoSync:
                 "outcome": outcome,
             }
         )
+        if direction is not UNSET:
+            field_dict["direction"] = direction
+        if observed_state is not UNSET:
+            field_dict["observed_state"] = observed_state
         if source_state is not UNSET:
             field_dict["source_state"] = source_state
         if provider_state is not UNSET:
@@ -130,6 +157,20 @@ class IssueTrackerAutoSync:
         source_issue_id = UUID(d.pop("source_issue_id"))
 
         outcome = check_issue_tracker_auto_sync_outcome(d.pop("outcome"))
+
+        _direction = d.pop("direction", UNSET)
+        direction: IssueTrackerAutoSyncDirection | Unset
+        if isinstance(_direction, Unset):
+            direction = UNSET
+        else:
+            direction = check_issue_tracker_auto_sync_direction(_direction)
+
+        _observed_state = d.pop("observed_state", UNSET)
+        observed_state: IssueTrackerAutoSyncObservedState | Unset
+        if isinstance(_observed_state, Unset):
+            observed_state = UNSET
+        else:
+            observed_state = check_issue_tracker_auto_sync_observed_state(_observed_state)
 
         _source_state = d.pop("source_state", UNSET)
         source_state: IssueTrackerAutoSyncSourceState | Unset
@@ -188,6 +229,8 @@ class IssueTrackerAutoSync:
             revision=revision,
             source_issue_id=source_issue_id,
             outcome=outcome,
+            direction=direction,
+            observed_state=observed_state,
             source_state=source_state,
             provider_state=provider_state,
             pending_state=pending_state,

@@ -31,3 +31,10 @@ type IssueTrackerFixingDeployment struct {
 	ID, CommitSHA string
 	CreatedAt     time.Time
 }
+
+// IssueTrackerInboundAutoStore separates durable source intent from worker claims
+// and completes an inbound reopening together with its provider baseline.
+type IssueTrackerInboundAutoStore interface {
+	GetIssueTrackerSourceRevision(context.Context, string, string, string) (int64, error)
+	ApplyIssueTrackerAutoReopen(context.Context, IssueTrackerAutoSyncRecord, api.IssueTrackerProviderStatus) (IssueTrackerAutoSyncRecord, error)
+}

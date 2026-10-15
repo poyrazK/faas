@@ -21,7 +21,7 @@ func TestInboundAssessmentRendersWithoutApplyControl(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := out.String()
-			if !strings.Contains(body, "Inbound sync preview") || !strings.Contains(body, template.HTMLEscapeString(view.InboundReason)) || !strings.Contains(body, "Automatic inbound sync is not enabled") {
+			if !strings.Contains(body, "Inbound sync preview") || !strings.Contains(body, template.HTMLEscapeString(view.InboundReason)) || !strings.Contains(body, "Automatic inbound reopenings require an explicitly enabled") {
 				t.Fatal(body)
 			}
 			if strings.Contains(body, `value="pull"`) || strings.Contains(body, `value="apply"`) {

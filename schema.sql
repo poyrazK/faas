@@ -58304,8 +58304,6 @@ CREATE INDEX issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id
 --
 
 CREATE TABLE public.issue_tracker_auto_sync (
-    linear_open_state_id text DEFAULT ''::text NOT NULL,
-    linear_resolved_state_id text DEFAULT ''::text NOT NULL,
     link_id uuid NOT NULL,
     app_id uuid NOT NULL,
     account_id uuid NOT NULL,
@@ -58323,14 +58321,25 @@ CREATE TABLE public.issue_tracker_auto_sync (
     last_checked_at timestamp with time zone,
     next_check_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    linear_open_state_id text DEFAULT ''::text NOT NULL,
+    linear_resolved_state_id text DEFAULT ''::text NOT NULL,
+    direction text DEFAULT 'outbound'::text NOT NULL,
+    source_revision bigint DEFAULT 0 NOT NULL,
+    pending_source_revision bigint DEFAULT 0 NOT NULL,
+    observed_state text DEFAULT ''::text NOT NULL,
     CONSTRAINT issue_tracker_auto_sync_baseline_check CHECK ((jsonb_typeof(baseline) = 'object'::text)),
     CONSTRAINT issue_tracker_auto_sync_binding_fingerprint_check CHECK ((binding_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_tracker_auto_sync_direction_check CHECK ((direction = ANY (ARRAY['outbound'::text, 'inbound'::text, 'both'::text]))),
     CONSTRAINT issue_tracker_auto_sync_linear_mapping_check CHECK ((((COALESCE((baseline ->> 'provider'::text), ''::text) = 'github'::text) AND (linear_open_state_id = ''::text) AND (linear_resolved_state_id = ''::text)) OR ((COALESCE((baseline ->> 'provider'::text), ''::text) = 'linear'::text) AND (linear_open_state_id ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'::text) AND (linear_resolved_state_id ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'::text) AND (linear_open_state_id <> '00000000-0000-0000-0000-000000000000'::text) AND (linear_resolved_state_id <> '00000000-0000-0000-0000-000000000000'::text) AND (linear_open_state_id <> linear_resolved_state_id)))),
+    CONSTRAINT issue_tracker_auto_sync_observed_state_check CHECK ((observed_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
     CONSTRAINT issue_tracker_auto_sync_outcome_check CHECK ((outcome = ANY (ARRAY['disabled'::text, 'matched'::text, 'pending'::text, 'applied'::text, 'error'::text, 'conflict'::text, 'blocked'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_pending_source_revision_check CHECK ((pending_source_revision >= 0)),
     CONSTRAINT issue_tracker_auto_sync_pending_state_check CHECK ((pending_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
     CONSTRAINT issue_tracker_auto_sync_reason_check CHECK ((octet_length(reason) <= 128)),
     CONSTRAINT issue_tracker_auto_sync_revision_check CHECK ((revision > 0)),
-    CONSTRAINT issue_tracker_auto_sync_source_state_check CHECK ((source_state = ANY (ARRAY['open'::text, 'resolved'::text])))
+    CONSTRAINT issue_tracker_auto_sync_source_revision_check CHECK ((source_revision >= 0)),
+    CONSTRAINT issue_tracker_auto_sync_source_state_check CHECK ((source_state = ANY (ARRAY['open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_inbound_revision_required CHECK (((direction = 'outbound'::text) OR (source_revision > 0)))
 );
 
 
@@ -58606,6 +58615,7 @@ CREATE FUNCTION public.issue_tracker_inbound_bump() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE target uuid;
+ source_change boolean;
 BEGIN
  IF TG_TABLE_NAME = 'apps' THEN
   target := NEW.id;
@@ -58620,8 +58630,34 @@ BEGIN
  ELSE
   target := NEW.app_id;
  END IF;
+ source_change := TG_TABLE_NAME IN ('apps','issue_tracker_linear_connections');
  INSERT INTO issue_tracker_inbound_guards(app_id) SELECT target WHERE EXISTS(SELECT 1 FROM apps WHERE id=target)
- ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1;
+ ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1,
+ source_revision=CASE WHEN source_change THEN nextval('issue_tracker_source_revision_seq') ELSE issue_tracker_inbound_guards.source_revision END;
+ IF TG_TABLE_NAME='app_issues' THEN
+  IF TG_OP<>'DELETE' THEN PERFORM issue_tracker_source_bump(NEW.id); END IF;
+ ELSIF TG_TABLE_NAME='issue_group_links' THEN
+  IF TG_OP<>'INSERT' THEN
+   PERFORM issue_tracker_source_bump(OLD.issue_id);
+   PERFORM issue_tracker_source_bump(OLD.canonical_issue_id);
+  END IF;
+  IF TG_OP<>'DELETE' THEN
+   PERFORM issue_tracker_source_bump(NEW.issue_id);
+   PERFORM issue_tracker_source_bump(NEW.canonical_issue_id);
+  END IF;
+ ELSIF TG_TABLE_NAME='issue_split_rules' THEN
+  IF TG_OP<>'INSERT' THEN
+   PERFORM issue_tracker_source_bump(OLD.source_issue_id);
+   PERFORM issue_tracker_source_bump(OLD.target_issue_id);
+  END IF;
+  IF TG_OP<>'DELETE' THEN
+   PERFORM issue_tracker_source_bump(NEW.source_issue_id);
+   PERFORM issue_tracker_source_bump(NEW.target_issue_id);
+  END IF;
+ ELSIF TG_TABLE_NAME='issue_tracker_links' THEN
+  IF TG_OP<>'INSERT' THEN PERFORM issue_tracker_source_bump(OLD.issue_id); END IF;
+  IF TG_OP<>'DELETE' THEN PERFORM issue_tracker_source_bump(NEW.issue_id); END IF;
+ END IF;
  RETURN NULL;
 END $$;
 
@@ -58638,7 +58674,7 @@ BEGIN
   (TG_OP <> 'INSERT' AND github_install_id=OLD.installation_id AND github_install_account_id=OLD.account_id) OR
   (TG_OP <> 'DELETE' AND github_install_id=NEW.installation_id AND github_install_account_id=NEW.account_id)
  ORDER BY id
- ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1;
+ ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1,source_revision=nextval('issue_tracker_source_revision_seq');
  RETURN NULL;
 END $$;
 
@@ -58649,7 +58685,9 @@ END $$;
 CREATE TABLE public.issue_tracker_inbound_guards (
     app_id uuid NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,
-    CONSTRAINT issue_tracker_inbound_guards_revision_check CHECK ((revision > 0))
+    source_revision bigint DEFAULT nextval('public.issue_tracker_source_revision_seq'::regclass) NOT NULL,
+    CONSTRAINT issue_tracker_inbound_guards_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_inbound_guards_source_revision_check CHECK ((source_revision > 0))
 );
 
 --
@@ -58747,7 +58785,7 @@ CREATE TRIGGER issue_inbound_policy_insert AFTER INSERT ON public.issue_tracker_
 -- Name: issue_tracker_auto_sync issue_inbound_policy_update; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER issue_inbound_policy_update AFTER UPDATE ON public.issue_tracker_auto_sync FOR EACH ROW WHEN (((((((((((old.revision IS DISTINCT FROM new.revision) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.source_issue_id IS DISTINCT FROM new.source_issue_id)) OR (old.binding_fingerprint IS DISTINCT FROM new.binding_fingerprint)) OR (old.baseline IS DISTINCT FROM new.baseline)) OR (old.source_state IS DISTINCT FROM new.source_state)) OR (old.pending_state IS DISTINCT FROM new.pending_state)) OR (old.outcome IS DISTINCT FROM new.outcome)) OR (old.reason IS DISTINCT FROM new.reason)) OR (old.claim_id IS DISTINCT FROM new.claim_id))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+CREATE TRIGGER issue_inbound_policy_update AFTER UPDATE ON public.issue_tracker_auto_sync FOR EACH ROW WHEN (((((((((((((((old.revision IS DISTINCT FROM new.revision) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.source_issue_id IS DISTINCT FROM new.source_issue_id)) OR (old.binding_fingerprint IS DISTINCT FROM new.binding_fingerprint)) OR (old.baseline IS DISTINCT FROM new.baseline)) OR (old.source_state IS DISTINCT FROM new.source_state)) OR (old.pending_state IS DISTINCT FROM new.pending_state)) OR (old.outcome IS DISTINCT FROM new.outcome)) OR (old.reason IS DISTINCT FROM new.reason)) OR (old.claim_id IS DISTINCT FROM new.claim_id)) OR (old.direction IS DISTINCT FROM new.direction)) OR (old.source_revision IS DISTINCT FROM new.source_revision)) OR (old.pending_source_revision IS DISTINCT FROM new.pending_source_revision)) OR (old.observed_state IS DISTINCT FROM new.observed_state))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
 
 --
 -- Name: issue_split_rules issue_inbound_rules; Type: TRIGGER; Schema: public; Owner: -
@@ -58761,3 +58799,49 @@ CREATE TRIGGER issue_inbound_rules AFTER INSERT OR DELETE OR UPDATE ON public.is
 
 ALTER TABLE ONLY public.issue_tracker_inbound_guards
     ADD CONSTRAINT issue_tracker_inbound_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_source_bump(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_tracker_source_bump(target uuid) RETURNS void
+    LANGUAGE sql
+    AS $$
+ INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues WHERE id=target
+ ON CONFLICT(issue_id) DO UPDATE SET revision=nextval('issue_tracker_source_revision_seq');
+$$;
+
+--
+-- Name: issue_tracker_source_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.issue_tracker_source_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+--
+-- Name: issue_tracker_source_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_source_guards (
+    issue_id uuid NOT NULL,
+    revision bigint DEFAULT nextval('public.issue_tracker_source_revision_seq'::regclass) NOT NULL,
+    CONSTRAINT issue_tracker_source_guards_revision_check CHECK ((revision > 0))
+);
+
+--
+-- Name: issue_tracker_source_guards issue_tracker_source_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_source_guards
+    ADD CONSTRAINT issue_tracker_source_guards_pkey PRIMARY KEY (issue_id);
+
+--
+-- Name: issue_tracker_source_guards issue_tracker_source_guards_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_source_guards
+    ADD CONSTRAINT issue_tracker_source_guards_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;

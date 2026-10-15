@@ -98,14 +98,14 @@ test('native Linear status keeps connection and group preview fences',async(t)=>
 
 test('Linear automatic policy preserves workflow mapping and native scope',async(t)=>{
  const issue='33333333-3333-4333-8333-333333333333',link='55555555-5555-4555-8555-555555555555';
- const body={enabled:true,expected_revision:3,expected_issue_state:'open' as const,linear_open_state_id:'11111111-1111-4111-8111-111111111111',linear_resolved_state_id:'22222222-2222-4222-8222-222222222222',expected_linear_status:{issue_id:issue,link_id:link,connection_revision:7,group_fingerprint:'a'.repeat(64),workspace_id:issue,team_id:issue,viewer_id:issue,status:{provider:'linear' as const,url:'https://linear.app/acme/issue/PAY-42',id:issue,state:'open' as const,team_id:issue,state_id:issue}}};
+ const body={direction:'both' as const,enabled:true,expected_revision:3,expected_issue_state:'open' as const,linear_open_state_id:'11111111-1111-4111-8111-111111111111',linear_resolved_state_id:'22222222-2222-4222-8222-222222222222',expected_linear_status:{issue_id:issue,link_id:link,connection_revision:7,group_fingerprint:'a'.repeat(64),workspace_id:issue,team_id:issue,viewer_id:issue,status:{provider:'linear' as const,url:'https://linear.app/acme/issue/PAY-42',id:issue,state:'open' as const,team_id:issue,state_id:issue}}};
  const server=createServer(async(req,res)=>{
   assert.equal(req.method,'PUT');assert.equal(req.url,`/v1/apps/payments/issues/${issue}/tracker-links/${link}/auto-sync`);
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),body);
-  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({link_id:link,source_issue_id:issue,enabled:true,revision:4,outcome:'matched',linear_open_state_id:body.linear_open_state_id,linear_resolved_state_id:body.linear_resolved_state_id}));
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({direction:'both',observed_state:'resolved',link_id:link,source_issue_id:issue,enabled:true,revision:4,outcome:'matched',linear_open_state_id:body.linear_open_state_id,linear_resolved_state_id:body.linear_resolved_state_id}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
  const address=server.address();assert.ok(address&&typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
- const out=await AppsService.updateIssueTrackerAutoSync({slug:'payments',issueId:issue,linkId:link,requestBody:body});assert.equal(out.linear_resolved_state_id,body.linear_resolved_state_id);
+ const out=await AppsService.updateIssueTrackerAutoSync({slug:'payments',issueId:issue,linkId:link,requestBody:body});assert.equal(out.linear_resolved_state_id,body.linear_resolved_state_id);assert.equal(out.direction,'both');assert.equal(out.observed_state,'resolved');
 });
 
 test('Linear callback configuration keeps the signing secret write-only',async(t)=>{

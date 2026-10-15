@@ -125,7 +125,7 @@ func dashboardTrackerSyncFormBody(r *http.Request) ([]byte, error) {
 	if err != nil || revision < 0 {
 		return nil, api.ErrValidation("reload the policy before continuing")
 	}
-	in := api.UpdateIssueTrackerAutoSyncRequest{Enabled: action == "enable", ExpectedRevision: revision, ExpectedIssueState: r.PostForm.Get("source_state"), LinearOpenStateID: r.PostForm.Get("linear_open_state_id"), LinearResolvedStateID: r.PostForm.Get("linear_resolved_state_id")}
+	in := api.UpdateIssueTrackerAutoSyncRequest{Direction: r.PostForm.Get("direction"), Enabled: action == "enable", ExpectedRevision: revision, ExpectedIssueState: r.PostForm.Get("source_state"), LinearOpenStateID: r.PostForm.Get("linear_open_state_id"), LinearResolvedStateID: r.PostForm.Get("linear_resolved_state_id")}
 	if action == "disable" {
 		return json.Marshal(in)
 	}

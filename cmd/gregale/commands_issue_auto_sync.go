@@ -14,12 +14,13 @@ func cmdIssueAutoSync(args []string) int {
 	app := fs.String("app", "", "app slug")
 	issue := fs.String("issue", "", "issue UUID")
 	link := fs.String("link", "", "reference UUID")
-	enable := fs.Bool("enable", false, "delegate future Gregale lifecycle pushes to the native tracker worker")
+	enable := fs.Bool("enable", false, "delegate the selected lifecycle direction to the native tracker worker")
+	direction := fs.String("direction", "", "outbound (default), inbound reopenings, or both")
 	provider := fs.String("provider", "github", "github or linear")
 	openState := fs.String("linear-open-state", "", "selected Linear open workflow UUID")
 	resolvedState := fs.String("linear-resolved-state", "", "selected Linear resolved workflow UUID")
-	disable := fs.Bool("disable", false, "disable future automatic pushes")
-	flags, pos := normalizeDebugFlagArgs(args, map[string]bool{"app": true, "issue": true, "link": true, "provider": true, "linear-open-state": true, "linear-resolved-state": true})
+	disable := fs.Bool("disable", false, "pause automatic tracker sync")
+	flags, pos := normalizeDebugFlagArgs(args, map[string]bool{"app": true, "issue": true, "link": true, "provider": true, "direction": true, "linear-open-state": true, "linear-resolved-state": true})
 	if err := fs.Parse(flags); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -28,6 +29,12 @@ func cmdIssueAutoSync(args []string) int {
 	}
 	if *app == "" || len(pos) > 0 || (*enable && *disable) {
 		return printErr("Invalid automatic sync request", fmt.Errorf("require --app, --issue and --link; choose at most one of --enable or --disable"))
+	}
+	if _, err := api.NormalizeIssueTrackerSyncDirection(*direction); err != nil {
+		return printErr("Invalid automatic sync direction", err)
+	}
+	if *direction != "" && !*enable {
+		return printErr("Invalid automatic sync direction", fmt.Errorf("--direction requires --enable"))
 	}
 	if *provider != "github" && *provider != "linear" {
 		return printErr("Invalid automatic sync request", fmt.Errorf("provider must be github or linear"))
@@ -63,8 +70,11 @@ func cmdIssueAutoSync(args []string) int {
 	if err != nil {
 		return printErr("Cannot read automatic sync policy", err)
 	}
+	if *enable && (*direction == "inbound" || *direction == "both") && policy.Direction == "" {
+		return printErr("Inbound sync is unavailable", fmt.Errorf("this server does not advertise directional sync; upgrade it before enabling inbound or both"))
+	}
 	if *enable || *disable {
-		in := api.UpdateIssueTrackerAutoSyncRequest{Enabled: *enable, ExpectedRevision: policy.Revision}
+		in := api.UpdateIssueTrackerAutoSyncRequest{Direction: *direction, Enabled: *enable, ExpectedRevision: policy.Revision}
 		if *enable {
 			var observedIssueID, observedState string
 			if *provider == "linear" {
@@ -89,7 +99,7 @@ func cmdIssueAutoSync(args []string) int {
 				return printErr("Cannot read issue", e)
 			}
 			if detail.Issue.ID != observedIssueID || detail.Issue.State != observedState || (detail.Issue.State != "open" && detail.Issue.State != "resolved") {
-				return printErr("Align issue lifecycle before enabling", fmt.Errorf("explicitly synchronize the stored reference before automatic push"))
+				return printErr("Align issue lifecycle before enabling", fmt.Errorf("explicitly synchronize the stored reference before automatic sync"))
 			}
 			in.ExpectedIssueState = detail.Issue.State
 		}
@@ -98,9 +108,13 @@ func cmdIssueAutoSync(args []string) int {
 			return printErr("Cannot configure automatic sync", err)
 		}
 	}
+	if *enable && (*direction == "inbound" || *direction == "both") && policy.Direction != *direction {
+		return printErr("Sync direction was not confirmed", fmt.Errorf("read the policy and disable it before retrying; the server did not confirm the selected direction"))
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(policy))
 	}
-	fmt.Fprintf(osStdout, "enabled=%t\t%s\trevision=%d\t%s\n", policy.Enabled, policy.Outcome, policy.Revision, policy.Reason)
+	directionLabel, _ := api.NormalizeIssueTrackerSyncDirection(policy.Direction)
+	fmt.Fprintf(osStdout, "enabled=%t\tdirection=%s\t%s\trevision=%d\t%s\n", policy.Enabled, directionLabel, policy.Outcome, policy.Revision, policy.Reason)
 	return 0
 }

@@ -4001,8 +4001,6 @@ type IssueSplitRule struct {
 }
 
 type IssueTrackerAutoSync struct {
-	LinearOpenStateID     string
-	LinearResolvedStateID string
 	LinkID                pgtype.UUID
 	AppID                 pgtype.UUID
 	AccountID             pgtype.UUID
@@ -4020,6 +4018,12 @@ type IssueTrackerAutoSync struct {
 	LastCheckedAt         pgtype.Timestamptz
 	NextCheckAt           pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	LinearOpenStateID     string
+	LinearResolvedStateID string
+	Direction             string
+	SourceRevision        int64
+	PendingSourceRevision int64
+	ObservedState         string
 }
 
 type IssueTrackerCallback struct {
@@ -4053,8 +4057,9 @@ type IssueTrackerCallbackDiagnostic struct {
 }
 
 type IssueTrackerInboundGuard struct {
-	AppID    pgtype.UUID
-	Revision int64
+	AppID          pgtype.UUID
+	Revision       int64
+	SourceRevision int64
 }
 
 type IssueTrackerLinearConnection struct {
@@ -4099,6 +4104,11 @@ type IssueTrackerLink struct {
 	UpdatedAt          pgtype.Timestamptz
 	CreatedByAccountID pgtype.UUID
 	UpdatedByAccountID pgtype.UUID
+}
+
+type IssueTrackerSourceGuard struct {
+	IssueID  pgtype.UUID
+	Revision int64
 }
 
 type Job struct {

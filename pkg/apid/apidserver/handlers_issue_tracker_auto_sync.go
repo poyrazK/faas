@@ -54,6 +54,10 @@ func (s *server) updateIssueTrackerAutoSync(w http.ResponseWriter, r *http.Reque
 	if !decodeIssueBody(w, r, &in) {
 		return
 	}
+	if _, err := api.NormalizeIssueTrackerSyncDirection(in.Direction); err != nil {
+		writeNativeIssueTrackerError(w, err)
+		return
+	}
 	if in.ExpectedRevision < 0 {
 		api.WriteProblem(w, api.ErrValidation("expected_revision must be nonnegative"))
 		return

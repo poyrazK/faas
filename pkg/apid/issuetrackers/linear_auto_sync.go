@@ -12,7 +12,15 @@ func (s LinearService) EnableAutoSync(ctx context.Context, store state.IssueTrac
 	if in.ExpectedStatus != nil || in.ExpectedLinearStatus == nil || in.ExpectedRevision < 0 || (in.ExpectedIssueState != "open" && in.ExpectedIssueState != "resolved") {
 		return api.IssueTrackerAutoSync{}, api.ErrValidation("Linear delegation requires one native Linear snapshot, source lifecycle and policy revision")
 	}
+	direction, err := api.NormalizeIssueTrackerSyncDirection(in.Direction)
+	if err != nil {
+		return api.IssueTrackerAutoSync{}, err
+	}
 	p, err := s.prepare(ctx)
+	if err != nil {
+		return api.IssueTrackerAutoSync{}, err
+	}
+	source, err := autoSyncSourceBaseline(ctx, store, p, direction)
 	if err != nil {
 		return api.IssueTrackerAutoSync{}, err
 	}
@@ -27,11 +35,11 @@ func (s LinearService) EnableAutoSync(ctx context.Context, store state.IssueTrac
 		return api.IssueTrackerAutoSync{}, Changed()
 	}
 	if observed.Status.State != p.Issue.State {
-		return api.IssueTrackerAutoSync{}, api.NewProblem(409, "issue_tracker_auto_sync_requires_alignment", "Align lifecycle before enabling", "explicitly synchronize Gregale and Linear before enabling automatic push")
+		return api.IssueTrackerAutoSync{}, api.NewProblem(409, "issue_tracker_auto_sync_requires_alignment", "Align lifecycle before enabling", "explicitly synchronize Gregale and Linear before enabling automatic sync")
 	}
 	open, _ := uuid.Parse(in.LinearOpenStateID)
 	resolved, _ := uuid.Parse(in.LinearResolvedStateID)
-	row, err := store.ConfigureIssueTrackerAutoSync(ctx, p.Issue.AppID, p.Connection.AccountID, issue, state.IssueTrackerAutoSyncRecord{BindingFingerprint: autoSyncFingerprint(p), Baseline: observed.Status, Policy: api.IssueTrackerAutoSync{LinkID: p.Link.ID, Enabled: true, SourceIssueID: p.Issue.ID, SourceState: p.Issue.State, LinearOpenStateID: open.String(), LinearResolvedStateID: resolved.String()}}, in.ExpectedRevision)
+	row, err := store.ConfigureIssueTrackerAutoSync(ctx, p.Issue.AppID, p.Connection.AccountID, issue, state.IssueTrackerAutoSyncRecord{SourceRevision: source, BindingFingerprint: autoSyncFingerprint(p), Baseline: observed.Status, Policy: api.IssueTrackerAutoSync{Direction: direction, LinkID: p.Link.ID, Enabled: true, SourceIssueID: p.Issue.ID, SourceState: p.Issue.State, LinearOpenStateID: open.String(), LinearResolvedStateID: resolved.String()}}, in.ExpectedRevision)
 	return row.Policy, err
 }
 func linearDestination(p api.IssueTrackerAutoSync, state string) string {
@@ -44,6 +52,9 @@ func linearDestination(p api.IssueTrackerAutoSync, state string) string {
 // LinearAutoSyncStep uses the policy's immutable workflow mapping to recognize
 // uncertain writes. Unconfirmed pending writes are observed, never redispatched.
 func LinearAutoSyncStep(ctx context.Context, s LinearService, store state.IssueTrackerAutoSyncStore, r state.IssueTrackerAutoSyncRecord) state.IssueTrackerAutoSyncRecord {
+	if r.Policy.Direction == "inbound" || r.Policy.Direction == "both" {
+		return linearDirectionalSyncStep(ctx, s, store, r)
+	}
 	s.Host = autoSyncHost{Host: s.Host, store: store, record: r}
 	var snapshot api.NativeLinearIssueTrackerStatus
 	return autoSyncRun(ctx, s.prepare, func(ctx context.Context) (api.IssueTrackerProviderStatus, error) {
