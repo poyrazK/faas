@@ -231,7 +231,7 @@ func applyTestEnvironmentPlan(plan *testCampaignPolicyPlan) {
 			if environment.Context.Scenario != entry.Context.Scenario || environment.Context.Engine != entry.Context.Engine ||
 				(!environment.AllProfiles && environment.Context.Profile != "" && environment.Context.Profile != entry.Context.Profile) { continue }
 			for _, side := range []struct{name string; value testEnvironmentPlanSide}{{"baseline", environment.Baseline}, {"current", environment.Current}} {
-				if side.value.Action == "ready" || side.value.Action == "collect_execution_evidence" { continue }
+				if side.value.Action == "ready" || side.value.Action == "ready_preflight" || side.value.Action == "collect_execution_evidence" { continue }
 				if side.value.Action == "ready_existing_evidence" {
 					needsMore := false
 					for _, command := range entry.Suggestions { needsMore = needsMore || command.Side == side.name }

@@ -716,8 +716,61 @@ Output is informational: mismatches and unavailable metadata return 0 with
 ready false. Invalid options/policies/manifests/mappings, authentication errors,
 failed app reads, or stdout failures return 1. Partial read failures still emit
 the collected report. No preflight result changes policy execution requirements
-or replaces required test evidence. Planner ingestion is not automatic; review
-preflight findings before resolving the planner's prerequisites.
+or replaces required test evidence. Planner ingestion is opt-in through --preflight, as described below; review
+findings before using them to resolve planning prerequisites.
 
 Shell redirection must target a separate file so it does not truncate a policy,
 manifest, target map, or test report before the command starts.
+
+## Planning with a saved preflight
+
+```sh
+gregale test policy plan --policy regression-policy.yaml --manifest gregale-test.yaml --preflight environment-preflight.json --targets existing-workloads.yaml --preflight-side current
+```
+
+The optional preflight input resolves platform_evidence_required prerequisites
+for one side of the plan. The side defaults to current; baseline must be selected
+explicitly with --preflight-side baseline and an appropriate baseline workload
+mapping. One preflight/side is accepted per invocation. Review each side with
+its own mapping when their environments differ.
+
+The original target file is required. Its exact SHA-256 must match the report,
+so even changing or reformatting the mapping requires a fresh preflight. Inputs
+must be non-execution version 1 platform_preflight documents. Ambiguous
+requirement/workload identities, verified-execution claims, invalid timestamps,
+and mismatched mappings are rejected.
+
+The default maximum age is 15 minutes. Override it with --preflight-max-age
+within 1s..1h. The report must have a valid ordered read window, end no later
+than planning time, and remain fresh. Every readable workload observation must
+also be fresh and fall inside that window. Future-dated observations are rejected.
+The JSON report size limit is 8 MiB. These checks inspect saved data locally;
+the planner makes no platform calls.
+
+A preflight requirement must match the current rule name and exact selectors.
+The planner recomputes resource/runtime checks from allowlisted observed fields
+against current expectations. Saved ready flags, derived check statuses, and
+old expected values are not accepted as proof. Missing, unreadable, unmapped,
+incomplete, or nonmatching observations leave the prerequisite blocked. Partial
+preflight reports can resolve a requirement only when its necessary mapped
+workload observations are complete and valid.
+
+Only the requested API-observable platform fields are resolved. Declaration-only
+fixture/database/port settings still need execution snapshots, and unavailable
+precise binary versions remain blocked. Preflight cannot waive manifest changes,
+historical configuration problems, existing noncompliant report replacement, or
+other prerequisite types. A live correction does not remove bad execution
+receipts already present in a report.
+
+The plan includes a preflight summary with source-report and target-file hashes,
+selected side, age bound, and per-context resolution status. Resolved entries list
+the exact fields and oldest observation used. ready_preflight means only that
+the selected platform prerequisite can guide suggestions. Baseline/current
+executed coverage, sample counts, run IDs, and receipt evidence are unchanged.
+The other side remains blocked unless it independently has suitable evidence.
+
+These are planning observations, not a guarantee about future expiring
+environments or an authenticated attestation of an edited report. Execution
+must still meet every coverage and environment requirement. No original report
+or manifest is modified. Invalid preflight inputs return 1; unresolved valid
+observations remain informational blocked entries.

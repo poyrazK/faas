@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 type testCampaignPolicyPlan struct {
+	Preflight *testPlanPreflightSummary `json:"preflight,omitempty"`
 	Environments []testEnvironmentPlanEntry `json:"environment_requirements"`
 	SchemaVersion int                          `json:"schema_version"`
 	Informational bool                         `json:"informational"`
@@ -49,6 +51,10 @@ type testCampaignPlanCandidate struct {
 
 func cmdTestPolicyPlan(args []string) int {
 	fs := newFlagSet("test policy plan", flag.ContinueOnError)
+	preflightPath := fs.String("preflight", "", "optional platform preflight JSON")
+	targetsPath := fs.String("targets", "", "original mapping used for preflight")
+	preflightSide := fs.String("preflight-side", "current", "side whose platform prerequisites may be resolved")
+	preflightAge := fs.Duration("preflight-max-age", 15*time.Minute, "maximum preflight age (1s..1h)")
 	path := fs.String("policy", "", "YAML campaign policy")
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "scenario manifest")
 	from := fs.String("from", "", "optional current raw JSON report")
@@ -61,6 +67,13 @@ func cmdTestPolicyPlan(args []string) int {
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *path == "" || (*baseline != "" && *from == "") {
 		return printErr("Invalid policy plan options", errors.New("--policy is required; --baseline requires --from"))
+	}
+	preflightOptions := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "targets" || f.Name == "preflight-side" || f.Name == "preflight-max-age" { preflightOptions = true }
+	})
+	if (*preflightPath == "" && preflightOptions) || (*preflightPath != "" && *targetsPath == "") {
+		return printErr("Invalid plan preflight options", errors.New("--preflight requires --targets; preflight settings require --preflight"))
 	}
 	policy, err := readTestCampaignPolicy(*path)
 	if err != nil {
@@ -85,7 +98,12 @@ func cmdTestPolicyPlan(args []string) int {
 			return printErr("Could not read baseline", err)
 		}
 	}
-	plan, err := buildTestCampaignPolicyPlan(policy, manifest.Scenarios, *manifestPath, before, after)
+	var preflight *testPlannerPreflight
+	if *preflightPath != "" {
+		preflight, err = readTestPlannerPreflight(*preflightPath, *targetsPath, manifest.Scenarios, *preflightSide, *preflightAge, time.Now().UTC())
+		if err != nil { return printErr("Invalid planner preflight", err) }
+	}
+	plan, err := buildTestCampaignPolicyPlan(policy, manifest.Scenarios, *manifestPath, before, after, preflight)
 	if err != nil {
 		return printErr("Could not plan coverage", err)
 	}
@@ -127,7 +145,7 @@ func testCampaignPlanCandidates(scenario testScenario) ([]testCampaignPlanCandid
 	return cases, nil
 }
 
-func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string]testScenario, manifestPath string, before, after []testRunReceipt) (testCampaignPolicyPlan, error) {
+func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string]testScenario, manifestPath string, before, after []testRunReceipt, preflight ...*testPlannerPreflight) (testCampaignPolicyPlan, error) {
 	plan := testCampaignPolicyPlan{SchemaVersion: 1, Informational: true, Notes: []string{
 		"Commands are suggestions only; no environments are provisioned.",
 		"Matrix commands execute all cases. Suggestions are independent and may duplicate work across requirements.",
@@ -241,6 +259,10 @@ func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string
 		return plan, err
 	}
 	plan.Environments = environments
+	if len(preflight) > 1 { return plan, errors.New("only one side-specific preflight is supported per plan") }
+	if len(preflight) == 1 && preflight[0] != nil {
+		if err := applyTestPlannerPreflight(&plan, policy, preflight[0]); err != nil { return plan, err }
+	}
 	applyTestEnvironmentPlan(&plan)
 	return plan, nil
 }
