@@ -113,7 +113,7 @@ def sync_detailed(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[OperationWebhookBindingResponse | Problem]:
-    """Route a verified endpoint to a customer operation (ADR-1158).
+    """Route a verified endpoint to a customer operation (ADR-1193).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -130,7 +130,7 @@ def sync_detailed(
         id (UUID):
         idempotency_key (str | Unset):
         body (PutOperationWebhookBindingRequest): Bind a verified provider endpoint to a customer
-            operation with revision control (ADR-1158).
+            operation with revision control (ADR-1193).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,7 +162,7 @@ def sync(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> OperationWebhookBindingResponse | Problem | None:
-    """Route a verified endpoint to a customer operation (ADR-1158).
+    """Route a verified endpoint to a customer operation (ADR-1193).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -179,7 +179,7 @@ def sync(
         id (UUID):
         idempotency_key (str | Unset):
         body (PutOperationWebhookBindingRequest): Bind a verified provider endpoint to a customer
-            operation with revision control (ADR-1158).
+            operation with revision control (ADR-1193).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,7 +206,7 @@ async def asyncio_detailed(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[OperationWebhookBindingResponse | Problem]:
-    """Route a verified endpoint to a customer operation (ADR-1158).
+    """Route a verified endpoint to a customer operation (ADR-1193).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -223,7 +223,7 @@ async def asyncio_detailed(
         id (UUID):
         idempotency_key (str | Unset):
         body (PutOperationWebhookBindingRequest): Bind a verified provider endpoint to a customer
-            operation with revision control (ADR-1158).
+            operation with revision control (ADR-1193).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -253,7 +253,7 @@ async def asyncio(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> OperationWebhookBindingResponse | Problem | None:
-    """Route a verified endpoint to a customer operation (ADR-1158).
+    """Route a verified endpoint to a customer operation (ADR-1193).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -270,7 +270,7 @@ async def asyncio(
         id (UUID):
         idempotency_key (str | Unset):
         body (PutOperationWebhookBindingRequest): Bind a verified provider endpoint to a customer
-            operation with revision control (ADR-1158).
+            operation with revision control (ADR-1193).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

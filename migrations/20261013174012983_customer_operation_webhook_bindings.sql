@@ -1,4 +1,4 @@
--- ADR-1158: an inbound webhook endpoint can start customer Operations.
+-- ADR-1193: an inbound webhook endpoint can start customer Operations.
 -- +goose Up
 CREATE SEQUENCE IF NOT EXISTS customer_operation_webhook_binding_revision_seq;
 

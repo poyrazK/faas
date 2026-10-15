@@ -13,7 +13,7 @@ T = TypeVar("T", bound="PutOperationWebhookBindingRequest")
 
 @_attrs_define
 class PutOperationWebhookBindingRequest:
-    """Bind a verified provider endpoint to a customer operation with revision control (ADR-1158)."""
+    """Bind a verified provider endpoint to a customer operation with revision control (ADR-1193)."""
 
     expected_version: int
     operation: str

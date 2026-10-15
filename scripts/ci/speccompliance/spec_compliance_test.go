@@ -432,7 +432,7 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
-	// ADR-1158: the operation input delivered to the app, not an apid request or response.
+	// ADR-1193: the operation input delivered to the app, not an apid request or response.
 	"OperationWebhookInput":                  true,
 	"OperationWebhookEvent":                  true,
 	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
@@ -1308,7 +1308,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
-		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1158 operation webhook binding DTOs
+		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

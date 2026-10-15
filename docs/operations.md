@@ -635,7 +635,7 @@ with `Retry-After`, so the provider keeps the event and retries. Deleting the
 binding with its `expected_version` returns the endpoint to ordinary delivery;
 admitted operations and their receipts are retained. An endpoint has one
 delivery mode: remove an automation or exclusive operation binding first. See
-[ADR-1158](adr/1158-webhook-submitted-customer-operations.md).
+[ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
 
 ## Batch Job Operations (closed preview)
 

@@ -32696,7 +32696,7 @@ paths:
     put:
       tags: [inbound_webhooks]
       operationId: putOperationWebhookBinding
-      summary: Route a verified endpoint to a customer operation (ADR-1158).
+      summary: Route a verified endpoint to a customer operation (ADR-1193).
       description: |
         One binding per endpoint, owned by the same app. The platform tenant is
         the operation owner; it must be active and linked to the app through an
@@ -32827,7 +32827,7 @@ paths:
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
-        An operation-bound endpoint (ADR-1158) admits one customer operation per
+        An operation-bound endpoint (ADR-1193) admits one customer operation per
         provider event, owned by the binding's platform tenant, with input
         {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
         preview admission or an unavailable operation returns 503 with
@@ -89102,7 +89102,7 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         updated_at: { type: string, format: date-time }
     PutOperationWebhookBindingRequest:
-      description: Bind a verified provider endpoint to a customer operation with revision control (ADR-1158).
+      description: Bind a verified provider endpoint to a customer operation with revision control (ADR-1193).
       type: object
       additionalProperties: false
       required: [expected_version, operation, platform_tenant_id, take_over_delivery]
