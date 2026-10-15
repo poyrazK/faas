@@ -14,6 +14,12 @@ func automationLiveCLISubs() []cliSub {
 		cliFlag{Name: "confirm-real-actions", Bool: true, Req: true, Short: "confirm this case can perform real actions"},
 		cliFlag{Name: "wait", Bool: true, Short: "wait and require a current passing assertion verdict"})
 	return []cliSub{
+		{Name: "gate", Short: "Require passing retained suite evidence for an explicit candidate target; read-only", Flags: flags(
+			cliFlag{Name: "baseline", Value: "UUID", Req: true, Short: "retained baseline suite UUID"},
+			cliFlag{Name: "candidate", Value: "UUID", Req: true, Short: "distinct retained candidate suite UUID"},
+			cliFlag{Name: "expected-version", Value: "N", Req: true, Short: "expected candidate saved automation version"},
+			cliFlag{Name: "expected-published-version", Value: "N", Req: true, Short: "expected candidate published revision"},
+			cliFlag{Name: "expected-deployment-id", Value: "UUID", Req: true, Short: "expected candidate live default deployment UUID"})},
 		{Name: "suite", Short: "Run selected live cases sequentially with resumable private progress", Flags: automationLiveSuiteCLIFlags()},
 		{Name: "list", Short: "Read current target IDs and recent live verifications", Flags: flags()},
 		{Name: "start", Short: "Explicitly start one saved case against real handlers", Flags: append(start, wait...)},

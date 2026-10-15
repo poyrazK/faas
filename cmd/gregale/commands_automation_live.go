@@ -37,6 +37,9 @@ type automationLiveResult struct {
 }
 
 func cmdAutomationsLive(args []string) int {
+	if len(args) > 0 && args[0] == "gate" {
+		return cmdAutomationsLiveGate(args[1:])
+	}
 	if len(args) > 0 && args[0] == "suite" {
 		return cmdAutomationsLiveSuite(args[1:])
 	}
@@ -61,11 +64,11 @@ func cmdAutomationsLive(args []string) int {
 func parseAutomationLiveOptions(args []string) (automationLiveOptions, error) {
 	var o automationLiveOptions
 	if len(args) == 0 {
-		return o, errors.New("usage: gregale automations live <start|list|show|check|wait|suite> --app SLUG --name NAME")
+		return o, errors.New("usage: gregale automations live <start|list|show|check|wait|suite|gate> --app SLUG --name NAME")
 	}
 	o.verb = args[0]
 	if o.verb != "start" && o.verb != "list" && o.verb != "show" && o.verb != "check" && o.verb != "wait" {
-		return o, errors.New("choose live start, list, show, check, wait or suite")
+		return o, errors.New("choose live start, list, show, check, wait, suite or gate")
 	}
 	fs := newFlagSet("automations live "+o.verb, flag.ContinueOnError)
 	fs.StringVar(&o.app, "app", "", "app slug")

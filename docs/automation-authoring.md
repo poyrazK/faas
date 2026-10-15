@@ -401,6 +401,57 @@ outputs, assertion values or admission keys are returned. Suite and verification
 retention still apply, so a removed suite returns not found. This feature does
 not enforce a CI or release gate.
 
+### Gate CI on retained suite evidence
+
+Use the read-only gate after explicitly running and checking a dashboard suite
+or a shared CLI suite. Pin the intended candidate's complete target:
+
+```sh
+gregale --non-interactive automations live gate --app billing --name paid-invoice \
+  --baseline 00000000-0000-4000-8000-000000000010 \
+  --candidate 00000000-0000-4000-8000-000000000011 \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --json > automation-gate.json
+```
+
+`strict_v1` passes only when every candidate case passed, the candidate is still
+current and matches the expected saved version, published revision and deployment,
+and the comparison has no regressions, unknown/incompatible matches or removed
+baseline cases. Recoveries and passed added cases are allowed. The historical
+baseline's original reports remain usable when they still describe their runs.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | The selected evidence satisfies the strict policy. |
+| 1 | The intended current candidate contains failed assertions, including unchanged failures; also used for invalid local options. |
+| 7 | Inconclusive: wrong/outdated candidate target, incomplete or incompatible evidence, or removed baseline coverage. |
+| 2 / 3 / 4 / 5 / 6 | Authentication / infrastructure or protocol / unavailable records / conflict / permission denied. |
+| 130 | Observation interrupted. |
+
+Wrong or outdated candidate targets take precedence over their old verdicts.
+For a matching current target, a known failure takes precedence over other gaps;
+all reasons stay visible. Pending added cases also block a pass, even though their
+comparison category is `added`. Malformed or inconsistent response counts cannot
+produce a pass. The gate reads the comparison once with a ten-second deadline.
+It never starts cases, checks assertions, resumes workflows or advances suites.
+
+JSON reports use `schema_version: 1` and include `policy`, `app`, `name`,
+`baseline_id`, `candidate_id`, `expected_target`, `outcome`, `exit_code`, `message`,
+`reasons`, `candidate_passed`, `candidate_failed` and a safe `comparison` when valid.
+Outcomes are `passed`, `failed`, `inconclusive`, `error` or `interrupted`.
+After valid options are parsed, request errors also emit this report, with a
+sanitized RFC 7807 diagnostic on stderr. Invalid local flags only emit the normal
+CLI diagnostic. Reports contain no private inputs, outputs or assertion values.
+
+The [GitHub Actions example](../examples/automation-ci/README.md) installs a
+pinned CLI, reads existing suite evidence with an app-read token, preserves
+nonzero exit codes and uploads the JSON artifact even when the gate fails. It is
+opt-in and does not execute real actions. Use a CLI release containing this
+command or build the current source. This observation does not enforce publishing
+or deployment, impose a maximum report age, or certify cases that were never
+selected. Retention still applies to suites and their linked run records.
+
 ### Share suite results with your team
 
 Add `--share` when creating a new CLI suite to retain its selection and run links

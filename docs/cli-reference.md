@@ -5638,6 +5638,22 @@ gregale automations delete --app billing --name paid-invoice --expected-version 
 
 Start, observe and check saved cases against real execution
 
+#### automations live gate
+
+Require passing retained suite evidence for an explicit candidate target; read-only
+
+`gregale automations live gate --app <SLUG> --name <NAME> --baseline <UUID> --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--baseline <UUID>` | retained baseline suite UUID | required |
+| `--candidate <UUID>` | distinct retained candidate suite UUID | required |
+| `--expected-version <N>` | expected candidate saved automation version | required |
+| `--expected-published-version <N>` | expected candidate published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate live default deployment UUID | required |
+
 #### automations live suite
 
 Run selected live cases sequentially with resumable private progress

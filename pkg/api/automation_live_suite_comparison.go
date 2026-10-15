@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -45,7 +46,21 @@ type AutomationLiveSuiteObservation struct {
 }
 
 func (c *Client) CompareAutomationLiveSuites(ctx context.Context, slug, name, suiteID, baselineID string) (AutomationLiveSuiteComparison, error) {
-	var out AutomationLiveSuiteComparison
+	var out struct {
+		AutomationLiveSuiteComparison
+		BaselineOutdated  *bool `json:"baseline_outdated"`
+		CandidateOutdated *bool `json:"candidate_outdated"`
+	}
 	err := c.do(ctx, http.MethodGet, automationLiveSuitesPath(slug, name)+"/"+url.PathEscape(suiteID)+"/compare/"+url.PathEscape(baselineID), nil, &out)
-	return out, err
+	if err != nil {
+		return AutomationLiveSuiteComparison{}, err
+	}
+	// Freshness must be explicit. Missing/null booleans cannot become false and
+	// accidentally certify an unobserved current target in a downstream CI gate.
+	if out.BaselineOutdated == nil || out.CandidateOutdated == nil {
+		return AutomationLiveSuiteComparison{}, errors.New("comparison response omitted required freshness observations")
+	}
+	view := out.AutomationLiveSuiteComparison
+	view.BaselineOutdated, view.CandidateOutdated = *out.BaselineOutdated, *out.CandidateOutdated
+	return view, nil
 }

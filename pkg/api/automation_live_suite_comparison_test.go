@@ -23,3 +23,35 @@ func TestAutomationLiveSuiteComparisonClientReadsEscapedPair(t *testing.T) {
 		t.Fatal("comparison response lost direction or results", err)
 	}
 }
+
+func TestAutomationLiveSuiteComparisonClientRequiresFreshnessObservations(t *testing.T) {
+	for _, mode := range []string{"both-current", "historical-baseline", "historical-candidate", "missing-baseline", "missing-candidate", "null-baseline", "null-candidate"} {
+		t.Run(mode, func(t *testing.T) {
+			fields := map[string]any{"baseline_outdated": false, "candidate_outdated": false}
+			switch mode {
+			case "historical-baseline":
+				fields["baseline_outdated"] = true
+			case "historical-candidate":
+				fields["candidate_outdated"] = true
+			case "missing-baseline":
+				delete(fields, "baseline_outdated")
+			case "missing-candidate":
+				delete(fields, "candidate_outdated")
+			case "null-baseline":
+				fields["baseline_outdated"] = nil
+			case "null-candidate":
+				fields["candidate_outdated"] = nil
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fields) }))
+			defer srv.Close()
+			view, err := NewClient(srv.URL, "token").CompareAutomationLiveSuites(t.Context(), "billing", "report", "candidate", "baseline")
+			valid := mode == "both-current" || mode == "historical-baseline" || mode == "historical-candidate"
+			if valid && (err != nil || view.BaselineOutdated != (mode == "historical-baseline") || view.CandidateOutdated != (mode == "historical-candidate")) {
+				t.Fatal("freshness flags lost", view, err)
+			}
+			if !valid && err == nil {
+				t.Fatal("missing or null freshness accepted")
+			}
+		})
+	}
+}
