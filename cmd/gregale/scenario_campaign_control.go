@@ -48,6 +48,12 @@ type testCampaignCleanupAction struct {
 // No fixture commands, API consumer revocations, or scenario registrations are retried.
 func testCampaignRetryCleanup(ctx context.Context, client testCampaignCleanupClient, scenario testScenario,
  leaves []testRunReceipt, execute bool) ([]testCampaignCleanupAction,error) {
+ targets,err:=testCampaignReceiptCleanupTargets(scenario,leaves)
+ if err!=nil{return nil,err}
+ return testCampaignRetryCleanupTargets(ctx,client,targets,execute)
+}
+
+func testCampaignReceiptCleanupTargets(scenario testScenario,leaves []testRunReceipt)(map[string]testCampaignCleanupAction,error){
  targets := map[string]testCampaignCleanupAction{}
  for _,leaf := range leaves {
   decoded,err := hex.DecodeString(leaf.RunID)
@@ -66,7 +72,7 @@ func testCampaignRetryCleanup(ctx context.Context, client testCampaignCleanupCli
    targets[key]=target
   }
  }
- return testCampaignRetryCleanupTargets(ctx,client,targets,execute)
+ return targets,nil
 }
 
 func testCampaignRetryCleanupTargets(ctx context.Context,client testCampaignCleanupClient,targets map[string]testCampaignCleanupAction,execute bool)([]testCampaignCleanupAction,error){

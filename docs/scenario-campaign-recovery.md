@@ -130,3 +130,57 @@ Malformed/truncated snapshots or reports are rejected rather than silently
 dropped. The existing 64 MiB decoded bundle, 4096-file, 33-node and 1024-run-per-
 journal bounds apply. Shared claim directories must actually be shared by all
 recipients; checksums protect integrity, not sender authenticity.
+
+
+## Unified recovery assessment
+
+Start with a read-only assessment to determine which recovery command applies:
+
+```sh
+gregale test policy recover --inspect --plan plan.json --policy campaign.yaml \
+  --manifest gregale-test.yaml --directory campaign-current
+```
+
+Supply the exact original `--from` and `--baseline` inputs when the saved plan
+requires them. Imported work also requires `--handoff recipient/bundle-index.json`.
+Use `--recovery-bundle recovery/` to verify an existing reconciliation bundle
+and obtain a command for inspecting its ready continuation. A matching blocked
+seal can instead produce a reconciliation refresh command, using a new output
+directory. The frozen directory is never reopened for cleanup.
+
+The default assessment is offline. `--check-cleanup` authenticates only for
+read-only session GET requests (30 seconds total, at most 1024 lookups). It
+distinguishes recorded identities from absent, present, replaced and unknown
+live resources. A deletion command is suggested only when the entire batch's
+live identities match or are absent, at least one is present, and ownership,
+locks and evidence permit recovery. The actual cleanup command rechecks these
+conditions when invoked. Unknown provisioning outcomes remain manual work.
+
+Output includes the existing verified campaign status, per-batch cleanup
+evidence and its digest, resource identities, blockers, an overall recommendation,
+and exact commands. Each command has an `argv` array, a quoted `posix_shell`
+representation and a `mutates` flag. Nothing is executed. Cleanup inspection
+itself saves observation files when later invoked, so its command is marked
+as mutating even though it does not delete sessions. POSIX command strings are
+for compatible shells; other consumers should use the argument arrays.
+
+The suggested reconciliation directory defaults to the campaign directory plus
+`-recovery`. Override it with `--output-directory`; assessment never creates
+that directory. Reconciliation commands are conditional next steps after the
+worker is inactive and cleanup is resolved; they do not promise that missing
+test evidence or recorded cleanup errors can be repaired automatically.
+
+Runner locks, shared claim locks, frozen/transferred sources, inspection-only
+imports, conflicting evidence and invalid parent seals suppress cleanup advice.
+Lock presence does not prove liveness; assessment never deletes stale locks.
+Evidence, journal membership, checkpoint state and ownership are fingerprinted
+around the read. Changes suppress all command suggestions and require rerunning
+the assessment. This is an informational snapshot, not an execution gate or
+a replacement for the checks performed by cleanup and reconciliation.
+
+The command never acquires locks, deploys, runs fixture commands, deletes
+resources or rewrites campaign evidence. Optional `--json assessment.json`
+writes only the requested export outside protected campaign/import/recovery
+directories, with input/output alias checks. Assessment returns zero for a valid
+informational report even when recovery is blocked; invalid inputs or failed
+inspection return one. Validation of this implementation remains deferred.

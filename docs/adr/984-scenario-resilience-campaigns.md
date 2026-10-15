@@ -175,3 +175,22 @@ Ancestor journals stay immutable history. Unconfirmed provisioning remains
 uncertain across transport. Journal evidence cannot grant coverage, establish
 test completion, waive recorded failures or refund attempted execution budget.
 Malformed or uncheckpointed journals are rejected rather than lost in transit.
+
+
+## Unified read-only recovery assessment (2026-10-15)
+
+An explicit `test policy recover --inspect` command combines verified campaign
+status, receipt/journal cleanup identities, ownership and recovery seals into a
+read-only assessment. Offline recorded identities remain distinct from optional
+read-only live session observations. Deletion advice requires matching live
+identities and available ownership; the existing mutation commands still perform
+their own checks. No execution, deletion, lock acquisition, claim mutation or
+checkpoint rewrite occurs during assessment.
+
+Advice is emitted as argument arrays and POSIX-quoted display commands, with
+mutation labels and explicit prerequisites. A ready verified continuation can be
+inspected; a matching blocked seal can be refreshed without reopening its source.
+Invalid/missing reports, uncertain provisioning and recorded fixture/consumer
+cleanup errors remain visible blockers. Bounded evidence fingerprints before and
+after inspection suppress commands if state changes. Informational reports do
+not grant coverage, refund budget or act as cleanup authorization.
