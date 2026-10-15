@@ -4331,7 +4331,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4359,6 +4359,7 @@ func cmdRollback(args []string) int {
 	var to, current, reason string
 	interactive := false
 	checked := false
+	acknowledgeReleases := false
 	var err error
 	wait, noWait := false, false
 	timeout, interval := 10*time.Minute, 2*time.Second
@@ -4368,6 +4369,8 @@ func cmdRollback(args []string) int {
 		switch {
 		case a == "--interactive":
 			interactive = true
+		case a == "--acknowledge-releases":
+			acknowledgeReleases = true
 		case a == "--to":
 			i++
 			if i >= len(rest) {
@@ -4416,8 +4419,9 @@ func cmdRollback(args []string) int {
 				return printErr("Invalid duration", err)
 			}
 		case a == "--yes" || a == "-y":
-			// Rollback never prompts. Accept the flag deploy uses so shared
-			// scripts do not fail here (issue #3362).
+			// Accept the flag deploy uses so shared scripts do not fail here
+			// (issue #3362). It does not acknowledge release commands a
+			// rollback would cross; that takes --acknowledge-releases.
 		case strings.HasPrefix(a, "-"):
 			return printErr("Unknown flag", fmt.Errorf("%q (rollback accepts --to <deployment|vN>)", a))
 		default:
@@ -4450,13 +4454,24 @@ func cmdRollback(args []string) int {
 		return printErr("Invalid rollback", err)
 	}
 	if current != "" {
-		return cmdCheckedRollback(slug, to, current, reason, wait, timeout, interval)
+		return cmdCheckedRollback(slug, to, current, reason, acknowledgeReleases, wait, timeout, interval)
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	dep, err := client.RollbackTo(context.Background(), slug, to)
+	dep, err := sendRollbackOverReleases(slug, api.RollbackRequest{}, acknowledgeReleases, func(req api.RollbackRequest) (api.DeploymentResponse, error) {
+		if !req.AcknowledgeReleases {
+			return client.RollbackTo(context.Background(), slug, to)
+		}
+		if to != "" {
+			req.TargetDeploymentID = &to
+		}
+		return client.RollbackWithRequest(context.Background(), slug, req)
+	})
+	if errors.Is(err, errRollbackDeclined) {
+		return 1
+	}
 	if err != nil {
 		return printErr("Rollback failed", err)
 	}

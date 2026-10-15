@@ -3399,7 +3399,11 @@ type DeploymentResponse struct {
 	// RolloutHold is the newest hold recorded since the current canary step
 	// started, while the rollout is in flight (ADR-1237). Only single-deployment
 	// reads and the deployment summary fill it.
-	RolloutHold           *RolloutDecision               `json:"rollout_hold,omitempty"`
+	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
+	// Release is the deployment's release command run, for a deployment that
+	// declares one (ADR-1331). Only single-deployment reads and the
+	// deployment summary fill it.
+	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
@@ -3821,6 +3825,12 @@ type RollbackRequest struct {
 	// set this; the API does not enforce role because the
 	// underlying endpoint already requires MFA + ScopesDeployWrite.
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
+
+	// AcknowledgeReleases lets the rollback proceed although release
+	// commands ran after its target last served (ADR-1331). Without it such a
+	// rollback is refused with rollback_crosses_release. Automated rollbacks
+	// never set it.
+	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's

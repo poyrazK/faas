@@ -4332,6 +4332,7 @@ var cliCommands = []cliCommand{
 			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},
 			{Name: "expected-current", Short: "exact completed serving deployment; requires --to", Value: "deployment_id|vN"},
 			{Name: "reason", Short: "one-line reason of at most 256 bytes; requires --expected-current", Value: "TEXT"},
+			{Name: "acknowledge-releases", Short: "roll back even though release commands ran after the target last served; rollback does not undo them", Bool: true},
 			{Name: "wait", Short: "wait until the rollback completes (default for a plain rollback; a checked rollback waits only with this flag)"},
 			{Name: "no-wait", Short: "return once a plain rollback is requested instead of waiting for the previous release to serve"},
 			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},

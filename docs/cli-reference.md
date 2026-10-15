@@ -11676,7 +11676,7 @@ Show bearer token rotation state
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -11684,6 +11684,7 @@ Restore a previous deployment, or check an exact historical rollback
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
 | `--reason <TEXT>` | one-line reason of at most 256 bytes; requires --expected-current |  |
+| `--acknowledge-releases` | roll back even though release commands ran after the target last served; rollback does not undo them |  |
 | `--wait` | wait until the rollback completes (default for a plain rollback; a checked rollback waits only with this flag) |  |
 | `--no-wait` | return once a plain rollback is requested instead of waiting for the previous release to serve |  |
 | `--timeout <duration>` | wait deadline (default 10m) |  |

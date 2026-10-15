@@ -109,6 +109,13 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 	}
 	targetID := target.ID
 	if _, _, problem := s.rollbackAppCore(request, acct, app, api.RollbackRequest{TargetDeploymentID: &targetID}, state.RollbackTriggerAuto5xx); problem != nil {
+		if problem.Code == api.CodeRollbackCrossesRelease {
+			// ADR-1331: automation never runs code on changes it has not
+			// served with. The release keeps serving; a person decides.
+			s.log.Warn("rollback-on-5xx: skipped; the rollback would cross release commands",
+				"app", app.ID, "deployment", c.DeploymentID, "target", target.ID, "detail", problem.Detail)
+			return nil
+		}
 		return fmt.Errorf("roll back to %s: %s: %s", target.ID, problem.Code, problem.Detail)
 	}
 	if _, err := s.store.MarkAutoRollback(ctx, c.DeploymentID, string(state.AutoRollbackReasonThresholdExceeded), time.Now().UTC()); err != nil {

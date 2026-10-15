@@ -845,6 +845,8 @@ from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
 from .deployment_readiness_probe import DeploymentReadinessProbe
+from .deployment_release import DeploymentRelease
+from .deployment_release_status import DeploymentReleaseStatus
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -3510,6 +3512,8 @@ from .register_event_schema_response import RegisterEventSchemaResponse
 from .register_managed_realtime_push_device_response_200 import RegisterManagedRealtimePushDeviceResponse200
 from .register_scenario_test_request import RegisterScenarioTestRequest
 from .rekey_progress import RekeyProgress
+from .release_database_ref import ReleaseDatabaseRef
+from .release_restore_point import ReleaseRestorePoint
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -3567,6 +3571,7 @@ from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import 
 )
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_crossed_release import RollbackCrossedRelease
 from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
@@ -5250,6 +5255,8 @@ __all__ = (
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
     "DeploymentReadinessProbe",
+    "DeploymentRelease",
+    "DeploymentReleaseStatus",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -7686,6 +7693,8 @@ __all__ = (
     "RegisterManagedRealtimePushDeviceResponse200",
     "RegisterScenarioTestRequest",
     "RekeyProgress",
+    "ReleaseDatabaseRef",
+    "ReleaseRestorePoint",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -7739,6 +7748,7 @@ __all__ = (
     "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackCrossedRelease",
     "RollbackEdgeRulesRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",

@@ -19998,3 +19998,31 @@ SELECT EXISTS (
       )
     )
 ) AS managed;
+
+-- name: ReleaseRunsCrossedBy :many
+-- ADR-1331: release tasks of other deployments in a rollback target's scope
+-- that started after the target last served (serving_ended_at), or after it
+-- was created if it never served. Any started task counts: a failed migration
+-- may still have committed changes.
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > coalesce(target.serving_ended_at, target.created_at)
+JOIN deployments d ON d.id = t.deployment_id
+WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
+ORDER BY t.started_at, t.id;
+
+-- name: ReleaseMigrationDatabases :many
+-- ADR-1331: managed PostgreSQL databases whose migration binding delivers a
+-- secret into this app scope, the rows a release task receives.
+SELECT DISTINCT db.id::text AS database_id, db.name
+FROM app_secrets s
+JOIN managed_postgres_bindings b ON b.id = s.managed_postgres_binding_id
+  AND b.access = 'migration' AND b.deleted_at IS NULL
+JOIN managed_postgres_databases db ON db.id = b.database_id AND db.deleted_at IS NULL
+WHERE s.app_id = sqlc.arg(app_id)::text::uuid AND s.scope = sqlc.arg(scope)::text
+ORDER BY db.name, database_id;

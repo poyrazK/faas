@@ -2018,7 +2018,8 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app)))
+	resp := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
+	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), resp, d))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -2443,6 +2444,10 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			return state.Deployment{}, nil, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
 		}
 	}
+	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	if problem != nil {
+		return state.Deployment{}, nil, problem
+	}
 
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, nil, problem
@@ -2510,11 +2515,12 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		DeploymentID: depUUID, AccountID: acctUUID, Kind: state.DeployRolledBack,
 		Actor: "apid:rollback", At: time.Now().UTC(),
 		Data: json.RawMessage(safetext.JSONObject(struct {
-			From  string `json:"from"`
-			To    string `json:"to"`
-			Mode  string `json:"mode"`
-			Phase string `json:"phase"`
-		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested"})),
+			From            string   `json:"from"`
+			To              string   `json:"to"`
+			Mode            string   `json:"mode"`
+			Phase           string   `json:"phase"`
+			CrossedReleases []string `json:"crossed_releases,omitempty"`
+		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested", CrossedReleases: crossedReleaseIDs(crossed)})),
 	}
 	if alertRuleID != uuid.Nil {
 		auditEntry.AlertRuleID = &alertRuleID

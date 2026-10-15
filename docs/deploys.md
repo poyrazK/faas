@@ -88,6 +88,47 @@ gregale rollback status my-api --operation <id> --wait
 See [`gregale deployments`](cli-reference.md#deployments) for deployment
 history and annotations.
 
+## Releases that change the database
+
+A release command (`release:` in a Procfile, or `release.command` in the
+manifest), typically a migration, runs before the new version serves. The
+release it replaces keeps serving while the command runs and through the
+rollout, so the old code always runs against the new schema for a while.
+Write migrations that the previous release can live with: add columns and
+tables first, and remove what the old code uses only in a later release.
+
+A rollback restores code, never the database. Rolling back to the release
+that was serving when the migration ran is the usual case and needs nothing
+extra: that code already ran against the migrated schema. Rolling back
+further is different. If a release command ran after the target last served,
+the rollback is refused with `rollback_crosses_release`
+([ADR-1331](adr/1331-releases-that-change-the-database.md)):
+
+```text
+This rollback crosses release commands that ran after its target last served:
+  v42  succeeded  started 2026-10-15T10:02:13Z
+A rollback does not undo them; the target would run against their changes.
+To undo database changes first, restore each database to a new one and attach it:
+  gregale postgres restore 4b1e… --name orders-before-v42 --point-in-time 2026-10-15T10:02:13Z
+Pass --acknowledge-releases to roll back anyway.
+```
+
+At a terminal, `gregale rollback` then asks you to type the app's slug to go
+ahead. Scripts pass `--acknowledge-releases`, and the API takes
+`"acknowledge_releases": true`. A failed release counts too: it may have
+committed part of its changes. Automatic rollbacks (the first-wake 5xx
+rollback and alert-rule rollback actions) never acknowledge, so they leave
+the current release serving instead.
+
+For a managed PostgreSQL database that the app's release commands can migrate
+(attached with `--access migration`), the refusal names the moment before the
+earliest crossed release. `gregale postgres restore` creates a new database
+from that point without touching the current one; attach it when you have
+checked it. The point must be inside the database's restore window.
+`gregale deployment summary <id>` and `GET /v1/deployments/{id}` show a
+deployment's release run as `release`: its status, start and finish times,
+and the databases it can migrate.
+
 ## Revisions
 
 Every deploy creates an immutable revision, numbered per app and shown as

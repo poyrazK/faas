@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+    from ..models.deployment_release import DeploymentRelease
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
@@ -282,6 +283,8 @@ class DeploymentResponse:
     rollout_hold: RolloutDecision | Unset = UNSET
     """Evidence behind one decision about a rollout (ADR-1237): why a canary stage advanced, is held, or was
     aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    release: DeploymentRelease | Unset = UNSET
+    """A deployment's release command run (ADR-1331)."""
     rollback_operation: RollbackOperation | Unset = UNSET
     """Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback
     (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1160) reports preparing until its target serves
@@ -621,6 +624,10 @@ class DeploymentResponse:
         if not isinstance(self.rollout_hold, Unset):
             rollout_hold = self.rollout_hold.to_dict()
 
+        release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release, Unset):
+            release = self.release.to_dict()
+
         rollback_operation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.rollback_operation, Unset):
             rollback_operation = self.rollback_operation.to_dict()
@@ -761,6 +768,8 @@ class DeploymentResponse:
             field_dict["rollout_decision"] = rollout_decision
         if rollout_hold is not UNSET:
             field_dict["rollout_hold"] = rollout_hold
+        if release is not UNSET:
+            field_dict["release"] = release
         if rollback_operation is not UNSET:
             field_dict["rollback_operation"] = rollback_operation
         if service_rollout_handoff is not UNSET:
@@ -775,6 +784,7 @@ class DeploymentResponse:
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_promotion_hold import DeploymentPromotionHold
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+        from ..models.deployment_release import DeploymentRelease
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
@@ -1368,6 +1378,13 @@ class DeploymentResponse:
         else:
             rollout_hold = RolloutDecision.from_dict(_rollout_hold)
 
+        _release = d.pop("release", UNSET)
+        release: DeploymentRelease | Unset
+        if isinstance(_release, Unset):
+            release = UNSET
+        else:
+            release = DeploymentRelease.from_dict(_release)
+
         _rollback_operation = d.pop("rollback_operation", UNSET)
         rollback_operation: RollbackOperation | Unset
         if isinstance(_rollback_operation, Unset):
@@ -1449,6 +1466,7 @@ class DeploymentResponse:
             rollout_aborted_reason=rollout_aborted_reason,
             rollout_decision=rollout_decision,
             rollout_hold=rollout_hold,
+            release=release,
             rollback_operation=rollback_operation,
             service_rollout_handoff=service_rollout_handoff,
         )

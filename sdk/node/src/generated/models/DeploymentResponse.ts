@@ -7,6 +7,7 @@ import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DeploymentRelease } from './DeploymentRelease.js';
 import type { DeploymentWorkerDrainStatus } from './DeploymentWorkerDrainStatus.js';
 import type { DevPatchPreview } from './DevPatchPreview.js';
 import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
@@ -264,6 +265,10 @@ export type DeploymentResponse = {
    * The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1237). Filled on GET /v1/deployments/{id} and the deployment summary.
    */
   rollout_hold?: RolloutDecision;
+  /**
+   * The deployment's release command run, for a deployment that declares one (ADR-1331). Filled on GET /v1/deployments/{id} and the deployment summary.
+   */
+  release?: DeploymentRelease;
   rollback_operation?: RollbackOperation;
   service_rollout_handoff?: ServiceRolloutHandoffResponse;
 };

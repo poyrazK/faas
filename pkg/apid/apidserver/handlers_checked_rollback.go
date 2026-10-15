@@ -61,6 +61,9 @@ func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account,
 	if err != nil {
 		return empty, target, api.ErrRollbackTargetIneligible("select a superseded or zero-traffic live deployment of this app")
 	}
+	if _, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases); problem != nil {
+		return empty, target, problem
+	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return empty, target, problem
 	}

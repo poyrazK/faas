@@ -66220,6 +66220,9 @@ components:
         rollout_hold:
           $ref: '#/components/schemas/RolloutDecision'
           description: "The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1237). Filled on GET /v1/deployments/{id} and the deployment summary."
+        release:
+          $ref: '#/components/schemas/DeploymentRelease'
+          description: "The deployment's release command run, for a deployment that declares one (ADR-1331). Filled on GET /v1/deployments/{id} and the deployment summary."
         rollback_operation:
           $ref: '#/components/schemas/RollbackOperation'
         service_rollout_handoff:
@@ -66619,6 +66622,57 @@ components:
           type: string
           maxLength: 256
           description: One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
+        acknowledge_releases:
+          type: boolean
+          description: "Roll back although release commands ran after the target last served (ADR-1331). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+
+    RollbackCrossedRelease:
+      description: "A release command that ran after a rollback target last served (ADR-1331). A rollback does not undo it."
+      type: object
+      required: [deployment_id, status, started_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1, description: "The deployment's vN revision." }
+        status:
+          type: string
+          description: "The release task's status. A failed release may still have committed changes."
+        started_at: { type: string, format: date-time }
+
+    ReleaseRestorePoint:
+      description: "The moment before the earliest crossed release for one managed PostgreSQL database the app's release commands can migrate (ADR-1331), with the command that restores it into a new database."
+      type: object
+      required: [database_id, database_name, point_in_time, command]
+      properties:
+        database_id: { type: string, format: uuid }
+        database_name: { type: string }
+        point_in_time: { type: string, format: date-time }
+        command:
+          type: string
+          example: "gregale postgres restore 0123... --name orders-before-v42 --point-in-time 2026-10-15T10:02:13Z"
+
+    ReleaseDatabaseRef:
+      description: "A managed PostgreSQL database a release command can migrate (ADR-1331)."
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
+    DeploymentRelease:
+      description: "A deployment's release command run (ADR-1331)."
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, queued, restoring, running, succeeded, failed, timed_out, cancelled]
+          description: "The release task's status; pending before imaged has admitted the task."
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        migration_databases:
+          type: array
+          items: { $ref: '#/components/schemas/ReleaseDatabaseRef' }
+          description: "Managed PostgreSQL databases whose migration binding the release task receives."
 
 
 
@@ -84030,6 +84084,14 @@ components:
         message_index: { type: integer, minimum: 0 }
         expected_sequence: { type: integer, format: int64, minimum: 0, description: 'Requested channel head precondition.' }
         bindings_check: { $ref: '#/components/schemas/BindingCheckReport' }
+        crossed_releases:
+          type: array
+          items: { $ref: '#/components/schemas/RollbackCrossedRelease' }
+          description: "rollback_crosses_release: release commands the rollback would not undo (ADR-1331)."
+        restore_points:
+          type: array
+          items: { $ref: '#/components/schemas/ReleaseRestorePoint' }
+          description: "rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1331)."
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
