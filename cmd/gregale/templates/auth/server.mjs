@@ -10,6 +10,7 @@ import { filterLogs } from './logs.mjs'
 import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
+import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
 import { gotrue, limits, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
@@ -153,6 +154,14 @@ export function start(env = process.env) {
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
   const admin = createAdminHandler({ pool, admin: goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS)), keys: adminKeyHashes(env), origins: dashboard })
   const server = createServer({ authz, ui, realtime, admin, settings: config.settings })
+  // Lifecycle events publish after requests that may change users, and
+  // once at startup for anything recorded while the app was parked.
+  const lifecycle = lifecycleConfig(env)
+  const events = lifecycle && createEventPublisher({ pool, config: lifecycle })
+  setLifecycleEvents(pool, Boolean(lifecycle)).then(() => events?.poke(), err => {
+    console.error(JSON.stringify({ level: 'error', event: 'lifecycle_events_setup_failed', sqlstate: err?.code ?? null }))
+  })
+  if (events) server.on('request', (req, res) => { if (publishesAfter(req)) res.on('finish', () => events.poke()) })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()

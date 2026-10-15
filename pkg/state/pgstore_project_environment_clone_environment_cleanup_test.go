@@ -285,6 +285,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"environment_managed_fields.environment_id",
 		"environment_management_overrides.environment_id",
 		"environment_workload_graphs.environment_id",
+		"environment_workload_retirements.environment_id", // ADR-1331: immutable retained retirement evidence; journal/source deletion guards prevent cleanup cascades.
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"github_deploy_branches.scope",

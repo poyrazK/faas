@@ -185,6 +185,7 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 	if !s.cfg.Enabled() {
 		return 0, 0, nil
 	}
+	s.spool.CountExisting()
 	start := s.now()
 	files := s.spool.FilesSnapshot()
 	var shipped int

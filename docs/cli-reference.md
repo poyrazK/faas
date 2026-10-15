@@ -13000,7 +13000,7 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 Show the running Auth settings, or change them and restart the app
 
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--scope <SCOPE>] <name>`
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--scope <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13016,12 +13016,14 @@ Show the running Auth settings, or change them and restart the app
 | `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
 | `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
 | `--authz <FILE>` | JSON file declaring custom roles and policies (applied on restart) |  |
+| `--events <on|off>` | publish user lifecycle events (auth.user.*) to Gregale&#39;s event bus | one of `on` · `off` |
 | `--scope <SCOPE>` | environment scope |  |
 
 Examples:
 
 ```sh
 gregale auth config shop-auth
+gregale auth config shop-auth --events on
 gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on
 ```
 
@@ -13173,6 +13175,25 @@ Examples:
 ```sh
 gregale auth import shop-auth --file users.jsonl --dry-run
 printf '%s' "$ADMIN_KEY" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin
+```
+
+### auth activity
+
+List sign-ins, sign-ups and account changes, newest first
+
+`gregale auth activity [--user <ID>] [--search <TEXT>] [--limit <N>] [--admin-key-stdin] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--user <ID>` | only this user&#39;s activity (user ID) |  |
+| `--search <TEXT>` | an event such as login, or part of an email address |  |
+| `--limit <N>` | entries to show (1-100) |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+Examples:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
 ```
 
 
