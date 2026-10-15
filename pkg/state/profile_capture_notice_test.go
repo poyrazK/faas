@@ -37,7 +37,7 @@ func TestProfileCaptureNotifications(t *testing.T) {
 			}
 			hooks := map[string]string{}
 			for name, filter := range map[string][]string{"all": nil, "oom": {"profile.capture_oom_linked"}, "deploys": {"deployment.live"}} {
-				h, err := store.CreateAppWebhook(ctx, state.AppWebhook{AppID: app.ID, AccountID: acct.ID, TargetURL: "https://" + name + ".example/hook", EventFilter: filter, Enabled: true})
+				h, err := store.CreateAppWebhook(ctx, state.AppWebhook{AppID: app.ID, AccountID: acct.ID, TargetURL: "https://" + name + ".example/hook", SecretSealed: []byte("sealed"), EventFilter: filter, Enabled: true})
 				if err != nil {
 					t.Fatal(err)
 				}
