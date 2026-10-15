@@ -120,6 +120,11 @@ func TestAppEgressPolicyPartialFailureRetainsNewIntentAndRetries(t *testing.T) {
 	run := &policyNetworkRunner{failInput: true}
 	m := newTestManager(run, &fakeVMM{})
 	seedPolicyInstance(m, "live", "app", api.PlanPro)
+	// A first allowlist entry changes the chain's shape and applies at the next
+	// start (H10-36); start from an installed allowlist so the CIDR change is a
+	// live in-place patch and only the port write fails.
+	m.live["live"].Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")}
+	m.live["live"].AllowlistHandleV4 = 7
 	prefixes := []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}
 	if err := m.UpdateAppEgressPolicy(t.Context(), "app", 4, prefixes, []uint16{5432}); err == nil {
 		t.Fatal("port failure acknowledged")
