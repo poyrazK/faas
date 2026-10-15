@@ -282,7 +282,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
-| `FAAS_IMAGE_RUNS` | apid, shared | `default` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); enable after the image-run migration and imaged are deployed (ADR-1161) |
+| `FAAS_IMAGE_RUNS` | apid, shared | `dropin` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); 99-faas-image-runs.conf drop-in from control_plane_service (faas_image_runs_enabled); enable after the image-run migration and imaged are deployed (ADR-1161) |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_INTERACTIVE_APP_TASKS` | apid, shared | `default` |  |  | `` | exact opt-in for ADR-1037 interactive app tasks (exec -it, cp, port-forward) on top of FAAS_APP_TASK_API_ENABLED; default off until vmmd, schedd, gateways and guest-init carry the attach path |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
@@ -526,6 +526,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
+| `FAAS_STORAGE_SPARSE_EXTENTS` | shared | `envfile` |  |  | `` | GCS writers store compressed drives, rootfs images and snapshot memory as data extents only; default off; enable only after every node runs a compatible reader (ADR-1135) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |
@@ -619,6 +620,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
 | `FAAS_WORKLOAD_IDENTITY_ENDPOINT` | shared | `guest` |  |  | `` | guest-init stamps the platform-owned loopback workload identity token endpoint into each workload environment |
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
-| `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |
-| `FAAS_WORKLOAD_IDENTITY_KEY_PATH` | vmmd | `default` |  |  | `` | optional vmmd workload-identity signing-key path override; an empty path leaves issuance disabled |
+| `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `dropin` |  |  | `` | ADR-1141 cluster workload-identity key ID; vmmd_service 99-faas-workload-identity.conf renders it from the key's .kid file |
+| `FAAS_WORKLOAD_IDENTITY_KEY_PATH` | vmmd | `dropin` |  |  | `` | ADR-1141 cluster workload-identity signing key; vmmd_service 99-faas-workload-identity.conf sets it when the key is installed, and an empty path leaves issuance disabled |
 | `FAAS_WORKLOAD_IDENTITY_TTL_SECONDS` | vmmd | `default` |  |  | `` | optional vmmd workload-identity token lifetime override (30..3600 seconds) |
+| `FAAS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | ADR-1141 optional override for the cluster workload issuer apid trusts; defaults to the vmmd default issuer |
+| `FAAS_WORKLOAD_JWKS_PATH` | apid | `dropin` |  |  | `path-exists` | ADR-1141 cluster workload-identity public JWKS for queue leases, and the fallback for Flags and Operations trust; control_plane_service 99-faas-workload-trust.conf |

@@ -68,6 +68,7 @@ func main() {
 	queueAck := flag.Bool("queue-ack", false, "acknowledge push-queue fixture deliveries without returning customer data")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
+	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
 	flag.Parse()
 	if *echoSession {
 		runEchoSession()
@@ -126,6 +127,9 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	if *identityProbe {
+		serveIdentityProbe(mux)
+	}
 	if *durableCounter {
 		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
 	}

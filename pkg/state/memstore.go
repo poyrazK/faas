@@ -212,11 +212,12 @@ type MemStore struct {
 	routeLifecycleApprovals              map[string]api.RouteLifecycleApproval
 	routeRemovalPolicies                 map[string]api.RouteRemovalPolicy
 
-	eventCircuitBreakers      map[string]*eventCircuitRecord
-	eventSubscriptionControls map[string]*memEventSubscriptionControl
-	eventRecoveryJobs         map[string]*memEventRecoveryJob
-	workflowCodePins          map[string]time.Time
-	qualificationSnapshots    map[string]EnvironmentQualificationSnapshotReceipt
+	eventCircuitBreakers              map[string]*eventCircuitRecord
+	eventSubscriptionControls         map[string]*memEventSubscriptionControl
+	eventSubscriptionCapacityCommands map[string]memSubscriptionCapacityCommand
+	eventRecoveryJobs                 map[string]*memEventRecoveryJob
+	workflowCodePins                  map[string]time.Time
+	qualificationSnapshots            map[string]EnvironmentQualificationSnapshotReceipt
 	// Restore evidence survives cleanup of the target's runtime receipt.
 	qualificationRestoreReceipts map[string]EnvironmentQualificationRestoreReceipt
 	// Guest configuration hashes survive cleanup of private qualification VMs.
@@ -20353,7 +20354,7 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
 		return ErrInvalidArgument
 	}
-	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" {
+	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" && secret.ManagedPostgresAccess != "auth" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()

@@ -471,13 +471,17 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 // function can branch on shape without re-parsing the dispatch
 // response.
 type invocationDispatchRequest struct {
-	PlatformTenantID string            `json:"platform_tenant_id,omitempty"`
-	InvocationID     string            `json:"invocation_id"`
-	AppID            string            `json:"app_id"`
-	Source           string            `json:"source"` // async_invoke|queue|delayed_task|cron
-	Method           string            `json:"method"`
-	Path             string            `json:"path"`
-	Headers          map[string]string `json:"headers,omitempty"`
+	InvocationAttempt          int               `json:"invocation_attempt,omitempty"`
+	InvocationReplayGeneration int64             `json:"invocation_replay_generation,omitempty"`
+	InvocationReplayedFrom     string            `json:"invocation_replayed_from,omitempty"`
+	InvocationReplayRoot       string            `json:"invocation_replay_root,omitempty"`
+	PlatformTenantID           string            `json:"platform_tenant_id,omitempty"`
+	InvocationID               string            `json:"invocation_id"`
+	AppID                      string            `json:"app_id"`
+	Source                     string            `json:"source"` // async_invoke|queue|delayed_task|cron
+	Method                     string            `json:"method"`
+	Path                       string            `json:"path"`
+	Headers                    map[string]string `json:"headers,omitempty"`
 	// BodyB64 is base64-encoded so JSON encoding stays trivial and
 	// the cron path (no body) ships an empty string by default.
 	BodyB64 string `json:"body_b64,omitempty"`
@@ -507,6 +511,10 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	}
 	if req.AppID == "" || req.InvocationID == "" {
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
+		return
+	}
+	if err := validateInvocationAttemptMetadata(req); err != nil {
+		http.Error(w, "invocation attempt metadata invalid", http.StatusBadRequest)
 		return
 	}
 	workflowOperationAccount := ""
@@ -581,6 +589,10 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		payload = dec
 	}
 	inv := state.Invocation{
+		Attempts:                   req.InvocationAttempt,
+		ReplayGeneration:           req.InvocationReplayGeneration,
+		ReplayedFromInvocationID:   req.InvocationReplayedFrom,
+		ReplayRootInvocationID:     req.InvocationReplayRoot,
 		PlatformTenantID:           req.PlatformTenantID,
 		ID:                         req.InvocationID,
 		AppID:                      req.AppID,

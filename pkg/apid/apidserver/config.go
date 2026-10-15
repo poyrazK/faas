@@ -48,6 +48,11 @@ type Config struct {
 	FlagsEnabled            bool   `toml:"flags_enabled"`
 	FlagsWorkloadJWKSPath   string `toml:"flags_workload_jwks_path"`
 	FlagsWorkloadIssuer     string `toml:"flags_workload_issuer"`
+	// WorkloadJWKSPath is the cluster workload-identity JWKS (ADR-1141):
+	// queue leases verify against it, and Flags and Operations use it when
+	// their own trust settings are empty.
+	WorkloadJWKSPath string `toml:"workload_jwks_path"`
+	WorkloadIssuer   string `toml:"workload_issuer"`
 	// AIGatewayEnabled opens the AI gateway APIs (ADR-991); off by default.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
 	// AIGatewayAccounts limits the AI gateway to these account IDs during a

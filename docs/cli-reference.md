@@ -86,6 +86,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
+| [`auth`](#auth) | Add sign-up, sessions and users to your application (application Auth, not your Gregale login) |
 | [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
@@ -1415,7 +1416,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `auth` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add bucket
@@ -2948,9 +2949,310 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-lineage-case-backfill-pause
+
+Pause a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-pause [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill-resume
+
+Resume a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-resume [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill-cancel
+
+Cancel a retained lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill-cancel [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed scan |  |
+
+### events subscription-lineage-case-backfill
+
+Inspect latest lineage diagnostic scan
+
+`gregale events subscription-lineage-case-backfill <app> <subscription-id>`
+
+### events subscription-lineage-case-backfill-request
+
+Backfill missing lineage diagnostics from retained evidence
+
+`gregale events subscription-lineage-case-backfill-request [--request-id <UUID>] [--expected-previous-request-id <UUID>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable scan identity |  |
+| `--expected-previous-request-id <UUID>` | reviewed completed, cancelled or expired scan identity |  |
+
+### events subscription-lineage-retry-preview
+
+Preview retained unresolved lineage cases
+
+`gregale events subscription-lineage-retry-preview [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+| `--reason <CODE>` | exact case reason filter |  |
+
+### events subscription-lineage-retry-export
+
+Save a guarded preview as a reviewable retry request
+
+`gregale events subscription-lineage-retry-export [--file <PATH>] [--raw] [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new scoped retry file (never overwrite) |  |
+| `--raw` | legacy unscoped API body |  |
+| `--limit <N>` | selected cases (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+| `--reason <CODE>` | exact case reason filter |  |
+
+### events subscription-lineage-retry-control-plan-export
+
+Save fixed guarded controls from one attention page
+
+`gregale events subscription-lineage-retry-control-plan-export [--file <PATH>] [--action <ACTION>] [--attention <WARNING>] [--status <STATE>] [--limit <N>] [--after <CURSOR>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new private plan file (never overwrite) |  |
+| `--action <ACTION>` | pause, resume or cancel |  |
+| `--attention <WARNING>` | any, stalled or retention_risk (default any) |  |
+| `--status <STATE>` | pending or paused |  |
+| `--limit <N>` | fixed jobs (default 50, maximum 200) |  |
+| `--after <CURSOR>` | attention-list cursor |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-apply
+
+Apply a reviewed fixed control plan with independent results
+
+`gregale events subscription-lineage-retry-control-plan-apply [--report <PATH>] [--resume-report <PATH>] [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | new private durable execution report |  |
+| `--resume-report <PATH>` | inspect prior report before retry; requires new --report |  |
+| `--file <PATH>` | reviewed plan; unchanged on apply |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-preflight
+
+Check reviewed commands with read-only job and receipt inspection
+
+`gregale events subscription-lineage-retry-control-plan-preflight [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | reviewed plan; unchanged on preflight |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-reconcile
+
+Reconcile execution evidence with read-only receipt inspection
+
+`gregale events subscription-lineage-retry-control-plan-reconcile [--file <PATH>] [--source-report <PATH>] [--report <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | unchanged reviewed plan |  |
+| `--source-report <PATH>` | previous matching execution report |  |
+| `--report <PATH>` | new private reconciled report; never overwrite |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-jobs
+
+List retained bulk lineage retry job summaries
+
+`gregale events subscription-lineage-retry-jobs [--attention <WARNING>] [--status <STATE>] [--limit <N>] [--after <CURSOR>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--attention <WARNING>` | any, stalled or retention_risk (active jobs only) |  |
+| `--status <STATE>` | pending, paused, completed or cancelled (default all) |  |
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <CURSOR>` | continuation cursor from the previous page |  |
+
+### events subscription-lineage-retry-preflight
+
+Check a saved retry request without changing it
+
+`gregale events subscription-lineage-retry-preflight [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | scoped retry file or legacy request body |  |
+| `--timeout <DURATION>` | maximum preflight duration (default 2m) |  |
+
+### events subscription-lineage-retry-job-create
+
+Submit a reviewed fixed lineage retry selection
+
+`gregale events subscription-lineage-retry-job-create [--file <PATH>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
+
+### events subscription-lineage-retry-job-controls-inspect
+
+Inspect or compare saved control history offline
+
+`gregale events subscription-lineage-retry-job-controls-inspect [--file <PATH>] [--compare <BASELINE_PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | saved control-history artifact (local read only) |  |
+| `--compare <BASELINE_PATH>` | earlier artifact with the same job scope and filters |  |
+
+### events subscription-lineage-retry-job-controls-export
+
+Export a guarded private control-history snapshot
+
+`gregale events subscription-lineage-retry-job-controls-export [--file <PATH>] [--expected-created-at <TIMESTAMP>] [--action <ACTION>] [--actor-id <UUID_OR_STORE>] [--credential-type <TYPE>] [--timeout <DURATION>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new private JSON artifact (never overwrite) |  |
+| `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
+| `--action <ACTION>` | exact action: pause, resume or cancel |  |
+| `--actor-id <UUID_OR_STORE>` | exact original actor identity |  |
+| `--credential-type <TYPE>` | exact original credential type |  |
+| `--timeout <DURATION>` | maximum export duration (default 2m) |  |
+
+### events subscription-lineage-retry-job-controls
+
+List retained immutable bulk retry command receipts
+
+`gregale events subscription-lineage-retry-job-controls [--action <ACTION>] [--actor-id <UUID_OR_STORE>] [--credential-type <TYPE>] [--expected-created-at <TIMESTAMP>] [--limit <N>] [--after <SEQUENCE>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--action <ACTION>` | exact action: pause, resume or cancel |  |
+| `--actor-id <UUID_OR_STORE>` | exact original actor identity |  |
+| `--credential-type <TYPE>` | exact original credential type |  |
+| `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <SEQUENCE>` | exclusive recorded command sequence |  |
+
+### events subscription-lineage-retry-job-pause
+
+Pause unprocessed bulk lineage retries
+
+`gregale events subscription-lineage-retry-job-pause [--expected-created-at <TIMESTAMP>] [--command-id <UUID>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+| `--command-id <UUID>` | optional immutable receipt identity; reuse after timeouts |  |
+
+### events subscription-lineage-retry-job-resume
+
+Resume a paused bulk lineage retry job
+
+`gregale events subscription-lineage-retry-job-resume [--expected-created-at <TIMESTAMP>] [--command-id <UUID>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+| `--command-id <UUID>` | optional immutable receipt identity; reuse after timeouts |  |
+
+### events subscription-lineage-retry-job-cancel
+
+Cancel unprocessed lineage retries
+
+`gregale events subscription-lineage-retry-job-cancel [--command-id <UUID>] [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--command-id <UUID>` | optional reusable UUID for an immutable control receipt |  |
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+
+### events subscription-lineage-retry-job-export
+
+Export current guards for remaining cases from a finished job
+
+`gregale events subscription-lineage-retry-job-export [--file <PATH>] [--raw] [--expected-created-at <TIMESTAMP>] [--outcomes <STATES>] [--timeout <DURATION>] <app> <subscription-id> <source-request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new scoped retry file (never overwrite) |  |
+| `--raw` | legacy unscoped API body without provenance |  |
+| `--expected-created-at <TIMESTAMP>` | required reviewed source creation timestamp |  |
+| `--outcomes <STATES>` | original outcomes (default unresolved,conflict,changed,unavailable; cancelled also allowed) |  |
+| `--timeout <DURATION>` | maximum export duration (default 2m) |  |
+
+### events subscription-lineage-retry-job-watch
+
+Watch a retained bulk retry job and summarize outcomes
+
+`gregale events subscription-lineage-retry-job-watch [--timeout <DURATION>] [--poll-interval <DURATION>] [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum watch duration (default 10m) |  |
+| `--poll-interval <DURATION>` | delay between reads (default 2s, between 1s and 1h) |  |
+| `--expected-created-at <TIMESTAMP>` | optional reviewed original RFC3339 creation timestamp |  |
+
+### events subscription-lineage-retry-job
+
+Inspect durable lineage retry progress
+
+`gregale events subscription-lineage-retry-job <app> <subscription-id> <request-id>`
+
+### events subscription-lineage-cases
+
+List retained lineage repair cases
+
+`gregale events subscription-lineage-cases [--limit <N>] [--after <ID>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+
+### events subscription-lineage-retry
+
+Retry one reviewed lineage case
+
+`gregale events subscription-lineage-retry [--request-id <UUID>] [--expected-revision <N>] [--expected-diagnostic-id <UUID>] <app> <subscription-id> <outbox-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable request identity |  |
+| `--expected-revision <N>` | reviewed case revision |  |
+| `--expected-diagnostic-id <UUID>` | incarnation guard for a backfilled case |  |
+
+### events subscription-execution-reconciliation
+
+Inspect durable execution coverage reconciliation
+
+`gregale events subscription-execution-reconciliation <app> <subscription-id>`
+
+### events subscription-reconcile-execution
+
+Request a forward-only execution coverage boundary
+
+`gregale events subscription-reconcile-execution <app> <subscription-id>`
+
 ### events subscription-execution-health
 
-Inspect retained consumer executions and handler outcomes
+Inspect executions, handler outcomes, and active retry-job health
 
 `gregale events subscription-execution-health [--window <5m|15m|1h|6h|24h>] <app> <subscription-id>`
 
@@ -2972,15 +3274,24 @@ Inspect, replay, or acknowledge a local delivery health alert queue
 
 ### events subscription-delivery-health
 
-Inspect routing, retained executions, and oldest pending blockers
+Inspect routing, executions, retry jobs, and pending blockers
 
-`gregale events subscription-delivery-health [--window <WINDOW>] [--watch] [--alerts-json] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
+`gregale events subscription-delivery-health [--lineage-stalled-threshold <N>] [--lineage-retention-risk-threshold <N>] [--lineage-paused-threshold <DURATION>] [--receipt-budget-full-threshold <DURATION>] [--receipt-budget-remaining-threshold <N>] [--receipt-budget-low-sustain <DURATION>] [--receipt-budget-recovery-threshold <N>] [--receipt-budget-recovery-sustain <DURATION>] [--window <WINDOW>] [--watch] [--alerts-json] [--confirmation-progress] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lineage-stalled-threshold <N>` | stalled pending retry-job count threshold |  |
+| `--lineage-retention-risk-threshold <N>` | active retry-job retention-risk count threshold |  |
+| `--lineage-paused-threshold <DURATION>` | sustained nonzero paused retry-job backlog |  |
+| `--receipt-budget-full-threshold <DURATION>` | sustained full capacity-command receipt budget |  |
+| `--receipt-budget-remaining-threshold <N>` | warn below N remaining receipt slots (1..128; zero disables) |  |
+| `--receipt-budget-low-sustain <DURATION>` | confirm low remaining slots (default 30s when enabled) |  |
+| `--receipt-budget-recovery-threshold <N>` | opt-in recovery at N remaining slots; N must be at least the warning threshold |  |
+| `--receipt-budget-recovery-sustain <DURATION>` | fresh recovery confirmation (default 30s when recovery enabled) |  |
 | `--window <WINDOW>` | 5m\|15m\|1h\|6h\|24h |  |
 | `--watch` | watch configured local health thresholds |  |
 | `--alerts-json` | lifecycle alert JSON lines on stderr |  |
+| `--confirmation-progress` | live receipt-budget confirmation details on text stdout; omit with --json |  |
 | `--interval <DURATION>` | poll interval (100ms-1m) |  |
 | `--timeout <DURATION>` | watch deadline (up to 24h) |  |
 | `--max-age <DURATION>` | maximum sample age |  |
@@ -3018,6 +3329,55 @@ Inspect consumer backlog, routing rates, latency, and pause duration
 Inspect delivery pause, pacing, and oldest waiting event
 
 `gregale events subscription-status <app> <subscription-id>`
+
+### events subscription-capacity
+
+Set a lower live-delivery limit for one subscription
+
+`gregale events subscription-capacity [--command-id <UUID>] [--expected-max-pending <N>] [--expected-plan-max-pending <N>] [--max-pending <N>] [--yes] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--command-id <UUID>` | retain original outcome; reuse unchanged on uncertain response |  |
+| `--expected-max-pending <N>` | reviewed saved setting; use with expected-plan-max-pending |  |
+| `--expected-plan-max-pending <N>` | reviewed plan ceiling; use with expected-max-pending |  |
+| `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |
+| `--yes` | confirm changing subscription capacity |  |
+
+### events subscription-capacity-commands
+
+List a page of retained original capacity-command receipts
+
+`gregale events subscription-capacity-commands [--outcome <FILTER>] [--limit <N>] [--after <CURSOR>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--outcome <FILTER>` | any (default), applied or unchanged |  |
+| `--limit <N>` | receipts per page (default 25; maximum 100) |  |
+| `--after <CURSOR>` | next_after for the same app, subscription and outcome filter |  |
+| `--timeout <DURATION>` | total read deadline (default 5s; maximum 1m) |  |
+
+### events subscription-capacity-command
+
+Read retained original capacity-command evidence without applying a change
+
+`gregale events subscription-capacity-command [--timeout <DURATION>] <app> <subscription-id> <command-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | total read deadline (default 5s; maximum 1m) |  |
+
+### events subscription-capacity-preview
+
+Preview delivery capacity and command receipt budget without changing controls
+
+`gregale events subscription-capacity-preview [--max-pending <N>] [--timeout <DURATION>] [--max-age <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--max-pending <N>` | proposed live ceiling; 0 restores plan default |  |
+| `--timeout <DURATION>` | total read deadline (default 5s) |  |
+| `--max-age <DURATION>` | maximum pressure snapshot age (default 30s) |  |
 
 ### events recovery-preview
 
@@ -7116,7 +7476,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` · `auth` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -8694,7 +9054,7 @@ gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-auth <AUTH_APP>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8729,6 +9089,7 @@ Add an edge rule
 | `--geo-deny <CC>` | kind=geo: deny ISO country code (repeat) |  |
 | `--jwt-issuer <ISSUER>` | kind=jwt: token issuer |  |
 | `--jwt-jwks-url <URL>` | kind=jwt: JWKS URL (https) |  |
+| `--jwt-auth <AUTH_APP>` | kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp) |  |
 | `--on-success-webhook <ID>` | success webhook subscription; repeat when updating async policy |  |
 | `--on-failure-webhook <ID>` | failure webhook subscription; repeat when updating async policy |  |
 | `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
@@ -9137,6 +9498,24 @@ Examples:
 gregale routes advise my-api
 gregale routes advise my-api --cache-max-age 300
 gregale routes advise my-api --apply 3f9a1c2b7d4e
+```
+
+### routes awake
+
+Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park
+
+`gregale routes awake [--since <DURATION>] [--until <RFC3339>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | window to analyze (default 7d; clamped to telemetry retention) |  |
+| `--until <RFC3339>` | end of the window (default now) |  |
+
+Examples:
+
+```sh
+gregale routes awake my-api
+gregale routes awake my-api --since 24h --json
 ```
 
 ### routes priority
@@ -10002,7 +10381,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` · `auth` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -12189,11 +12568,286 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 `gregale plan`
 
 
+## auth
+
+Add sign-up, sessions and users to your application (application Auth, not your Gregale login)
+
+`gregale auth [<subcommand>]`
+
+### auth create
+
+Deploy a managed GoTrue Auth server bound to your database
+
+`gregale auth create --database <DATABASE> --site-url <URL> [--redirect-urls <URLS>] [--scope <SCOPE>] [--autoconfirm] [--disable-signup] [--authz <FILE>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--workflows] [--resume] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--database <DATABASE>` | ready managed database name or ID | required |
+| `--site-url <URL>` | application URL users return to after sign-in | required |
+| `--redirect-urls <URLS>` | comma-separated additional allowed redirect URLs |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--autoconfirm` | sign users in without email confirmation (development only) |  |
+| `--disable-signup` | allow only invited or administrator-created users |  |
+| `--authz <FILE>` | JSON file declaring custom roles and policies (applied on deploy) |  |
+| `--email-provider <PROVIDER>` | HTTPS email provider | one of `resend` · `postmark` |
+| `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
+| `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
+| `--workflows` | let authorized users start workflows (mints an events:publish key sealed in the app) |  |
+| `--resume` | resume configuration and deployment of an existing app |  |
+
+Examples:
+
+```sh
+gregale auth create shop-auth --database shop-db --site-url https://shop.example.com
+gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --authz authz.json
+```
+
+### auth status
+
+Show the issuer, JWKS URL and readiness of an Auth app
+
+`gregale auth status <name>`
+
+### auth admin-key
+
+Manage owner keys for the dashboard&#39;s users and organizations screens and imports
+
+#### auth admin-key create
+
+Create a key; it is shown once and only its hash is stored
+
+`gregale auth admin-key create [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth admin-key list
+
+List admin key IDs
+
+`gregale auth admin-key list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth admin-key revoke
+
+Revoke an admin key
+
+`gregale auth admin-key revoke [--scope <SCOPE>] <name> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+### auth import
+
+Import users with their password hashes from a JSON or JSON Lines file
+
+`gregale auth import --file <FILE> [--dry-run] [--admin-key-stdin] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <FILE>` | JSON array or JSON Lines file of users | required |
+| `--dry-run` | validate the file without importing |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+Examples:
+
+```sh
+gregale auth import shop-auth --file users.jsonl --dry-run
+printf '%s' "$ADMIN_KEY" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin
+```
+
+
 ## data-api
 
 Create schema-generated PostgreSQL APIs and export application types
 
 `gregale data-api [<subcommand>]`
+
+### data-api transaction
+
+Build a typed atomic business-operation starter
+
+#### data-api transaction init
+
+Generate an editable tenant-scoped order/inventory RPC package
+
+`gregale data-api transaction init --name <NAME> --output <DIR>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | new function/table prefix | required |
+| `--output <DIR>` | new transaction package directory | required |
+
+### data-api verify
+
+Verify named data integrity assertions and project authorization locally
+
+`gregale data-api verify <release|coverage|init> [--directory <DIR>] [--config <FILE>] [--checks <FILE>] [--access-checks <FILE>] [--fixture <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | Data API project directory (default .) |  |
+| `--config <FILE>` | project-relative development config |  |
+| `--checks <FILE>` | version 1 named SQL assertion manifest (or use --access-checks) |  |
+| `--access-checks <FILE>` | request collection or version 3/4/5 guided RLS check manifest |  |
+| `--fixture <FILE>` | SQL fixture for the current schema (default: configured seed) |  |
+
+Examples:
+
+```sh
+gregale --json data-api verify --checks data-checks.json --fixture fixture.sql
+```
+
+#### data-api verify release
+
+Run local Data API release checks and consolidate reports
+
+`gregale data-api verify release --config <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | version 1 release-check configuration | required |
+
+#### data-api verify coverage
+
+Check customer-declared verification coverage offline
+
+`gregale data-api verify coverage --schema <FILE> --policy <FILE> [--verification <FILE>] [--plans <FILE>] [--baseline-schema <FILE>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <FILE>` | current saved schema contract | required |
+| `--policy <FILE>` | explicit relation requirements and named check mappings | required |
+| `--verification <FILE>` | data-api verify JSON report |  |
+| `--plans <FILE>` | budget-checked data-api explain JSON report |  |
+| `--baseline-schema <FILE>` | previous contract to identify newly added relations |  |
+| `--check` | fail if customer-required coverage is missing |  |
+
+#### data-api verify init
+
+Generate editable verification templates offline
+
+`gregale data-api verify init --schema <FILE> --config <FILE> --output <DIR> [--plans <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <FILE>` | saved schema contract | required |
+| `--config <FILE>` | development config containing identity names | required |
+| `--output <DIR>` | new verification package directory | required |
+| `--plans <FILE>` | successful explain JSON report for query budgets |  |
+
+### data-api explain
+
+Review saved read-query plans against a disposable local database
+
+`gregale data-api explain [--directory <DIR>] [--config <FILE>] --collection <FILE> [--fixture <FILE>] [--scenario <NAME>] [--baseline <FILE>] [--check] [--budget <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | Data API project directory (default .) |  |
+| `--config <FILE>` | project-relative development config |  |
+| `--collection <FILE>` | saved API request collection | required |
+| `--fixture <FILE>` | representative SQL fixture (default: configured seed) |  |
+| `--scenario <NAME>` | one named collection scenario |  |
+| `--baseline <FILE>` | previous explain JSON report for estimated plan comparison |  |
+| `--check` | fail when query budgets or coverage checks fail |  |
+| `--budget <FILE>` | version 1 query budget JSON (requires --check and --baseline) |  |
+
+Examples:
+
+```sh
+gregale --json data-api explain --collection data-api.requests.json --fixture fixtures/before-upgrade/fixture.sql
+```
+
+### data-api fixture
+
+Build representative migration rehearsal data
+
+#### data-api fixture build
+
+Export allowlisted and explicitly masked related rows
+
+`gregale data-api fixture build --config <FILE> --output <DIR> [--database-url-env <ENV>] [--api-role <ROLE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | JSON column allowlists, masks and root filters | required |
+| `--output <DIR>` | new fixture package directory | required |
+| `--database-url-env <ENV>` | environment variable holding the local or test PostgreSQL URL (default DATA_API_FIXTURE_DATABASE_URL) |  |
+| `--api-role <ROLE>` | source API role used for contract introspection |  |
+
+Examples:
+
+```sh
+gregale --json data-api fixture build --config fixture-policy.json --output fixtures/before-upgrade --api-role gregale_data_api
+```
+
+### data-api migration
+
+Rehearse local database migrations
+
+#### data-api migration guide
+
+Generate reviewable client migration guidance offline
+
+`gregale data-api migration guide --baseline <FILE> --current <FILE> [--requests <FILE>] [--dependencies <FILE>] [--coverage-policy <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | previous schema contract | required |
+| `--current <FILE>` | candidate schema contract | required |
+| `--requests <FILE>` | saved API request collection |  |
+| `--dependencies <FILE>` | customer-declared consumer dependencies |  |
+| `--coverage-policy <FILE>` | explicit verification mappings to review |  |
+
+#### data-api migration preview
+
+Rebuild a disposable database and report API, types, client and replay checks
+
+`gregale data-api migration preview [--directory <DIR>] [--from-version <N>] [--fixture <FILE>] [--data-check <FILE>] --baseline <FILE> [--config <FILE>] [--output <FILE>] [--dependencies <FILE>] [--approval <FILE>] [--replay <FILE>] [--scenario <NAME>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | Data API project directory (default .) |  |
+| `--from-version <N>` | upgrade from an existing numbered migration version |  |
+| `--fixture <FILE>` | SQL data fixture for the older schema (default: configured seed) |  |
+| `--data-check <FILE>` | JSON manifest of post-migration SQL data assertions |  |
+| `--baseline <FILE>` | read-only schema contract baseline | required |
+| `--config <FILE>` | project-relative development config |  |
+| `--output <FILE>` | committed types path (default: project config or client/src/database.types.ts) |  |
+| `--dependencies <FILE>` | customer-declared consumer dependency manifest |  |
+| `--approval <FILE>` | fingerprint-bound breaking change approvals |  |
+| `--replay <FILE>` | saved request collection |  |
+| `--scenario <NAME>` | one named replay scenario (requires --replay) |  |
+
+Examples:
+
+```sh
+gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json
+```
+
+### data-api onboard
+
+Create and verify a local typed application with two-user isolation
+
+`gregale data-api onboard [--template <NAME>] --path <DIR> --bundle <MANIFEST>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--template <NAME>` | data-api-starter or data-api-teams | one of `data-api-starter` · `data-api-teams` |
+| `--path <DIR>` | new starter project directory | required |
+| `--bundle <MANIFEST>` | approved local data-api-bundle.json | required |
+
+Examples:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
+```
 
 ### data-api install
 
@@ -12221,7 +12875,7 @@ gregale data-api install --restore
 
 Run a disposable local Data API with test identities
 
-`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--approval <FILE>] [--accepted-contracts <FILE>] [--replay <FILE>] [--scenario <NAME>]`
+`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--validators] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--approval <FILE>] [--accepted-contracts <FILE>] [--replay <FILE>] [--scenario <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12231,6 +12885,7 @@ Run a disposable local Data API with test identities
 | `--port <PORT>` | loopback gateway port (default 8080; 0 selects a free port) |  |
 | `--check` | run configured client checks |  |
 | `--check-types` | compare committed types without rewriting them (requires --once) |  |
+| `--validators` | generate runtime table and RPC argument validators alongside types |  |
 | `--once` | verify and exit, removing disposable containers |  |
 | `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
 | `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |
@@ -12251,16 +12906,17 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] --issuer <HTTPS_URL> --jwks-url <HTTPS_URL> --audience <AUDIENCE> [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--auth <AUTH_APP>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--database <DATABASE>` | ready managed database name or ID | required |
 | `--schema <SCHEMA>` | exposed schema (api) |  |
 | `--scope <SCOPE>` | environment scope |  |
-| `--issuer <HTTPS_URL>` | application JWT issuer | required |
-| `--jwks-url <HTTPS_URL>` | application JWKS URL | required |
-| `--audience <AUDIENCE>` | application JWT audience | required |
+| `--auth <AUTH_APP>` | Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience) |  |
+| `--issuer <HTTPS_URL>` | application JWT issuer |  |
+| `--jwks-url <HTTPS_URL>` | application JWKS URL |  |
+| `--audience <AUDIENCE>` | application JWT audience |  |
 | `--origins <ORIGINS>` | comma-separated browser origins |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
 
@@ -12268,13 +12924,14 @@ Deploy a managed PostgREST Data API
 
 Generate types in an owner-authenticated app task
 
-`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--timeout <DURATION>] <name>`
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--output <FILE>` | generated TypeScript or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
 | `--snapshot` | export a JSON baseline for data-api diff |  |
+| `--validators` | include typed runtime table and RPC argument validators |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
 ### data-api check
@@ -12302,7 +12959,7 @@ gregale data-api check --current candidate.json --baseline schema.json --types c
 
 Compare the current schema with a saved JSON baseline
 
-`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--check-compatible] [--approval <FILE>] [--accept-contract <FILE>] [--timeout <DURATION>] [<name>]`
+`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--check-compatible] [--approval <FILE>] [--accept-contract <FILE>] [--dependencies <FILE>] [--timeout <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12312,6 +12969,7 @@ Compare the current schema with a saved JSON baseline
 | `--check-compatible` | fail on unapproved breaking changes (alias of --check) |  |
 | `--approval <FILE>` | reviewed changes bound to both contract fingerprints |  |
 | `--accept-contract <FILE>` | write an owner runtime policy; requires zero breaking changes |  |
+| `--dependencies <FILE>` | customer-declared saved-view and RPC dependencies for impact reporting |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
 Examples:
@@ -12694,7 +13352,7 @@ Show one endpoint and safe auth-rotation status
 
 Create a managed realtime endpoint
 
-`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth <AUTH_APP>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12709,6 +13367,7 @@ Create a managed realtime endpoint
 | `--auth-token <TOKEN>` | client static bearer token (prefer --auth-token-stdin) |  |
 | `--auth-issuer <URL>` | OIDC issuer URL |  |
 | `--auth-jwks-url <URL>` | OIDC JWKS URL |  |
+| `--auth <AUTH_APP>` | Auth app that verifies clients and authorizes channels; replaces the callback and auth flags |  |
 | `--auth-audience <AUDIENCE>` | OIDC audience (repeatable) |  |
 | `--auth-algorithm <ALG>` | OIDC signing algorithm (repeatable) |  |
 | `--auth-claim <KEY=VALUE>` | required OIDC claim as KEY=VALUE (repeatable) |  |
@@ -13123,7 +13782,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
 
-`gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -13135,11 +13794,14 @@ Inspect the source and recent reconciliation attempts
 
 Bind the verified project repository to a definition
 
-`gregale projects environments gitops bind [--manifest-path <PATH>] [--ref <REF>] [--mode <MODE>] [--prune] <project> <environment>`
+`gregale projects environments gitops bind [--manifest-path <PATH>] [--provider <PROVIDER>] [--repository <GROUP/PROJECT>] [--approval-policy <POLICY>] [--ref <REF>] [--mode <MODE>] [--prune] <project> <environment>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--manifest-path <PATH>` | Environment definition path in Git |  |
+| `--provider <PROVIDER>` | github (default) or gitlab |  |
+| `--repository <GROUP/PROJECT>` | GitLab.com repository path |  |
+| `--approval-policy <POLICY>` | manual or protected_branch (GitHub only) |  |
 | `--ref <REF>` | Git ref selecting revision candidates |  |
 | `--mode <MODE>` | report (default; enforcement unavailable in preview) |  |
 | `--prune` | Allow removal of previously owned fields |  |
@@ -13178,6 +13840,24 @@ Fetch an immutable commit and output a review receipt
 | Flag | Meaning | |
 |---|---|---|
 | `--commit <SHA>` | Exact lowercase GitHub commit SHA |  |
+
+##### projects environments gitops plan
+
+Preview candidate field changes without approval or writes
+
+`gregale projects environments gitops plan --commit <SHA> [--format <FORMAT>] [--fail-on-blocked] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--commit <SHA>` | Exact immutable commit SHA | required |
+| `--format <FORMAT>` | json (default) or markdown |  |
+| `--fail-on-blocked` | Exit 2 after printing ownership or unsupported-operation blockers |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops plan shop staging --commit COMMIT_SHA --format markdown --fail-on-blocked
+```
 
 ##### projects environments gitops approve
 
@@ -14326,7 +15006,7 @@ Create a receiver; omitted signing secret is generated and shown once
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | HTTPS receiver URL | required |
-| `--event <EVENT>` | distinct release event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` |
+| `--event <EVENT>` | distinct release event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
 | `--retry-policy <POLICY>` | delivery retry policy | one of `default` · `aggressive` · `none` |
@@ -14347,7 +15027,7 @@ Update a receiver
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | replacement HTTPS receiver URL |  |
-| `--event <EVENT>` | replacement release event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` |
+| `--event <EVENT>` | replacement release event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` |
 | `--enable` | enable the receiver; mutually exclusive with --disable |  |
 | `--disable` | disable the receiver; mutually exclusive with --enable |  |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |

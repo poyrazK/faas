@@ -102,6 +102,9 @@
     mode: "0644"
   notify: restart faas-vmmd
 
+- name: vmmd_service — converge the workload-identity signing key (ADR-1141)
+  ansible.builtin.include_tasks: workload_identity.yml
+
 - name: vmmd_service — remove legacy schedd target override
   ansible.builtin.file:
     path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf

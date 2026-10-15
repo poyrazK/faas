@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -91,7 +92,7 @@ func cmdPostgresAttach(args []string) int {
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -451,7 +452,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -459,7 +460,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -513,9 +514,16 @@ func cmdPostgresBindingsRotate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	before, beforeErr := client.GetManagedPostgresBinding(context.Background(), id)
 	result, err := client.RotateManagedPostgresBinding(context.Background(), id)
 	if err != nil {
-		return printErr("Could not rotate PostgreSQL binding", err)
+		adopted, ok := adoptRotationAfterUncertainError(context.Background(), client, err, id, before, beforeErr)
+		if !ok {
+			return printErr("Could not rotate PostgreSQL binding", err)
+		}
+		result = adopted
+	} else if beforeErr == nil && before.RotationPending && result.CredentialGeneration == before.CredentialGeneration {
+		PrintWarn(osStderr, "A rotation was already in progress (generation %d); this call joined it instead of starting another.", result.CredentialGeneration)
 	}
 	timedOut := false
 	if waitOptions.Wait {
@@ -587,7 +595,7 @@ func normalizePostgresArgs(args []string) []string {
 var postgresFlagVocab = map[string][]string{
 	"class":        {"development", "burstable", "production"},
 	"availability": {"single_zone", "high_availability"},
-	"access":       {"read_write", "read_only", "migration", "data_api"},
+	"access":       {"read_write", "read_only", "migration", "data_api", "auth"},
 }
 
 func postgresServiceClassOK(value string) bool {
@@ -682,4 +690,24 @@ func formatPostgresDuration(seconds int64) string {
 		return strconv.FormatInt(seconds/day, 10) + "d"
 	}
 	return strconv.FormatInt(seconds, 10) + "s"
+}
+
+// adoptRotationAfterUncertainError recovers a rotation whose response was
+// lost. On production-us `bindings rotate --wait` failed with "Could not reach
+// Gregale" after 26.6 s while the rotation had committed and the running app
+// had already switched to the new role (live test 2026-10-14). Only a
+// server-side or transport failure is uncertain; a generation past the one
+// read before the call is this rotation.
+func adoptRotationAfterUncertainError(ctx context.Context, client interface {
+	GetManagedPostgresBinding(context.Context, string) (api.ManagedPostgresBinding, error)
+}, err error, id string, before api.ManagedPostgresBinding, beforeErr error) (api.ManagedPostgresBinding, bool) {
+	var apiErr *APIError
+	if beforeErr != nil || errors.As(err, &apiErr) && apiErr.Problem.Status < 500 {
+		return api.ManagedPostgresBinding{}, false
+	}
+	now, getErr := client.GetManagedPostgresBinding(ctx, id)
+	if getErr != nil || now.CredentialGeneration <= before.CredentialGeneration {
+		return api.ManagedPostgresBinding{}, false
+	}
+	return now, true
 }

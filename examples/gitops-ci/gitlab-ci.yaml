@@ -1,0 +1,15 @@
+gregale-gitops-plan:
+  tags: [gregale-cli]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - >-
+      gregale projects environments gitops plan "$GREGALE_PROJECT" "$GREGALE_ENVIRONMENT"
+      --commit "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}"
+      --format markdown --fail-on-blocked > gitops-plan.md
+  artifacts:
+    when: always
+    paths: [gitops-plan.md]
+    expire_in: 7 days
