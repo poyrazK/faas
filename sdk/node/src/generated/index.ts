@@ -476,6 +476,8 @@ export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
+export type { DeploymentResponseCheckRequest } from './models/DeploymentResponseCheckRequest.js';
+export type { DeploymentResponseCheckResult } from './models/DeploymentResponseCheckResult.js';
 export type { DeploymentRoutePolicySnapshotResponse } from './models/DeploymentRoutePolicySnapshotResponse.js';
 export type { DeploymentRuntimeResponse } from './models/DeploymentRuntimeResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';

@@ -3801,6 +3801,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
 				return
 			}
+			if strings.HasSuffix(r.URL.Path, "/response-check") {
+				picker, _ := deps.backend.(deploymentResponsePicker)
+				var forward func(gateway.Target) http.Handler
+				if deps.nodeCache != nil {
+					forward = deps.nodeCache.Forwarding()
+				}
+				(deploymentResponseChecker{store: pgStore, picker: picker, ensure: handler.EnsureServiceDeploymentCapacity, forward: forward, appsDomain: deps.appsDomain}).ServeHTTP(w, r)
+				return
+			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
 				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
 				return
