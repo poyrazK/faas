@@ -532,7 +532,7 @@ func uploadCommitProcessTimeout(bytes int64) time.Duration {
 	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
 }
 
-func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) { //nolint:contextcheck // Once every byte has arrived the commit runs detached from the request budget under a size-scaled bound (H10-26); the outcome is recorded idempotently.
 	uploadID := r.PathValue("id")
 	// Serialize per-upload_id upload/file critical sections to
 	// prevent two concurrent commit retries both calling
