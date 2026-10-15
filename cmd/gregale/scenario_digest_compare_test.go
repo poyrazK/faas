@@ -82,8 +82,17 @@ func TestDigestComparisonMissingEvidenceCannotResolveFailure(t *testing.T) {
 				current.Case = "different-case"
 			}
 			rows := compareTestDigestGroups(old, []testRunReceipt{current})
-			if len(rows) != 1 || rows[0].status != "not_comparable" || rows[0].delta != nil {
-				t.Fatalf("incomplete evidence resolved a failure: %+v", rows)
+			want := 1
+			if kind == "configuration" {
+				want = 2 // One absent configuration in each direction.
+			}
+			if len(rows) != want {
+				t.Fatalf("got %d comparisons, want %d", len(rows), want)
+			}
+			for _, row := range rows {
+				if row.status != "not_comparable" || row.delta != nil {
+					t.Fatalf("incomplete evidence resolved a failure: %+v", rows)
+				}
 			}
 		})
 	}
@@ -176,5 +185,37 @@ func TestDigestComparisonAcceptsPassingFingerprintWithoutReplay(t *testing.T) {
 	rows := compareTestDigestGroups([]testRunReceipt{old}, []testRunReceipt{current})
 	if len(rows) != 1 || rows[0].status != "no_longer_observed" {
 		t.Fatal("a passing configuration fingerprint was ignored")
+	}
+}
+
+func TestDigestComparisonSeparatesCampaignConfigurations(t *testing.T) {
+	// adr: 984 — changing seed weights must not change another configuration's rate.
+	aFail := digestComparisonReceipt("a-fail", false, 200)
+	aPass := digestComparisonReceipt("a-pass", true, 50)
+	bFail := digestComparisonReceipt("b-fail", false, 300)
+	bFail.Replay.ConfigurationSHA256 = strings.Repeat("b", 64)
+	before := []testRunReceipt{aFail, aPass, bFail}
+	after := []testRunReceipt{aFail, aPass, bFail, bFail, bFail}
+	rows := compareTestDigestGroups(before, after)
+	if len(rows) != 2 {
+		t.Fatalf("got %d configuration comparisons", len(rows))
+	}
+	for _, row := range rows {
+		if row.status != "persisting" || row.delta == nil || *row.delta != 0 {
+			t.Fatalf("campaign mixture changed a configuration rate: %+v", row)
+		}
+		if row.fingerprint == strings.Repeat("a", 64) && (row.beforeRuns != 2 || row.afterRuns != 2) {
+			t.Fatal("configuration A acquired another seed's denominator")
+		}
+		if row.fingerprint == strings.Repeat("b", 64) && (row.beforeRuns != 1 || row.afterRuns != 3 || row.after.root != 2) {
+			t.Fatal("configuration B lost its denominator or original evidence index")
+		}
+	}
+	// A missing configuration cannot be reported as fixed.
+	rows = compareTestDigestGroups(before, []testRunReceipt{aPass})
+	for _, row := range rows {
+		if row.fingerprint == strings.Repeat("b", 64) && (row.status != "not_comparable" || row.delta != nil) {
+			t.Fatal("unexecuted configuration was reported as improved")
+		}
 	}
 }

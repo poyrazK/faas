@@ -14,6 +14,7 @@ type testDigestComparisonSide struct {
 }
 
 type testDigestGroupChange struct {
+	fingerprint string
 	key        testFailureGroupKey
 	status     string
 	reason     string
@@ -26,37 +27,111 @@ type testDigestGroupChange struct {
 
 func buildTestDigestComparisonSide(receipts []testRunReceipt) testDigestComparisonSide {
 	side := testDigestComparisonSide{groups: make(map[testFailureGroupKey]testDigestGroup), runs: make(map[testFailureGroupScope][]testRunReceipt)}
-	var leaves []testRunReceipt
-	for _, r := range receipts {
-		collectTestFailureLeaves(r, "", &leaves)
-	}
-	for _, r := range leaves {
-		if r.Status == "passed" || r.Status == "failed" {
-			scope := testFailureScope(r)
-			side.runs[scope] = append(side.runs[scope], r)
+	for root, receipt := range receipts {
+		var leaves []testRunReceipt
+		collectTestFailureLeaves(receipt, "", &leaves)
+		for _, r := range leaves {
+			if r.Status == "passed" || r.Status == "failed" {
+				scope := testFailureScope(r)
+				side.runs[scope] = append(side.runs[scope], r)
+			}
+			for _, row := range collectTestDigestGroups([]testRunReceipt{r}) {
+				row.root = root
+				key := row.group.Key
+				existing, ok := side.groups[key]
+				if !ok {
+					side.groups[key] = row
+					side.order = append(side.order, key)
+					continue
+				}
+				existing.group.Failures += row.group.Failures
+				existing.group.Occurrences = append(existing.group.Occurrences, row.group.Occurrences...)
+				if row.group.Operator == "mixed" {
+					existing.group.Operator, existing.group.WorstObserved, existing.group.WorstLimit = "mixed", nil, nil
+				} else {
+					updateTestFailureWorst(&existing.group, &testFailureAssertionSummary{Operator: row.group.Operator, Observed: row.group.WorstObserved, Expected: row.group.WorstLimit})
+				}
+				side.groups[key] = existing
+			}
 		}
-	}
-	for _, row := range collectTestDigestGroups(receipts) {
-		key := row.group.Key
-		existing, ok := side.groups[key]
-		if !ok {
-			side.groups[key] = row
-			side.order = append(side.order, key)
-			continue
-		}
-		existing.group.Failures += row.group.Failures
-		existing.group.Occurrences = append(existing.group.Occurrences, row.group.Occurrences...)
-		if row.group.Operator == "mixed" {
-			existing.group.Operator, existing.group.WorstObserved, existing.group.WorstLimit = "mixed", nil, nil
-		} else {
-			updateTestFailureWorst(&existing.group, &testFailureAssertionSummary{Operator: row.group.Operator, Observed: row.group.WorstObserved, Expected: row.group.WorstLimit})
-		}
-		side.groups[key] = existing
 	}
 	return side
 }
 
+// Compare each exact configuration independently: a changed seed distribution must
+// never change a failure rate merely by changing the campaign's mixture.
 func compareTestDigestGroups(before, after []testRunReceipt) []testDigestGroupChange {
+	old, current := partitionTestDigestConfigurations(before), partitionTestDigestConfigurations(after)
+	keys := make(map[string]bool)
+	for hash := range old {
+		keys[hash] = true
+	}
+	for hash := range current {
+		keys[hash] = true
+	}
+	ordered := make([]string, 0, len(keys))
+	for hash := range keys {
+		ordered = append(ordered, hash)
+	}
+	sort.Strings(ordered)
+	var changes []testDigestGroupChange
+	for _, hash := range ordered {
+		rows := compareTestDigestConfiguration(old[hash], current[hash])
+		for i := range rows {
+			rows[i].fingerprint = hash
+		}
+		changes = append(changes, rows...)
+	}
+	return changes
+}
+
+// Preserve top-level receipt indexes for links into the original HTML report.
+func partitionTestDigestConfigurations(receipts []testRunReceipt) map[string][]testRunReceipt {
+	partitions := make(map[string][]testRunReceipt)
+	for _, receipt := range receipts {
+		var leaves []testRunReceipt
+		collectTestFailureLeaves(receipt, "", &leaves)
+		for _, r := range leaves {
+			hash := testDigestScopeFingerprint([]testRunReceipt{r})
+			partitions[hash] = nil
+		}
+	}
+	for hash := range partitions {
+		rows := make([]testRunReceipt, len(receipts))
+		for root, receipt := range receipts {
+			rows[root] = filterTestDigestConfiguration(receipt, hash)
+		}
+		partitions[hash] = rows
+	}
+	return partitions
+}
+
+func filterTestDigestConfiguration(r testRunReceipt, hash string) testRunReceipt {
+	if r.FaultMatrix != nil {
+		matrix := *r.FaultMatrix
+		matrix.Cases = append(matrix.Cases[:0:0], matrix.Cases...)
+		for i := range matrix.Cases {
+			matrix.Cases[i] = filterTestDigestConfiguration(matrix.Cases[i], hash)
+		}
+		r.FaultMatrix = &matrix
+		return r
+	}
+	if r.Resilience != nil {
+		campaign := *r.Resilience
+		campaign.History = append(campaign.History[:0:0], campaign.History...)
+		for i := range campaign.History {
+			campaign.History[i] = filterTestDigestConfiguration(campaign.History[i], hash)
+		}
+		r.Resilience = &campaign
+		return r
+	}
+	if testDigestScopeFingerprint([]testRunReceipt{r}) != hash {
+		r.Status = "skipped"
+	}
+	return r
+}
+
+func compareTestDigestConfiguration(before, after []testRunReceipt) []testDigestGroupChange {
 	old, current := buildTestDigestComparisonSide(before), buildTestDigestComparisonSide(after)
 	keys := append([]testFailureGroupKey{}, old.order...)
 	seen := make(map[testFailureGroupKey]bool)
@@ -289,7 +364,7 @@ func appendTestDigestBaseline(body string, current []testRunReceipt, path, evide
 	var out strings.Builder
 	out.WriteString(body)
 	_, _ = fmt.Fprintln(&out, "\n## Failure-group changes vs baseline")
-	_, _ = fmt.Fprintln(&out, "\nCounts describe first recorded failures, not statistical confidence. No longer observed requires matching executed coverage and passing assertion evidence. Mixed or changed configurations are not comparable.")
+	_, _ = fmt.Fprintln(&out, "\nCounts describe first recorded failures, not statistical confidence. No longer observed requires matching executed coverage and passing assertion evidence. Each exact configuration is compared separately; missing configurations are not comparable.")
 	changes := compareTestDigestGroups(baseline, current)
 	counts := make(map[string]int)
 	for _, change := range changes {
@@ -311,6 +386,9 @@ func appendTestDigestBaseline(body string, current []testRunReceipt, path, evide
 
 func writeTestDigestChange(out *strings.Builder, c testDigestGroupChange, baselineURL, currentURL string) {
 	_, _ = fmt.Fprintf(out, "\n### %s: %s / %s / %s\n", c.status, testDigestText(c.key.Scenario), testDigestText(c.key.Phase), testDigestText(c.key.Assertion))
+	if c.fingerprint != "" {
+		_, _ = fmt.Fprintf(out, "\n- Configuration SHA-256: %s\n", testDigestText(c.fingerprint))
+	}
 	_, _ = fmt.Fprintf(out, "\n- Baseline: %d / %d executed runs; current: %d / %d.\n", c.before.group.Failures, c.beforeRuns, c.after.group.Failures, c.afterRuns)
 	if c.reason != "" {
 		_, _ = fmt.Fprintf(out, "- Not comparable: %s.\n", c.reason)
