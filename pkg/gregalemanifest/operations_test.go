@@ -383,3 +383,35 @@ func TestOperationManifestApprovals(t *testing.T) {
 		t.Fatalf("toml approvals lost: %+v", spec.Approvals)
 	}
 }
+
+// ADR-1196: definition limits are declared beside the contract they bound.
+func TestOperationManifestLimits(t *testing.T) {
+	yamlSource := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: in.json\n    output_schema: out.json\n    progress_stages: [generating]\n    limits:\n      deadline_seconds: 3600\n      max_attempts: 3\n      max_execution_seconds: 300\n"
+	m, err := ParseBytes([]byte(yamlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResolveOperations("exports", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`{"type":"object"}`), nil }); err != nil {
+		t.Fatal(err)
+	}
+	want := api.OperationLimits{DeadlineSeconds: 3600, MaxAttempts: 3, MaxExecutionSeconds: 300}
+	if got := m.ResolvedOperations[0].Limits; got == nil || *got != want {
+		t.Fatalf("limits lost: %+v", got)
+	}
+	tomlSource := "[[operations]]\nname = 'export'\nmethod = 'POST'\npath = '/exports'\nowner = 'platform_tenant'\ninput_schema = 'in.json'\noutput_schema = 'out.json'\nprogress_stages = ['generating']\n[operations.limits]\ndeadline_seconds = 3600\nmax_attempts = 3\nmax_execution_seconds = 300\n"
+	tm, err := ParseTOMLBytes([]byte(tomlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tm.Operations[0].specification().Limits; got == nil || *got != want {
+		t.Fatalf("toml limits lost: %+v", got)
+	}
+	over := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: in.json\n    output_schema: out.json\n    progress_stages: [generating]\n    limits:\n      max_attempts: 100\n"
+	bad, err := ParseBytes([]byte(over))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.ResolveOperations("exports", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`{"type":"object"}`), nil }); err == nil {
+		t.Fatal("limits beyond the plan resolved")
+	}
+}

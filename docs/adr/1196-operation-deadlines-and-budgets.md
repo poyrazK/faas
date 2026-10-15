@@ -39,10 +39,12 @@ recovery cannot extend it.
 - An HTTP execution's invocation deadline becomes the earlier of the plan's
   async deadline and the Operation deadline. The existing claim fence refuses a
   late claim, and the existing claim context cuts a running attempt there.
-- schedd's limit sweeper settles every active Operation (`accepted`, `running`,
-  `waiting`) past its deadline. A pending HTTP execution is cancelled. A workflow
-  run is interrupted and cancelled through the cancellation path, which also ends
-  timer and approval waits.
+- The existing invocation deadline reaper settles a queued or retrying HTTP
+  execution past its deadline. Workflow runs carry no deadline of their own, so
+  a new sweep, run in the same 60-second schedd tick, stops every active
+  workflow Operation (`accepted`, `running`, `waiting`) past its deadline. It
+  takes the cancellation path, which also ends timer and approval waits; an
+  indexed `customer_operations.deadline_at` column finds due work.
 - The Operation settles `failed` with `failure_code: deadline_exceeded`, emits its
   `failed` event and sends its completion callback.
 - An attempt cut while running keeps the existing uncertainty rule. Unless the
@@ -81,9 +83,11 @@ the remaining budget.
 
 - Developers can bound business time per Operation, and compute per HTTP
   Operation. Abandoned approvals and retry loops end on their own.
-- One new indexed `customer_operations.deadline_at` column feeds the sweeper.
-  Usage lives in the Operation record and needs no extra writes beyond the
-  existing transition.
+- One new indexed `customer_operations.deadline_at` column feeds the workflow
+  sweep. Usage lives in the Operation record and needs no extra writes beyond
+  the existing transition.
+- Workflow Operations settle up to one sweep (60 s) after their deadline; HTTP
+  attempts are cut at the deadline itself.
 - A deadline cut is still subject to reconciliation. Gregale promises a bound on
   its own work, not exactly-once effects.
 

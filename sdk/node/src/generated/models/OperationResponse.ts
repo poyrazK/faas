@@ -3,9 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationDeliveryResponse } from './OperationDeliveryResponse.js';
+import type { OperationLimits } from './OperationLimits.js';
 import type { OperationProgress } from './OperationProgress.js';
 import type { OperationResultArtifact } from './OperationResultArtifact.js';
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationUsage } from './OperationUsage.js';
 import type { OperationWaitingState } from './OperationWaitingState.js';
 /**
  * Customer business work; execution recovery and delivery retain independent semantics.
@@ -24,8 +26,17 @@ export type OperationResponse = {
   artifacts?: Array<OperationResultArtifact>;
   completion_delivery: OperationDeliveryResponse;
   cancellation_requested: boolean;
+  /**
+   * Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it (ADR-1196).
+   */
   failure_code?: string;
   waiting?: OperationWaitingState;
+  limits?: OperationLimits;
+  /**
+   * Absolute deadline fixed at acceptance; waits, retries and recovery count against it.
+   */
+  deadline_at?: string;
+  usage?: OperationUsage;
   latest_sequence: number;
   created_at: string;
   updated_at: string;

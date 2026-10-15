@@ -158,6 +158,45 @@ so only the approval endpoints can resume an approval. Event waits, condition
 checks and branches remain unavailable to operations. See
 [ADR-1194](adr/1194-operation-waits-and-approvals.md).
 
+## Deadlines and budgets
+
+A definition can bound each Operation it accepts:
+
+```yaml
+operations:
+  - name: refund
+    # ...contract fields...
+    limits:
+      deadline_seconds: 3600       # wall clock from acceptance, waits included
+      max_attempts: 5              # automatic attempts of one HTTP execution
+      max_execution_seconds: 300   # attempt runtime summed across generations
+```
+
+Each field is optional and bounded by the plan (see [Limits](#limits)). Limits
+are fixed when an Operation is accepted; a later definition does not change
+accepted work.
+
+- **Deadline.** The Operation settles `failed` with `failure_code:
+  deadline_exceeded` when its deadline passes, whether it is queued, retrying,
+  running or waiting for a timer or approval. Its completion callback fires.
+  An HTTP attempt still running at the deadline is cut. Unless the definition
+  declares `recovery: safe_to_retry`, that attempt needs reconciliation,
+  because Gregale cannot know whether it took effect. Workflow Operations
+  settle within one minute of the deadline.
+- **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
+- **Execution budget.** HTTP attempts are cut when the summed runtime reaches
+  `max_execution_seconds`; a retry that would start with no budget left settles
+  the Operation `failed` with `budget_exhausted`.
+- **Recovery** with `safe_to_retry` is refused (`409 operation_limit_exceeded`)
+  once a deadline has passed or the budget is spent. Recording an outcome is
+  still allowed.
+
+Workflow definitions accept only `deadline_seconds`; their steps carry their own
+retries and timeouts. Job definitions accept no limits. Reads return `limits`,
+`deadline_at` and `usage {execution_ms, attempts}`, and
+`gregale customer-operations get` prints the deadline and budget. See
+[ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
+
 ## Contract
 
 `OperationDefinitionSpec` captures an HTTP target or named workflow, platform-tenant ownership,
@@ -330,6 +369,9 @@ allowance. The following are contract bounds, not a rollout announcement.
 | Artifacts per operation | 8 | 16 | 32 |
 | Bytes per artifact | 8 MiB | 32 MiB | 64 MiB |
 | Total artifact bytes per operation | 32 MiB | 128 MiB | 256 MiB |
+| Maximum `deadline_seconds` | 1 day | 7 days | 30 days |
+| Maximum `max_attempts` | 3 | 10 | 25 |
+| Maximum `max_execution_seconds` | 1 hour | 1 day | 7 days |
 
 Schemas are capped at 64 KiB, submission JSON at 1 MiB, and idempotency keys at
 128 bytes. Retained idempotency receipts outlive results. A replay during that

@@ -8,6 +8,9 @@ import type { OperationWorkflowStep } from './generated/models/OperationWorkflow
 export type OperationState = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
 /** ADR-1194: why a waiting operation holds no execution, and until when. */
 export interface OperationWaitingState { kind: 'timer' | 'approval'; step: string; since: string; until?: string; approver?: 'account' | 'customer' }
+/** ADR-1196: bounds fixed onto an accepted Operation, and what it has used. */
+export interface OperationLimits { deadline_seconds?: number; max_attempts?: number; max_execution_seconds?: number }
+export interface OperationUsage { execution_ms: number; attempts: number }
 export interface OperationProgress { stage: string; completed: number; total: number; attempt: number; updated_at: string }
 export interface OperationDelivery { state: string; delivery_id?: string; attempts: number; last_error?: string; next_attempt_at?: string }
 export interface OperationArtifact { id: string; name: string; uri: string; size_bytes: number; sha256: string; expires_at?: string }
@@ -60,7 +63,7 @@ export interface Operation<T = unknown> {
   subject?: OperationSubject;
   id: string; name: string; generation: number; state: OperationState;
   progress?: OperationProgress; result?: T; artifacts?: OperationArtifact[]; completion_delivery: OperationDelivery;
-  cancellation_requested: boolean; failure_code?: string; waiting?: OperationWaitingState; latest_sequence: number;
+  cancellation_requested: boolean; failure_code?: string; waiting?: OperationWaitingState; limits?: OperationLimits; deadline_at?: string; usage?: OperationUsage; latest_sequence: number;
   created_at: string; updated_at: string; expires_at: string;
 }
 export interface OperationTenantIdentity { account_id: string; platform_tenant_id: string }

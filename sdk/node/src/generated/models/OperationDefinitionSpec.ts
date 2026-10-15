@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationApprovalSpec } from './OperationApprovalSpec.js';
+import type { OperationLimits } from './OperationLimits.js';
 import type { OperationSubjectSpec } from './OperationSubjectSpec.js';
 import type { OperationWorkflowStep } from './OperationWorkflowStep.js';
 /**
@@ -13,6 +14,7 @@ export type OperationDefinitionSpec = {
    * ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
    */
   approvals?: Array<OperationApprovalSpec>;
+  limits?: OperationLimits;
   /**
    * Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most 16 names, with an aggregate 16384 schema bytes.
    */

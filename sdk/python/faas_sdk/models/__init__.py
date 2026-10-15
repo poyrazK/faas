@@ -2387,6 +2387,7 @@ from .operation_executions_response import OperationExecutionsResponse
 from .operation_job_artifact_response import OperationJobArtifactResponse
 from .operation_job_control_response import OperationJobControlResponse
 from .operation_job_report_request import OperationJobReportRequest
+from .operation_limits import OperationLimits
 from .operation_list_response import OperationListResponse
 from .operation_milestone import OperationMilestone
 from .operation_milestone_request import OperationMilestoneRequest
@@ -2423,6 +2424,7 @@ from .operation_submission_scope import OperationSubmissionScope
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_usage import OperationUsage
 from .operation_waiting_state import OperationWaitingState
 from .operation_waiting_state_approver import OperationWaitingStateApprover
 from .operation_waiting_state_kind import OperationWaitingStateKind
@@ -6936,6 +6938,7 @@ __all__ = (
     "OperationJobArtifactResponse",
     "OperationJobControlResponse",
     "OperationJobReportRequest",
+    "OperationLimits",
     "OperationListResponse",
     "OperationMilestone",
     "OperationMilestoneRequest",
@@ -6972,6 +6975,7 @@ __all__ = (
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationUsage",
     "OperationWaitingState",
     "OperationWaitingStateApprover",
     "OperationWaitingStateKind",

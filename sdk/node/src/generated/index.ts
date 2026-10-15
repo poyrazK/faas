@@ -1185,6 +1185,7 @@ export type { OperationJobArtifactResponse } from './models/OperationJobArtifact
 export type { OperationJobControlResponse } from './models/OperationJobControlResponse.js';
 export type { OperationJobReportRequest } from './models/OperationJobReportRequest.js';
 export type { OperationLastEventId } from './models/OperationLastEventId.js';
+export type { OperationLimits } from './models/OperationLimits.js';
 export type { OperationListResponse } from './models/OperationListResponse.js';
 export type { OperationMilestone } from './models/OperationMilestone.js';
 export type { OperationMilestoneAppID } from './models/OperationMilestoneAppID.js';
@@ -1220,6 +1221,7 @@ export type { OperationSubmissionLookupResponse } from './models/OperationSubmis
 export type { OperationSubmissionScope } from './models/OperationSubmissionScope.js';
 export type { OperationSummary } from './models/OperationSummary.js';
 export type { OperationTenantIdentity } from './models/OperationTenantIdentity.js';
+export type { OperationUsage } from './models/OperationUsage.js';
 export type { OperationWaitingState } from './models/OperationWaitingState.js';
 export type { OperationWorkflowActionObligation } from './models/OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';

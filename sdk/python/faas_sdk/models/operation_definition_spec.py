@@ -28,6 +28,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_approval_spec import OperationApprovalSpec
     from ..models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
+    from ..models.operation_limits import OperationLimits
     from ..models.operation_subject_spec import OperationSubjectSpec
     from ..models.operation_workflow_step import OperationWorkflowStep
 
@@ -56,6 +57,9 @@ class OperationDefinitionSpec:
     approvals: list[OperationApprovalSpec] | Unset = UNSET
     """ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the
     named approver."""
+    limits: OperationLimits | Unset = UNSET
+    """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan;
+    workflow definitions take only a deadline, and job definitions take none."""
     milestones: OperationDefinitionSpecMilestones | Unset = UNSET
     """Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most
     16 names, with an aggregate 16384 schema bytes."""
@@ -101,6 +105,10 @@ class OperationDefinitionSpec:
             for approvals_item_data in self.approvals:
                 approvals_item = approvals_item_data.to_dict()
                 approvals.append(approvals_item)
+
+        limits: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.limits, Unset):
+            limits = self.limits.to_dict()
 
         milestones: dict[str, Any] | Unset = UNSET
         if not isinstance(self.milestones, Unset):
@@ -152,6 +160,8 @@ class OperationDefinitionSpec:
         )
         if approvals is not UNSET:
             field_dict["approvals"] = approvals
+        if limits is not UNSET:
+            field_dict["limits"] = limits
         if milestones is not UNSET:
             field_dict["milestones"] = milestones
         if workflow_steps is not UNSET:
@@ -177,6 +187,7 @@ class OperationDefinitionSpec:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_approval_spec import OperationApprovalSpec
         from ..models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
+        from ..models.operation_limits import OperationLimits
         from ..models.operation_subject_spec import OperationSubjectSpec
         from ..models.operation_workflow_step import OperationWorkflowStep
 
@@ -203,6 +214,13 @@ class OperationDefinitionSpec:
                 approvals_item = OperationApprovalSpec.from_dict(approvals_item_data)
 
                 approvals.append(approvals_item)
+
+        _limits = d.pop("limits", UNSET)
+        limits: OperationLimits | Unset
+        if isinstance(_limits, Unset):
+            limits = UNSET
+        else:
+            limits = OperationLimits.from_dict(_limits)
 
         _milestones = d.pop("milestones", UNSET)
         milestones: OperationDefinitionSpecMilestones | Unset
@@ -270,6 +288,7 @@ class OperationDefinitionSpec:
             output_schema=output_schema,
             progress_stages=progress_stages,
             approvals=approvals,
+            limits=limits,
             milestones=milestones,
             workflow_steps=workflow_steps,
             subject=subject,

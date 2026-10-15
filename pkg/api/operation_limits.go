@@ -6,11 +6,11 @@ package api
 type OperationLimits struct {
 	// DeadlineSeconds is wall clock from acceptance, including waits,
 	// retries and recovery.
-	DeadlineSeconds int `json:"deadline_seconds,omitempty" yaml:"deadline_seconds,omitempty"`
+	DeadlineSeconds int `json:"deadline_seconds,omitempty" yaml:"deadline_seconds,omitempty" toml:"deadline_seconds,omitempty"`
 	// MaxAttempts bounds the automatic attempts of one HTTP execution.
-	MaxAttempts int `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
+	MaxAttempts int `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty" toml:"max_attempts,omitempty"`
 	// MaxExecutionSeconds bounds attempt runtime summed across generations.
-	MaxExecutionSeconds int `json:"max_execution_seconds,omitempty" yaml:"max_execution_seconds,omitempty"`
+	MaxExecutionSeconds int `json:"max_execution_seconds,omitempty" yaml:"max_execution_seconds,omitempty" toml:"max_execution_seconds,omitempty"`
 }
 
 // OperationUsage is what an Operation has consumed of its limits.

@@ -372,8 +372,31 @@ func renderCustomerOperation(out io.Writer, op api.OperationResponse, asJSON boo
 			return err
 		}
 	}
+	if _, err = fmt.Fprint(out, customerOperationStatusLabels(op)); err != nil {
+		return err
+	}
 	_, err = fmt.Fprintln(out)
 	return err
+}
+
+// customerOperationStatusLabels adds why work stopped or waits, and how much
+// of its limits it has used (ADR-1194, ADR-1196).
+func customerOperationStatusLabels(op api.OperationResponse) string {
+	var b strings.Builder
+	if op.FailureCode != "" {
+		fmt.Fprintf(&b, "\tfailure=%s", op.FailureCode)
+	}
+	if op.Waiting != nil {
+		fmt.Fprintf(&b, "\twaiting=%s:%s", op.Waiting.Kind, op.Waiting.Step)
+	}
+	if op.DeadlineAt != nil {
+		fmt.Fprintf(&b, "\tdeadline=%s", op.DeadlineAt.UTC().Format(time.RFC3339))
+	}
+	if op.Limits != nil && op.Limits.MaxExecutionSeconds > 0 && op.Usage != nil {
+		used := time.Duration(op.Usage.ExecutionMS) * time.Millisecond
+		fmt.Fprintf(&b, "\tbudget=%s/%ds", used.Round(time.Millisecond), op.Limits.MaxExecutionSeconds)
+	}
+	return b.String()
 }
 
 // Watching reports changed durable snapshots as NDJSON in JSON mode. A failed
