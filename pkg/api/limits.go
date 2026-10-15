@@ -10533,6 +10533,14 @@ const (
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512
 	AuthProviderSecretMaxBytes   = 4096
+	// AuthEventBatch bounds the lifecycle events one claim publishes, and
+	// AuthEventLeaseSeconds how long a claim holds them. Failures back off
+	// up to AuthEventMaxBackoffSeconds; undelivered events are dropped after
+	// AuthEventRetentionSeconds.
+	AuthEventBatch             = 50
+	AuthEventLeaseSeconds      = 120
+	AuthEventMaxBackoffSeconds = 3600
+	AuthEventRetentionSeconds  = 3 * 24 * 3600
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

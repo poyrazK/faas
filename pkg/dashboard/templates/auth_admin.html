@@ -36,10 +36,11 @@
 <button type="submit">Enable provider</button>
 <p class="muted">Register <code>{{.Data.AuthOrigin}}/auth/v1/callback</code> as the callback URL with the provider.</p>
 </form>
-<h3>Email and signing keys</h3>
+<h3>Email, events and signing keys</h3>
 <p id="email-status"></p>
+<p id="events-status"></p>
 <p id="keys-status"></p>
-<p class="muted">Change email delivery with <code>gregale auth config {{.Data.Slug}} --email-provider …</code> and rotate signing keys with <code>gregale auth keys rotate {{.Data.Slug}}</code>.</p>
+<p class="muted">Change email delivery with <code>gregale auth config {{.Data.Slug}} --email-provider …</code>, lifecycle events with <code>gregale auth config {{.Data.Slug}} --events on</code>, and rotate signing keys with <code>gregale auth keys rotate {{.Data.Slug}}</code>.</p>
 </section>
 <h2>Users and organizations</h2>
 <section id="key-section"><h2>Admin key</h2>
@@ -47,7 +48,7 @@
 <p id="key-error" class="danger" role="alert"></p>
 <p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
 <section id="workspace" hidden>
-<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" id="forget">Forget key</button></nav>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" id="forget">Forget key</button></nav>
 <form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button></form>
 <p id="status" role="status" aria-live="polite"></p>
 <table id="list"><thead></thead><tbody></tbody></table>
@@ -66,7 +67,7 @@
     clear() { try { sessionStorage.removeItem(storageKey) } catch { /* memory only */ } },
   }
   const perPage = 50
-  let key = store.get(), tab = 'users', page = 1, search = ''
+  let key = store.get(), tab = 'users', page = 1, search = '', loads = 0
   const messages = {
     last_owner: 'This user is the last owner of an organization that has other members. Make another member an owner first.',
     not_found: 'It no longer exists.', invalid_duration: 'Choose a ban duration.',
@@ -79,6 +80,15 @@
   }
   const button = (text, onClick, attrs = {}) => { const b = el('button', text, { type: 'button', ...attrs }); b.addEventListener('click', onClick); return b }
   const when = value => value ? new Date(value).toLocaleString() : '—'
+  // GoTrue audit actions; anything else is shown as recorded.
+  const actions = {
+    login: 'Signed in', logout: 'Signed out', user_signedup: 'Signed up', user_repeated_signup: 'Signed up again', token_refreshed: 'Session refreshed',
+    token_revoked: 'Session revoked', user_recovery_requested: 'Password reset requested', user_updated_password: 'Password changed',
+    user_modified: 'Account changed', user_deleted: 'Deleted', user_invited: 'Invited', invite_accepted: 'Invitation accepted',
+    user_confirmation_requested: 'Confirmation requested', user_reauthenticate_requested: 'Reauthentication requested',
+    factor_in_progress: 'MFA enrolment started', factor_unenrolled: 'MFA removed', verification_attempted: 'MFA verified', identity_unlinked: 'Identity unlinked',
+  }
+  const actionLabel = action => actions[action] || action || '—'
   const say = text => { $('status').textContent = text }
 
   function lock(message) {
@@ -121,20 +131,38 @@
     body.replaceChildren(...rows)
   }
 
-  function pager(total) {
+  function pager(total, more) {
     const last = Math.max(1, Math.ceil((total ?? 0) / perPage))
-    $('position').textContent = 'Page ' + page + ' of ' + last + (total !== null && total !== undefined ? ' · ' + total + ' total' : '')
+    // Activity pages carry no total, only whether another page exists.
+    $('position').textContent = more === undefined ? 'Page ' + page + ' of ' + last + (total !== null && total !== undefined ? ' · ' + total + ' total' : '') : 'Page ' + page
     $('prev').disabled = page <= 1
-    $('next').disabled = page >= last
+    $('next').disabled = more === undefined ? page >= last : !more
+  }
+
+  function activityRows(entries, withUser) {
+    return entries.map(entry => {
+      const row = el('tr')
+      row.append(el('td', when(entry.created_at)), el('td', actionLabel(entry.action) + (entry.actor === 'administrator' ? ' by an administrator' : '')))
+      if (withUser) {
+        const cell = el('td')
+        if (entry.user_id) cell.append(button(entry.email || entry.user_id, () => showUser(entry.user_id)))
+        else cell.textContent = '—'
+        row.append(cell)
+      }
+      return row
+    })
   }
 
   async function load() {
     $('detail').hidden = true
     say('Loading…')
     const qs = new URLSearchParams({ page: String(page), per_page: String(perPage), ...(search ? { search } : {}) })
+    // A slower earlier load must not overwrite the view the owner switched to.
+    const current = ++loads
+    const fetchView = async path => { const data = await call('GET', path); if (current !== loads) throw new Error('superseded'); return data }
     try {
       if (tab === 'users') {
-        const data = await call('GET', '/admin/v1/users?' + qs)
+        const data = await fetchView('/admin/v1/users?' + qs)
         setTable(['Email', 'Created', 'Last sign-in', 'Confirmed', 'Status', ''], data.users.map(user => {
           const row = el('tr')
           row.append(el('td', user.email || user.phone || user.id), el('td', when(user.created_at)), el('td', when(user.last_sign_in_at)),
@@ -144,8 +172,13 @@
         }))
         pager(data.total)
         say(data.users.length ? '' : 'No users match.')
+      } else if (tab === 'activity') {
+        const data = await fetchView('/admin/v1/activity?' + qs)
+        setTable(['Time', 'Event', 'User'], activityRows(data.entries, true))
+        pager(null, data.more)
+        say(data.entries.length ? '' : 'No activity matches.')
       } else {
-        const data = await call('GET', '/admin/v1/orgs?' + qs)
+        const data = await fetchView('/admin/v1/orgs?' + qs)
         setTable(['Slug', 'Name', 'Members', 'Created', ''], data.organizations.map(org => {
           const row = el('tr')
           row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', when(org.created_at)))
@@ -155,7 +188,7 @@
         pager(data.total)
         say(data.organizations.length ? '' : 'No organizations match.')
       }
-    } catch (error) { say(error.message) }
+    } catch (error) { if (current === loads) say(error.message) }
   }
 
   const banned = user => user.banned_until && new Date(user.banned_until) > new Date()
@@ -169,7 +202,10 @@
   async function showUser(id) {
     const panel = $('detail')
     try {
-      const { user, organizations, active_sessions: sessions } = await call('GET', '/admin/v1/users/' + encodeURIComponent(id))
+      const [{ user, organizations, active_sessions: sessions }, recent] = await Promise.all([
+        call('GET', '/admin/v1/users/' + encodeURIComponent(id)),
+        call('GET', '/admin/v1/activity?' + new URLSearchParams({ user: id, per_page: '10' })),
+      ])
       const result = el('p', '', { role: 'status' })
       const act = async (label, method, path, body, done) => {
         result.textContent = label + '…'
@@ -207,11 +243,20 @@
           ['Email confirmed', when(user.email_confirmed_at)], ['Banned until', banned(user) ? when(user.banned_until) : '—'], ['Active sessions', sessions]]),
         actions, result,
         el('h3', 'Organizations'), organizations.length ? memberships : el('p', 'Not a member of any organization.', { class: 'muted' }),
+        el('h3', 'Recent activity'), recent.entries.length ? activityTable(recent.entries) : el('p', 'No recorded activity.', { class: 'muted' }),
         button('Close', () => { panel.hidden = true }),
       )
       panel.hidden = false
       panel.scrollIntoView({ block: 'nearest' })
     } catch (error) { say(error.message) }
+  }
+
+  function activityTable(entries) {
+    const table = el('table')
+    table.append(el('tr'))
+    for (const heading of ['Time', 'Event']) table.rows[0].append(el('th', heading, { scope: 'col' }))
+    table.append(...activityRows(entries, false))
+    return table
   }
 
   async function showOrg(id) {
@@ -260,7 +305,7 @@
       tab = tabButton.dataset.tab
       page = 1
       for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
-      $('query').placeholder = tab === 'users' ? 'Email or name' : 'Slug or name'
+      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login' }[tab]
       load()
     })
   }
@@ -309,6 +354,7 @@
       return item
     }))
     $('email-status').textContent = settings.email.configured ? 'Email delivery is configured.' : 'Email delivery is not configured: confirmation, magic-link, recovery and invitation emails fail.'
+    $('events-status').textContent = settings.events?.lifecycle ? 'Lifecycle events (auth.user.created, signed_in, confirmed, banned, unbanned, deleted) are published to your event bus.' : 'Lifecycle events are off.'
     const verifying = settings.keys.verifying.length
     $('keys-status').textContent = 'Key ' + settings.keys.signing + ' signs tokens' + (verifying ? '; ' + verifying + ' previous or standby key(s) only verify.' : '.')
   }
