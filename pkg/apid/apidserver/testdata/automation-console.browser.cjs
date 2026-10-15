@@ -17,6 +17,43 @@ const { chromium } = require('playwright');
       assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label + '; alerts: ' + (await page.locator('[role=alert]').allTextContents()).join('; '));
       assert.equal(await page.locator('[role=alert]').count(), 0, 'action returned an error for ' + label);
     }
+    if (fixture.mode === 'live') {
+      assert.equal((await page.goto(fixture.url + '?template=scheduled-report')).status(), 200);
+      await page.locator('#automation-name').fill('browser-live');
+      await page.getByText('Live expectations for this case', { exact: true }).click();
+      const liveTest = '{"expectations":[{"step":"collect","state":"succeeded","output":null,"attempt_count":2},{"step":"deliver","state":"succeeded"}]}';
+      await page.locator('#test-live').fill(liveTest);
+      await submit('Save draft', 'Draft saved.');
+      await submit('Save test data', 'Test data saved.');
+      await submit('Check and publish', 'Checks passed and the draft was published.');
+      assert.equal(await page.locator('input[name=confirm_live]').isChecked(), false);
+      const denied = await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Start live verification', exact: true }).click()]);
+      assert.equal(denied[0].status(), 400);
+      assert.ok(await page.getByRole('alert').getByText('Confirm that live verification', { exact: false }).count());
+      await page.locator('input[name=confirm_live]').check();
+      await submit('Start live verification', 'Live verification started.');
+      assert.ok(await page.locator('#automation-live-result').getByText('No assertion verdict yet.', { exact: false }).count());
+      await submit('Check live results', 'No assertion verdict yet.');
+      await submit('Check live results', 'Live verification passed.');
+      assert.equal((await page.locator('#automation-live-result').innerText()).includes('PRIVATE'), false);
+      if (process.env.GREGALE_AUTOMATION_LIVE_SCREENSHOT) {
+        await page.locator('#automation-live-verification').screenshot({ path: process.env.GREGALE_AUTOMATION_LIVE_SCREENSHOT });
+      }
+      await page.goto(fixture.url + '?name=browser-live&verification=' + await page.locator('input[name=verification_id]').inputValue());
+      assert.ok(await page.getByText('Live verification passed.', { exact: true }).count());
+      await page.getByText('Live expectations for this case', { exact: true }).click();
+      await page.locator('#test-live').fill('{"expected_run_status":"failed","expectations":[{"step":"collect","state":"failed"}]}');
+      await submit('Save test data', 'Test data saved.');
+      assert.ok(await page.getByText('This verification is outdated', { exact: false }).count());
+      await submit('Check live results', 'Live verification passed.');
+      assert.ok(await page.getByText('This verification is outdated', { exact: false }).count());
+      await page.getByText('Remove saved test data', { exact: true }).click();
+      await page.locator('input[name=confirm_clear_tests]').check();
+      await submit('Clear saved test data', 'Saved test data and results removed.');
+      assert.equal(await page.locator('#automation-live-result').count(), 0);
+      assert.equal(errors.length, 0);
+      return;
+    }
     if (fixture.mode === 'case-editor') {
       assert.equal((await page.goto(fixture.url + '?template=scheduled-report')).status(), 200);
       await page.locator('input[name=editor_mode][value=json]').check();

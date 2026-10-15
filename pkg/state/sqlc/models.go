@@ -9132,6 +9132,22 @@ type WorkflowAutomationFailurePolicy struct {
 	WindowSeconds    int32
 }
 
+type WorkflowAutomationLiveVerification struct {
+	RunID              pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	CaseName           string
+	AutomationVersion  int64
+	PublishedVersion   int64
+	DeploymentID       pgtype.UUID
+	InputsHash         string
+	LiveTest           []byte
+	IdempotencyKey     string
+	RequestFingerprint []byte
+	Report             []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
 type WorkflowAutomationPublishPolicy struct {
 	AppID   pgtype.UUID
 	Mode    string

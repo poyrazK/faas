@@ -95,7 +95,7 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := dashboard.AutomationConsoleData{Slug: scope.Slug, Name: r.PostFormValue("name"),
-		Definition: r.PostFormValue("definition"), Sample: r.PostFormValue("sample"), Scenarios: r.PostFormValue("scenarios")}
+		Definition: r.PostFormValue("definition"), Sample: r.PostFormValue("sample"), Scenarios: r.PostFormValue("scenarios"), LiveID: r.PostFormValue("verification_id"), LiveCase: r.PostFormValue("live_case")}
 	if action := r.PathValue("action"); action == "bind-webhook" || action == "unbind-webhook" {
 		s.webhookAction(w, r, scope, data)
 		return
@@ -122,6 +122,8 @@ func (s *Service) authorAction(w http.ResponseWriter, r *http.Request, scope Sco
 	case "test-editor", "apply-test-case", "select-test-case", "add-test-case", "duplicate-test-case", "remove-test-case", "select-test-assertion", "add-test-assertion", "remove-test-assertion":
 		data.Message = "Test case edits applied locally. Save test data to keep them."
 		s.render(w, r, scope, data, http.StatusOK)
+	case "start-live", "check-live":
+		s.live(w, r, scope, data)
 	case "save-tests", "run-tests", "clear-tests":
 		s.tests(w, r, scope, data)
 	case "preview-schedule":
@@ -143,6 +145,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 	s.refreshMetadata(r, scope, &data)
 	s.setup(r, scope, &data)
 	setupTestEditor(&data)
+	s.inspectLive(r, scope, &data)
 	if failure := s.inspectIngress(r, scope, &data); failure != nil {
 		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this automation."
 	}

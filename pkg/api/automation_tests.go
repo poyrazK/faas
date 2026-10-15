@@ -34,6 +34,7 @@ type AutomationTestCase struct {
 	Name         string                       `json:"name"`
 	Simulation   AutomationTestInputs         `json:"simulation"`
 	Expectations []AutomationCheckExpectation `json:"expectations"`
+	Live         *AutomationLiveTest          `json:"live,omitempty"`
 }
 type AutomationTestSuite struct {
 	Sample AutomationTestInputs `json:"sample"`

@@ -48344,6 +48344,189 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-verifications:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose recent live verification history is requested.
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveVerifications
+      summary: List recent live verifications and the current published deployment target.
+      responses:
+        '200':
+          description: listAutomationLiveVerifications returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveVerificationsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags:
+      - workflows
+      operationId: startAutomationLiveVerification
+      summary: Explicitly execute one saved case input with atomic target fences and idempotency.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description: Stable request key; retry the same key and body to recover the original run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAutomationLiveVerificationRequest'
+      responses:
+        '201':
+          description: startAutomationLiveVerification returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveVerification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation containing the retained live verification to read.
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Specific workflow run whose live provenance is requested.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveVerification
+      summary: Read one verification without starting a run or evaluating live assertions.
+      responses:
+        '200':
+          description: getAutomationLiveVerification returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveVerification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose frozen live assertions will be checked.
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Retained live run whose terminal outcomes will be evaluated.
+    post:
+      tags:
+      - workflows
+      operationId: checkAutomationLiveVerification
+      summary: Check terminal run outcomes against frozen live assertions and retain a safe summary.
+      responses:
+        '200':
+          description: checkAutomationLiveVerification returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveVerification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+
 components:
 
   securitySchemes:
@@ -69028,6 +69211,11 @@ components:
       - simulation
       - expectations
       properties:
+        live:
+          description: Optional live assertions saved with this case; null disables its live test.
+          anyOf:
+          - $ref: '#/components/schemas/AutomationLiveTest'
+          - type: 'null'
         name:
           type: string
           minLength: 1
@@ -69039,6 +69227,177 @@ components:
           maxItems: 4096
           items:
             $ref: '#/components/schemas/AutomationCheckExpectation'
+    AutomationLiveExpectation:
+      description: A separate assertion against a real terminal workflow step, not a mock trace.
+      type: object
+      additionalProperties: false
+      required:
+      - step
+      properties:
+        step:
+          type: string
+        loop:
+          type: string
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 127
+        state:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - dead
+          - skipped
+        output:
+          description: Optional expected JSON result; an explicit null is asserted.
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 425
+    AutomationLiveTest:
+      description: Explicit live assertions frozen when a saved case is admitted for execution.
+      type: object
+      additionalProperties: false
+      required:
+      - expectations
+      properties:
+        expected_run_status:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - dead
+          description: Desired terminal run state; omitted means succeeded. Cancellation always fails verification.
+        expectations:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/AutomationLiveExpectation'
+    StartAutomationLiveVerificationRequest:
+      description: Fenced request to execute one saved case input against a specific published revision and deployment.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - case_name
+      - confirm_real_actions
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        expected_published_version:
+          type: integer
+          minimum: 1
+        expected_deployment_id:
+          type: string
+        case_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        confirm_real_actions:
+          type: boolean
+          description: Must be true to authorize real handler and connected-service actions.
+    AutomationLiveReport:
+      description: Payload-free verdict for the frozen live assertions at one terminal run state.
+      type: object
+      additionalProperties: false
+      required:
+      - checked_at
+      - passed
+      - run_status
+      - resume_count
+      - run_updated_at
+      - steps
+      properties:
+        checked_at:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+        issue:
+          type: string
+        run_status:
+          type: string
+        resume_count:
+          type: integer
+          minimum: 0
+        run_updated_at:
+          type: string
+          format: date-time
+        steps:
+          type: array
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/AutomationTestStepResult'
+    AutomationLiveVerification:
+      description: Safe provenance and status for one explicitly authorized live verification run.
+      type: object
+      additionalProperties: false
+      required:
+      - run_id
+      - case_name
+      - deployment_id
+      - inputs_hash
+      - run_status
+      - version
+      - published_version
+      - created_at
+      - outdated
+      - report_current
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        case_name:
+          type: string
+        deployment_id:
+          type: string
+        inputs_hash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        run_status:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        published_version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        outdated:
+          type: boolean
+          description: True when the saved case, published revision, or current default deployment differs from the
+            frozen target.
+        report_current:
+          type: boolean
+          description: True when the report still matches this run status, resume count and update time; also require
+            outdated=false for current-target evidence.
+        report:
+          $ref: '#/components/schemas/AutomationLiveReport'
+    ListAutomationLiveVerificationsResponse:
+      description: Current target identities and the twenty most recent retained live verifications.
+      type: object
+      additionalProperties: false
+      required:
+      - published_version
+      - verifications
+      properties:
+        deployment_id:
+          type: string
+        published_version:
+          type: integer
+          minimum: 0
+        verifications:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveVerification'
     AutomationTestSuite:
       type: object
       additionalProperties: false
@@ -69171,6 +69530,11 @@ components:
         - simulation
         - expectations
       properties:
+        live:
+          description: Live test configuration carried by the case editor; mock publishing checks do not evaluate it.
+          anyOf:
+          - $ref: '#/components/schemas/AutomationLiveTest'
+          - type: 'null'
         name:
           type: string
           minLength: 1

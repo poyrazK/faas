@@ -124,6 +124,9 @@ type Querier interface {
 	AutomationFailureRetainedEvents(ctx context.Context, db DBTX, arg AutomationFailureRetainedEventsParams) (int64, error)
 	AutomationFailureSignals(ctx context.Context, db DBTX, arg AutomationFailureSignalsParams) (AutomationFailureSignalsRow, error)
 	AutomationFailureTargetExists(ctx context.Context, db DBTX, arg AutomationFailureTargetExistsParams) (bool, error)
+	AutomationLiveDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
+	AutomationLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (AutomationLiveRunStateRow, error)
+	AutomationLiveStep(ctx context.Context, db DBTX, arg AutomationLiveStepParams) ([]AutomationLiveStepRow, error)
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
 	BeginClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg BeginClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error)
@@ -522,6 +525,7 @@ type Querier interface {
 	DeleteAppErrorRequestsOlderThan(ctx context.Context, db DBTX, arg DeleteAppErrorRequestsOlderThanParams) error
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
+	DeleteAutomationLiveVerifications(ctx context.Context, db DBTX, arg DeleteAutomationLiveVerificationsParams) error
 	DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, arg DeleteAutomationScheduleCursorParams) error
 	DeleteCloneCheckpointObjectPublicationGrant(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationGrantParams) (int64, error)
 	DeleteCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationSecretParams) (int64, error)
@@ -1079,6 +1083,9 @@ type Querier interface {
 	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
 	GetArtifactRuntimeRelease(ctx context.Context, db DBTX, arg GetArtifactRuntimeReleaseParams) (RuntimeRelease, error)
 	GetAutomationFailurePolicy(ctx context.Context, db DBTX, arg GetAutomationFailurePolicyParams) ([]byte, error)
+	GetAutomationForLiveVerification(ctx context.Context, db DBTX, arg GetAutomationForLiveVerificationParams) (WorkflowAutomationDefinition, error)
+	GetAutomationLiveVerification(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationParams) (WorkflowAutomationLiveVerification, error)
+	GetAutomationLiveVerificationByKey(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationByKeyParams) (WorkflowAutomationLiveVerification, error)
 	GetAutomationPublishDraftVersion(ctx context.Context, db DBTX, arg GetAutomationPublishDraftVersionParams) (int64, error)
 	GetAutomationPublishPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (GetAutomationPublishPolicyRow, error)
 	GetAutomationPublishReceipt(ctx context.Context, db DBTX, arg GetAutomationPublishReceiptParams) (WorkflowAutomationPublishReceipt, error)
@@ -1287,6 +1294,7 @@ type Querier interface {
 	// call; the read path derives the joined total at query time.
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
 	InsertAppHealthHistory(ctx context.Context, db DBTX, arg InsertAppHealthHistoryParams) error
+	InsertAutomationLiveVerification(ctx context.Context, db DBTX, arg InsertAutomationLiveVerificationParams) (WorkflowAutomationLiveVerification, error)
 	InsertBlockedLifecycleHistory(ctx context.Context, db DBTX, arg InsertBlockedLifecycleHistoryParams) error
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
 	InsertCloneCheckpointCaptureCatalogueRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointCaptureCatalogueRetirementParams) (int64, error)
@@ -1810,6 +1818,7 @@ type Querier interface {
 	ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]pgtype.UUID, error)
 	ListAutomationFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ListAutomationFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListAutomationFailurePolicyCandidatesParams) ([]ListAutomationFailurePolicyCandidatesRow, error)
+	ListAutomationLiveVerifications(ctx context.Context, db DBTX, arg ListAutomationLiveVerificationsParams) ([]WorkflowAutomationLiveVerification, error)
 	ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowAutomationDefinition, error)
 	ListBindingVerificationTasks(ctx context.Context, db DBTX, arg ListBindingVerificationTasksParams) ([]ListBindingVerificationTasksRow, error)
 	ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg ListBuildsAwaitingImageParams) ([]ListBuildsAwaitingImageRow, error)
@@ -2152,6 +2161,7 @@ type Querier interface {
 	LockAppHealthAccount(ctx context.Context, db DBTX, accountID string) error
 	LockAppHealthCollection(ctx context.Context, db DBTX, arg LockAppHealthCollectionParams) (LockAppHealthCollectionRow, error)
 	LockAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg LockAppSecretRuntimeProcessParams) (LockAppSecretRuntimeProcessRow, error)
+	LockAutomationLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (LockAutomationLiveRunStateRow, error)
 	LockBindingPromotionRevision(ctx context.Context, db DBTX, arg LockBindingPromotionRevisionParams) (string, error)
 	LockBoundOrProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg LockBoundOrProductionQueueTriggerInvocationParams) (pgtype.UUID, error)
 	LockCanaryRouteGateApp(ctx context.Context, db DBTX, appID string) (string, error)
@@ -3605,6 +3615,7 @@ type Querier interface {
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SaveAlertRollback(ctx context.Context, db DBTX, arg SaveAlertRollbackParams) error
 	SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error
+	SaveAutomationLiveReport(ctx context.Context, db DBTX, arg SaveAutomationLiveReportParams) (int64, error)
 	// Observation only: suite/definition changes advance version through SaveAutomation.
 	SaveAutomationTestReport(ctx context.Context, db DBTX, arg SaveAutomationTestReportParams) (int64, error)
 	SaveCheckedRollback(ctx context.Context, db DBTX, arg SaveCheckedRollbackParams) error

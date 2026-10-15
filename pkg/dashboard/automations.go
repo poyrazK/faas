@@ -24,6 +24,11 @@ type AutomationConsoleData struct {
 	CheckEvidence                                            *api.AutomationCheckEvidence
 	TestSuiteSaved, TestReportFresh                          bool
 	TestReport                                               *api.AutomationTestReport
+	LiveCases                                                []string
+	LiveID, LiveCase, LiveError, LiveRunURL                  string
+	LiveEditorChanged                                        bool
+	LiveHistory                                              *api.ListAutomationLiveVerificationsResponse
+	LiveSelected                                             *api.AutomationLiveVerification
 	TestEditorMode                                           string
 	TestCaseIndex, TestAssertionIndex                        int
 	TestEditor                                               *AutomationTestEditor
@@ -49,6 +54,7 @@ type AutomationConsoleData struct {
 }
 
 type AutomationTestEditor struct {
+	LiveJSON                               string
 	Cases, Assertions                      []AutomationTestChoice
 	Targets                                []string
 	Name, Simulation, Step, State          string

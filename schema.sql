@@ -32541,6 +32541,37 @@ CREATE TABLE public.workflow_automation_failure_policies (
 
 
 --
+-- Name: workflow_automation_live_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_live_verifications (
+    run_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    case_name text NOT NULL,
+    automation_version bigint NOT NULL,
+    published_version bigint NOT NULL,
+    deployment_id uuid NOT NULL,
+    inputs_hash text NOT NULL,
+    live_test jsonb NOT NULL,
+    idempotency_key text NOT NULL,
+    request_fingerprint bytea NOT NULL,
+    report jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_automation_live_verification_request_fingerprint_check CHECK ((octet_length(request_fingerprint) = 32)),
+    CONSTRAINT workflow_automation_live_verifications_automation_version_check CHECK ((automation_version > 0)),
+    CONSTRAINT workflow_automation_live_verifications_case_name_check CHECK (((octet_length(case_name) >= 1) AND (octet_length(case_name) <= 128))),
+    CONSTRAINT workflow_automation_live_verifications_check CHECK (((published_version > 0) AND (published_version <= automation_version))),
+    CONSTRAINT workflow_automation_live_verifications_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_verifications_idempotency_key_check CHECK (((octet_length(idempotency_key) >= 1) AND (octet_length(idempotency_key) <= 255))),
+    CONSTRAINT workflow_automation_live_verifications_inputs_hash_check CHECK ((inputs_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT workflow_automation_live_verifications_live_test_check CHECK ((jsonb_typeof(live_test) = 'object'::text)),
+    CONSTRAINT workflow_automation_live_verifications_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_live_verifications_report_check CHECK (((report IS NULL) OR (jsonb_typeof(report) = 'object'::text)))
+);
+
+
+--
 -- Name: workflow_automation_publish_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40257,6 +40288,22 @@ ALTER TABLE ONLY public.workflow_automation_failure_policies
 
 
 --
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifi_app_id_name_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifi_app_id_name_idempotency_key_key UNIQUE (app_id, name, idempotency_key);
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: workflow_automation_publish_policies workflow_automation_publish_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47254,6 +47301,13 @@ CREATE INDEX webhook_deliveries_expires_idx ON public.webhook_deliveries USING b
 --
 
 CREATE INDEX workflow_automation_failure_finished_idx ON public.workflow_runs USING btree (app_id, workflow_name, finished_at) WHERE ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead'::text])) AND (cancelled_at IS NULL) AND (operation_id IS NULL));
+
+
+--
+-- Name: workflow_automation_live_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_automation_live_history ON public.workflow_automation_live_verifications USING btree (app_id, name, created_at DESC, run_id DESC);
 
 
 --
@@ -60706,6 +60760,30 @@ ALTER TABLE ONLY public.workflow_automation_failure_history
 
 ALTER TABLE ONLY public.workflow_automation_failure_policies
     ADD CONSTRAINT workflow_automation_failure_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_app_id_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_app_id_name_fkey FOREIGN KEY (app_id, name) REFERENCES public.workflow_automation_definitions(app_id, name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
 
 
 --

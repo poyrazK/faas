@@ -381,6 +381,12 @@ from .automation_health_response_status_counts import AutomationHealthResponseSt
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_live_expectation import AutomationLiveExpectation
+from .automation_live_expectation_state import AutomationLiveExpectationState
+from .automation_live_report import AutomationLiveReport
+from .automation_live_test import AutomationLiveTest
+from .automation_live_test_expected_run_status import AutomationLiveTestExpectedRunStatus
+from .automation_live_verification import AutomationLiveVerification
 from .automation_publish_check_scenario import AutomationPublishCheckScenario
 from .automation_publish_policy import AutomationPublishPolicy
 from .automation_publish_policy_mode import AutomationPublishPolicyMode
@@ -1721,6 +1727,7 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
@@ -4098,6 +4105,7 @@ from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -4961,6 +4969,12 @@ __all__ = (
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationLiveExpectation",
+    "AutomationLiveExpectationState",
+    "AutomationLiveReport",
+    "AutomationLiveTest",
+    "AutomationLiveTestExpectedRunStatus",
+    "AutomationLiveVerification",
     "AutomationPublishCheckScenario",
     "AutomationPublishPolicy",
     "AutomationPublishPolicyMode",
@@ -6255,6 +6269,7 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationLiveVerificationsResponse",
     "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
     "ListBucketObjectsResponse200",
@@ -8410,6 +8425,7 @@ __all__ = (
     "SourceRefDeployRequestTag",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StartAutomationLiveVerificationRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",

@@ -50,6 +50,7 @@ func TestGuidedCasesPreserveAdvancedDataAndExactJSON(t *testing.T) {
 	data := caseEditorFixture(t)
 	cases, _ := testCases(data)
 	cases[0].Simulation.Input = json.RawMessage(`{"id":9007199254740993}`)
+	cases[0].Live = &api.AutomationLiveTest{Expectations: []api.AutomationLiveExpectation{{Step: "collect", State: "succeeded", Output: json.RawMessage(`9007199254740993`)}}}
 	cases[0].Simulation.MockItemAttempts = map[string]map[string][]api.AutomationSimulationMockAttempt{"batch": {"0": {{Outcome: "success", Output: json.RawMessage(`null`)}}}}
 	yes, reason := true, "PRIVATE-REASON"
 	count := 0

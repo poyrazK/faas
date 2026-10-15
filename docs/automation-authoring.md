@@ -100,6 +100,76 @@ bounded to 32 uniquely named cases, 3 MiB per sample/simulation, 24 MiB for the
 combined cases, and 27 MiB overall. Each case accepts up to 4,096 assertions;
 reports retain up to 1,024 step summaries per case and indicate truncation.
 
+### Verify one saved case against real execution
+
+Live verification executes the **published** automation against the app's current
+live default deployment. Configure synthetic case input and appropriate test
+integration credentials before opting into real actions. This first version is
+app-scoped; apps requiring platform-tenant identity are blocked.
+
+In **Guided test cases**, open **Live expectations for this case**. Keep `null` to
+disable live verification, or enter a separate spec such as:
+
+```json
+{
+  "expected_run_status": "succeeded",
+  "expectations": [
+    {"step": "collect", "state": "succeeded", "attempt_count": 1},
+    {"step": "deliver", "state": "succeeded", "output": null}
+  ]
+}
+```
+
+Apply case changes and **Save test data**. In advanced case JSON this object is
+stored as `live`. Live step states are `succeeded`, `failed`, `dead`, or `skipped`;
+`mocked` is invalid. Expected run state defaults to `succeeded` and may explicitly
+be `failed` or `dead`. Cancellation always fails verification. The durable step
+attempt count includes attempts from resumed execution. Loop assertions use
+`step: "batch/action"`, `loop: "batch"` and a zero-based `item_index`. Output and
+attempt checks preserve explicit `null` and zero; omission skips that check.
+
+Under **Verify a saved case with real handlers**, review the published revision
+and deployment, choose a saved case, confirm real actions and select **Start live
+verification**. Unsaved test edits must be saved first. Admission freezes the case,
+assertions, published revision and code deployment together; stale target fences
+reject the request before any run is created. Only the case's `input` is used;
+mock outcomes never control real execution.
+
+**Check live results** reads recorded terminal outcomes against the frozen
+assertions and saves safe results. It does not start a new run, retry a handler,
+or apply later expectation edits. Running and waiting workflows have no verdict.
+After a continuation/resume, check again once execution reaches a terminal state.
+Reports identify failed fields without returning expected/actual output or errors.
+The existing run inspector remains available for explicit diagnostics.
+
+Verification history survives reopening. Case, published revision or current
+code deployment changes mark results outdated. A current-target verdict requires
+both `outdated: false` and `report_current: true`; the latter means the report
+still describes the run's current status, update time and resume count. Draft or
+automatic-start changes alone do not invalidate unchanged published-case evidence.
+
+The API offers:
+
+- `GET /v1/apps/{slug}/automations/{name}/live-verifications` for current target IDs
+  and up to 20 recent verifications.
+- `POST` to that collection with a required stable `Idempotency-Key` and
+  `{expected_version, expected_published_version, expected_deployment_id, case_name,
+  confirm_real_actions: true}` to admit one case.
+- `GET /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}` to read a
+  retained record, and `POST .../{run_id}/check` to evaluate its results.
+
+Identical retained requests return the original run, including after a publish,
+case edit or runtime outage. Changed requests with the same key conflict. History
+and idempotency follow workflow-run retention. Go, Node and Python SDKs expose all
+four operations. Live assertions are bounded to 128 entries and 3 MiB per spec,
+real input and each expected output to 1 MiB, start requests to 4 KiB, and reports
+to 128 KiB. Existing saved-suite totals and real execution quotas still apply.
+
+Clearing saved test data also removes frozen live expectations and verification
+summaries. It leaves admitted runs under the normal workflow controls and
+retention. Live reports are separate from publishing receipts and native runtime
+qualification.
+
 ### Configure and preview a scheduled report
 
 Choose **scheduled-report**, enter its schedule and an IANA timezone, and replace

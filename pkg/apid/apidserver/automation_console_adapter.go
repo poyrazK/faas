@@ -57,7 +57,7 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
 	switch operation.Kind {
-	case "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
+	case "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -79,6 +79,7 @@ func setAutomationConsolePaths(r *http.Request, slug string, operation automatio
 	r.SetPathValue("name", operation.Name)
 	r.SetPathValue("id", operation.RunID)
 	r.SetPathValue("step", operation.Step)
+	r.SetPathValue("run_id", operation.RunID)
 	if operation.EndpointID != "" {
 		r.SetPathValue("id", operation.EndpointID)
 	}
@@ -101,6 +102,14 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodPost, root + ":simulate", h.server.simulateAutomation
 	case "save":
 		return http.MethodPut, named, h.server.saveAutomationDraft
+	case "live-list":
+		return http.MethodGet, named + "/live-verifications", h.server.listAutomationLiveVerifications
+	case "live-start":
+		return http.MethodPost, named + "/live-verifications", h.server.startAutomationLiveVerification
+	case "live-get":
+		return http.MethodGet, named + "/live-verifications/" + url.PathEscape(op.RunID), h.server.getAutomationLiveVerification
+	case "live-check":
+		return http.MethodPost, named + "/live-verifications/" + url.PathEscape(op.RunID) + "/check", h.server.checkAutomationLiveVerification
 	case "save-tests":
 		return http.MethodPut, named + "/tests", h.server.saveAutomationTestSuite
 	case "run-tests":

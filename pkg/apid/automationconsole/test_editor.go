@@ -66,6 +66,7 @@ func setupTestEditor(data *dashboard.AutomationConsoleData) {
 	}
 	c := cases[data.TestCaseIndex]
 	view.HasCase, view.Name, view.Simulation = true, c.Name, pretty(api.TestInputsFromSimulation(c.Simulation))
+	view.LiveJSON = pretty(c.Live)
 	view.CanAddAssertion = len(c.Expectations) < api.AutomationPublishCheckMaxExpectations
 	for i, e := range c.Expectations {
 		label := e.Step
@@ -131,6 +132,9 @@ func prepareTestEditor(r *http.Request, data *dashboard.AutomationConsoleData) s
 	setupTestEditor(data)
 	view := data.TestEditor
 	view.Name, view.Simulation = r.PostFormValue("test_case_name"), r.PostFormValue("test_case_simulation")
+	if _, posted := r.PostForm["test_live"]; posted {
+		view.LiveJSON = r.PostFormValue("test_live")
+	}
 	view.Step, view.State, view.ItemIndex = r.PostFormValue("test_step"), r.PostFormValue("test_state"), r.PostFormValue("test_item_index")
 	view.Output, view.AttemptCount, view.AssertOutput = r.PostFormValue("test_output"), r.PostFormValue("test_attempt_count"), r.PostFormValue("test_assert_output") == "yes"
 	if len(cases) > 0 && r.PathValue("action") != "remove-test-case" {
@@ -176,6 +180,13 @@ func patchTestCase(r *http.Request, data *dashboard.AutomationConsoleData, cases
 		return "Enter valid input and mock JSON for this case."
 	}
 	c.Name, c.Simulation = name, inputs.Simulation(api.WorkflowSpec{})
+	if _, posted := r.PostForm["test_live"]; posted {
+		var live *api.AutomationLiveTest
+		if decode(view.LiveJSON, api.AutomationLiveSpecMaxBytes, &live) != nil {
+			return "Enter valid live expectation JSON, or null to disable live verification for this case."
+		}
+		c.Live = live
+	}
 	if len(c.Expectations) == 0 {
 		return ""
 	}

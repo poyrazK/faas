@@ -193,6 +193,10 @@ export type { AutomationFailureTransition } from './AutomationFailureTransition.
 export type { AutomationHealthResponse } from './AutomationHealthResponse.js';
 export type { AutomationHealthRun } from './AutomationHealthRun.js';
 export type { AutomationHealthStepFailure } from './AutomationHealthStepFailure.js';
+export type { AutomationLiveExpectation } from './AutomationLiveExpectation.js';
+export type { AutomationLiveReport } from './AutomationLiveReport.js';
+export type { AutomationLiveTest } from './AutomationLiveTest.js';
+export type { AutomationLiveVerification } from './AutomationLiveVerification.js';
 export type { AutomationPublishCheckScenario } from './AutomationPublishCheckScenario.js';
 export type { AutomationPublishPolicy } from './AutomationPublishPolicy.js';
 export type { AutomationQueueHealth } from './AutomationQueueHealth.js';
@@ -828,6 +832,7 @@ export type { LinkPlatformTenantConsumerRequest } from './LinkPlatformTenantCons
 export type { LinkPlatformTenantSurfaceRequest } from './LinkPlatformTenantSurfaceRequest.js';
 export type { ListAuditEventsResponse } from './ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './ListAuditLogResponse.js';
+export type { ListAutomationLiveVerificationsResponse } from './ListAutomationLiveVerificationsResponse.js';
 export type { ListAutomationRevisionsResponse } from './ListAutomationRevisionsResponse.js';
 export type { ListAutomationsResponse } from './ListAutomationsResponse.js';
 export type { ListCronRunsResponse } from './ListCronRunsResponse.js';
@@ -2133,6 +2138,7 @@ export type { SimulateAutomationResponse } from './SimulateAutomationResponse.js
 export type { Slug } from './Slug.js';
 export type { SourceRefDeployRequest } from './SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './SourceTarballDeployRequest.js';
+export type { StartAutomationLiveVerificationRequest } from './StartAutomationLiveVerificationRequest.js';
 export type { StatusIncident } from './StatusIncident.js';
 export type { StatusPage } from './StatusPage.js';
 export type { StatusUptimeBucket } from './StatusUptimeBucket.js';

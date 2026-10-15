@@ -145,6 +145,9 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	} else {
 		m.automations[key] = copyAutomation(next)
 	}
+	if mutation.Action == "delete" || mutation.Action == "tests" && len(mutation.TestSuite) == 0 {
+		m.clearAutomationLiveLocked(appID, name)
+	}
 	if mutation.Action != "save" && mutation.Action != "tests" {
 		delete(m.workflowSchedules, key)
 		for key, cursor := range m.workflowTenantSchedules {
@@ -330,6 +333,11 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 			Definition:    next.Published, RecordedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true},
 			PublishedByAccountID: mustPgUUID(mutation.ActorAccountID), PublishedByApiKeyID: apiKeyID,
 		}); err != nil {
+			return Automation{}, err
+		}
+	}
+	if mutation.Action == "tests" && len(mutation.TestSuite) == 0 {
+		if err := q.DeleteAutomationLiveVerifications(ctx, tx, sqlc.DeleteAutomationLiveVerificationsParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
 			return Automation{}, err
 		}
 	}

@@ -199,6 +199,10 @@ export type { AutomationFailureTransition } from './models/AutomationFailureTran
 export type { AutomationHealthResponse } from './models/AutomationHealthResponse.js';
 export type { AutomationHealthRun } from './models/AutomationHealthRun.js';
 export type { AutomationHealthStepFailure } from './models/AutomationHealthStepFailure.js';
+export type { AutomationLiveExpectation } from './models/AutomationLiveExpectation.js';
+export type { AutomationLiveReport } from './models/AutomationLiveReport.js';
+export type { AutomationLiveTest } from './models/AutomationLiveTest.js';
+export type { AutomationLiveVerification } from './models/AutomationLiveVerification.js';
 export type { AutomationPublishCheckScenario } from './models/AutomationPublishCheckScenario.js';
 export type { AutomationPublishPolicy } from './models/AutomationPublishPolicy.js';
 export type { AutomationQueueHealth } from './models/AutomationQueueHealth.js';
@@ -834,6 +838,7 @@ export type { LinkPlatformTenantConsumerRequest } from './models/LinkPlatformTen
 export type { LinkPlatformTenantSurfaceRequest } from './models/LinkPlatformTenantSurfaceRequest.js';
 export type { ListAuditEventsResponse } from './models/ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './models/ListAuditLogResponse.js';
+export type { ListAutomationLiveVerificationsResponse } from './models/ListAutomationLiveVerificationsResponse.js';
 export type { ListAutomationRevisionsResponse } from './models/ListAutomationRevisionsResponse.js';
 export type { ListAutomationsResponse } from './models/ListAutomationsResponse.js';
 export type { ListCronRunsResponse } from './models/ListCronRunsResponse.js';
@@ -2139,6 +2144,7 @@ export type { SLODuration } from './models/SLODuration.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './models/SourceTarballDeployRequest.js';
+export type { StartAutomationLiveVerificationRequest } from './models/StartAutomationLiveVerificationRequest.js';
 export type { StatusIncident } from './models/StatusIncident.js';
 export type { StatusPage } from './models/StatusPage.js';
 export type { StatusUptimeBucket } from './models/StatusUptimeBucket.js';

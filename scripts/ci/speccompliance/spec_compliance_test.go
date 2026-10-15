@@ -1159,6 +1159,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "automation_check_evidence.go"),
 		filepath.Join(root, "pkg", "api", "automation_publish_checks.go"),
 		filepath.Join(root, "pkg", "api", "automation_tests.go"),
+		filepath.Join(root, "pkg", "api", "automation_live.go"),
 		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),

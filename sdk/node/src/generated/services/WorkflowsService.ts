@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AutomationFailurePolicyResponse } from '../models/AutomationFailurePolicyResponse.js';
 import type { AutomationHealthResponse } from '../models/AutomationHealthResponse.js';
+import type { AutomationLiveVerification } from '../models/AutomationLiveVerification.js';
 import type { AutomationPublishPolicy } from '../models/AutomationPublishPolicy.js';
 import type { AutomationResponse } from '../models/AutomationResponse.js';
 import type { AutomationRevisionResponse } from '../models/AutomationRevisionResponse.js';
@@ -14,6 +15,7 @@ import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflo
 import type { CreateWorkflowCallbackWebhookBindingRequest } from '../models/CreateWorkflowCallbackWebhookBindingRequest.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
+import type { ListAutomationLiveVerificationsResponse } from '../models/ListAutomationLiveVerificationsResponse.js';
 import type { ListAutomationRevisionsResponse } from '../models/ListAutomationRevisionsResponse.js';
 import type { ListAutomationsResponse } from '../models/ListAutomationsResponse.js';
 import type { ListTenantWorkflowSchedulesResponse } from '../models/ListTenantWorkflowSchedulesResponse.js';
@@ -36,6 +38,7 @@ import type { SetAutomationFailurePolicyRequest } from '../models/SetAutomationF
 import type { SetAutomationPublishPolicyRequest } from '../models/SetAutomationPublishPolicyRequest.js';
 import type { SimulateAutomationRequest } from '../models/SimulateAutomationRequest.js';
 import type { SimulateAutomationResponse } from '../models/SimulateAutomationResponse.js';
+import type { StartAutomationLiveVerificationRequest } from '../models/StartAutomationLiveVerificationRequest.js';
 import type { TenantWorkflowScheduleResponse } from '../models/TenantWorkflowScheduleResponse.js';
 import type { UpdateTenantWorkflowScheduleRequest } from '../models/UpdateTenantWorkflowScheduleRequest.js';
 import type { ValidateAutomationRequest } from '../models/ValidateAutomationRequest.js';
@@ -2595,6 +2598,198 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List recent live verifications and the current published deployment target.
+   * @returns ListAutomationLiveVerificationsResponse listAutomationLiveVerifications returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static listAutomationLiveVerifications({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose recent live verification history is requested.
+     */
+    name: string,
+  }): CancelablePromise<ListAutomationLiveVerificationsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/live-verifications',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Explicitly execute one saved case input with atomic target fences and idempotency.
+   * @returns AutomationLiveVerification startAutomationLiveVerification returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static startAutomationLiveVerification({
+    slug,
+    name,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose recent live verification history is requested.
+     */
+    name: string,
+    /**
+     * Stable request key; retry the same key and body to recover the original run.
+     */
+    idempotencyKey: string,
+    requestBody: StartAutomationLiveVerificationRequest,
+  }): CancelablePromise<AutomationLiveVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/live-verifications',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read one verification without starting a run or evaluating live assertions.
+   * @returns AutomationLiveVerification getAutomationLiveVerification returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static getAutomationLiveVerification({
+    slug,
+    name,
+    runId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation containing the retained live verification to read.
+     */
+    name: string,
+    /**
+     * Specific workflow run whose live provenance is requested.
+     */
+    runId: string,
+  }): CancelablePromise<AutomationLiveVerification> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/live-verifications/{run_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Check terminal run outcomes against frozen live assertions and retain a safe summary.
+   * @returns AutomationLiveVerification checkAutomationLiveVerification returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static checkAutomationLiveVerification({
+    slug,
+    name,
+    runId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose frozen live assertions will be checked.
+     */
+    name: string,
+    /**
+     * Retained live run whose terminal outcomes will be evaluated.
+     */
+    runId: string,
+  }): CancelablePromise<AutomationLiveVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check',
+      path: {
+        'slug': slug,
+        'name': name,
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

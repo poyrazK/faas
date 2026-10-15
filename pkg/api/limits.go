@@ -6386,11 +6386,17 @@ const (
 	AutomationTestSuiteMaxBytes          int64 = AutomationSimulationRequestMaxBytes + AutomationPublishCheckMaxBytes
 	AutomationTestSuiteRequestMaxBytes   int64 = AutomationTestSuiteMaxBytes + 4096
 	AutomationTestReportMaxBytes         int64 = AutomationPublishCheckMaxBytes
+	AutomationLiveMaxExpectations              = AutomationSimulationMaxSteps
+	AutomationLiveSpecMaxBytes           int64 = AutomationSimulationRequestMaxBytes
+	AutomationLiveStartMaxBytes          int64 = 4096
+	AutomationLiveHistoryLimit                 = 20
+	AutomationLiveReportMaxBytes         int64 = 128 << 10
+	AutomationLiveMaxAttempts                  = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
 	AutomationTestCaseNameMaxBytes             = 128
 	AutomationTestStepResultsMax               = AutomationSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected
 	// case simulation/output controls.
-	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes) + 4096
+	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
 	AutomationNameMaxBytes                            = 128
 	WorkflowRunInputMaxBytes                    int64 = 1 << 20
 	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10

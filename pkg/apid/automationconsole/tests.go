@@ -20,7 +20,7 @@ func editorTestSuite(data dashboard.AutomationConsoleData) (api.AutomationTestSu
 	}
 	suite := api.AutomationTestSuite{Sample: api.TestInputsFromSimulation(sim), Cases: []api.AutomationTestCase{}}
 	for _, c := range scenarios {
-		suite.Cases = append(suite.Cases, api.AutomationTestCase{Name: c.Name, Simulation: api.TestInputsFromSimulation(c.Simulation), Expectations: c.Expectations})
+		suite.Cases = append(suite.Cases, api.AutomationTestCase{Name: c.Name, Simulation: api.TestInputsFromSimulation(c.Simulation), Expectations: c.Expectations, Live: c.Live})
 	}
 	return suite, nil
 }
@@ -88,6 +88,7 @@ func (s *Service) tests(w http.ResponseWriter, r *http.Request, scope Scope, dat
 }
 
 func testMetadata(data *dashboard.AutomationConsoleData, saved api.AutomationResponse) {
+	liveMetadata(data, saved)
 	data.TestSuiteSaved = saved.TestSuite != nil
 	data.TestReport = saved.TestReport
 	data.TestReportFresh = false
