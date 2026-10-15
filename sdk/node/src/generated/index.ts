@@ -704,7 +704,10 @@ export type { EventSubscriptionDeliveryControl } from './models/EventSubscriptio
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';
 export type { EventSubscriptionRateCommandReceipt } from './models/EventSubscriptionRateCommandReceipt.js';
 export type { EventSubscriptionRateCommands } from './models/EventSubscriptionRateCommands.js';
+export type { EventSubscriptionRateDeadlineRisk } from './models/EventSubscriptionRateDeadlineRisk.js';
 export type { EventSubscriptionRateLimit } from './models/EventSubscriptionRateLimit.js';
+export type { EventSubscriptionRatePreview } from './models/EventSubscriptionRatePreview.js';
+export type { EventSubscriptionRatePreviewRequest } from './models/EventSubscriptionRatePreviewRequest.js';
 export type { EventSubscriptionRateRequest } from './models/EventSubscriptionRateRequest.js';
 export type { EventSubscriptionResponse } from './models/EventSubscriptionResponse.js';
 export type { EventSubscriptionResumeRequest } from './models/EventSubscriptionResumeRequest.js';

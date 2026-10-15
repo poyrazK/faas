@@ -571,3 +571,10 @@ type (
 	EventSubscriptionRateCommandReceipt = api.EventSubscriptionRateCommandReceipt
 	EventSubscriptionRateCommands       = api.EventSubscriptionRateCommands
 )
+
+// Read-only delivery pacing previews.
+type (
+	EventSubscriptionRatePreviewRequest = api.EventSubscriptionRatePreviewRequest
+	EventSubscriptionRatePreview        = api.EventSubscriptionRatePreview
+	EventSubscriptionRateDeadlineRisk   = api.EventSubscriptionRateDeadlineRisk
+)

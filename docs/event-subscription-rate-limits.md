@@ -98,3 +98,8 @@ No helper applies production DDL. The new table and control columns are operatio
 clone state, not copied configuration. Draining old workers is necessary for
 rollback; the down migration removes bucket controls and command evidence while
 preserving legacy pause/rate configuration.
+
+Before applying a change, use the [read-only rate preview](event-subscription-rate-preview.md)
+for projected capacity, a reviewed revision, a bounded rate-only admission model
+and deadline-risk identities. The preview makes no reservations and extends no
+deadlines.

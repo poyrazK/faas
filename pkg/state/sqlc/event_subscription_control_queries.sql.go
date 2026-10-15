@@ -584,6 +584,66 @@ func (q *Queries) EventSubscriptionRateInitialize(ctx context.Context, db DBTX, 
 	return err
 }
 
+const eventSubscriptionRatePreviewPending = `-- name: EventSubscriptionRatePreviewPending :many
+SELECT b.outbox_id,b.accepted_at,b.next_attempt_at,b.lease_until::timestamptz AS lease_until,
+ coalesce(o.payload->>'source','')::text AS event_source,coalesce(o.payload->>'id','')::text AS event_id,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+WHERE b.account_id=$1::uuid AND b.app_id=$2::uuid AND b.subscription_id=$3::text AND b.consumer_kind='application' AND b.routing_state='pending'
+ORDER BY b.accepted_at,b.outbox_id LIMIT $4::integer
+`
+
+type EventSubscriptionRatePreviewPendingParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+	SampleLimit    int32
+}
+
+type EventSubscriptionRatePreviewPendingRow struct {
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	EventSource   string
+	EventID       string
+	DeadlineAt    pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionRatePreviewPending(ctx context.Context, db DBTX, arg EventSubscriptionRatePreviewPendingParams) ([]EventSubscriptionRatePreviewPendingRow, error) {
+	rows, err := db.Query(ctx, eventSubscriptionRatePreviewPending,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.SampleLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionRatePreviewPendingRow{}
+	for rows.Next() {
+		var i EventSubscriptionRatePreviewPendingRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.NextAttemptAt,
+			&i.LeaseUntil,
+			&i.EventSource,
+			&i.EventID,
+			&i.DeadlineAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionCapacityCommands = `-- name: ListEventSubscriptionCapacityCommands :many
 SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands
 WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid

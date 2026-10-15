@@ -76,6 +76,8 @@ import type { EventSubscriptionDeliveryControl } from '../models/EventSubscripti
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { EventSubscriptionRateCommandReceipt } from '../models/EventSubscriptionRateCommandReceipt.js';
 import type { EventSubscriptionRateCommands } from '../models/EventSubscriptionRateCommands.js';
+import type { EventSubscriptionRatePreview } from '../models/EventSubscriptionRatePreview.js';
+import type { EventSubscriptionRatePreviewRequest } from '../models/EventSubscriptionRatePreviewRequest.js';
 import type { EventSubscriptionRateRequest } from '../models/EventSubscriptionRateRequest.js';
 import type { EventSubscriptionResumeRequest } from '../models/EventSubscriptionResumeRequest.js';
 import type { EventSubscriptionSchemaVersionsRequest } from '../models/EventSubscriptionSchemaVersionsRequest.js';
@@ -2893,6 +2895,45 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * Preview consumer pacing and delivery deadline risk.
+   * Read-only advisory preview of proposed interval/burst settings from one owned subscription snapshot. Requires read scope. Returns the reviewed bucket revision for a subsequent guarded command, without allocating a command ID or receipt, consuming tokens, claiming work or reserving capacity. Models the oldest 1000 captured pending recipients in acceptance order, with current scheduled times and the legacy per-second cap. This models admission rather than completion and does not promise scheduler ordering. Pause, circuit, lease and capacity constraints can delay actual admission without bound; inspect constraints and completeness. Deadline-risk identities are limited to 100.
+   * @returns EventSubscriptionRatePreview Advisory rate-only admission model and bounded deadline evidence; completeness does not certify deadline safety.
+   * @throws ApiError
+   */
+  public static previewEventSubscriptionRateLimit({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * Application slug for a read-only consumer pacing preview.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose pacing is being reviewed.
+     */
+    subscriptionId: string,
+    requestBody: EventSubscriptionRatePreviewRequest,
+  }): CancelablePromise<EventSubscriptionRatePreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Proposed preview settings or subscription UUID are invalid.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Read-only pacing preview exceeded its request deadline; retry with a fresh observation.`,
       },
     });
   }

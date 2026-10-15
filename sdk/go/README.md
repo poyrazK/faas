@@ -1302,3 +1302,9 @@ per-subscription interval/burst bucket. Revision-guarded UUID commands return
 applied or rejected receipts; lookup and bounded history support uncertain retries.
 Existing pause, circuit and per-second caps remain in force. See
 [consumer rate controls](../../docs/event-subscription-rate-limits.md).
+
+`PreviewEventSubscriptionRateLimit` reviews proposed consumer bucket settings
+without changing state. It returns the reviewed revision, projected capacity,
+current overlapping controls and bounded deadline-risk evidence. Its rate-only
+drain model is advisory and does not guarantee ordering or completion. See
+[preview semantics](../../docs/event-subscription-rate-preview.md).

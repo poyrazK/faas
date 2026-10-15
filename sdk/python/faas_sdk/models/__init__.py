@@ -1422,7 +1422,16 @@ from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_rate_command_receipt import EventSubscriptionRateCommandReceipt
 from .event_subscription_rate_command_receipt_outcome import EventSubscriptionRateCommandReceiptOutcome
 from .event_subscription_rate_commands import EventSubscriptionRateCommands
+from .event_subscription_rate_deadline_risk import EventSubscriptionRateDeadlineRisk
+from .event_subscription_rate_deadline_risk_reason import EventSubscriptionRateDeadlineRiskReason
 from .event_subscription_rate_limit import EventSubscriptionRateLimit
+from .event_subscription_rate_preview import EventSubscriptionRatePreview
+from .event_subscription_rate_preview_capacity_blocking_scopes_item import (
+    EventSubscriptionRatePreviewCapacityBlockingScopesItem,
+)
+from .event_subscription_rate_preview_coverage import EventSubscriptionRatePreviewCoverage
+from .event_subscription_rate_preview_request import EventSubscriptionRatePreviewRequest
+from .event_subscription_rate_preview_sample_limit import EventSubscriptionRatePreviewSampleLimit
 from .event_subscription_rate_request import EventSubscriptionRateRequest
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
@@ -6072,7 +6081,14 @@ __all__ = (
     "EventSubscriptionRateCommandReceipt",
     "EventSubscriptionRateCommandReceiptOutcome",
     "EventSubscriptionRateCommands",
+    "EventSubscriptionRateDeadlineRisk",
+    "EventSubscriptionRateDeadlineRiskReason",
     "EventSubscriptionRateLimit",
+    "EventSubscriptionRatePreview",
+    "EventSubscriptionRatePreviewCapacityBlockingScopesItem",
+    "EventSubscriptionRatePreviewCoverage",
+    "EventSubscriptionRatePreviewRequest",
+    "EventSubscriptionRatePreviewSampleLimit",
     "EventSubscriptionRateRequest",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",

@@ -983,6 +983,7 @@ type Querier interface {
 	EventSubscriptionRateConfigure(ctx context.Context, db DBTX, arg EventSubscriptionRateConfigureParams) (EventSubscriptionDeliveryControl, error)
 	EventSubscriptionRateConsume(ctx context.Context, db DBTX, arg EventSubscriptionRateConsumeParams) error
 	EventSubscriptionRateInitialize(ctx context.Context, db DBTX, arg EventSubscriptionRateInitializeParams) error
+	EventSubscriptionRatePreviewPending(ctx context.Context, db DBTX, arg EventSubscriptionRatePreviewPendingParams) ([]EventSubscriptionRatePreviewPendingRow, error)
 	EventSubscriptionSchemaVersionsSet(ctx context.Context, db DBTX, arg EventSubscriptionSchemaVersionsSetParams) error
 	EventWorkflowRecoveryCandidate(ctx context.Context, db DBTX, arg EventWorkflowRecoveryCandidateParams) (EventWorkflowRecoveryCandidateRow, error)
 	ExclusiveWorkAppScope(ctx context.Context, db DBTX, arg ExclusiveWorkAppScopeParams) (ExclusiveWorkAppScopeRow, error)

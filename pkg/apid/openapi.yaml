@@ -39892,6 +39892,49 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview:
+    post:
+      tags: [events]
+      operationId: previewEventSubscriptionRateLimit
+      summary: Preview consumer pacing and delivery deadline risk.
+      description: "Read-only advisory preview of proposed interval/burst settings from one owned subscription snapshot. Requires read scope. Returns the reviewed bucket revision for a subsequent guarded command, without allocating a command ID or receipt, consuming tokens, claiming work or reserving capacity. Models the oldest 1000 captured pending recipients in acceptance order, with current scheduled times and the legacy per-second cap. This models admission rather than completion and does not promise scheduler ordering. Pause, circuit, lease and capacity constraints can delay actual admission without bound; inspect constraints and completeness. Deadline-risk identities are limited to 100."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for a read-only consumer pacing preview.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose pacing is being reviewed.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionRatePreviewRequest' }
+      responses:
+        '200':
+          description: Advisory rate-only admission model and bounded deadline evidence; completeness does not certify deadline safety.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRatePreview' }
+        '400':
+          description: Proposed preview settings or subscription UUID are invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Read-only pacing preview exceeded its request deadline; retry with a fresh observation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit:
     put:
       tags: [events]
@@ -73364,6 +73407,65 @@ components:
         recorded_at: { type: string, format: date-time }
         retain_until: { type: string, format: date-time }
 
+    EventSubscriptionRatePreviewRequest:
+      type: object
+      additionalProperties: false
+      description: Proposed bucket settings for a preview only; this request has no command UUID or mutation guard.
+      required: [enabled, interval_millis, burst]
+      properties:
+        enabled: { type: boolean }
+        interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
+        burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+    EventSubscriptionRatePreview:
+      type: object
+      additionalProperties: false
+      description: One snapshot of current controls and a hypothetical rate-only admission model. The deterministic oldest-first model is not an ordering guarantee, completion ETA or deadline-safety certificate. Full pending coverage excludes processing, unattributed receipts and future arrivals.
+      required: [coverage, app_id, subscription_id, observed_at, advisory, read_only, expected_revision, current, projected, paused, legacy_rate_per_second, circuit_state, capacity_blocking_scopes, constraints, sample_limit, sampled_pending, complete, truncated, deadline_risk_count, already_expired_count, deadline_risks, risks_truncated]
+      properties:
+        coverage: { type: string, enum: [retained_captured_pending_application_recipients] }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        advisory: { type: boolean, enum: [true] }
+        read_only: { type: boolean, enum: [true] }
+        expected_revision: { type: integer, format: int64, minimum: 0, description: "Reviewed bucket revision for the subsequent mutation; other controls and backlog can change independently." }
+        current: { $ref: '#/components/schemas/EventSubscriptionRateLimit' }
+        projected: { $ref: '#/components/schemas/EventSubscriptionRateLimit', description: "Hypothetical capacity immediately after applying the proposal. Revision remains the reviewed baseline because no mutation occurred." }
+        paused: { type: boolean }
+        legacy_rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        circuit_state: { type: string }
+        capacity_blocking_scopes:
+          type: array
+          maxItems: 3
+          items: { type: string, enum: [consumer, app, account] }
+        constraints:
+          type: array
+          description: Current pause, circuit, capacity, lease, scheduled-retry, clock and sampling constraints. An empty list does not promise future readiness.
+          items: { type: string }
+        sample_limit: { type: integer, enum: [1000] }
+        sampled_pending: { type: integer, minimum: 0, maximum: 1000 }
+        complete: { type: boolean, description: "Captured pending sample is untruncated with usable timestamps; not evidence of eventual delivery." }
+        truncated: { type: boolean }
+        rate_only_drain_millis: { type: integer, format: int64, minimum: 0, description: "Modeled admission span for the sample, assuming all unexpired sampled recipients are admitted once, no new arrivals, oldest-first order and no blocking from pause/circuit/capacity/leases or execution. Includes scheduled times and legacy pacing. Missing when clocks or duration are unusable. Truncated samples never estimate the full backlog." }
+        deadline_risk_count: { type: integer, minimum: 0, maximum: 1000 }
+        already_expired_count: { type: integer, minimum: 0, maximum: 1000 }
+        deadline_risks:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventSubscriptionRateDeadlineRisk' }
+        risks_truncated: { type: boolean }
+    EventSubscriptionRateDeadlineRisk:
+      type: object
+      additionalProperties: false
+      description: Payload-free identity of an expired or model-at-risk sampled recipient. Absence from the sample is not evidence that its deadline is safe.
+      required: [event_source, event_id, accepted_at, deadline_at, reason]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        modeled_admission_at: { type: string, format: date-time }
+        reason: { type: string, enum: [already_expired, modeled_deadline_risk] }
     EventSubscriptionRateRequest:
       type: object
       additionalProperties: false

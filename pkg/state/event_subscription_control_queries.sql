@@ -117,3 +117,12 @@ INSERT INTO event_subscription_rate_commands(account_id,app_id,subscription_id,c
 
 -- name: EventSubscriptionRateCommandsList :many
 SELECT receipt FROM event_subscription_rate_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND sequence>sqlc.arg(after_sequence)::bigint AND retain_until>sqlc.arg(now_at)::timestamptz ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventSubscriptionRatePreviewPending :many
+SELECT b.outbox_id,b.accepted_at,b.next_attempt_at,b.lease_until::timestamptz AS lease_until,
+ coalesce(o.payload->>'source','')::text AS event_source,coalesce(o.payload->>'id','')::text AS event_id,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uuid AND b.subscription_id=sqlc.arg(subscription_id)::text AND b.consumer_kind='application' AND b.routing_state='pending'
+ORDER BY b.accepted_at,b.outbox_id LIMIT sqlc.arg(sample_limit)::integer;

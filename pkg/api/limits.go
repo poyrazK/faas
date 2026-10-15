@@ -11181,3 +11181,8 @@ const (
 	EventSubscriptionRateCommandPageSize          = 50
 	EventSubscriptionRateRequestMaxBytes          = 4 << 10
 )
+
+const (
+	EventSubscriptionRatePreviewSampleMax = 1000
+	EventSubscriptionRatePreviewRiskMax   = 100
+)

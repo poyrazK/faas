@@ -11,6 +11,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func (s *Service) PreviewEventSubscriptionRateLimit(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.subscriptionRateCommand(w, r, acct, "preview")
+}
+
 func (s *Service) SetEventSubscriptionRateLimit(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.subscriptionRateCommand(w, r, acct, "set")
 }
@@ -45,7 +49,11 @@ func (s *Service) subscriptionRateCommand(w http.ResponseWriter, r *http.Request
 	case errors.Is(err, state.ErrEventSubscriptionRateCommandLimit):
 		api.WriteProblem(w, api.NewProblem(429, "event_subscription_rate_command_limit", "Rate command history full", "known repeats remain available; expired receipts free slots").WithLimit(api.EventSubscriptionRateCommandMaxReceipts, api.EventSubscriptionRateCommandMaxReceipts).WithDocs("https://gregale.dev/docs/event-driven"))
 	case errors.Is(err, context.DeadlineExceeded):
-		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Rate control timed out", "look up or replay the same command UUID after an uncertain mutation"))
+		detail := "look up or replay the same command UUID after an uncertain mutation"
+		if action == "preview" {
+			detail = "retry the read-only preview with a fresh observation"
+		}
+		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Rate control timed out", detail))
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("subscription rate controls"))
 	default:
@@ -55,6 +63,17 @@ func (s *Service) subscriptionRateCommand(w http.ResponseWriter, r *http.Request
 func applySubscriptionRateCommand(ctx context.Context, store state.EventSubscriptionRateStore, r *http.Request, account, app, action string) (any, error) {
 	sub := r.PathValue("subscriptionID")
 	switch action {
+	case "preview":
+		preview, ok := store.(state.EventSubscriptionRatePreviewStore)
+		if !ok {
+			return nil, errors.New("subscription rate preview unavailable")
+		}
+		var req api.EventSubscriptionRatePreviewRequest
+		if httpkit.DecodeJSONSized(r, &req, api.EventSubscriptionRateRequestMaxBytes) != nil || req.Validate() != nil {
+			return nil, state.ErrInvalidArgument
+		}
+		return preview.PreviewEventSubscriptionRateLimit(ctx, account, app, sub, req)
+
 	case "set":
 		var req api.EventSubscriptionRateRequest
 		if httpkit.DecodeJSONSized(r, &req, api.EventSubscriptionRateRequestMaxBytes) != nil || req.Validate() != nil {
