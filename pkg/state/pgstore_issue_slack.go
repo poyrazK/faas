@@ -71,7 +71,7 @@ func (s *PgStore) ListIssueSlackDeliveries(ctx context.Context, app, owner strin
 	rows, err := sqlc.New().IssueSlackDeliveryList(ctx, s.pool, sqlc.IssueSlackDeliveryListParams{ID: issueUUID(app), AccountID: issueUUID(owner), Limit: api.IssueSlackDeliveryPageSize})
 	out := []IssueSlackDelivery{}
 	for _, r := range rows {
-		out = append(out, IssueSlackDelivery{ID: issueID(r.ID), NotificationID: issueID(r.NotificationID), IncidentID: issueID(r.IncidentID), TeamName: r.TeamName, ChannelID: r.ChannelID, Kind: r.Kind, Status: r.Status, LastError: r.LastError, Attempts: r.TotalAttempts, DestinationRevision: r.DestinationRevision, CanRetry: r.CanRetry, ResponseCode: int(r.ResponseCode), NextAttemptAt: r.NextAttemptAt.Time, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time})
+		out = append(out, IssueSlackDelivery{ID: issueID(r.ID), NotificationID: issueID(r.NotificationID), ActivityID: issueID(r.ActivityID), IssueID: issueID(r.IssueID), IncidentID: issueID(r.IncidentID), TeamName: r.TeamName, ChannelID: r.ChannelID, Kind: r.Kind, Status: r.Status, LastError: r.LastError, Attempts: r.TotalAttempts, DestinationRevision: r.DestinationRevision, CanRetry: r.CanRetry, ResponseCode: int(r.ResponseCode), NextAttemptAt: r.NextAttemptAt.Time, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time})
 	}
 	return out, err
 }
@@ -93,7 +93,7 @@ func (s *PgStore) RetryIssueSlackDelivery(ctx context.Context, app, owner, id st
 	if err != nil {
 		return mapErr(err)
 	}
-	if !r.Enabled || r.CurrentRevision != r.DestinationRevision || (r.Status != "failed" && r.Status != "dead") {
+	if !r.ApplicationRetryAllowed || !r.Enabled || r.CurrentRevision != r.DestinationRevision || (r.Status != "failed" && r.Status != "dead") {
 		return api.NewProblem(409, "issue_slack_delivery_changed", "Delivery cannot be retried", "only retained failed deliveries for the current enabled destination may be retried")
 	}
 	if err = q.IssueSlackRetry(ctx, tx, sqlc.IssueSlackRetryParams{ID: r.ID, ExpiresAt: issueTime(time.Now().Add(api.IssueSlackDeliveryTTL))}); err != nil {
@@ -111,5 +111,9 @@ func issueSlackEntitledPlans() []string {
 	return out
 }
 func (s *PgStore) CleanupIssueSlackThreads(ctx context.Context) error {
-	return sqlc.New().IssueSlackThreadCleanup(ctx, s.pool)
+	q := sqlc.New()
+	if err := q.IssueApplicationSlackHistoryExpire(ctx, s.pool, sqlc.IssueApplicationSlackHistoryExpireParams{Before: issueTime(time.Now().Add(-api.IssueApplicationSlackHistoryRetention)), BatchSize: api.IssueApplicationSlackCleanupBatch}); err != nil {
+		return err
+	}
+	return q.IssueSlackThreadCleanup(ctx, s.pool)
 }

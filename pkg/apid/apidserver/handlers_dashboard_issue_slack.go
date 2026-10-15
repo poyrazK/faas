@@ -14,6 +14,10 @@ import (
 
 func (s *server) dashboardTrackerSlackAction(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) bool {
 	kind := r.PostForm.Get("settings_kind")
+	if kind == "application_slack" {
+		s.dashboardApplicationSlackAction(w, r, acct, app)
+		return true
+	}
 	if kind != "slack_destination" && kind != "slack_retry" {
 		return false
 	}
@@ -87,5 +91,5 @@ func (s *server) dashboardIssueSlackView(w http.ResponseWriter, r *http.Request,
 	}
 	view.SlackSaved = r.URL.Query().Get("saved") == "slack"
 	view.SlackTokenMax = api.IssueSlackTokenMaxBytes
-	return true
+	return s.dashboardApplicationSlackView(w, r, app, view)
 }

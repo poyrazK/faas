@@ -107,6 +107,9 @@ func message(c state.IssueSlackClaim, base string) ([]byte, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, state.ErrInvalidArgument
 	}
+	if c.Application {
+		return applicationMessage(c, u)
+	}
 	switch c.Kind {
 	case "paused", "closure", "failure", "reminder", "escalation", "recovered":
 	default:
@@ -153,4 +156,44 @@ func slackRetryAfter(s string, now time.Time) time.Time {
 		return t
 	}
 	return time.Time{}
+}
+
+var safeApplicationValue = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) {
+	labels := map[string]string{"created": "New issue", "regressed": "Issue regressed", "impact_threshold_reached": "Customer-impact threshold reached", "frequency_threshold_reached": "Event-frequency threshold reached"}
+	label, ok := labels[c.Kind]
+	if !ok {
+		return nil, state.ErrInvalidArgument
+	}
+	heading := "Gregale Issues · " + label
+	detail := "App: " + c.AppSlug + "\nIssue: " + c.IssueID
+	if value := c.Details["environment"]; safeApplicationValue.MatchString(value) {
+		detail += "\nEnvironment: " + value
+	}
+	if value := c.Details["rule_key"]; safeApplicationValue.MatchString(value) {
+		detail += "\nRule: " + value
+	}
+	for _, field := range []struct{ key, label string }{
+		{"observed_events", "Events in window"}, {"minimum_events", "Event threshold"}, {"identified_customers", "Verified customers"}, {"minimum_customers", "Customer threshold"}, {"window_seconds", "Window (seconds)"},
+	} {
+		value := c.Details[field.key]
+		if _, err := strconv.ParseUint(value, 10, 32); err == nil && len(value) <= 10 {
+			detail += "\n" + field.label + ": " + value
+		}
+	}
+	root := strings.TrimRight(base.String(), "/") + "/dashboard/apps/" + url.PathEscape(c.AppSlug)
+	link := root + "/issues?issue=" + url.QueryEscape(c.IssueID)
+	body := map[string]any{"channel": c.ChannelID, "client_msg_id": c.ID, "text": heading, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false, "blocks": []any{
+		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": heading}},
+		map[string]any{"type": "section", "text": map[string]any{"type": "plain_text", "text": detail}},
+		map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "link", "text": "Open issue", "url": link}}}}},
+	}}
+	if c.ThreadTS != "" {
+		if !state.ValidIssueSlackTimestamp(c.ThreadTS) {
+			return nil, state.ErrInvalidArgument
+		}
+		body["thread_ts"] = c.ThreadTS
+	}
+	return json.Marshal(body)
 }

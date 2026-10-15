@@ -28,14 +28,16 @@ type PutIssueSlackDestination struct {
 	TokenSealed       []byte `json:"-"`
 }
 type IssueSlackDelivery struct {
-	ID, NotificationID, IncidentID, TeamName, ChannelID, Kind, Status, LastError string
-	CanRetry                                                                     bool
-	Attempts, DestinationRevision                                                int64
-	ResponseCode                                                                 int
-	NextAttemptAt, CreatedAt, UpdatedAt                                          time.Time
+	ID, NotificationID, ActivityID, IssueID, IncidentID, TeamName, ChannelID, Kind, Status, LastError string
+	CanRetry                                                                                          bool
+	Attempts, DestinationRevision                                                                     int64
+	ResponseCode                                                                                      int
+	NextAttemptAt, CreatedAt, UpdatedAt                                                               time.Time
 }
 type IssueSlackClaim struct {
 	ID, AppID, AccountID, DestinationID, NotificationID, IncidentID, IssueID, LinkID, AppSlug, TeamID, ChannelID, Kind, Reason, ThreadTS, ClaimID, Status string
+	Application                                                                                                                                           bool
+	Details                                                                                                                                               map[string]string
 	DestinationRevision                                                                                                                                   int64
 	Attempt                                                                                                                                               int
 	TokenSealed                                                                                                                                           []byte `json:"-"`

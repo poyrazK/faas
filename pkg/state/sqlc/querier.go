@@ -1579,6 +1579,16 @@ type Querier interface {
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
 	IssueAddTeamMember(ctx context.Context, db DBTX, arg IssueAddTeamMemberParams) error
 	IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error
+	IssueApplicationSlackCancelPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationSlackCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueApplicationSlackEnqueue(ctx context.Context, db DBTX, arg IssueApplicationSlackEnqueueParams) error
+	IssueApplicationSlackHistoryExpire(ctx context.Context, db DBTX, arg IssueApplicationSlackHistoryExpireParams) error
+	IssueApplicationSlackHistoryTrim(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueApplicationSlackMissed(ctx context.Context, db DBTX, arg IssueApplicationSlackMissedParams) error
+	IssueApplicationSlackPolicy(ctx context.Context, db DBTX, arg IssueApplicationSlackPolicyParams) (IssueApplicationSlackPolicyRow, error)
+	IssueApplicationSlackPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationSlackPolicyPutParams) error
+	IssueApplicationSlackReleaseClaims(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationSlackRoute(ctx context.Context, db DBTX, arg IssueApplicationSlackRouteParams) (IssueApplicationSlackRouteRow, error)
 	IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApplySplitRuleParams) (int64, error)
 	IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error)
 	IssueAttribution(ctx context.Context, db DBTX, arg IssueAttributionParams) ([]IssueAttributionRow, error)

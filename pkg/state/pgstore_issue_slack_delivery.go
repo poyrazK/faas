@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -34,6 +35,12 @@ func (s *PgStore) ClaimIssueSlackDelivery(ctx context.Context) (IssueSlackClaim,
 		return out, false, err
 	}
 	out = IssueSlackClaim{ID: issueID(r.ID), AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), DestinationID: issueID(r.DestinationID), DestinationRevision: r.DestinationRevision, NotificationID: issueID(r.NotificationID), IncidentID: issueID(r.IncidentID), IssueID: issueID(r.IssueID), LinkID: issueID(r.LinkID), AppSlug: r.AppSlug, TeamID: issueID(r.TeamID), ChannelID: r.ChannelID, Kind: r.Kind, Reason: r.Reason, Attempt: int(r.Attempt) + 1, TokenSealed: r.TokenSealed, Status: "in_flight"}
+	out.Application = r.ActivityID.Valid
+	if out.Application {
+		if err = json.Unmarshal(r.Details, &out.Details); err != nil {
+			return IssueSlackClaim{}, false, err
+		}
+	}
 	status, reason := "", ""
 	switch {
 	case !r.Eligible:

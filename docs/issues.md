@@ -623,7 +623,8 @@ Go clients expose `GetIssueFrequencyAlertPolicy` / `SetIssueFrequencyAlertPolicy
 Node's generated `AppsService` and Python's generated apps API expose the matching
 operations. The customer-operated Node Slack bridge accepts frequency alerts when
 its explicit `events` list includes `issue.frequency_threshold_reached`; its default
-event list is unchanged. Native Slack destinations still cover tracker-sync notices.
+event list is unchanged. Native application Slack delivery can use those team destinations directly; see
+[application Slack alerts](#native-application-slack-alerts).
 
 ### Application error alerting compared with Sentry
 
@@ -637,11 +638,11 @@ The current application-error alert surface has these boundaries (reviewed
 | Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
-| Slack | Customer-operated application webhook bridge | Native application-error delivery; native team Slack destinations currently cover tracker-sync incidents only |
+| Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation, interactive acknowledgment and per-rule channel overrides |
 
-The next delivery gap is native Slack routing for application-error rules.
+Native Slack delivery now connects application alerts to team channels.
 Tracker-sync acknowledgment, reminders and escalation policies remain a separate
-workflow. Frequency rules do not yet share those incident controls. Ending an ignore
+workflow; application alerts do not yet share those incident controls. Ending an ignore
 period does not retroactively notify about suppressed customer-impact crossings.
 
 ## Limits
@@ -1003,12 +1004,63 @@ Gregale app webhooks to a Slack incoming webhook and stores delivery receipts in
 a customer-owned PostgreSQL database. It defaults to new issues, regressions,
 and customer-impact threshold crossings; lifecycle notifications are opt-in.
 
-This is a customer-operated receiver, not a native workspace connector. It
-checks signatures before sending, deduplicates confirmed deliveries across
+This bridge is a customer-operated receiver. It checks signatures before sending, deduplicates confirmed deliveries across
 restarts, and preserves Gregale retry/replay behavior. Slack has no incoming
 webhook idempotency key, so uncertain provider/database acknowledgements can
-still cause duplicates. GitHub/Linear synchronization and crash-free session
-instrumentation remain separate gaps.
+still cause duplicates. The bridge does not synchronize GitHub/Linear status or
+instrument crash-free sessions.
+
+### Native application Slack alerts
+
+On an app's **Issues** page, choose **Configure native team Slack alerts and
+delivery status**. The notification settings page contains **Application-error
+Slack alerts**, independently of tracker-sync notification settings. Configure a
+team bot destination below it, enable application delivery, and select new issues,
+regressions, customer-impact thresholds and/or event-frequency thresholds.
+Bot tokens require `chat:write` and the bot must be invited to the channel.
+Only the app owner can configure these settings or retry deliveries. Tokens remain
+sealed and are never returned in settings, payloads or logs.
+
+Each alert uses the assigned team's enabled destination when that team has an
+eligible owner/active organization member. Otherwise it uses the explicitly
+selected fallback team, including for account-owned and unassigned issues. No
+fallback means no Slack broadcast. The page shows cumulative **unrouted alerts**
+so missing destinations or eligible membership are visible. Selecting an event
+kind does not enable its producer: impact/frequency thresholds must be configured
+separately. No generic app webhook or tracker connection is required.
+
+Only future emitted activity queues messages. Related application alerts reply in
+one issue thread per team destination revision. Messages show the alert kind,
+issue/app IDs, environment and safe threshold/count metadata, with a local issue
+link. They exclude issue titles, stacks and request context. Opening the link
+requires Gregale app permission; Slack channel membership grants no Gregale access.
+Manual reopen, resolve and assignment are not regression notifications.
+
+Queued alerts are canceled before sending when their policy or destination is
+obsolete, the issue is actively ignored or reassigned, the captured issue becomes
+a merged alias, or captured eligible membership/owner entitlement is lost.
+Changing settings does not reroute or replay historical events. No-op policy saves
+preserve queued work. Old messages and threads are not moved by merge/split, and an
+already-started Slack request cannot be recalled. App webhooks keep their independent
+routing and retry semantics. A fallback already captured for an alert remains its
+route if a preferred destination is enabled later.
+
+**Recent Slack deliveries** combines tracker and application delivery status.
+Application entries link to the issue; tracker entries link to incident handling.
+Retained failed application jobs can be retried only while the same application
+policy and destination revisions remain enabled. Automatic/manual retries reuse
+the same message ID; Slack delivery remains at least once, so ambiguous timeouts
+can still produce duplicates. Failed roots hold later replies until terminal or
+successful, and a channel change starts a new thread.
+
+Queue plus retained application delivery history is capped at 1,000 records per
+app. The oldest terminal record makes room first. If every slot is live, the new
+Slack delivery is skipped and the visible skipped counter increases; error capture,
+activity and generic webhooks still commit. These omissions are not backfilled.
+Terminal history expires after seven days, with bounded cleanup; an expired thread
+root can cause a later alert to start a fresh thread. Tracker retention remains
+independent. Application acknowledgment, snoozing, escalation and interactive Slack
+actions are not included in this increment.
 
 ## GitHub and Linear tracker links
 

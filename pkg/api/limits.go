@@ -10548,3 +10548,10 @@ const (
 	IssueFrequencyAlertMinCooldownSeconds = 60
 	IssueFrequencyAlertMaxCooldownSeconds = 604800
 )
+
+// Application Slack delivery history and admission are bounded independently of telemetry.
+const (
+	IssueApplicationSlackMaxDeliveries    = 1000
+	IssueApplicationSlackHistoryRetention = 7 * 24 * time.Hour
+	IssueApplicationSlackCleanupBatch     = 1000
+)

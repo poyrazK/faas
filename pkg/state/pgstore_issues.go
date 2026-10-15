@@ -405,6 +405,9 @@ func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.App
 	if err != nil {
 		return err
 	}
+	if err = enqueueApplicationIssueSlack(ctx, q, tx, row, activity.ID, action, now); err != nil {
+		return err
+	}
 	return q.IssueAddTransition(ctx, tx, sqlc.IssueAddTransitionParams{ActivityID: activity.ID, AccountID: row.AccountID, AppID: row.AppID, Payload: payload})
 }
 

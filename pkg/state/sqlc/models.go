@@ -3894,6 +3894,16 @@ type IssueActivity struct {
 	Details        []byte
 }
 
+type IssueApplicationSlackPolicy struct {
+	AppID             pgtype.UUID
+	Enabled           bool
+	Revision          int64
+	Events            []string
+	FallbackTeamID    pgtype.UUID
+	SkippedDeliveries int64
+	UnroutedAlerts    int64
+}
+
 type IssueEvent struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID
@@ -3984,6 +3994,17 @@ type IssueResolution struct {
 	ActorAccountID    pgtype.UUID
 }
 
+type IssueSlackDeliverySource struct {
+	DeliveryID              pgtype.UUID
+	IssueID                 pgtype.UUID
+	LinkID                  pgtype.UUID
+	Kind                    string
+	Reason                  string
+	Details                 []byte
+	Eligible                bool
+	ApplicationRetryAllowed bool
+}
+
 type IssueSourceMapArtifact struct {
 	AppID              pgtype.UUID
 	DeploymentID       pgtype.UUID
@@ -4015,24 +4036,29 @@ type IssueSplitRule struct {
 }
 
 type IssueTeamSlackDelivery struct {
-	ID                  pgtype.UUID
-	DeliverySeq         pgtype.Int8
-	ChannelID           string
-	DestinationID       pgtype.UUID
-	DestinationRevision int64
-	NotificationID      pgtype.UUID
-	IncidentID          pgtype.UUID
-	Status              string
-	Attempt             int32
-	TotalAttempts       int64
-	NextAttemptAt       pgtype.Timestamptz
-	ExpiresAt           pgtype.Timestamptz
-	ClaimID             pgtype.UUID
-	ClaimUntil          pgtype.Timestamptz
-	LastError           string
-	ResponseCode        int32
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                        pgtype.UUID
+	DeliverySeq               pgtype.Int8
+	ChannelID                 string
+	DestinationID             pgtype.UUID
+	DestinationRevision       int64
+	NotificationID            pgtype.UUID
+	IncidentID                pgtype.UUID
+	Status                    string
+	Attempt                   int32
+	TotalAttempts             int64
+	NextAttemptAt             pgtype.Timestamptz
+	ExpiresAt                 pgtype.Timestamptz
+	ClaimID                   pgtype.UUID
+	ClaimUntil                pgtype.Timestamptz
+	LastError                 string
+	ResponseCode              int32
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	ActivityID                pgtype.UUID
+	ApplicationPolicyRevision pgtype.Int8
+	RecipientAccountIds       []pgtype.UUID
+	AssignedTeamID            pgtype.UUID
+	AssignedAccountID         pgtype.UUID
 }
 
 type IssueTeamSlackDestination struct {

@@ -6,6 +6,10 @@ import (
 )
 
 type IssueTrackerNotificationsView struct {
+	ApplicationSlackAvailable, ApplicationSlackSaved       bool
+	ApplicationSlackPolicy                                 state.IssueApplicationSlackPolicy
+	ApplicationSlackEvents                                 []IssueSlackEventChoice
+	ApplicationSlackMaxDeliveries                          int
 	SlackTeams                                             []IssueSlackTeamSettings
 	SlackDeliveries                                        []state.IssueSlackDelivery
 	SlackSaved                                             bool
@@ -26,4 +30,9 @@ type IssueTrackerNotificationsView struct {
 type IssueSlackTeamSettings struct {
 	TeamID, TeamName string
 	Destination      state.IssueSlackDestination
+}
+
+type IssueSlackEventChoice struct {
+	Key, Label string
+	Selected   bool
 }
