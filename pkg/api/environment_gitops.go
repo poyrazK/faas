@@ -235,9 +235,6 @@ func (s EnvironmentGitSourceSpec) Validate() error {
 	if s.Mode != "report" && s.Mode != "enforce" || s.ApprovalPolicy != "manual" && s.ApprovalPolicy != "protected_branch" {
 		return fmt.Errorf("git source needs report/enforce mode and manual/protected_branch approval_policy")
 	}
-	if provider == "gitlab" && (s.Mode != "report" || s.ApprovalPolicy != "manual" || s.Prune) {
-		return fmt.Errorf("GitLab source currently supports report mode, manual approval, and retained resources")
-	}
 	return nil
 }
 

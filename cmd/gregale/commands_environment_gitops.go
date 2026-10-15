@@ -85,7 +85,7 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 	approval := fs.String("approval-policy", "manual", "manual or protected_branch")
 	prune := fs.Bool("prune", false, "allow removal of previously owned fields")
 	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || *mode != "report" || (*approval != "manual" && *approval != "protected_branch") ||
-		(*provider != "github" && *provider != "gitlab") || (*provider == "gitlab" && (*repository == "" || *ref == "" || *approval != "manual" || *prune)) || (*provider == "github" && *repository != "") {
+		(*provider != "github" && *provider != "gitlab") || (*provider == "gitlab" && (*repository == "" || *ref == "")) || (*provider == "github" && *repository != "") {
 		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--provider github|gitlab] [--repository GROUP/PROJECT] [--ref REF] [--mode report] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
 		return 1
 	}

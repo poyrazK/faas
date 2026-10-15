@@ -57528,8 +57528,8 @@ components:
       type: object
       description: Select a Git definition. GitHub uses the project's bound repository;
         GitLab.com requires an account OAuth connection, a repository path and an explicit ref.
-        Repository identity is verified by the server. GitLab.com currently supports report
-        mode, manual approval and prune=false.
+        Repository identity is verified by the server. Both providers support manual or verified
+        protected-branch approval. Production enforcement remains unavailable in this preview.
       properties:
         provider:
           type: string
@@ -57904,7 +57904,7 @@ components:
       required: [id, source_id, revision_id, generation, definition_digest, evidence, recorded_at]
     EnvironmentGitReviewedMergeEvidence:
       type: object
-      description: Reviews of the final PR head before merge. Permissions and protection describe the check time, not historical policy.
+      description: Reviews of the final GitHub PR or GitLab MR head before merge. Permissions and protection describe the check time, not historical policy.
       properties:
         reviewed_definition_digest:
           type: string
@@ -57953,6 +57953,7 @@ components:
         installation_id:
           type: integer
           format: int64
+          description: GitHub App installation ID; omitted for GitLab OAuth sources.
         repository_id:
           type: integer
           format: int64
@@ -57969,7 +57970,7 @@ components:
         checked_at:
           type: string
           format: date-time
-      required: [qualified, profile, installation_id, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
+      required: [qualified, profile, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
     EnvironmentGitReviewEvidence:
       description: One reviewer decision for the proposed environment definition at an exact commit.
       type: object

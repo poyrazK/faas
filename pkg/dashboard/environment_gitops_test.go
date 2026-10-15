@@ -22,13 +22,13 @@ func TestGitOpsDashboardSupportsGitLabBindingAndProviderControls(t *testing.T) {
 		}
 		body := rec.Body.String()
 		if !bound {
-			for _, want := range []string{`name="provider" value="gitlab"`, `name="repository"`, `name="ref" value="refs/heads/main"`, `name="approval_policy" value="manual"`} {
+			for _, want := range []string{`name="provider" value="gitlab"`, `name="repository"`, `name="ref" value="refs/heads/main"`, `<option value="manual">`} {
 				if !strings.Contains(body, want) {
 					t.Fatalf("GitLab binding missing %s", want)
 				}
 			}
-		} else if strings.Contains(body, `value="protected_branch"`) || strings.Contains(body, `name="prune"`) || !strings.Contains(body, "GitLab.com uses manual approval") {
-			t.Fatalf("GitLab exposed unsupported controls: %s", body)
+		} else if !strings.Contains(body, `value="protected_branch"`) || !strings.Contains(body, `name="prune"`) || !strings.Contains(body, "Continuous enforcement is unavailable") {
+			t.Fatalf("GitLab trust controls or production gate missing: %s", body)
 		}
 	}
 }

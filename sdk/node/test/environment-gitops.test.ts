@@ -82,3 +82,25 @@ test('GitOps services preserve reviewed authority and override identity', async 
     client.uninstall();
   }
 });
+
+
+test('GitLab protected approval uses OAuth repository identity', async () => {
+  const client = new FaaSClient('https://api.example.test', {
+    token: 'token',
+    fetch: async (_input, init) => {
+      assert.deepEqual(JSON.parse(String(init?.body)), {
+        provider: 'gitlab', repository: 'team/subgroup/shop', ref: 'refs/heads/main',
+        manifest_path: 'environments/staging.yaml', mode: 'report', approval_policy: 'protected_branch',
+      });
+      return Response.json({ id: 'source', source: { provider: 'gitlab', repository_id: 41, installation_id: 0 } });
+    },
+  });
+  try {
+    const source = await ProjectsService.createEnvironmentGitSource({ slug: 'shop', environment: 'staging', requestBody: {
+      provider: 'gitlab', repository: 'team/subgroup/shop', ref: 'refs/heads/main',
+      manifest_path: 'environments/staging.yaml', mode: 'report', approval_policy: 'protected_branch',
+    } });
+    assert.equal(source.source.provider, 'gitlab');
+    assert.equal(source.source.installation_id, 0);
+  } finally { client.uninstall(); }
+});

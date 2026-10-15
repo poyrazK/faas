@@ -13267,7 +13267,7 @@ RETURNING id;
 -- name: CreateEnvironmentGitOpsSourceBuild :exec
 WITH queued AS (
  INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
- VALUES(sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,'github',sqlc.arg(source_bytes)::bigint,'queued',sqlc.arg(log_path)::text)
+ VALUES(sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(kind)::text,sqlc.arg(source_bytes)::bigint,'queued',sqlc.arg(log_path)::text)
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued

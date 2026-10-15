@@ -75,7 +75,7 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		if revision.ID == "" {
 			definition, _ := json.Marshal(result.Desired.Definition)
 			revision = EnvironmentDesiredRevision{ID: newID(), SourceID: memory.source.ID, CommitSHA: result.CommitSHA, Digest: result.Digest,
-				Definition: definition, ApprovedBy: "github:protected_branch", ApprovedAt: time.Now().UTC()}
+				Definition: definition, ApprovedBy: environmentProtectedApprover(memory.source.Spec.Provider), ApprovedAt: time.Now().UTC()}
 		}
 		changed := memory.source.ApprovedRevisionID != revision.ID
 		generation := memory.source.Generation

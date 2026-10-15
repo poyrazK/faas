@@ -241,3 +241,22 @@ def test_reviewed_authority_and_override_identity() -> None:
         assert calls[1].headers.get("Idempotency-Key")
     finally:
         client.close()
+
+
+def test_gitlab_review_policy_has_no_github_installation_identity():
+    from faas_sdk.models.environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+
+    body = {
+        "qualified": True,
+        "profile": "gitlab_reviewed_branch/v1",
+        "repository_id": 41,
+        "repository": "team/subgroup/shop",
+        "branch": "main",
+        "commit_sha": "a" * 40,
+        "policy_digest": "b" * 64,
+        "required_review_count": 1,
+        "checked_at": "2026-10-15T16:00:00Z",
+    }
+    evidence = EnvironmentGitProtectedBranchEvidence.from_dict(body)
+    assert evidence.repository_id == 41
+    assert "installation_id" not in evidence.to_dict()

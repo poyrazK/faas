@@ -1101,3 +1101,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+- [ADR-1332: Provider-bound GitLab review and workload provenance](1332-gitlab-reviewed-gitops.md)

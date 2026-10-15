@@ -135,7 +135,7 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 	}
 	image := intent.Source
 	if image == nil {
-		image, _, _ = observedWorkloadSource(app, "")
+		image, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
 	if image == nil || image.Kind != "image" {
 		return intent, ErrConflict

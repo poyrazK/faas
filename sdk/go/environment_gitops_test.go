@@ -79,3 +79,14 @@ func TestEnvironmentGitOpsReviewedRevisionAndOverrideTransport(t *testing.T) {
 		t.Fatalf("requests: %d", requests)
 	}
 }
+
+func TestGitLabProtectedSourceUsesOAuthRepositoryIdentity(t *testing.T) {
+	spec := faas.EnvironmentGitSourceSpec{Provider: "gitlab", RepositoryID: 41, Repository: "team/subgroup/shop", Ref: "refs/heads/main", ManifestPath: "production.yaml", Mode: "report", ApprovalPolicy: "protected_branch"}
+	if err := spec.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	spec.InstallationID = 42
+	if err := spec.Validate(); err == nil {
+		t.Fatal("GitLab accepted a GitHub installation")
+	}
+}

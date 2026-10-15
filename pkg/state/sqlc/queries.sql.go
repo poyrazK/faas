@@ -9821,7 +9821,7 @@ func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 const createEnvironmentGitOpsSourceBuild = `-- name: CreateEnvironmentGitOpsSourceBuild :exec
 WITH queued AS (
  INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
- VALUES($1::uuid,$2::uuid,'github',$3::bigint,'queued',$4::text)
+ VALUES($1::uuid,$2::uuid,$3::text,$4::bigint,'queued',$5::text)
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued
@@ -9831,6 +9831,7 @@ WHERE d.id=queued.deployment_id AND d.environment_workload_held AND d.status='pe
 type CreateEnvironmentGitOpsSourceBuildParams struct {
 	BuildID      pgtype.UUID
 	DeploymentID pgtype.UUID
+	Kind         string
 	SourceBytes  int64
 	LogPath      string
 }
@@ -9839,6 +9840,7 @@ func (q *Queries) CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBT
 	_, err := db.Exec(ctx, createEnvironmentGitOpsSourceBuild,
 		arg.BuildID,
 		arg.DeploymentID,
+		arg.Kind,
 		arg.SourceBytes,
 		arg.LogPath,
 	)

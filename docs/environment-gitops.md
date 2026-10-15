@@ -6,10 +6,10 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
-| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey | Dedicated native outage/rollback acceptance for live workloads; workload deletion remains unsupported |
-| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity for report mode | GitLab protected-branch evidence and workload provenance; incomplete or conflicting GitHub provenance |
+| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey; reviewed workload retirement retaining original identities and accepted work | Dedicated native outage/rollback acceptance for live workloads |
+| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity, protected-branch review evidence and project/commit-bound source builds | Dedicated native GitLab workload acceptance; incomplete or conflicting build provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery; PostgreSQL apid acceptance for an API/worker/queue graph through a source outage and controller restart | Live report-mode qualification on a deployed control plane |
-| Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies and unsupported source-provider provenance |
+| Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies; unsupported or unverified source-provider provenance |
 | Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image-only schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
 | Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, private Manager restore orchestration, version-checked load, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels; restore-target config/runtime receipts and receipt-gated route selection in both stores; native-retired and native-effects-absent proofs; schedd's periodic, node-bound abandoned-execution recovery; smoke-authorized conditional GCS retirement with durable host tombstones and an opt-in vmmd retry loop | Dedicated Linux capture/restore acceptance; production qualification polling remains gated until those pass |
 | Enforcement | Transactional ownership, override and execution fences; lease-bound activation and serving of supported request/service graphs including pinned scoped service bindings, push and pull workers, queue-bound HTTP functions, and scheduled Jobs with a successful post-activation occurrence | Production qualification polling remains gated; dedicated Linux acceptance and unsupported production execution adapters |
@@ -19,7 +19,7 @@ Approved Git content, observed intent, qualification, activation and serving sta
 An immutable `source.kind: image` may set `source.full_rootfs: true` when the image is not layered on Gregale's runtime base. The choice is part of the reviewed source contract and is frozen with the candidate deployment; other source kinds reject it. Omitting the field keeps the existing dispatch policy, including inherited settings on adopted workloads.
 For an adopted workload with live deployments, a conflicting inherited full-rootfs setting blocks preparation until the live deployment policy and reviewed source agree.
 
-The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker in a rollback is still blocked by the unavailable workload-pruning adapter.
+The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker requires reviewed retained workload retirement under ADR-1331.
 
 The opt-in apid reporter has a separate PostgreSQL journey for API variables, routes and policies alongside a worker queue binding. It retains durable drift reports across a Git source outage and controller restart while leaving console values and the queue contract unchanged. This validates report mode, not live workload activation or enforcement.
 
@@ -52,12 +52,22 @@ gregale projects environments gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
-GitLab.com sources currently support reporting, manual approval, and
-`prune=false` only. Gregale verifies the connected account's access, the
-canonical GitLab project path and numeric ID, and the immutable commit before
-reading a bounded archive. A source outage or OAuth disconnect is reported
-separately; it does not discard the last approved revision. GitLab
-protected-branch approval and workload enforcement are not qualified yet.
+GitLab.com supports manual approval or `approval_policy: protected_branch`.
+The automatic profile requires GitLab Premium/Ultimate policy API access, one
+project-wide approval rule, approvals reset on push, and author/committer
+approvals and per-MR overrides disabled. Every matching branch rule must deny
+direct pushes and force pushes. Missing or unsupported evidence blocks automatic
+approval; manual report mode remains available. Review evidence binds the latest
+MR diff and its approving humans to the exact merged definition. See
+[ADR-1332](adr/1332-gitlab-reviewed-gitops.md) for the supported profile.
+
+Source/Dockerfile/function candidates use the approved GitLab commit and the
+same archive checks as GitHub. Their provenance also includes the immutable
+numeric project ID and canonical path; another provider or project cannot be
+adopted through a matching repository name. Uploader-supplied source URLs do
+not establish trust: unverified tarball baselines remain blocked. Existing
+image workloads can be adopted and then rebuilt from the reviewed GitLab source.
+Production qualification and enforcement remain gated on exclusive native acceptance.
 
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 

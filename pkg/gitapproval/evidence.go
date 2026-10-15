@@ -9,6 +9,8 @@ import (
 
 const ProtectedBranchProfile = "classic_reviewed_branch/v1"
 const ReviewedMergeProfile = "reviewed_merge/v1"
+const GitLabProtectedBranchProfile = "gitlab_reviewed_branch/v1"
+const GitLabReviewedMergeProfile = "gitlab_reviewed_merge/v1"
 
 type PolicyEvidence struct {
 	Qualified           bool      `json:"qualified"`
@@ -66,8 +68,27 @@ type MergeEvidence struct {
 }
 
 func (e MergeEvidence) ValidFor(installationID, repositoryID int64, repository, branch, sha string, now time.Time, maxAge time.Duration) bool {
-	if !e.Qualified || e.Reason != "" || e.Profile != ReviewedMergeProfile ||
-		!e.Policy.ValidFor(installationID, repositoryID, repository, branch, sha, now, maxAge) ||
+	return e.ValidForProvider("github", installationID, repositoryID, repository, branch, sha, now, maxAge)
+}
+
+// ValidForProvider prevents one provider's receipt from authorizing another
+// provider's source, even when numeric repository identities happen to match.
+func (e MergeEvidence) ValidForProvider(provider string, installationID, repositoryID int64, repository, branch, sha string, now time.Time, maxAge time.Duration) bool {
+	profile, policyValid := ReviewedMergeProfile, false
+	switch provider {
+	case "", "github":
+		policyValid = e.Policy.ValidFor(installationID, repositoryID, repository, branch, sha, now, maxAge)
+	case "gitlab":
+		profile = GitLabReviewedMergeProfile
+		p := e.Policy
+		policyValid = p.Qualified && p.Reason == "" && p.Profile == GitLabProtectedBranchProfile &&
+			installationID == 0 && p.InstallationID == 0 && repositoryID > 0 && p.RepositoryID == repositoryID &&
+			p.Repository == repository && p.Branch == branch && p.CommitSHA == sha && p.RequiredReviewCount > 0 &&
+			commitSHA.MatchString(sha) && digest.MatchString(p.PolicyDigest) && fresh(p.CheckedAt, now, maxAge)
+	default:
+		return false
+	}
+	if !e.Qualified || e.Reason != "" || e.Profile != profile || !policyValid ||
 		e.PullRequestID <= 0 || e.PullRequestNumber <= 0 || e.AuthorID <= 0 || !commitSHA.MatchString(e.HeadSHA) ||
 		e.MergedAt.IsZero() || e.MergedAt.After(e.CheckedAt) || e.CheckedAt.Before(e.Policy.CheckedAt) ||
 		!fresh(e.CheckedAt, now, maxAge) || len(e.Reviews) < e.Policy.RequiredReviewCount {

@@ -19,8 +19,8 @@ T = TypeVar("T", bound="EnvironmentGitReviewedMergeEvidence")
 
 @_attrs_define
 class EnvironmentGitReviewedMergeEvidence:
-    """Reviews of the final PR head before merge. Permissions and protection describe the check time, not historical
-    policy.
+    """Reviews of the final GitHub PR or GitLab MR head before merge. Permissions and protection describe the check time,
+    not historical policy.
 
     """
 

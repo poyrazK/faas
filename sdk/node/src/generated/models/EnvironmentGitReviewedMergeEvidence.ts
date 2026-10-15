@@ -5,7 +5,7 @@
 import type { EnvironmentGitProtectedBranchEvidence } from './EnvironmentGitProtectedBranchEvidence.js';
 import type { EnvironmentGitReviewEvidence } from './EnvironmentGitReviewEvidence.js';
 /**
- * Reviews of the final PR head before merge. Permissions and protection describe the check time, not historical policy.
+ * Reviews of the final GitHub PR or GitLab MR head before merge. Permissions and protection describe the check time, not historical policy.
  */
 export type EnvironmentGitReviewedMergeEvidence = {
   reviewed_definition_digest: string;

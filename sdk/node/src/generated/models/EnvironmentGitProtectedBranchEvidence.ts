@@ -12,7 +12,10 @@ export type EnvironmentGitProtectedBranchEvidence = {
    */
   reason?: string;
   profile: string;
-  installation_id: number;
+  /**
+   * GitHub App installation ID; omitted for GitLab OAuth sources.
+   */
+  installation_id?: number;
   repository_id: number;
   repository: string;
   branch: string;

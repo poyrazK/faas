@@ -2,7 +2,6 @@ package apidserver
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -24,30 +23,7 @@ func (reader *environmentGitSourceReader) ReadEnvironmentGitSource(ctx context.C
 		return state.EnvironmentGitSourcePollResult{}, err
 	}
 	if source.Spec.Provider == "gitlab" {
-		client, token, sha, readErr := s.resolveVerifiedGitLabCommit(ctx, account.ID, source, source.Spec.Ref)
-		if readErr == nil && source.SourceVerifiedAt != nil && source.SourceCommitSHA == sha && source.SourceDefinitionDigest != "" {
-			// The verified definition is immutable at this commit. Re-check
-			// account access and the ref each poll without spending GitLab.com's
-			// archive quota on an unchanged source.
-			return state.EnvironmentGitSourcePollResult{CommitSHA: sha, Digest: source.SourceDefinitionDigest}, nil
-		}
-		var desired environmentsync.DesiredState
-		if readErr == nil {
-			desired, readErr = s.readGitLabDefinitionAtCommit(ctx, account, source, client, token, sha)
-		}
-		if readErr != nil {
-			code := "environment_git_source_unavailable"
-			switch {
-			case errors.Is(readErr, errGitLabRepositoryUnavailable):
-				code = "environment_git_repository_unavailable"
-			case errors.Is(readErr, errGitLabDefinitionInvalid):
-				code = "environment_git_definition_invalid"
-			case errors.Is(readErr, errGitLabScopeMismatch):
-				code = "environment_git_scope_mismatch"
-			}
-			return state.EnvironmentGitSourcePollResult{ErrorCode: code}, nil
-		}
-		return state.EnvironmentGitSourcePollResult{CommitSHA: sha, Digest: desired.Digest}, nil
+		return reader.readGitLab(ctx, account, source)
 	}
 	if _, err := s.verifyEnvironmentGitRepository(ctx, account.ID, source.Spec.InstallationID, source.Spec.Repository, source.Spec.RepositoryID); err != nil {
 		return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_repository_unavailable"}, nil

@@ -101,7 +101,7 @@ func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease 
 				SourcePath: input.SourcePath, SourceRoot: input.SourceRoot, SourceSha256: input.SourceSHA256, SourceBytes: input.SourceBytes, SourceUrl: input.SourceURL})
 			if err == nil && input.Kind != DeploymentKindImage {
 				err = q.CreateEnvironmentGitOpsSourceBuild(ctx, tx, sqlc.CreateEnvironmentGitOpsSourceBuildParams{
-					DeploymentID: id, BuildID: mustPgUUID(input.BuildID), SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath})
+					DeploymentID: id, BuildID: mustPgUUID(input.BuildID), Kind: string(input.Kind), SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath})
 			}
 			if err == nil && input.Kind == DeploymentKindImage {
 				payload, _ := json.Marshal(map[string]string{"app_id": input.AppID, "to": pgUUIDString(id), "deployment_id": pgUUIDString(id), "kind": string(input.Kind)})

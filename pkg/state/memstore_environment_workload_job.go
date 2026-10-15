@@ -50,7 +50,7 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 	}
 	image := row.Source
 	if image == nil {
-		image, _, _ = observedWorkloadSource(app, "")
+		image, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
 	if image == nil || image.Kind != "image" {
 		return row, ErrConflict

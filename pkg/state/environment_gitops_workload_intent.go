@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 )
 
-func observedWorkloadSource(app gitOpsIntentApp, repository string) (*api.EnvironmentWorkloadSource, string, string) {
+func observedWorkloadSource(app gitOpsIntentApp, binding EnvironmentGitSourceSpec) (*api.EnvironmentWorkloadSource, string, string) {
 	if app.WorkloadIntent != nil && app.WorkloadIntent.Source != nil {
 		source := *app.WorkloadIntent.Source
 		return &source, app.WorkloadIntent.SourceRevision, ""
@@ -31,7 +31,8 @@ func observedWorkloadSource(app gitOpsIntentApp, repository string) (*api.Enviro
 			imageSource = candidate
 		case DeploymentKindGitHub:
 			repo, _, ok := inheritedGitHubSource(baseline)
-			if !ok || repository == "" || !strings.EqualFold(repo, repository) {
+			matches := baseline.Kind == DeploymentKindGitHub && binding.Provider != "gitlab" && ok && binding.Repository != "" && strings.EqualFold(repo, binding.Repository)
+			if !matches {
 				return nil, "", "live GitHub source provenance is incomplete or belongs to another repository"
 			}
 			if app.Type == AppTypeFunction && app.Manifest.BuildDockerfile != "" {
@@ -140,7 +141,7 @@ func environmentGitOpsScheduledJobUnsupported(app gitOpsIntentApp, intent Enviro
 	}
 	source := intent.Source
 	if source == nil {
-		source, _, _ = observedWorkloadSource(app, "")
+		source, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
 	if source == nil || source.Kind != "image" || source.Image == "" {
 		return "environment_scheduled_job_requires_immutable_image_source"
@@ -187,7 +188,7 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 			wantedSource = true
 		}
 	}
-	source, sourceRevision, reason := observedWorkloadSource(baselineApp, snapshot.Repository)
+	source, sourceRevision, reason := observedWorkloadSource(baselineApp, snapshot.GitSource)
 	if wantedSource && source != nil && reason == "" {
 		_, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
 			Project: snapshot.Project, Environment: snapshot.Environment,
