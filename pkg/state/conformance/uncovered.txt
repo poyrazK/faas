@@ -243,15 +243,12 @@ JobConcurrentByAccount
 JobGetByName
 JobRunIncrementDeadLetter
 JobRunListByAccount
-JobRunListByJob
 JobRunReopenDeadLetter
-JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
 JobTaskList
 JobTaskRequeue
-JobTaskRetry
 JobUpdate
 LatestBuilderHeartbeatStats
 LatestDeployment
@@ -492,6 +489,7 @@ RequestTelemetryAnalyticsTimeseriesGrouped
 RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
+RequestTelemetryErrorsByRoute
 RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 from ..models.image_run_response_image_status import ImageRunResponseImageStatus, check_image_run_response_image_status
 from ..models.image_run_response_status import ImageRunResponseStatus, check_image_run_response_status
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.app_task_attach_info import AppTaskAttachInfo
+
 
 T = TypeVar("T", bound="ImageRunResponse")
 
@@ -34,6 +38,8 @@ class ImageRunResponse:
     run_id: UUID | Unset = UNSET
     command: list[str] | Unset = UNSET
     """The resolved argv the task runs."""
+    attach: AppTaskAttachInfo | Unset = UNSET
+    """One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +63,10 @@ class ImageRunResponse:
         if not isinstance(self.command, Unset):
             command = self.command
 
+        attach: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.attach, Unset):
+            attach = self.attach.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,11 +85,15 @@ class ImageRunResponse:
             field_dict["run_id"] = run_id
         if command is not UNSET:
             field_dict["command"] = command
+        if attach is not UNSET:
+            field_dict["attach"] = attach
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_task_attach_info import AppTaskAttachInfo
+
         d = dict(src_dict)
         status = check_image_run_response_status(d.pop("status"))
 
@@ -102,6 +116,13 @@ class ImageRunResponse:
 
         command = cast(list[str], d.pop("command", UNSET))
 
+        _attach = d.pop("attach", UNSET)
+        attach: AppTaskAttachInfo | Unset
+        if isinstance(_attach, Unset):
+            attach = UNSET
+        else:
+            attach = AppTaskAttachInfo.from_dict(_attach)
+
         image_run_response = cls(
             status=status,
             job=job,
@@ -111,6 +132,7 @@ class ImageRunResponse:
             image_digest=image_digest,
             run_id=run_id,
             command=command,
+            attach=attach,
         )
 
         image_run_response.additional_properties = d

@@ -46,6 +46,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -221,6 +222,12 @@ type AppTaskOutputVMMAPI interface {
 // whose input and output belong to one attached client.
 type AppTaskInteractiveVMMAPI interface {
 	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+// JobInteractiveVMMAPI runs ADR-1164's attached session against a live
+// interactive job guest without tearing the VM down.
+type JobInteractiveVMMAPI interface {
+	ExecuteInteractiveJob(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
 // AppTaskRestoreVMMAPI is deliberately command-free. A successful return is
@@ -757,6 +764,15 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	boot.StartHeld = startHeld
+	var interactiveVMM JobInteractiveVMMAPI
+	var attach *pendingAppTaskAttach
+	if boot.Interactive != nil {
+		interactiveVMM, attach, err = s.registerInteractiveJob(req, startHeld)
+		if err != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+	}
 	var inst *fcvm.Instance
 	if req.GetQualificationExecution() != nil {
 		qualifier, supported := s.vmm.(environmentQualificationJobVMMAPI)
@@ -774,35 +790,75 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		inst, err = jobVMM.BootJob(ctx, boot)
 	}
 	s.ops.Observe(op, time.Since(start), err)
+	var problem *api.Problem
 	if err != nil {
 		s.log.Error("vmmd: job cold boot failed", "instance", req.GetInstance(),
 			"run", req.GetRunId(), "task", req.GetTaskIndex(), "err", err.Error())
-		return nil, grpcerr.ToStatus(toProblem(err))
+		problem = toProblem(err)
+	} else {
+		problem = jobBootContractProblem(inst, startHeld)
 	}
-	if inst == nil {
-		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
-			"Job boot failed", "vmmd returned an empty instance")
-		return nil, grpcerr.ToStatus(err)
+	if problem != nil {
+		if attach != nil {
+			s.appTaskAttach.unregister(req.GetInstance(), attach)
+		}
+		return nil, grpcerr.ToStatus(problem)
 	}
-	if inst.Lease.Netns == "" || !inst.Lease.HostIP.Is4() || inst.Lease.UID <= 0 ||
-		int64(int32(inst.Lease.UID)) != int64(inst.Lease.UID) {
-		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
-			"Job boot failed", "vmmd returned an incomplete runtime identity")
-		return nil, grpcerr.ToStatus(err)
-	}
-	if inst.JobStartGateEnabled != startHeld {
-		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
-			"Job boot failed", "vmmd did not honor the requested held-start contract")
-		return nil, grpcerr.ToStatus(err)
+	if attach != nil {
+		go s.serveInteractiveJob(interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
 	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance:  inst.Lease.Instance,
-		NodeId:    boot.NodeID,
-		Netns:     inst.Lease.Netns,
-		HostIp:    inst.Lease.HostIP.String(),
-		GuestUid:  int32(inst.Lease.UID),
-		StartHeld: startHeld,
+		Instance:    inst.Lease.Instance,
+		NodeId:      boot.NodeID,
+		Netns:       inst.Lease.Netns,
+		HostIp:      inst.Lease.HostIP.String(),
+		GuestUid:    int32(inst.Lease.UID),
+		StartHeld:   startHeld,
+		Interactive: attach != nil,
 	}, nil
+}
+
+// jobBootContractProblem rejects a booted job instance that lacks what schedd
+// needs to publish it.
+func jobBootContractProblem(inst *fcvm.Instance, startHeld bool) *api.Problem {
+	switch {
+	case inst == nil:
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an empty instance")
+	case inst.Lease.Netns == "" || !inst.Lease.HostIP.Is4() || inst.Lease.UID <= 0 ||
+		int64(int32(inst.Lease.UID)) != int64(inst.Lease.UID):
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an incomplete runtime identity")
+	case inst.JobStartGateEnabled != startHeld:
+		return api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd did not honor the requested held-start contract")
+	}
+	return nil
+}
+
+// registerInteractiveJob checks that this vmmd can serve ADR-1164's session
+// and registers the instance's rendezvous before the VM boots. Errors are
+// gRPC statuses: a duplicate registration is AlreadyExists, which a Problem's
+// validation code would flatten to InvalidArgument.
+func (s *Server) registerInteractiveJob(req *vmmdpb.JobColdBootRequest, startHeld bool) (JobInteractiveVMMAPI, *pendingAppTaskAttach, error) {
+	jobVMM, ok := s.vmm.(JobInteractiveVMMAPI)
+	if !ok {
+		return nil, nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Interactive jobs unavailable", "vmmd interactive job sessions are not configured"))
+	}
+	if startHeld || req.GetQualificationExecution() != nil {
+		return nil, nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid interactive job", "an interactive job cannot be start-held or a qualification attempt"))
+	}
+	entry, err := s.appTaskAttach.register(req.GetInstance(), req.GetInteractive().GetAttachTokenSha256())
+	if err != nil {
+		code := codes.InvalidArgument
+		if errors.Is(err, errAppTaskAttachDuplicate) {
+			code = codes.AlreadyExists
+		}
+		return nil, nil, status.Error(code, err.Error())
+	}
+	return jobVMM, entry, nil
 }
 
 func (s *Server) ReleaseJobStart(ctx context.Context, req *vmmdpb.ReleaseJobStartRequest) (*vmmdpb.ReleaseJobStartResponse, error) {

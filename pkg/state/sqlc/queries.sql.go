@@ -30862,6 +30862,79 @@ func (q *Queries) IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const jobRunAttachSession = `-- name: JobRunAttachSession :one
+SELECT tty, attach_token_sha256, attach_timeout_s
+FROM job_run_attach_sessions
+WHERE run_id = $1::uuid
+`
+
+type JobRunAttachSessionRow struct {
+	Tty               bool
+	AttachTokenSha256 []byte
+	AttachTimeoutS    int32
+}
+
+// ADR-1164: an interactive image run's session, read by schedd at dispatch.
+func (q *Queries) JobRunAttachSession(ctx context.Context, db DBTX, runID pgtype.UUID) (JobRunAttachSessionRow, error) {
+	row := db.QueryRow(ctx, jobRunAttachSession, runID)
+	var i JobRunAttachSessionRow
+	err := row.Scan(&i.Tty, &i.AttachTokenSha256, &i.AttachTimeoutS)
+	return i, err
+}
+
+const jobTaskAttachTarget = `-- name: JobTaskAttachTarget :one
+SELECT t.status,
+       s.tty,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.state::text, '')::text AS instance_state,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_run_attach_sessions s ON s.run_id = r.id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = $1::uuid
+  AND j.name = $2::text
+  AND j.status <> 'deleted'
+  AND r.id = $3::uuid
+  AND t.task_index = $4::int
+`
+
+type JobTaskAttachTargetParams struct {
+	AccountID pgtype.UUID
+	JobName   string
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+type JobTaskAttachTargetRow struct {
+	Status        string
+	Tty           bool
+	InstanceID    string
+	InstanceState string
+	NodeID        string
+}
+
+// ADR-1164: the interactive job task an attach reaches, scoped to the account
+// and job name, with the state and node of its current instance (if any).
+func (q *Queries) JobTaskAttachTarget(ctx context.Context, db DBTX, arg JobTaskAttachTargetParams) (JobTaskAttachTargetRow, error) {
+	row := db.QueryRow(ctx, jobTaskAttachTarget,
+		arg.AccountID,
+		arg.JobName,
+		arg.RunID,
+		arg.TaskIndex,
+	)
+	var i JobTaskAttachTargetRow
+	err := row.Scan(
+		&i.Status,
+		&i.Tty,
+		&i.InstanceID,
+		&i.InstanceState,
+		&i.NodeID,
+	)
+	return i, err
+}
+
 const jobTaskLogTarget = `-- name: JobTaskLogTarget :one
 SELECT t.status,
        t.attempt,

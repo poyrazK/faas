@@ -20101,3 +20101,28 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND j.status <> 'deleted'
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
+
+-- name: JobRunAttachSession :one
+-- ADR-1164: an interactive image run's session, read by schedd at dispatch.
+SELECT tty, attach_token_sha256, attach_timeout_s
+FROM job_run_attach_sessions
+WHERE run_id = sqlc.arg(run_id)::uuid;
+
+-- name: JobTaskAttachTarget :one
+-- ADR-1164: the interactive job task an attach reaches, scoped to the account
+-- and job name, with the state and node of its current instance (if any).
+SELECT t.status,
+       s.tty,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.state::text, '')::text AS instance_state,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_run_attach_sessions s ON s.run_id = r.id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = sqlc.arg(account_id)::uuid
+  AND j.name = sqlc.arg(job_name)::text
+  AND j.status <> 'deleted'
+  AND r.id = sqlc.arg(run_id)::uuid
+  AND t.task_index = sqlc.arg(task_index)::int;

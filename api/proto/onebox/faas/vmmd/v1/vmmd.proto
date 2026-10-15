@@ -1198,6 +1198,18 @@ message JobColdBootRequest {
   // and stages them into this task's private writable layer before boot.
   // Plaintext is never carried through schedd or this RPC.
   repeated SealedSecret sealed_env = 17;
+  // Present only for an interactive image run (ADR-1164): the guest holds the
+  // command until one client attaches through AttachAppTask with the token
+  // whose digest is given here.
+  JobInteractiveAttach interactive = 18;
+}
+
+// JobInteractiveAttach is ADR-1164's per-task attach contract.
+message JobInteractiveAttach {
+  bool tty = 1;
+  bytes attach_token_sha256 = 2;
+  // 0 means the default window (60 s).
+  int32 attach_timeout_seconds = 3;
 }
 
 message JobColdBootResponse {
@@ -1212,6 +1224,10 @@ message JobColdBootResponse {
   // Echoes the distinct held-start RPC contract. The caller validates this
   // before it publishes the instance as runnable.
   bool start_held = 6;
+  // Echoes JobColdBootRequest.interactive (ADR-1164). A vmmd that predates it
+  // leaves this false, and schedd fails the task instead of running the
+  // command without stdin.
+  bool interactive = 7;
 }
 
 message ReleaseJobStartRequest {

@@ -10515,11 +10515,13 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)
 
-`gregale run [--image <REF>] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
+| `--interactive` | with --image, attach stdin and relay the session until the command exits (-i; ADR-1164) |  |
+| `--tty` | with --image --interactive, give the command a terminal (-t; -it for both) |  |
 | `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
 | `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
@@ -10550,6 +10552,7 @@ Examples:
 ```sh
 gregale run --image alpine echo hello
 gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
+gregale run -it --image alpine sh
 ```
 
 

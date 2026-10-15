@@ -23484,6 +23484,21 @@ CREATE TABLE public.job_registry_credentials (
 
 
 --
+-- Name: job_run_attach_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.job_run_attach_sessions (
+    run_id uuid NOT NULL,
+    tty boolean DEFAULT false NOT NULL,
+    attach_token_sha256 bytea NOT NULL,
+    attach_timeout_s integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT job_run_attach_sessions_timeout_chk CHECK (((attach_timeout_s >= 1) AND (attach_timeout_s <= 300))),
+    CONSTRAINT job_run_attach_sessions_token_chk CHECK ((octet_length(attach_token_sha256) = 32))
+);
+
+
+--
 -- Name: job_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36384,6 +36399,14 @@ ALTER TABLE ONLY public.job_registry_credentials
 
 ALTER TABLE ONLY public.job_registry_credentials
     ADD CONSTRAINT job_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: job_run_attach_sessions job_run_attach_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_run_attach_sessions
+    ADD CONSTRAINT job_run_attach_sessions_pkey PRIMARY KEY (run_id);
 
 
 --
@@ -56043,6 +56066,14 @@ ALTER TABLE ONLY public.job_registry_credentials
 
 ALTER TABLE ONLY public.job_registry_credentials
     ADD CONSTRAINT job_registry_credentials_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: job_run_attach_sessions job_run_attach_sessions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_run_attach_sessions
+    ADD CONSTRAINT job_run_attach_sessions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.job_runs(id) ON DELETE CASCADE;
 
 
 --

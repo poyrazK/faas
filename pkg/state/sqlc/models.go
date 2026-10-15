@@ -4181,6 +4181,14 @@ type JobRun struct {
 	ExclusiveGeneration         pgtype.Int8
 }
 
+type JobRunAttachSession struct {
+	RunID             pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	AttachTimeoutS    int32
+	CreatedAt         pgtype.Timestamptz
+}
+
 type JobTask struct {
 	RunID           pgtype.UUID
 	TaskIndex       int32

@@ -752,6 +752,8 @@ type MemStore struct {
 	appTasks map[string]AppTask
 	// appTaskAttach holds ADR-1037 interactive-session records by task id.
 	appTaskAttach map[string]AppTaskAttach
+	// jobRunAttach holds ADR-1164 interactive image-run sessions by run id.
+	jobRunAttach map[string]JobRunAttach
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
