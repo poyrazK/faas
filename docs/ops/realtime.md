@@ -2830,6 +2830,32 @@ per principal. Session cutoffs and principal records remain until endpoint
 deletion; they are not expired automatically. Static bearer and unauthenticated
 endpoints do not support per-user revocation.
 
+### Retained WebSocket channel authorization refresh
+
+Retained v2 WebSocket subscriptions reuse SSE's 30-second application channel
+grant lifetime ([ADR-1331](../adr/1331-retained-channel-authorization-refresh.md)).
+The history pump checks idle subscriptions, and the writer rechecks expired
+grants before sending queued channel messages, presence, signals, read receipts
+or checkpoints. Channel commands also refresh an expired grant before executing.
+Concurrent checks of one subscription share a callback. Changes
+to endpoint policy invalidate its cached grant and use the current callback
+address and token. No positive grant is extended while a refresh is unavailable.
+
+HTTP 401/403 from the authorization callback remove that subscription and emit
+`access_revoked`, including its presence and route cleanup. Other non-2xx statuses,
+transport errors and timeouts close the connection with WebSocket code 1013 so
+clients may reconnect; they do not assert permanent revocation. Idle cleanup
+includes the configured history poll interval and callback deadline. Already
+written frames cannot be recalled. These callbacks may wake the application and
+keep it billable while subscriptions remain active.
+
+This does not add periodic WebSocket JWT verification, identify individual Auth
+sessions, or change legacy management, inbox or direct-message authorization.
+Ticket subscriptions continue using their existing one-second durable checks.
+Before deployment qualification, exercise membership removal, bans/global
+sign-out, callback outages, policy rotation and slow consumers across nodes.
+Existing preview gates and production qualification requirements still apply.
+
 ### PostgreSQL table-change feeds (operator preview)
 
 A table-change feed queues selected row changes automatically into the transactional

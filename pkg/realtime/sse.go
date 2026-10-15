@@ -257,11 +257,6 @@ const (
 	sseUnavailable
 )
 
-// sseReauthorizeInterval bounds how often an open stream repeats identity
-// verification and the application channel callback. Durable denies and ticket
-// state still refresh every realtimeAccessRefreshInterval, as on WebSockets.
-const sseReauthorizeInterval = 30 * time.Second
-
 type sseAuthorization struct {
 	m                                                   *Manager
 	node                                                *endpointState
@@ -293,7 +288,7 @@ func (a *sseAuthorization) check(ctx context.Context) sseVerdict {
 	if a.usesTicket {
 		return a.checkTicket(ctx, now)
 	}
-	if now.Sub(a.authorizedAt) >= sseReauthorizeInterval {
+	if now.Sub(a.authorizedAt) >= channelReauthorizeInterval {
 		if verdict := a.authorize(ctx); verdict != sseAllowed {
 			return verdict
 		}

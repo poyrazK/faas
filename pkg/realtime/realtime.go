@@ -88,11 +88,12 @@ type pendingSignalKey struct{ channel, member, name string }
 type pendingSignal struct{ message Message }
 
 type Message struct {
-	accessChannel string
-	signalKey     pendingSignalKey
-	signalToken   *pendingSignal
-	signalUpdated time.Time
-	signalExpires *time.Time
+	accessChannel        string
+	channelAuthorization bool
+	signalKey            pendingSignalKey
+	signalToken          *pendingSignal
+	signalUpdated        time.Time
+	signalExpires        *time.Time
 
 	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
 	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
@@ -1193,6 +1194,10 @@ func (c *connection) writePump() {
 				continue
 			}
 			if !c.accessAllows(c.m.ctx, msg.accessChannel) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
+			if msg.channelAuthorization && !c.m.admitOutboundResumeChannel(c.m.ctx, c, msg.accessChannel) {
 				c.releaseOutboundBytes(int64(len(msg.Data)))
 				continue
 			}

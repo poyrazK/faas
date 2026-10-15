@@ -261,8 +261,20 @@ gregale realtime create shop --auth shop-auth --allowed-origin https://shop.exam
 
 Name channels `org:<org id>:<kind>:<name>`, for example `org:…:room:lobby`, and
 add a policy such as `{"action": "realtime:read", "resource": "room", "permission": "org:read"}`.
-Subscriptions are checked when they start. A ban, deletion or global sign-out
-stops new subscriptions; an open connection keeps its grant until it closes.
+Retained WebSocket and SSE channel grants have a 30-second lifetime. A ban,
+deletion, global sign-out or membership change is enforced when that check next
+runs. Expired grants block further channel output until the check succeeds.
+Idle WebSocket cleanup also includes the history poll interval and callback
+deadline. A definitive denial removes the subscription; a callback outage ends
+the connection so the client can reconnect. Already delivered data cannot be
+recalled. Active subscriptions can keep the Auth app awake through these checks.
+
+The callback checks the user and at least one active session. Signing out one
+session while another remains active does not revoke that user's channels.
+WebSocket token verification still occurs at connection admission; SSE also
+reverifies its token during refresh. Principal access controls remain available
+for explicit realtime revocation. Legacy management subscriptions and direct
+messages keep their existing access-control contracts.
 Do not set connect, message or disconnect callback paths on this endpoint; its
 callback URL is the Auth app.
 
