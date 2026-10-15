@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -131,6 +130,14 @@ func validateTestCampaignRunnable(plan testCampaignPolicyPlan, scenarios map[str
 		if dimension.limit < 0 || (dimension.limit > 0 && dimension.used > dimension.limit) {
 			return errors.New("saved campaign exceeds its budget")
 		}
+	}
+	if link := plan.Recovery; link != nil {
+		remaining,err := testCampaignRecoveryRemaining(link.Allocation,link.Reserved)
+		if err != nil || link.Blocked || remaining != link.Remaining || plan.Costs.Budget != remaining ||
+			total.Runs > remaining.Runs || total.Deployments > remaining.Deployments || total.WorkloadMinutes > remaining.WorkloadMinutes {
+			return errors.New("recovery plan exceeds its remaining side allocation or is blocked")
+		}
+		for _,batch := range plan.Batches { if batch.Side != link.Side { return errors.New("recovery cannot schedule the other revision side") } }
 	}
 	return nil
 }

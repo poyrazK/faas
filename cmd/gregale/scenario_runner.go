@@ -193,6 +193,7 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
+	CampaignRecovery []testCampaignRecoveryEvidence `json:"campaign_recovery,omitempty"`
 	Environment *testEnvironmentSnapshot `json:"environment,omitempty"`
 	SourceRevision *testSourceRevision `json:"source_revision,omitempty"`
 	ReportMergeRevisionOverride bool `json:"report_merge_revision_override,omitempty"`

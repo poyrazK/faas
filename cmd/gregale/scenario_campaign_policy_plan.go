@@ -11,6 +11,7 @@ import (
 )
 
 type testCampaignPolicyPlan struct {
+	Recovery *testCampaignRecoveryLink `json:"recovery,omitempty"`
 	Execution *testCampaignExecutionBinding `json:"execution,omitempty"`
 	Costs *testCampaignPlanCosts `json:"costs,omitempty"`
 	Batches []testCampaignCostBatch `json:"batches,omitempty"`

@@ -854,8 +854,8 @@ the runner does not spend additional runs to fill residual gaps.
 
 If a crash leaves a batch marked running, or interruption leaves a partial batch,
 the runner cannot prove that repeating it is safe and refuses automatic replay.
-Inspect its log, receipts and resource cleanup, merge valid evidence separately,
-and make a new plan for the remaining gaps. After an abnormal process exit a
+Use the reconciliation command below to inspect its receipts and cleanup,
+adopt verifiable evidence, and produce a continuation within the original budget. After an abnormal process exit a
 stale `runner.lock` may remain: remove it only after verifying no runner is
 active. Removing the lock does not bypass an uncertain checkpoint.
 
@@ -868,3 +868,84 @@ evidence. The other side is unchanged; use the completed side report as input to
 a new plan when preparing the next stage. Exit codes are 0 for accepted policy,
 2 for policy violations, and 1 for input, execution, cleanup or evidence errors.
 Raw logs, receipts and checkpoints remain available after a stop.
+
+
+### Reconciling an interrupted campaign
+
+Reconciliation inspects the existing checkpoint and batch reports, adopts verified
+evidence into a new bundle, and plans only the remaining work for the same
+revision side. It does not deploy, execute application commands, renew leases or
+destroy resources.
+
+```sh
+gregale test policy reconcile --plan campaign-plan.json --policy campaign-policy.yaml --manifest gregale-test.yaml --from current.json --baseline baseline.json --directory /tmp/gregale-current-campaign --output-directory /tmp/gregale-current-recovery
+```
+
+Supply the exact manifest, policy and original reports used by the interrupted
+plan. The source directory and checkpoint must match the plan and revision side.
+The original campaign directory is locked during reconciliation. A stale
+`runner.lock` must be resolved after confirming no runner is active; reconciliation
+never removes another runner's lock.
+
+The new output directory must not exist. It contains:
+
+- `reconciliation.json`: per-batch adoption, cleanup and uncertainty diagnostics,
+  original/recovered report hashes, and reserved/remaining costs.
+- `recovered-batch-*.json`: verified raw evidence with `campaign_recovery`
+  provenance linking the parent plan/checkpoint, original report hash, batch ID
+  and original receipt path.
+- `current.json` and/or `baseline.json`: safely merged evidence, including the
+  original input reports where supplied.
+- `policy-result.json`: actual coverage and environment policy reevaluation.
+- `continuation-plan.json`: a bound, budgeted plan for the reconciled side only.
+
+Complete reports retain their original matrix/campaign hierarchy and aggregate
+verdict. A finalized partial report may contribute individually verified executed
+leaves; skipped leaves never count as coverage. Partial extraction retains leaf
+assertions and source metadata, but does not fabricate an aggregate verdict.
+Premerged ancestor provenance that cannot safely be flattened is blocked.
+Unknown raw fields and integer values are preserved. No adoption rewrites the
+original checkpoint or report bytes.
+
+Completion timestamps, exact context/configuration, stable run IDs and source
+revision/build evidence are required. A saved done report must still match its
+checkpoint hash. Missing, truncated, unfinished or conflicting evidence blocks
+continuation. Recorded cleanup failures remain failures and require manual
+reconciliation; their flags are never cleared merely because a session is absent.
+
+By default, cleanup status describes recorded completion evidence. Add
+`--check-cleanup` to also GET each known run's primary/service developer sessions
+under the current credentials. Present sessions, read errors, invalid run IDs or
+inspection limits block continuation. Reads do not renew leases and no response
+secrets or raw platform errors are saved. A missing report cannot be resolved
+through live inspection because its run identities are unknown. These reads
+cannot prove that arbitrary fixture cleanup commands succeeded or that all
+external effects were reversed.
+
+Every checkpointed batch, or batch with an orphan report/log, reserves its full
+original estimate even if only some receipts can be adopted. The continuation
+uses only this side's original allocated cost minus those reservations.
+It cannot borrow the other side's allocation, refund uncertain work, reopen an
+exhausted zero budget, or grant extra runs. Actual remaining coverage may therefore
+exceed the available budget. Fresh environment evidence may also still be needed.
+
+Publication writes `campaign-reconciled.json` in the original directory last.
+This seal freezes its scheduler and binds the exact continuation plan to the
+parent checkpoint and reconciliation. The continuation cannot run without its
+matching seal; retain the parent directory. Outputs left by an interrupted
+publication are inspectable but not executable. Ready seals cannot be replaced.
+A blocked reconciliation seals the original scheduler too, but can be refreshed
+against the unchanged parent checkpoint into another new bundle after resolving
+the diagnosed evidence. Existing blocked plans remain unexecutable.
+
+Run the continuation using the reports present in the bundle, the same revision
+and side, and a fresh checkpoint directory:
+
+```sh
+gregale test policy run --plan /tmp/gregale-current-recovery/continuation-plan.json --policy campaign-policy.yaml --manifest gregale-test.yaml --from /tmp/gregale-current-recovery/current.json --baseline /tmp/gregale-current-recovery/baseline.json --side current --revision FULL_CURRENT_COMMIT --directory /tmp/gregale-current-continuation
+```
+
+Omit a report flag when that report is absent from the bundle. Reconciliation
+returns 0 when the bundle is ready, 2 when unresolved evidence blocks execution,
+and 1 for invalid inputs or artifact errors. Ready means the recovery evidence
+permits continuation; remaining coverage violations are reported independently.

@@ -54,3 +54,27 @@ Merge completed receipts through the existing provenance, duplicate and revision
 guards, then reevaluate required coverage and environment policies from raw
 execution evidence. Planned coverage, preflight data and checkpoint completion
 alone do not satisfy assertions.
+
+
+## Interrupted campaign reconciliation (2026-10-15)
+
+Reconciliation may adopt finalized raw execution evidence into a separately
+versioned recovery bundle. Preserve complete campaign hierarchies; partial
+extraction accepts only individually verified executed leaves and records their
+original receipt paths and report hashes. Skipped receipts, planning metadata
+and uncertain work never count as covered execution. Missing/conflicting evidence
+and recorded cleanup failures block automatic continuation. Optional live
+inspection is limited to read-only developer session GET requests for known
+run identities and never waives fixture cleanup failures.
+
+Reserve the full estimated cost of every attempted batch, including orphan
+outputs. Grant a same-side continuation only the original side allocation less
+those reservations, with hard zero bounds on exhausted dimensions. Never refund
+uncertain cost or borrow the other revision side's allocation.
+
+Publish a parent-directory seal after the evidence and continuation artifacts.
+The seal freezes the original scheduler and binds the parent checkpoint and exact
+continuation plan, preventing both schedulers from spending the same pending
+allocation. A continuation without its matching seal is not executable. Blocked
+seals can be refreshed after evidence reconciliation; ready seals are immutable.
+Original checkpoints and execution report bytes remain unchanged.

@@ -36,6 +36,9 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 	directory string, checkpoint *testCampaignCheckpoint, concurrency int,
 	guard func(testCampaignCostBatch) error, launch testCampaignBatchLauncher) error {
 	if concurrency < 1 || concurrency > 4 { return errors.New("campaign concurrency must be 1..4") }
+	if _,err := os.Lstat(filepath.Join(directory,testCampaignRecoverySealName)); !os.IsNotExist(err) {
+		return errors.New("campaign has been reconciled; use its sealed continuation plan")
+	}
 	path := filepath.Join(directory,"checkpoint.json")
 	allowed := make(map[string]testCampaignCostBatch)
 	for _, batch := range plan.Batches { if batch.Side == checkpoint.Side { allowed[batch.ID] = batch } }
@@ -125,6 +128,10 @@ func cmdTestCampaignRun(args []string) int {
 	manifest, manifestDir, err := readTestManifestDocument(*manifestPath,func(_ string,s testScenario) []string { return testHTTPDataFields(s) })
 	if err != nil { return printErr("Invalid campaign manifest",err) }
 	if err := validateTestCampaignRunnable(plan,manifest.Scenarios,policy); err != nil { return printErr("Cannot execute campaign",err) }
+	if plan.Recovery != nil && (plan.Recovery.Side != *side || plan.Recovery.Revision != *revision) {
+		return printErr("Recovery revision changed",errors.New("side and revision must match the reconciled campaign"))
+	}
+	if err := validateTestCampaignRecoverySeal(plan); err != nil { return printErr("Invalid recovery seal",err) }
 	var before,after []testRunReceipt
 	for _, input := range []struct{path,expected string; receipts *[]testRunReceipt}{
 		{*from,plan.Execution.CurrentSHA256,&after},{*baseline,plan.Execution.BaselineSHA256,&before},
@@ -143,6 +150,9 @@ func cmdTestCampaignRun(args []string) int {
 	info, err := os.Lstat(*directory)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
 		return printErr("Invalid campaign directory",errors.New("directory must be private (0700) and not a symlink"))
+	}
+	if _,err := os.Lstat(filepath.Join(*directory,testCampaignRecoverySealName)); !os.IsNotExist(err) {
+		return printErr("Campaign is reconciled",errors.New("use its sealed continuation plan"))
 	}
 	lockPath := filepath.Join(*directory,"runner.lock")
 	lock, err := os.OpenFile(lockPath,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0o600)
@@ -165,6 +175,7 @@ func cmdTestCampaignRun(args []string) int {
 	ctx,cancel := signal.NotifyContext(context.Background(),testTerminationSignals()...)
 	defer cancel()
 	guard := func(batch testCampaignCostBatch) error {
+		if err := validateTestCampaignRecoverySeal(plan); err != nil { return err }
 		currentPolicy, err := readTestCampaignPolicy(*policyPath)
 		if err != nil { return err }
 		currentManifest,_,err := readTestManifestDocument(*manifestPath,func(_ string,s testScenario) []string { return testHTTPDataFields(s) })
