@@ -20946,43 +20946,6 @@ CREATE TABLE public.app_custom_metrics (
 
 
 --
--- Name: app_slos; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_slos (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    name text NOT NULL,
-    sli text NOT NULL,
-    latency_threshold_ms integer,
-    objective_bp integer NOT NULL,
-    window_days integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_slos_latency_chk CHECK ((((sli = 'availability'::text) AND (latency_threshold_ms IS NULL)) OR ((sli = 'latency'::text) AND (latency_threshold_ms = ANY (ARRAY[5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]))))),
-    CONSTRAINT app_slos_name_shape CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
-    CONSTRAINT app_slos_objective_chk CHECK (((objective_bp >= 9000) AND (objective_bp <= 9999))),
-    CONSTRAINT app_slos_sli_chk CHECK ((sli = ANY (ARRAY['availability'::text, 'latency'::text]))),
-    CONSTRAINT app_slos_window_chk CHECK ((window_days = ANY (ARRAY[7, 30])))
-);
-
-
---
--- Name: app_slo_hourly; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_slo_hourly (
-    slo_id uuid NOT NULL,
-    hour timestamp with time zone NOT NULL,
-    good bigint NOT NULL,
-    total bigint NOT NULL,
-    CONSTRAINT app_slo_hourly_counts_chk CHECK (((good >= 0) AND (total >= good))),
-    CONSTRAINT app_slo_hourly_hour_chk CHECK ((hour = date_trunc('hour'::text, hour)))
-);
-
-
---
 -- Name: app_default_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21702,6 +21665,43 @@ CREATE TABLE public.app_service_wake_ahead (
     enabled boolean DEFAULT false NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT app_service_wake_ahead_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: app_slo_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_slo_hourly (
+    slo_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    good bigint NOT NULL,
+    total bigint NOT NULL,
+    CONSTRAINT app_slo_hourly_counts_chk CHECK (((good >= 0) AND (total >= good))),
+    CONSTRAINT app_slo_hourly_hour_chk CHECK ((hour = date_trunc('hour'::text, hour)))
+);
+
+
+--
+-- Name: app_slos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_slos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    sli text NOT NULL,
+    latency_threshold_ms integer,
+    objective_bp integer NOT NULL,
+    window_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_slos_latency_chk CHECK ((((sli = 'availability'::text) AND (latency_threshold_ms IS NULL)) OR ((sli = 'latency'::text) AND (latency_threshold_ms = ANY (ARRAY[5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]))))),
+    CONSTRAINT app_slos_name_shape CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT app_slos_objective_chk CHECK (((objective_bp >= 9000) AND (objective_bp <= 9999))),
+    CONSTRAINT app_slos_sli_chk CHECK ((sli = ANY (ARRAY['availability'::text, 'latency'::text]))),
+    CONSTRAINT app_slos_window_chk CHECK ((window_days = ANY (ARRAY[7, 30])))
 );
 
 
@@ -38495,44 +38495,6 @@ ALTER TABLE ONLY public.app_custom_metrics
 
 
 --
--- Name: app_slos app_slos_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_slos
-    ADD CONSTRAINT app_slos_app_name_uniq UNIQUE (app_id, name);
-
-
---
--- Name: app_slos app_slos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_slos
-    ADD CONSTRAINT app_slos_pkey PRIMARY KEY (id);
-
-
---
--- Name: app_slo_hourly app_slo_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_slo_hourly
-    ADD CONSTRAINT app_slo_hourly_pkey PRIMARY KEY (slo_id, hour);
-
-
---
--- Name: app_slo_hourly_hour_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX app_slo_hourly_hour_idx ON public.app_slo_hourly USING btree (hour);
-
-
---
--- Name: alert_rules_slo_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX alert_rules_slo_id_idx ON public.alert_rules USING btree (slo_id) WHERE (slo_id IS NOT NULL);
-
-
---
 -- Name: app_default_domains app_default_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38834,6 +38796,30 @@ ALTER TABLE ONLY public.app_service_address_cursors
 
 ALTER TABLE ONLY public.app_service_wake_ahead
     ADD CONSTRAINT app_service_wake_ahead_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_slo_hourly app_slo_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slo_hourly
+    ADD CONSTRAINT app_slo_hourly_pkey PRIMARY KEY (slo_id, hour);
+
+
+--
+-- Name: app_slos app_slos_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slos
+    ADD CONSTRAINT app_slos_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: app_slos app_slos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slos
+    ADD CONSTRAINT app_slos_pkey PRIMARY KEY (id);
 
 
 --
@@ -46279,6 +46265,13 @@ CREATE INDEX alert_rules_org_id_idx ON public.alert_rules USING btree (org_id) W
 
 
 --
+-- Name: alert_rules_slo_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rules_slo_id_idx ON public.alert_rules USING btree (slo_id) WHERE (slo_id IS NOT NULL);
+
+
+--
 -- Name: alert_rules_synthetic_check_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -46710,6 +46703,13 @@ CREATE INDEX app_secrets_org_id_idx ON public.app_secrets USING btree (org_id) W
 --
 
 CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead USING btree (account_id);
+
+
+--
+-- Name: app_slo_hourly_hour_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_slo_hourly_hour_idx ON public.app_slo_hourly USING btree (hour);
 
 
 --
@@ -58363,6 +58363,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_rules alert_rules_slo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rules
+    ADD CONSTRAINT alert_rules_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
+
+
+--
 -- Name: alert_rules alert_rules_synthetic_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58728,30 +58736,6 @@ ALTER TABLE ONLY public.app_cpu_policy_node_status
 
 ALTER TABLE ONLY public.app_custom_metrics
     ADD CONSTRAINT app_custom_metrics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_slos app_slos_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_slos
-    ADD CONSTRAINT app_slos_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_slo_hourly app_slo_hourly_slo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_slo_hourly
-    ADD CONSTRAINT app_slo_hourly_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_rules alert_rules_slo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.alert_rules
-    ADD CONSTRAINT alert_rules_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
 
 
 --
@@ -59352,6 +59336,22 @@ ALTER TABLE ONLY public.app_service_wake_ahead
 
 ALTER TABLE ONLY public.app_service_wake_ahead
     ADD CONSTRAINT app_service_wake_ahead_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_slo_hourly app_slo_hourly_slo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slo_hourly
+    ADD CONSTRAINT app_slo_hourly_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_slos app_slos_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slos
+    ADD CONSTRAINT app_slos_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
