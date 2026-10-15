@@ -55729,6 +55729,8 @@ components:
           description: ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
           items:
             $ref: '#/components/schemas/OperationApprovalSpec'
+        limits:
+          $ref: '#/components/schemas/OperationLimits'
         milestones:
           type: object
           maxProperties: 16
@@ -56178,6 +56180,38 @@ components:
         expected_generation: { type: integer, minimum: 1 }
         decision: { type: string, enum: [approved, rejected] }
         comment: { type: string, maxLength: 1024, description: Recorded with the decision in the operation history. }
+    OperationLimits:
+      description: ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take only a deadline, and job definitions take none.
+      type: object
+      additionalProperties: false
+      properties:
+        deadline_seconds:
+          description: Wall clock from acceptance, including waits, retries and recovery.
+          type: integer
+          minimum: 1
+          maximum: 2592000
+        max_attempts:
+          description: Automatic attempts of one HTTP execution.
+          type: integer
+          minimum: 1
+          maximum: 25
+        max_execution_seconds:
+          description: HTTP attempt runtime summed across generations.
+          type: integer
+          minimum: 1
+          maximum: 604800
+    OperationUsage:
+      description: What an Operation with limits has consumed. A running attempt is added when it ends.
+      type: object
+      additionalProperties: false
+      required: [execution_ms, attempts]
+      properties:
+        execution_ms:
+          type: integer
+          minimum: 0
+        attempts:
+          type: integer
+          minimum: 0
     OperationResponse:
       description: Customer business work; execution recovery and delivery retain independent semantics.
       type: object
@@ -56227,8 +56261,17 @@ components:
           type: boolean
         failure_code:
           type: string
+          description: Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it (ADR-1196).
         waiting:
           $ref: '#/components/schemas/OperationWaitingState'
+        limits:
+          $ref: '#/components/schemas/OperationLimits'
+        deadline_at:
+          type: string
+          format: date-time
+          description: Absolute deadline fixed at acceptance; waits, retries and recovery count against it.
+        usage:
+          $ref: '#/components/schemas/OperationUsage'
         latest_sequence:
           type: integer
           minimum: 0
