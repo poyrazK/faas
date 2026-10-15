@@ -32,14 +32,6 @@ func (e *Engine) checkApplicationStandardAdmission(ctx context.Context, app stat
 	return nil
 }
 
-func (e *Engine) checkApplicationStandardAdmissionByID(ctx context.Context, appID string) error {
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil {
-		return fmt.Errorf("sched: read application for standard admission: %w", err)
-	}
-	return e.checkApplicationStandardAdmission(ctx, app)
-}
-
 func (e *Engine) checkCapturedApplicationStandardAdmission(ctx context.Context, id string, app state.App, account state.Account, deployment state.Deployment) error {
 	if app.OrgID == "" {
 		return nil

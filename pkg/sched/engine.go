@@ -1743,15 +1743,25 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	scope = ScopeFrom(ctx)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
-	if err := e.checkApplicationStandardAdmissionByID(ctx, appID); err != nil {
+	// One app read serves the standards check and the fast path's tenant.
+	app, appErr := e.store.AppByID(ctx, appID)
+	if appErr != nil {
+		release()
+		return WakeResult{}, fmt.Errorf("sched: read application for standard admission: %w", appErr)
+	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		release()
 		return WakeResult{}, err
 	}
-	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
-		release()
-		return WakeResult{}, err
-	}
+	// The database cutover barrier is checked where its answer is used:
+	// before this path returns a running instance, and in
+	// admitAndDispatchWithOptions before a new admission. Checking it here
+	// as well cost every wake that goes on to admit a second round trip.
 	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
+		if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+			release()
+			return WakeResult{}, err
+		}
 		// Port and provenance belong to the selected instance's deployment.
 		// A newer live row, including one in another stage, cannot replace it.
 		resolvedDeploymentID := ins.DeploymentID
@@ -1780,14 +1790,17 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		if !dep.CreatedAt.IsZero() {
 			identity.DeploymentCreatedAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
 		}
-		if app, appErr := e.store.AppByID(ctx, appID); appErr == nil {
-			identity.TenantID = app.AccountID
-		}
+		identity.TenantID = app.AccountID
 		if node, nodeErr := e.store.ComputeNodeByID(ctx, ins.NodeID); nodeErr == nil {
 			identity.Region = stringValue(node.Region)
 		}
 		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount, Identity: identity}, nil
 	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
+		// A fenced app reports the barrier, as it did before the lookup.
+		if barrierErr := e.checkManagedPostgresAdmission(ctx, appID); barrierErr != nil {
+			release()
+			return WakeResult{}, barrierErr
+		}
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
 	}
@@ -5297,42 +5310,43 @@ func (e *Engine) pressureSweepCounterValue(appID string) int {
 	return e.pressureSweepCounter[appID]
 }
 
-// resolveNodeCeiling returns (ceilingMB, vcpuBudget) for a nodeID
-// via store.ComputeNodeByID. Used by MigrationHarness to thread
-// the destination's per-node admission limits into the Phase 3
-// ledger reservation — without this, NodeLedger.Admit falls back
-// to the global api.RAMAdmissionCeilingMB / api.VCPUSlots and a
-// heterogeneous fleet with one smaller destination gets
-// over-admitted (violating invariant §6.2-2).
-//
-// Errors fall through to (0, 0) which the ledger treats as the
-// legacy single-box fallback (safe for an un-registered node or a
-// transient store error; the migration proceeds at the global
-// ceiling — slightly less safe but never silently wrong). Called
-// with e.mu NOT held; ComputeNodeByID is read-only.
-func (e *Engine) resolveNodeCeiling(ctx context.Context, nodeID string) (int, int, error) {
-	if nodeID == "" {
-		return 0, 0, nil
-	}
-	n, err := e.store.ComputeNodeByID(ctx, nodeID)
-	if err != nil {
-		return 0, 0, err
-	}
-	return n.AdmissionCeilingMB, n.VCPUBudget, nil
+// nodeAdmissionLimits are one node's per-node admission limits, read
+// together so a re-admission costs one node read.
+type nodeAdmissionLimits struct {
+	ceilingMB, vcpuBudget, cpuBudgetMillicores int
 }
 
-func (e *Engine) resolveNodeCPUBudgetMillicores(ctx context.Context, nodeID string) int {
+// resolveNodeAdmission reads a node's admission ceiling, vCPU budget and
+// CPU budget in one store call, for re-admissions that thread the node's
+// limits into the ledger reservation — without them, NodeLedger.Admit falls
+// back to the global api.RAMAdmissionCeilingMB / api.VCPUSlots and a
+// heterogeneous fleet with one smaller node gets over-admitted (violating
+// invariant §6.2-2).
+//
+// An error returns zero limits, which the ledger treats as the legacy
+// single-box fallback (safe for an unregistered node or a transient store
+// error; slightly less safe but never silently wrong). Called with e.mu NOT
+// held; ComputeNodeByID is read-only.
+func (e *Engine) resolveNodeAdmission(ctx context.Context, nodeID string) (nodeAdmissionLimits, error) {
 	if nodeID == "" {
-		return 0
+		return nodeAdmissionLimits{}, nil
 	}
 	n, err := e.store.ComputeNodeByID(ctx, nodeID)
 	if err != nil {
-		return 0
+		return nodeAdmissionLimits{}, err
 	}
 	// One formula for the whole package: see cpuBudgetMillicores, which
 	// applies spec §1's CPUOvercommit. A second copy here is how the
 	// overcommit factor went missing from the admission path before.
-	return int(cpuBudgetMillicores(n))
+	return nodeAdmissionLimits{ceilingMB: n.AdmissionCeilingMB, vcpuBudget: n.VCPUBudget, cpuBudgetMillicores: int(cpuBudgetMillicores(n))}, nil
+}
+
+// resolveNodeCeiling returns (ceilingMB, vcpuBudget) for a nodeID. The
+// migration harness takes it as a function value to thread the destination's
+// per-node limits into the Phase 3 ledger reservation.
+func (e *Engine) resolveNodeCeiling(ctx context.Context, nodeID string) (int, int, error) {
+	limits, err := e.resolveNodeAdmission(ctx, nodeID)
+	return limits.ceilingMB, limits.vcpuBudget, err
 }
 
 // BuildAppSpecForMigration (Tier A5 / ADR-066) rebuilds the

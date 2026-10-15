@@ -94,17 +94,16 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 		if !e.ledger.ResidentFor(warm.ID) {
-			ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, warm.NodeID)
-			cpuBudgetMillicores := e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID)
-			if ceilingErr != nil {
-				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", ceilingErr)
+			node, nodeErr := e.resolveNodeAdmission(ctx, warm.NodeID)
+			if nodeErr != nil {
+				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", nodeErr)
 			}
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
 				ProductionEnvironment: production,
 				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
+				NodeID: warm.NodeID, NodeCeilingMB: node.ceilingMB, VCPUBudget: node.vcpuBudget, CPUBudgetMillicores: node.cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {
 					warmCount--

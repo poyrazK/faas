@@ -38,6 +38,7 @@ var memDispatched = map[string]bool{
 	"AppRuntimeConfigChangedAtInScope":                        true,
 	"ClaimPreviewTeardown":                                    true,
 	"CloneProjectEnvironment":                                 true,
+	"ComputeNodeByID":                                         true,
 	"ComputeNodeUsedMB":                                       true,
 	"ComputeNodeUsedMBByNode":                                 true,
 	"CountWakeBootStarted24h":                                 true,
@@ -183,6 +184,15 @@ func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p
 		return o.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
 	}
 	return s.MemStore.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) ComputeNodeByID(p0 context.Context, p1 string) (state.ComputeNode, error) {
+	if o, ok := s.over.(interface {
+		ComputeNodeByID(context.Context, string) (state.ComputeNode, error)
+	}); ok {
+		return o.ComputeNodeByID(p0, p1)
+	}
+	return s.MemStore.ComputeNodeByID(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {

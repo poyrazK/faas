@@ -46,13 +46,13 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 	}
 	thawer, ok := e.vmm.(FrozenVMM)
 	if !ok || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
-		for _, frozen := range candidates {
-			e.parkFrozenLocked(ctx, frozen, "ineligible")
+		for _, candidate := range candidates {
+			e.parkFrozenLocked(ctx, candidate.ins, "ineligible")
 		}
 		return WakeResult{}, false, nil
 	}
-	for _, frozen := range candidates {
-		result, thawed, err := e.thawFrozenLocked(ctx, thawer, app, acct, limits, dep, values, frozen, timing)
+	for _, candidate := range candidates {
+		result, thawed, err := e.thawFrozenLocked(ctx, thawer, app, acct, limits, dep, values, candidate, timing)
 		if err != nil {
 			return WakeResult{}, false, err
 		}
@@ -76,14 +76,28 @@ func unconfirmedThawWork(req ThawRequest, result ThawResult) error {
 	return nil
 }
 
+// frozenCandidate is a frozen row with its node, read once for the whole
+// thaw: reachability, re-admission limits and the answer's region all use
+// it. haveNode is false when the read failed for another reason than a
+// missing node; the thaw then falls back as each of those reads did.
+// nodeMissing means the node has no row, so it is unreachable.
+type frozenCandidate struct {
+	ins         state.Instance
+	node        state.ComputeNode
+	haveNode    bool
+	nodeMissing bool
+}
+
 // frozenCandidates lists the deployment's frozen rows, newest first. Rows
-// whose shape no longer matches the app are parked.
-func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]state.Instance, error) {
+// whose shape no longer matches the app, or whose node is gone or stale, are
+// parked. Each node is read once however many candidates it holds.
+func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return nil, fmt.Errorf("sched: frozen thaw: list candidates: %w", err)
 	}
-	var out []state.Instance
+	nodes := map[string]frozenCandidate{}
+	var out []frozenCandidate
 	for _, ins := range instances {
 		if state.State(ins.State) != state.StateFrozen || ins.DeploymentID != dep.ID {
 			continue
@@ -92,24 +106,47 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 			e.parkFrozenLocked(ctx, ins, "stale")
 			continue
 		}
-		if e.frozenNodeUnreachable(ctx, ins.NodeID) {
+		candidate, seen := nodes[ins.NodeID]
+		if !seen {
+			candidate = e.frozenCandidateNode(ctx, ins.NodeID)
+			nodes[ins.NodeID] = candidate
+		}
+		if candidate.nodeMissing || candidate.haveNode && e.frozenNodeRowUnreachable(candidate.node) {
 			e.parkFrozenLocked(ctx, ins, "node_restart")
 			continue
 		}
-		out = append(out, ins)
+		candidate.ins = ins
+		out = append(out, candidate)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].LastRequestAt.Equal(out[j].LastRequestAt) {
-			return out[i].ID < out[j].ID
+		if out[i].ins.LastRequestAt.Equal(out[j].ins.LastRequestAt) {
+			return out[i].ins.ID < out[j].ins.ID
 		}
-		return out[i].LastRequestAt.After(out[j].LastRequestAt)
+		return out[i].ins.LastRequestAt.After(out[j].ins.LastRequestAt)
 	})
 	return out, nil
 }
 
+// frozenCandidateNode reads a candidate's node once.
+func (e *Engine) frozenCandidateNode(ctx context.Context, nodeID string) frozenCandidate {
+	if nodeID == "" {
+		return frozenCandidate{}
+	}
+	node, err := e.store.ComputeNodeByID(ctx, nodeID)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return frozenCandidate{nodeMissing: true}
+	case err != nil:
+		e.log.Warn("sched: frozen thaw: node lookup", "node", nodeID, "err", err)
+		return frozenCandidate{}
+	}
+	return frozenCandidate{node: node, haveNode: true}
+}
+
 // thawFrozenLocked thaws one candidate. thawed=false means the candidate was
 // parked and the caller may try the next one.
-func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, values runtimeDeploymentValues, frozen state.Instance, timing thawTiming) (WakeResult, bool, error) {
+func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, values runtimeDeploymentValues, candidate frozenCandidate, timing thawTiming) (WakeResult, bool, error) {
+	frozen := candidate.ins
 	captured, proofErr := e.store.InstanceRuntimeConfigFence(ctx, acct.ID, app.ID, frozen.ID)
 	if proofErr != nil && !errors.Is(proofErr, state.ErrNotFound) {
 		return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: captured config: %w", proofErr)
@@ -118,10 +155,12 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		e.parkFrozenLocked(ctx, frozen, "config_changed")
 		return WakeResult{}, false, nil //nolint:nilerr // a VM without its captured config proof must not thaw; it parks and the ordinary wake proceeds
 	}
-	// Re-admit the full reservation on the VM's node, as a wake would.
-	ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, frozen.NodeID)
-	if ceilingErr != nil {
-		e.log.Warn("sched: frozen thaw: node ceiling", "instance", frozen.ID, "err", ceilingErr)
+	// Re-admit the full reservation on the VM's node, as a wake would. A
+	// node that could not be read admits at the global defaults (zero).
+	var ceiling, vcpuBudget, cpuBudget int
+	if candidate.haveNode {
+		ceiling, vcpuBudget = candidate.node.AdmissionCeilingMB, candidate.node.VCPUBudget
+		cpuBudget = int(cpuBudgetMillicores(candidate.node))
 	}
 	e.ledger.Release(frozen.ID)
 	if err := e.ledger.Admit(Request{
@@ -130,7 +169,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		ProductionEnvironment: reaperProductionScope(values.Snapshot.Scope),
 		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		NodeID: frozen.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget,
-		CPUBudgetMillicores: e.resolveNodeCPUBudgetMillicores(ctx, frozen.NodeID),
+		CPUBudgetMillicores: cpuBudget,
 	}); err != nil {
 		e.log.Debug("sched: frozen thaw: re-admission refused; parking", "instance", frozen.ID, "err", err)
 		e.parkFrozenLocked(ctx, frozen, "no_capacity")
@@ -174,8 +213,8 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	e.clearSnapshotBackoffAfterWake(ctx, dep.ID)
 	e.observeThaw("success")
 	region := ""
-	if node, nodeErr := e.store.ComputeNodeByID(ctx, fresh.NodeID); nodeErr == nil {
-		region = stringValue(node.Region)
+	if candidate.haveNode {
+		region = stringValue(candidate.node.Region)
 	}
 	e.emitThawBreakdown(ctx, app.ID, fresh, timing, time.Now())
 	// A thaw answers the gateway as a restore, as a warm-pool resume does.

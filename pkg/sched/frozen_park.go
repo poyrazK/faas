@@ -56,6 +56,12 @@ func (e *Engine) frozenNodeUnreachable(ctx context.Context, nodeID string) bool 
 	if err != nil {
 		return errors.Is(err, state.ErrNotFound)
 	}
+	return e.frozenNodeRowUnreachable(node)
+}
+
+// frozenNodeRowUnreachable is frozenNodeUnreachable for a node row the
+// caller already read.
+func (e *Engine) frozenNodeRowUnreachable(node state.ComputeNode) bool {
 	if node.Lifecycle == state.NodeLifecycleUnavailable {
 		return true
 	}
