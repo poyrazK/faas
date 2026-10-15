@@ -28,10 +28,16 @@ func (m *MemStore) SaveAutomationLiveSuite(ctx context.Context, appID, name, id 
 	if exists && (prior.AppID != appID || prior.Name != name) {
 		return api.AutomationLiveSuite{}, ErrNotFound
 	}
+	if exists && prior.Managed {
+		return api.AutomationLiveSuite{}, ErrWorkflowRunIdempotencyConflict
+	}
 	if exists {
 		request, err = mergeLiveSuitePlan(prior.Plan, request)
 	} else {
 		err = validateLiveSuiteTarget(request, current, m.automationDeploymentLocked(appID).ID)
+		if err == nil {
+			err = m.liveSuiteRoomLocked(appID, name)
+		}
 	}
 	if err != nil {
 		return api.AutomationLiveSuite{}, err
@@ -113,11 +119,33 @@ func (m *MemStore) liveSuitesLocked(appID, name string) []automationLiveSuiteRec
 
 func (m *MemStore) pruneLiveSuitesLocked(appID, name string) {
 	records := m.liveSuitesLocked(appID, name)
+	cutoff := time.Now().Add(-api.AutomationLiveSuiteStartWindow)
+	// Preserve creation receipts throughout the only window in which a missing
+	// UUIDv7 could still be admitted. The remaining slots retain recent history.
+	sort.SliceStable(records, func(i, j int) bool {
+		protectedI := records[i].Managed && records[i].CreatedAt.After(cutoff)
+		protectedJ := records[j].Managed && records[j].CreatedAt.After(cutoff)
+		return protectedI && !protectedJ
+	})
 	if len(records) > api.AutomationLiveSuiteRetainedLimit {
 		for _, record := range records[api.AutomationLiveSuiteRetainedLimit:] {
 			delete(m.automationLiveSuites, record.ID)
 		}
 	}
+}
+
+func (m *MemStore) liveSuiteRoomLocked(appID, name string) error {
+	cutoff := time.Now().Add(-api.AutomationLiveSuiteStartWindow)
+	count := 0
+	for _, record := range m.automationLiveSuites {
+		if record.AppID == appID && record.Name == name && record.Managed && record.CreatedAt.After(cutoff) {
+			count++
+		}
+	}
+	if count >= api.AutomationLiveSuiteRetainedLimit {
+		return api.ErrCapacity("Recent suites still own their recovery records. Retry after the suite creation window expires.")
+	}
+	return nil
 }
 
 func (m *MemStore) ListAutomationLiveSuites(ctx context.Context, appID, name string) (api.ListAutomationLiveSuitesResponse, error) {

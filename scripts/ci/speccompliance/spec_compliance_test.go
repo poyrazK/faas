@@ -298,8 +298,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/otel/v1/traces": true,
 
 	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
-	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":  true, // ADR-1293 session-authenticated HTML progress fragment
-	"POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}": true, // ADR-1293 CSRF-protected assertion check fragment
+	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
+	"POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
+	"POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
 }
 
 func init() {
@@ -1165,6 +1166,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "automation_tests.go"),
 		filepath.Join(root, "pkg", "api", "automation_live.go"),
 		filepath.Join(root, "pkg", "api", "automation_live_suites.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_suite_execution.go"),
 		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),

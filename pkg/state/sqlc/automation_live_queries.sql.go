@@ -92,6 +92,23 @@ func (q *Queries) AutomationLiveStep(ctx context.Context, db DBTX, arg Automatio
 	return items, nil
 }
 
+const countProtectedAutomationLiveSuites = `-- name: CountProtectedAutomationLiveSuites :one
+SELECT count(*) FROM workflow_automation_live_suites WHERE app_id=$1::uuid AND name=$2::text AND managed AND created_at>$3::timestamptz
+`
+
+type CountProtectedAutomationLiveSuitesParams struct {
+	AppID          pgtype.UUID
+	Name           string
+	ProtectedSince pgtype.Timestamptz
+}
+
+func (q *Queries) CountProtectedAutomationLiveSuites(ctx context.Context, db DBTX, arg CountProtectedAutomationLiveSuitesParams) (int64, error) {
+	row := db.QueryRow(ctx, countProtectedAutomationLiveSuites, arg.AppID, arg.Name, arg.ProtectedSince)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteAutomationLiveSuites = `-- name: DeleteAutomationLiveSuites :exec
 DELETE FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2
 `
@@ -148,7 +165,7 @@ func (q *Queries) GetAutomationForLiveVerification(ctx context.Context, db DBTX,
 }
 
 const getAutomationLiveSuite = `-- name: GetAutomationLiveSuite :one
-SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 AND id=$3
+SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 AND id=$3
 `
 
 type GetAutomationLiveSuiteParams struct {
@@ -170,6 +187,7 @@ func (q *Queries) GetAutomationLiveSuite(ctx context.Context, db DBTX, arg GetAu
 		&i.Cases,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Managed,
 	)
 	return i, err
 }
@@ -237,8 +255,8 @@ func (q *Queries) GetAutomationLiveVerificationByKey(ctx context.Context, db DBT
 }
 
 const insertAutomationLiveSuite = `-- name: InsertAutomationLiveSuite :one
-INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases)
-VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at
+INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases,managed)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed
 `
 
 type InsertAutomationLiveSuiteParams struct {
@@ -249,6 +267,7 @@ type InsertAutomationLiveSuiteParams struct {
 	PublishedVersion  int64
 	DeploymentID      pgtype.UUID
 	Cases             []byte
+	Managed           bool
 }
 
 func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
@@ -260,6 +279,7 @@ func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg In
 		arg.PublishedVersion,
 		arg.DeploymentID,
 		arg.Cases,
+		arg.Managed,
 	)
 	var i WorkflowAutomationLiveSuite
 	err := row.Scan(
@@ -272,6 +292,7 @@ func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg In
 		&i.Cases,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Managed,
 	)
 	return i, err
 }
@@ -330,7 +351,7 @@ func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX,
 }
 
 const listAutomationLiveSuites = `-- name: ListAutomationLiveSuites :many
-SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER BY created_at DESC,id DESC LIMIT $3
+SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER BY created_at DESC,id DESC LIMIT $3
 `
 
 type ListAutomationLiveSuitesParams struct {
@@ -358,6 +379,7 @@ func (q *Queries) ListAutomationLiveSuites(ctx context.Context, db DBTX, arg Lis
 			&i.Cases,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Managed,
 		); err != nil {
 			return nil, err
 		}
@@ -414,6 +436,33 @@ func (q *Queries) ListAutomationLiveVerifications(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const lockAutomationForLiveSuite = `-- name: LockAutomationForLiveSuite :one
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2 FOR SHARE
+`
+
+type LockAutomationForLiveSuiteParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) LockAutomationForLiveSuite(ctx context.Context, db DBTX, arg LockAutomationForLiveSuiteParams) (WorkflowAutomationDefinition, error) {
+	row := db.QueryRow(ctx, lockAutomationForLiveSuite, arg.AppID, arg.Name)
+	var i WorkflowAutomationDefinition
+	err := row.Scan(
+		&i.AppID,
+		&i.Name,
+		&i.Version,
+		&i.Draft,
+		&i.Published,
+		&i.PublishedVersion,
+		&i.Enabled,
+		&i.UpdatedAt,
+		&i.TestSuite,
+		&i.TestReport,
+	)
+	return i, err
+}
+
 const lockAutomationLiveRunState = `-- name: LockAutomationLiveRunState :one
 SELECT status, resume_count, updated_at, cancelled_at FROM workflow_runs WHERE id=$1 FOR UPDATE
 `
@@ -439,18 +488,25 @@ func (q *Queries) LockAutomationLiveRunState(ctx context.Context, db DBTX, id pg
 
 const pruneAutomationLiveSuites = `-- name: PruneAutomationLiveSuites :exec
 DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=$1::uuid AND suite.name=$2::text AND suite.id IN (
- SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text ORDER BY history.created_at DESC,history.id DESC OFFSET $3::integer
+ SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text
+ ORDER BY (history.managed AND history.created_at>$3::timestamptz) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
 )
 `
 
 type PruneAutomationLiveSuitesParams struct {
-	AppID    pgtype.UUID
-	Name     string
-	Retained int32
+	AppID          pgtype.UUID
+	Name           string
+	ProtectedSince pgtype.Timestamptz
+	Retained       int32
 }
 
 func (q *Queries) PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg PruneAutomationLiveSuitesParams) error {
-	_, err := db.Exec(ctx, pruneAutomationLiveSuites, arg.AppID, arg.Name, arg.Retained)
+	_, err := db.Exec(ctx, pruneAutomationLiveSuites,
+		arg.AppID,
+		arg.Name,
+		arg.ProtectedSince,
+		arg.Retained,
+	)
 	return err
 }
 
@@ -480,7 +536,7 @@ func (q *Queries) SaveAutomationLiveReport(ctx context.Context, db DBTX, arg Sav
 }
 
 const updateAutomationLiveSuite = `-- name: UpdateAutomationLiveSuite :one
-UPDATE workflow_automation_live_suites SET cases=$4,updated_at=now() WHERE app_id=$1 AND name=$2 AND id=$3 RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at
+UPDATE workflow_automation_live_suites SET cases=$4,updated_at=now() WHERE app_id=$1 AND name=$2 AND id=$3 RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed
 `
 
 type UpdateAutomationLiveSuiteParams struct {
@@ -508,6 +564,7 @@ func (q *Queries) UpdateAutomationLiveSuite(ctx context.Context, db DBTX, arg Up
 		&i.Cases,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Managed,
 	)
 	return i, err
 }

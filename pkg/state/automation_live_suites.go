@@ -23,6 +23,7 @@ type AutomationLiveSuiteStore interface {
 type automationLiveSuiteRecord struct {
 	ID, AppID, Name      string
 	Plan                 api.SaveAutomationLiveSuiteRequest
+	Managed              bool
 	CreatedAt, UpdatedAt time.Time
 }
 
@@ -98,7 +99,7 @@ func validateLiveSuiteLink(plan api.SaveAutomationLiveSuiteRequest, member api.A
 
 func liveSuiteSummary(record automationLiveSuiteRecord) api.AutomationLiveSuiteSummary {
 	result := api.AutomationLiveSuiteSummary{ID: record.ID, Name: record.Name, Version: record.Plan.ExpectedVersion, PublishedVersion: record.Plan.ExpectedPublishedVersion, DeploymentID: record.Plan.ExpectedDeploymentID,
-		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt, CaseCount: len(record.Plan.Cases)}
+		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt, CaseCount: len(record.Plan.Cases), Managed: record.Managed}
 	for _, member := range record.Plan.Cases {
 		if member.RunID != "" {
 			result.LinkedRuns++

@@ -8,6 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 
 from ..models.automation_live_suite_outcome import AutomationLiveSuiteOutcome, check_automation_live_suite_outcome
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.automation_live_suite_case import AutomationLiveSuiteCase
@@ -40,6 +41,9 @@ class AutomationLiveSuite:
     summary: AutomationLiveSuiteCounts
     """Current suite case counts, including unstarted and unverifiable members."""
     cases: list[AutomationLiveSuiteCase]
+    managed: bool | Unset = UNSET
+    """True when the suite owns durable server-managed execution and can be continued with explicit real-action
+    confirmation."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -73,6 +77,8 @@ class AutomationLiveSuite:
             cases_item = cases_item_data.to_dict()
             cases.append(cases_item)
 
+        managed = self.managed
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -93,6 +99,8 @@ class AutomationLiveSuite:
                 "cases": cases,
             }
         )
+        if managed is not UNSET:
+            field_dict["managed"] = managed
 
         return field_dict
 
@@ -135,6 +143,8 @@ class AutomationLiveSuite:
 
             cases.append(cases_item)
 
+        managed = d.pop("managed", UNSET)
+
         automation_live_suite = cls(
             id=id,
             name=name,
@@ -150,6 +160,7 @@ class AutomationLiveSuite:
             observed_at=observed_at,
             summary=summary,
             cases=cases,
+            managed=managed,
         )
 
         return automation_live_suite

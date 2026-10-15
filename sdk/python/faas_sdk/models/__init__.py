@@ -68,6 +68,7 @@ from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
+from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
@@ -4114,6 +4115,7 @@ from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .start_automation_live_suite_request import StartAutomationLiveSuiteRequest
 from .start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
@@ -4665,6 +4667,7 @@ __all__ = (
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
+    "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
@@ -8443,6 +8446,7 @@ __all__ = (
     "SourceRefDeployRequestTag",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StartAutomationLiveSuiteRequest",
     "StartAutomationLiveVerificationRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",

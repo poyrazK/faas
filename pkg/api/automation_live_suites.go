@@ -31,6 +31,7 @@ type AutomationLiveSuiteSummary struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 	CaseCount        int       `json:"case_count"`
 	LinkedRuns       int       `json:"linked_runs"`
+	Managed          bool      `json:"managed,omitempty"`
 }
 
 type AutomationLiveSuiteCase struct {

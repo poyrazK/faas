@@ -6,6 +6,10 @@
  * Retained suite identity and linked-run counts. Listing is not an assertion verdict.
  */
 export type AutomationLiveSuiteSummary = {
+  /**
+   * True for suites with durable server-managed admission. Metadata PUT cannot change these records; continuation requires explicit execution authorization.
+   */
+  managed?: boolean;
   id: string;
   name: string;
   version: number;

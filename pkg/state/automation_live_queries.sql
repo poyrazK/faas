@@ -37,8 +37,8 @@ WHERE app_id=$1 AND name=$2 AND run_id=$3;
 DELETE FROM workflow_automation_live_verifications WHERE app_id=$1 AND name=$2;
 
 -- name: InsertAutomationLiveSuite :one
-INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases)
-VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING *;
+INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases,managed)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING RETURNING *;
 
 -- name: GetAutomationLiveSuite :one
 SELECT * FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 AND id=$3;
@@ -51,7 +51,8 @@ SELECT * FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER 
 
 -- name: PruneAutomationLiveSuites :exec
 DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=sqlc.arg(app_id)::uuid AND suite.name=sqlc.arg(name)::text AND suite.id IN (
- SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=sqlc.arg(app_id)::uuid AND history.name=sqlc.arg(name)::text ORDER BY history.created_at DESC,history.id DESC OFFSET sqlc.arg(retained)::integer
+ SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=sqlc.arg(app_id)::uuid AND history.name=sqlc.arg(name)::text
+ ORDER BY (history.managed AND history.created_at>sqlc.arg(protected_since)::timestamptz) DESC,history.created_at DESC,history.id DESC OFFSET sqlc.arg(retained)::integer
 );
 
 -- name: DeleteAutomationLiveSuites :exec
@@ -60,3 +61,9 @@ DELETE FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2;
 -- name: AutomationLiveDeployment :one
 SELECT id FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
 ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1;
+
+-- name: LockAutomationForLiveSuite :one
+SELECT * FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2 FOR SHARE;
+
+-- name: CountProtectedAutomationLiveSuites :one
+SELECT count(*) FROM workflow_automation_live_suites WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text AND managed AND created_at>sqlc.arg(protected_since)::timestamptz;

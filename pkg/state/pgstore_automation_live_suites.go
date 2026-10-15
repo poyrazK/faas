@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,7 +13,7 @@ import (
 )
 
 func liveSuiteRecordFromSQL(row sqlc.WorkflowAutomationLiveSuite) (automationLiveSuiteRecord, error) {
-	record := automationLiveSuiteRecord{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), Name: row.Name, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt),
+	record := automationLiveSuiteRecord{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), Name: row.Name, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), Managed: row.Managed,
 		Plan: api.SaveAutomationLiveSuiteRequest{ExpectedVersion: row.AutomationVersion, ExpectedPublishedVersion: row.PublishedVersion, ExpectedDeploymentID: pgUUIDString(row.DeploymentID)}}
 	err := json.Unmarshal(row.Cases, &record.Plan.Cases)
 	return record, err
@@ -66,6 +67,9 @@ func (s *PgStore) SaveAutomationLiveSuite(ctx context.Context, appID, name, id s
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return api.AutomationLiveSuite{}, err
 	}
+	if exists && prior.Managed {
+		return api.AutomationLiveSuite{}, ErrWorkflowRunIdempotencyConflict
+	}
 	if exists {
 		request, err = mergeLiveSuitePlan(prior.Plan, request)
 	} else {
@@ -79,10 +83,15 @@ func (s *PgStore) SaveAutomationLiveSuite(ctx context.Context, appID, name, id s
 	if err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
+	if !exists {
+		if err := liveSuiteRoomSQL(ctx, tx, appID, name); err != nil {
+			return api.AutomationLiveSuite{}, err
+		}
+	}
 	if err := validateLiveSuiteLinksSQL(ctx, tx, appID, name, request, prior, exists); err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
-	record, err := persistLiveSuiteSQL(ctx, tx, appID, name, id, request, prior, exists)
+	record, err := persistLiveSuiteSQL(ctx, tx, appID, name, id, request, prior, exists, false)
 	if err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
@@ -90,7 +99,7 @@ func (s *PgStore) SaveAutomationLiveSuite(ctx context.Context, appID, name, id s
 	if err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
-	if err := q.PruneAutomationLiveSuites(ctx, tx, sqlc.PruneAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, Retained: api.AutomationLiveSuiteRetainedLimit}); err != nil {
+	if err := q.PruneAutomationLiveSuites(ctx, tx, sqlc.PruneAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, Retained: api.AutomationLiveSuiteRetainedLimit, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteStartWindow))}); err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -122,7 +131,7 @@ func validateLiveSuiteLinksSQL(ctx context.Context, db sqlc.DBTX, appID, name st
 	return nil
 }
 
-func persistLiveSuiteSQL(ctx context.Context, db sqlc.DBTX, appID, name, id string, request api.SaveAutomationLiveSuiteRequest, prior automationLiveSuiteRecord, exists bool) (automationLiveSuiteRecord, error) {
+func persistLiveSuiteSQL(ctx context.Context, db sqlc.DBTX, appID, name, id string, request api.SaveAutomationLiveSuiteRequest, prior automationLiveSuiteRecord, exists, managed bool) (automationLiveSuiteRecord, error) {
 	if exists && liveSuitePlanEqual(prior.Plan, request) {
 		return prior, nil
 	}
@@ -135,7 +144,7 @@ func persistLiveSuiteSQL(ctx context.Context, db sqlc.DBTX, appID, name, id stri
 	if exists {
 		row, err = q.UpdateAutomationLiveSuite(ctx, db, sqlc.UpdateAutomationLiveSuiteParams{AppID: mustPgUUID(appID), Name: name, ID: mustPgUUID(id), Cases: raw})
 	} else {
-		row, err = q.InsertAutomationLiveSuite(ctx, db, sqlc.InsertAutomationLiveSuiteParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID), Name: name, AutomationVersion: request.ExpectedVersion, PublishedVersion: request.ExpectedPublishedVersion, DeploymentID: mustPgUUID(request.ExpectedDeploymentID), Cases: raw})
+		row, err = q.InsertAutomationLiveSuite(ctx, db, sqlc.InsertAutomationLiveSuiteParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID), Name: name, AutomationVersion: request.ExpectedVersion, PublishedVersion: request.ExpectedPublishedVersion, DeploymentID: mustPgUUID(request.ExpectedDeploymentID), Cases: raw, Managed: managed})
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return prior, ErrNotFound

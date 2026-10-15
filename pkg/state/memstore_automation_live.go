@@ -22,12 +22,16 @@ func (m *MemStore) liveViewLocked(live automationLiveRecord) (api.AutomationLive
 }
 
 func (m *MemStore) StartAutomationLiveVerification(ctx context.Context, appID, name, key string, req api.StartAutomationLiveVerificationRequest, runtimeEnabled bool) (api.AutomationLiveVerification, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.startAutomationLiveVerificationLocked(ctx, appID, name, key, req, runtimeEnabled)
+}
+
+func (m *MemStore) startAutomationLiveVerificationLocked(ctx context.Context, appID, name, key string, req api.StartAutomationLiveVerificationRequest, runtimeEnabled bool) (api.AutomationLiveVerification, bool, error) {
 	fingerprint, err := validateLiveStart(&req, key)
 	if err != nil {
 		return api.AutomationLiveVerification{}, false, err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return api.AutomationLiveVerification{}, false, err
 	}
@@ -156,6 +160,10 @@ func (m *MemStore) CheckAutomationLiveVerification(ctx context.Context, appID, n
 	runID = id.String()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.checkAutomationLiveVerificationLocked(ctx, appID, name, runID)
+}
+
+func (m *MemStore) checkAutomationLiveVerificationLocked(ctx context.Context, appID, name, runID string) (api.AutomationLiveVerification, error) {
 	live, exists := m.automationLiveVerifications[runID]
 	run, hasRun := m.workflowRuns[runID]
 	if !exists || !hasRun || live.AppID != appID || live.Name != name {

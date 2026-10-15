@@ -7,6 +7,8 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="AutomationLiveSuiteSummary")
 
 
@@ -23,6 +25,9 @@ class AutomationLiveSuiteSummary:
     updated_at: datetime.datetime
     case_count: int
     linked_runs: int
+    managed: bool | Unset = UNSET
+    """True for suites with durable server-managed admission. Metadata PUT cannot change these records;
+    continuation requires explicit execution authorization."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -43,6 +48,8 @@ class AutomationLiveSuiteSummary:
 
         linked_runs = self.linked_runs
 
+        managed = self.managed
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -58,6 +65,8 @@ class AutomationLiveSuiteSummary:
                 "linked_runs": linked_runs,
             }
         )
+        if managed is not UNSET:
+            field_dict["managed"] = managed
 
         return field_dict
 
@@ -82,6 +91,8 @@ class AutomationLiveSuiteSummary:
 
         linked_runs = d.pop("linked_runs")
 
+        managed = d.pop("managed", UNSET)
+
         automation_live_suite_summary = cls(
             id=id,
             name=name,
@@ -92,6 +103,7 @@ class AutomationLiveSuiteSummary:
             updated_at=updated_at,
             case_count=case_count,
             linked_runs=linked_runs,
+            managed=managed,
         )
 
         return automation_live_suite_summary

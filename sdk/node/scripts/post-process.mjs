@@ -12,6 +12,19 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+/** Automation names are single path segments, including names with reserved
+ * characters. Keep the pinned generator's encoding for other route families.
+ */
+export async function patchAutomationPathEncoding(dir) {
+  const path = join(dir, 'core', 'request.ts');
+  const text = await readFile(path, 'utf8');
+  const before = 'const encoder = config.ENCODE_PATH || encodeURI;';
+  const after = "const encoder = config.ENCODE_PATH || (options.url.startsWith('/v1/apps/{slug}/automations/') ? encodeURIComponent : encodeURI);";
+  if (text.includes(after)) return;
+  if (!text.includes(before)) throw new Error('automation path generator anchor missing: request.ts');
+  await writeFile(path, text.replace(before, after), 'utf8');
+}
+
 /** Preserve bytes for generated Blob downloads, including JSON metadata files.
  * Error responses keep the normal JSON/Problem parser. Idempotent and pinned
  * to known generator anchors so a template change cannot silently undo it.

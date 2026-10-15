@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AdvanceAutomationLiveSuiteRequest } from '../models/AdvanceAutomationLiveSuiteRequest.js';
 import type { AutomationFailurePolicyResponse } from '../models/AutomationFailurePolicyResponse.js';
 import type { AutomationHealthResponse } from '../models/AutomationHealthResponse.js';
 import type { AutomationLiveSuite } from '../models/AutomationLiveSuite.js';
@@ -41,6 +42,7 @@ import type { SetAutomationFailurePolicyRequest } from '../models/SetAutomationF
 import type { SetAutomationPublishPolicyRequest } from '../models/SetAutomationPublishPolicyRequest.js';
 import type { SimulateAutomationRequest } from '../models/SimulateAutomationRequest.js';
 import type { SimulateAutomationResponse } from '../models/SimulateAutomationResponse.js';
+import type { StartAutomationLiveSuiteRequest } from '../models/StartAutomationLiveSuiteRequest.js';
 import type { StartAutomationLiveVerificationRequest } from '../models/StartAutomationLiveVerificationRequest.js';
 import type { TenantWorkflowScheduleResponse } from '../models/TenantWorkflowScheduleResponse.js';
 import type { UpdateTenantWorkflowScheduleRequest } from '../models/UpdateTenantWorkflowScheduleRequest.js';
@@ -2611,6 +2613,116 @@ export class WorkflowsService {
     });
   }
   /**
+   * Start a durable live suite with explicit real-action confirmation.
+   * Creates an immutable ordered selection and admits its first case atomically with the saved run link. Retry this same suite ID and body after a lost response. A retained start replay only reads progress; it never advances later cases. New IDs must be UUIDv7 generated within the last ten minutes. Existing metadata-only suites cannot be taken over.
+   * @returns AutomationLiveSuite startAutomationLiveSuite returns the original suite identities and current server-derived observations.
+   * @throws ApiError
+   */
+  public static startAutomationLiveSuite({
+    slug,
+    name,
+    suiteId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved automation whose managed suite is being started.
+     */
+    name: string,
+    /**
+     * Fresh UUIDv7 for creation; reuse the original ID for start recovery.
+     */
+    suiteId: string,
+    /**
+     * Frozen target, saved-case names and real-action confirmation.
+     */
+    requestBody: StartAutomationLiveSuiteRequest,
+  }): CancelablePromise<AutomationLiveSuite> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Check retained results and admit at most one next case of a managed suite.
+   * Requires explicit real-action confirmation on every call. Checks earlier original run IDs and stops on failed, unavailable, outdated or nonterminal results. The next admission and its immutable link commit together. Never recreates missing suites, replaces runs, resumes workflows or cancels them. Repeat while pending to observe execution; reopening history is read-only.
+   * @returns AutomationLiveSuite advanceAutomationLiveSuite returns the original suite identities and current server-derived observations.
+   * @throws ApiError
+   */
+  public static advanceAutomationLiveSuite({
+    slug,
+    name,
+    suiteId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved automation whose managed suite is being continued.
+     */
+    name: string,
+    /**
+     * Original retained managed suite ID; missing records are never recreated.
+     */
+    suiteId: string,
+    /**
+     * Explicit authorization to check and continue the original suite.
+     */
+    requestBody: AdvanceAutomationLiveSuiteRequest,
+  }): CancelablePromise<AutomationLiveSuite> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
    * List recent shared suite identities without executing or checking workflows.
    * @returns ListAutomationLiveSuitesResponse listAutomationLiveSuites returns safe retained suite metadata and server-derived observations.
    * @throws ApiError
@@ -2722,7 +2834,7 @@ export class WorkflowsService {
      */
     suiteId: string,
     /**
-     * The frozen selection and existing run links to retain. No execution or verdict fields are accepted.
+     * The frozen selection and existing run links to retain. No execution or verdict fields are accepted. Managed execution records cannot be modified here.
      */
     requestBody: SaveAutomationLiveSuiteRequest,
   }): CancelablePromise<AutomationLiveSuite> {

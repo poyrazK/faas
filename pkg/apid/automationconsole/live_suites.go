@@ -18,7 +18,10 @@ func (s *Service) inspectLiveSuites(r *http.Request, scope Scope, data *dashboar
 		return
 	}
 	data.LiveSuites = &listing
-	id := r.URL.Query().Get("suite")
+	id := data.LiveSuiteID
+	if id == "" {
+		id = r.URL.Query().Get("suite")
+	}
 	if id == "" {
 		return
 	}

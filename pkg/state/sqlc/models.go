@@ -9142,6 +9142,7 @@ type WorkflowAutomationLiveSuite struct {
 	Cases             []byte
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+	Managed           bool
 }
 
 type WorkflowAutomationLiveVerification struct {

@@ -29,7 +29,9 @@ type AutomationConsoleData struct {
 	LiveEditorChanged                                        bool
 	LiveHistory                                              *api.ListAutomationLiveVerificationsResponse
 	LiveSelected                                             *api.AutomationLiveVerification
-	LiveSuiteID, LiveSuiteError                              string
+	LiveSuiteID, LiveSuiteError, LiveSuiteStartID            string
+	LiveSuiteAuto                                            bool
+	LiveSuiteProgress                                        *AutomationLiveProgress
 	LiveSuites                                               *api.ListAutomationLiveSuitesResponse
 	LiveSuite                                                *api.AutomationLiveSuite
 	LiveProgress                                             *AutomationLiveProgress

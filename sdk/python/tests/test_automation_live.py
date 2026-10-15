@@ -96,6 +96,7 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
         "case_count": 2,
         "linked_runs": 1,
         "outcome": "unavailable",
+        "managed": True,
         "outdated": False,
         "observed_at": "2026-10-15T10:00:00+00:00",
         "summary": {
@@ -113,3 +114,46 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
         ],
     }
     assert AutomationLiveSuite.from_dict(view).to_dict() == view
+
+
+def test_managed_suites_preserve_target_and_explicit_continuation():
+    from uuid import UUID
+
+    from faas_sdk.api.workflows.advance_automation_live_suite import _get_kwargs as advance_kwargs
+    from faas_sdk.api.workflows.start_automation_live_suite import _get_kwargs as start_kwargs
+    from faas_sdk.models.advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
+    from faas_sdk.models.automation_live_suite_summary import AutomationLiveSuiteSummary
+    from faas_sdk.models.start_automation_live_suite_request import StartAutomationLiveSuiteRequest
+
+    suite_id = UUID("0199e820-0000-7000-8000-000000000010")
+    body = {
+        "expected_version": 7,
+        "expected_published_version": 4,
+        "expected_deployment_id": "00000000-0000-4000-8000-000000000002",
+        "cases": ["first", "second"],
+        "confirm_real_actions": True,
+    }
+    request = StartAutomationLiveSuiteRequest.from_dict(body)
+    assert request.to_dict() == body
+    root = "/v1/apps/billing/automations/case%2Freport/live-suites/" + str(suite_id)
+    start = start_kwargs("billing", "case/report", suite_id, body=request)
+    assert start["method"] == "post" and start["url"] == root + "/start"
+    assert start["json"] == body
+    advance = advance_kwargs(
+        "billing", "case/report", suite_id, body=AdvanceAutomationLiveSuiteRequest(confirm_real_actions=True)
+    )
+    assert advance["method"] == "post" and advance["url"] == root + "/advance"
+    assert advance["json"] == {"confirm_real_actions": True}
+    summary = {
+        "id": str(suite_id),
+        "name": "report",
+        "version": 7,
+        "published_version": 4,
+        "deployment_id": body["expected_deployment_id"],
+        "managed": True,
+        "created_at": "2026-10-15T10:00:00+00:00",
+        "updated_at": "2026-10-15T10:00:00+00:00",
+        "case_count": 2,
+        "linked_runs": 1,
+    }
+    assert AutomationLiveSuiteSummary.from_dict(summary).to_dict() == summary

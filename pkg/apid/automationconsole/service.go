@@ -104,6 +104,11 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 		s.control(w, r, scope, data)
 		return
 	}
+	if r.PathValue("action") == "advance-live-suite" {
+		data.Version, _ = strconv.ParseInt(r.PostFormValue("expected_version"), 10, 64)
+		s.continueLiveSuite(w, r, scope, data)
+		return
+	}
 	version, err := strconv.ParseInt(r.PostFormValue("expected_version"), 10, 64)
 	if err != nil || version < 0 {
 		s.invalid(w, r, scope, data, "Reload the automation to read its current draft version.")
@@ -123,6 +128,8 @@ func (s *Service) authorAction(w http.ResponseWriter, r *http.Request, scope Sco
 		"select-live-assertion", "add-live-assertion", "remove-live-assertion", "disable-live-test":
 		data.Message = "Test case edits applied locally. Save test data to keep them."
 		s.render(w, r, scope, data, http.StatusOK)
+	case "start-live-suite":
+		s.startLiveSuite(w, r, scope, data)
 	case "start-live", "check-live":
 		s.live(w, r, scope, data)
 	case "save-tests", "run-tests", "clear-tests":
@@ -155,6 +162,8 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 	setupLiveProgress(&data)
 	data.CSRFToken = s.Host.IssueCSRF(w, scope)
 	data.ActionKey = uuid.NewString()
+	data.LiveSuiteStartID = uuid.Must(uuid.NewV7()).String()
+	setupLiveSuiteProgress(&data)
 	if data.Run != nil {
 		data.Run.ResumeKey, data.Run.CancelKey = uuid.NewString(), uuid.NewString()
 	}

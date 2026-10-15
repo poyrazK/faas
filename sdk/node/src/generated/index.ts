@@ -45,6 +45,7 @@ export type { AdminStatusMaintenanceCreateRequest } from './models/AdminStatusMa
 export type { AdminStatusUpdateEditRequest } from './models/AdminStatusUpdateEditRequest.js';
 export type { AdoptEnvironmentGitOpsRequest } from './models/AdoptEnvironmentGitOpsRequest.js';
 export type { AdoptEnvironmentGitOpsResponse } from './models/AdoptEnvironmentGitOpsResponse.js';
+export type { AdvanceAutomationLiveSuiteRequest } from './models/AdvanceAutomationLiveSuiteRequest.js';
 export type { AdvanceCanaryRequest } from './models/AdvanceCanaryRequest.js';
 export type { AfterRestoreHook } from './models/AfterRestoreHook.js';
 export type { AlertDeliveryResponse } from './models/AlertDeliveryResponse.js';
@@ -2151,6 +2152,7 @@ export type { SLODuration } from './models/SLODuration.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './models/SourceTarballDeployRequest.js';
+export type { StartAutomationLiveSuiteRequest } from './models/StartAutomationLiveSuiteRequest.js';
 export type { StartAutomationLiveVerificationRequest } from './models/StartAutomationLiveVerificationRequest.js';
 export type { StatusIncident } from './models/StatusIncident.js';
 export type { StatusPage } from './models/StatusPage.js';

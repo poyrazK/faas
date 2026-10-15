@@ -952,6 +952,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/automations/{name}/live-suites":                        "ListAutomationLiveSuites",
 	"GET /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}":             "GetAutomationLiveSuite",
 	"PUT /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}":             "SaveAutomationLiveSuite",
+	"POST /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start":      "StartAutomationLiveSuite",
+	"POST /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance":    "AdvanceAutomationLiveSuite",
 	"POST /v1/apps/{slug}/automations/{name}/live-verifications":                "StartAutomationLiveVerification",
 	"GET /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}":        "GetAutomationLiveVerification",
 	"POST /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check": "CheckAutomationLiveVerification",

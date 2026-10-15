@@ -57,7 +57,7 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
 	switch operation.Kind {
-	case "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
+	case "live-suite-start", "live-suite-advance", "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -107,6 +107,10 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodGet, named + "/live-verifications", h.server.listAutomationLiveVerifications
 	case "live-suite-list":
 		return http.MethodGet, named + "/live-suites", h.server.listAutomationLiveSuites
+	case "live-suite-start":
+		return http.MethodPost, named + "/live-suites/" + url.PathEscape(op.RunID) + "/start", h.server.startAutomationLiveSuite
+	case "live-suite-advance":
+		return http.MethodPost, named + "/live-suites/" + url.PathEscape(op.RunID) + "/advance", h.server.advanceAutomationLiveSuite
 	case "live-suite-get":
 		return http.MethodGet, named + "/live-suites/" + url.PathEscape(op.RunID), h.server.getAutomationLiveSuite
 	case "live-start":

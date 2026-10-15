@@ -48344,6 +48344,112 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      description: Saved automation whose managed suite is being started.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: suite_id
+      in: path
+      required: true
+      description: Fresh UUIDv7 for creation; reuse the original ID for start recovery.
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags: [workflows]
+      operationId: startAutomationLiveSuite
+      summary: Start a durable live suite with explicit real-action confirmation.
+      description: Creates an immutable ordered selection and admits its first case atomically with the saved run link. Retry this same suite ID and body after a lost response. A retained start replay only reads progress; it never advances later cases. New IDs must be UUIDv7 generated within the last ten minutes. Existing metadata-only suites cannot be taken over.
+      requestBody:
+        required: true
+        description: Frozen target, saved-case names and real-action confirmation.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAutomationLiveSuiteRequest'
+      responses:
+        '200':
+          description: startAutomationLiveSuite returns the original suite identities and current server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      description: Saved automation whose managed suite is being continued.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: suite_id
+      in: path
+      required: true
+      description: Original retained managed suite ID; missing records are never recreated.
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags: [workflows]
+      operationId: advanceAutomationLiveSuite
+      summary: Check retained results and admit at most one next case of a managed suite.
+      description: Requires explicit real-action confirmation on every call. Checks earlier original run IDs and stops on failed, unavailable, outdated or nonterminal results. The next admission and its immutable link commit together. Never recreates missing suites, replaces runs, resumes workflows or cancels them. Repeat while pending to observe execution; reopening history is read-only.
+      requestBody:
+        required: true
+        description: Explicit authorization to check and continue the original suite.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvanceAutomationLiveSuiteRequest'
+      responses:
+        '200':
+          description: advanceAutomationLiveSuite returns the original suite identities and current server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
   /v1/apps/{slug}/automations/{name}/live-suites:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -48458,7 +48564,7 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:
-        description: The frozen selection and existing run links to retain. No execution or verdict fields are accepted.
+        description: The frozen selection and existing run links to retain. No execution or verdict fields are accepted. Managed execution records cannot be modified here.
         required: true
         content:
           application/json:
@@ -69453,6 +69559,40 @@ components:
           maxItems: 128
           items:
             $ref: '#/components/schemas/AutomationTestStepResult'
+    StartAutomationLiveSuiteRequest:
+      type: object
+      additionalProperties: false
+      description: At most 16 KiB. Bind an ordered selection of saved live case names to the exact saved version, published revision and deployment, with explicit real-action authorization.
+      required: [expected_version, expected_published_version, expected_deployment_id, cases, confirm_real_actions]
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        expected_published_version:
+          type: integer
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        confirm_real_actions:
+          type: boolean
+    AdvanceAutomationLiveSuiteRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit authorization to inspect existing identities and admit at most one remaining case. No target changes, run replacements or uploaded verdicts are accepted.
+      required: [confirm_real_actions]
+      properties:
+        confirm_real_actions:
+          type: boolean
     SaveAutomationLiveSuiteRequest:
       type: object
       additionalProperties: false
@@ -69508,6 +69648,9 @@ components:
       - case_count
       - linked_runs
       properties:
+        managed:
+          type: boolean
+          description: True for suites with durable server-managed admission. Metadata PUT cannot change these records; continuation requires explicit execution authorization.
         id:
           type: string
           format: uuid
@@ -69625,6 +69768,9 @@ components:
       - summary
       - cases
       properties:
+        managed:
+          type: boolean
+          description: True when the suite owns durable server-managed execution and can be continued with explicit real-action confirmation.
         id:
           type: string
           format: uuid

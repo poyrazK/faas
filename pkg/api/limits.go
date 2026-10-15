@@ -6404,6 +6404,7 @@ const (
 	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
 	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
 	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
+	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
 	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
 	AutomationLiveSuiteRetainedLimit               = 100
 	AutomationTestCaseNameMaxBytes                 = 128

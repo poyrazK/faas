@@ -212,6 +212,18 @@ func (s *PgStore) CheckAutomationLiveVerification(ctx context.Context, appID, na
 	if err := q.LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
 		return api.AutomationLiveVerification{}, err
 	}
+	view, err := checkLiveVerificationTx(ctx, tx, appID, name, runID)
+	if err != nil {
+		return api.AutomationLiveVerification{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return api.AutomationLiveVerification{}, err
+	}
+	return view, nil
+}
+
+func checkLiveVerificationTx(ctx context.Context, tx pgx.Tx, appID, name, runID string) (api.AutomationLiveVerification, error) {
+	q := sqlc.New()
 	row, err := q.GetAutomationLiveVerification(ctx, tx, sqlc.GetAutomationLiveVerificationParams{AppID: mustPgUUID(appID), Name: name, RunID: mustPgUUID(runID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.AutomationLiveVerification{}, ErrNotFound
@@ -264,9 +276,6 @@ func (s *PgStore) CheckAutomationLiveVerification(ctx context.Context, appID, na
 	}
 	view, err := liveViewSQL(ctx, tx, row, current, dep)
 	if err != nil {
-		return api.AutomationLiveVerification{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return api.AutomationLiveVerification{}, err
 	}
 	return view, nil

@@ -329,6 +329,42 @@ overall timeout uses 124 and interruption uses 130. Setup failures use ordinary
 CLI diagnostics. Reports omit keys, payloads and raw errors; observations do not
 provide publication receipts or an atomic server snapshot of every run.
 
+### Run a live verification suite from the dashboard
+
+After saving cases with live expectations, open **Shared live verification
+suites** and choose **Run saved cases as a live suite**. Select cases in the
+order shown and review the published revision and deployment displayed above.
+Save any editor changes first, then confirm real actions and select **Start live
+suite**. The suite calls real deployed handlers and connected services.
+
+The dashboard checks each completed case before starting the next. It stops on
+failed, outdated or unavailable results and waits for pending workflows. Progress
+and original run IDs are stored on the server; refreshing or reopening the suite
+only reads them. Confirm **Continue suite** to check those same runs and advance
+remaining cases. Failed or expired runs are never silently replaced. Any decision
+to resume an individual failed workflow uses that run's separate recovery controls.
+
+Keep the page visible for automatic advancement. Hiding or leaving it, selecting
+**Stop advancing this suite**, a request error or the 100-request polling limit
+stops further advancement. Already admitted workflows continue independently.
+Reopen the saved suite and confirm continuation when ready. Without JavaScript,
+each confirmed **Continue suite** submission checks results and admits at most
+one next case. Browser continuation never takes over a shared CLI journal.
+
+Clients can POST `live-suites/{suite_id}/start` with `expected_version`,
+`expected_published_version`, `expected_deployment_id`, ordered case names in
+`cases` and `confirm_real_actions: true`. Use a UUIDv7 generated within the last
+ten minutes and reuse its exact ID and body after a lost response. An identical
+retained start request reads progress without advancing it. POST
+`live-suites/{suite_id}/advance` with `confirm_real_actions: true` to continue.
+Each admission and its stored run link commit together; missing suites are never
+recreated by continuation. Go, Node and Python expose both operations.
+
+Suite history keeps at most 100 records per automation. Recent dashboard start
+receipts are protected for the creation window so history churn cannot erase
+recovery identity while the original creation request can still be admitted.
+When all slots are protected, new creation waits rather than displacing them.
+
 ### Share suite results with your team
 
 Add `--share` when creating a new CLI suite to retain its selection and run links
