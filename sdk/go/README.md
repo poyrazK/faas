@@ -1308,3 +1308,12 @@ without changing state. It returns the reviewed revision, projected capacity,
 current overlapping controls and bounded deadline-risk evidence. Its rate-only
 drain model is advisory and does not guarantee ordering or completion. See
 [preview semantics](../../docs/event-subscription-rate-preview.md).
+
+Set delivery-health watch `RateRisk: &EventDeliveryRateRiskOptions{ThrottledGrowth: 1,
+DeadlineRisk: 1, DeadlineWithin: 5*time.Minute, Sustain: time.Minute, RecoverySustain: time.Minute}` to monitor
+shared-bucket throttling with growing backlog, modeled deadline risk and approaching
+effective deadlines. Both
+warning and recovery require fresh sustained evidence. Progress exposes preview
+coverage and contributors; incomplete pending samples become unknown. The conditions
+support existing durable checkpoints and acknowledgements. See
+[rate-risk alerts](../../docs/event-delivery-rate-risk-alerts.md).

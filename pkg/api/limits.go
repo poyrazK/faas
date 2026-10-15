@@ -11186,3 +11186,9 @@ const (
 	EventSubscriptionRatePreviewSampleMax = 1000
 	EventSubscriptionRatePreviewRiskMax   = 100
 )
+
+const (
+	EventDeliveryRateRiskSustainDefault  = time.Minute
+	EventDeliveryRateRiskRecoveryDefault = time.Minute
+	EventDeliveryRateContributorMaxBytes = 512
+)

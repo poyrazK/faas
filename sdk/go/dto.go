@@ -578,3 +578,9 @@ type (
 	EventSubscriptionRatePreview        = api.EventSubscriptionRatePreview
 	EventSubscriptionRateDeadlineRisk   = api.EventSubscriptionRateDeadlineRisk
 )
+
+// Opt-in Go SDK consumer pacing and deadline-risk watch diagnostics.
+type (
+	EventDeliveryRateRiskOptions = api.EventDeliveryRateRiskOptions
+	EventDeliveryRateEvidence    = api.EventDeliveryRateEvidence
+)

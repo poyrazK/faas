@@ -22,6 +22,9 @@ func (r EventSubscriptionRatePreviewRequest) Validate() error {
 }
 
 type EventSubscriptionRatePreview struct {
+	DeadlineCoverage       string                              `json:"deadline_coverage,omitempty"`
+	DeadlineRecipients     *int                                `json:"deadline_recipients,omitempty"`
+	EarliestDeadlineAt     *time.Time                          `json:"earliest_deadline_at,omitempty"`
 	Coverage               string                              `json:"coverage"`
 	AppID                  string                              `json:"app_id"`
 	SubscriptionID         string                              `json:"subscription_id"`

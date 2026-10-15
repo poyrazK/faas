@@ -8,6 +8,18 @@ import type { EventSubscriptionRateLimit } from './EventSubscriptionRateLimit.js
  * One snapshot of current controls and a hypothetical rate-only admission model. The deterministic oldest-first model is not an ordering guarantee, completion ETA or deadline-safety certificate. Full pending coverage excludes processing, unattributed receipts and future arrivals.
  */
 export type EventSubscriptionRatePreview = {
+  /**
+   * Explicit evidence marker for earliest-deadline monitoring; absent on older responses.
+   */
+  deadline_coverage?: 'sampled_effective_pending_deadlines';
+  /**
+   * Sampled pending recipients with an effective delivery deadline, including expired rows.
+   */
+  deadline_recipients?: number;
+  /**
+   * Earliest effective deadline in the sampled pending rows, independent of modeled admission risk; omitted when deadline_recipients is zero.
+   */
+  earliest_deadline_at?: string;
   coverage: 'retained_captured_pending_application_recipients';
   app_id: string;
   subscription_id: string;

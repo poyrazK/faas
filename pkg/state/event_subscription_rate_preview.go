@@ -136,7 +136,8 @@ func buildSubscriptionRatePreview(app, sub string, req api.EventSubscriptionRate
 		credit = min(credit, st.credit*req.IntervalMillis/st.current.IntervalMillis)
 	}
 	projected, _, _ := subscriptionRateStatus(*req.Enabled, st.current.Revision, req.IntervalMillis, req.Burst, credit, now, now)
-	out := api.EventSubscriptionRatePreview{Coverage: "retained_captured_pending_application_recipients", AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: now, ReadOnly: true, Advisory: true, ExpectedRevision: st.current.Revision, Current: st.current, Projected: projected, Paused: st.paused, LegacyRatePerSecond: st.rate, CircuitState: st.circuit, CapacityBlockingScopes: st.capacity, Constraints: []string{}, SampleLimit: api.EventSubscriptionRatePreviewSampleMax, DeadlineRisks: []api.EventSubscriptionRateDeadlineRisk{}}
+	deadlineCount := 0
+	out := api.EventSubscriptionRatePreview{DeadlineRecipients: &deadlineCount, DeadlineCoverage: "sampled_effective_pending_deadlines", Coverage: "retained_captured_pending_application_recipients", AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: now, ReadOnly: true, Advisory: true, ExpectedRevision: st.current.Revision, Current: st.current, Projected: projected, Paused: st.paused, LegacyRatePerSecond: st.rate, CircuitState: st.circuit, CapacityBlockingScopes: st.capacity, Constraints: []string{}, SampleLimit: api.EventSubscriptionRatePreviewSampleMax, DeadlineRisks: []api.EventSubscriptionRateDeadlineRisk{}}
 	if len(pending) > out.SampleLimit {
 		out.Truncated = true
 		pending = pending[:out.SampleLimit]
@@ -173,6 +174,13 @@ func buildSubscriptionRatePreview(app, sub string, req api.EventSubscriptionRate
 			out.Complete = false
 			st.clockInvalid = true
 			continue
+		}
+		if !item.deadline.IsZero() {
+			deadlineCount++
+			if out.EarliestDeadlineAt == nil || item.deadline.Before(*out.EarliestDeadlineAt) {
+				deadline := item.deadline
+				out.EarliestDeadlineAt = &deadline
+			}
 		}
 		if item.leased {
 			leased = true

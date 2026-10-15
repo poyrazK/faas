@@ -38,6 +38,12 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold <= 0 {
 		return false
 	}
+	if _, near := rateDeadlineWindow(metric); near {
+		return threshold == 1
+	}
+	if deliveryRateRiskMetric(metric) {
+		return threshold <= EventSubscriptionRatePreviewSampleMax && math.Trunc(threshold) == threshold
+	}
 	if processingWindowMetric(metric) {
 		return (metric == "processing_renewal_rejection_fraction" && threshold <= 1) || (metric == "processing_lease_expiry_rate_per_second" && threshold <= float64(EventDeliveryHealthWatchCountMax))
 	}
@@ -99,6 +105,10 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		hasRecovery = hasRecovery || c.RecoverySustainSeconds > 0
 		if processingWindowMetric(c.Metric) {
 			// Per-window request samples and sustained distinct-window confirmation.
+		} else if deliveryRateRiskMetric(c.Metric) {
+			if !validRateRiskCondition(c) {
+				return ErrValidation("invalid checkpoint rate-risk configuration")
+			}
 		} else if strings.HasPrefix(c.Metric, "slo.") {
 			if c.MinimumSamples < 1 || c.MinimumSamples > EventDeliveryHealthWatchCountMax || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
 				return ErrValidation("invalid checkpoint SLO configuration")
@@ -156,6 +166,12 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		n, ok := deliveryHealthIncidentSequence(a.IncidentID, saved.Session)
 		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || a.MinimumSamples != c.MinimumSamples || a.SustainSeconds != c.SustainSeconds || a.RecoveryThreshold != c.RecoveryThreshold || a.RecoverySustainSeconds != c.RecoverySustainSeconds || !sameProcessingRecordingSince(a.MetricRecordingSince, c.MetricRecordingSince) || (a.MetricRecordingSince != nil && a.MetricRecordingSince.After(a.At)) || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
 			return ErrValidation("invalid checkpoint pending alert")
+		}
+		if _, near := rateDeadlineWindow(a.Metric); near && a.Value > 1 {
+			return ErrValidation("invalid near-deadline checkpoint value")
+		}
+		if !validRateContributors(a.Metric, a.RateConstraints) || (deliveryRateRiskMetric(a.Metric) && (a.Value > EventSubscriptionRatePreviewSampleMax || math.Trunc(a.Value) != a.Value)) {
+			return ErrValidation("invalid rate-risk checkpoint evidence")
 		}
 		if a.Metric == "capacity_command_receipt_budget_used_slots" && (a.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(a.Value) != a.Value) {
 			return ErrValidation("invalid checkpoint receipt budget alert usage")
@@ -307,6 +323,9 @@ func validDeliveryHealthRecoveryPolicy(c EventDeliveryHealthCondition) bool {
 	}
 	if processingWindowMetric(c.Metric) {
 		return c.RecoveryThreshold == c.Threshold && c.RecoverySustainSeconds == c.SustainSeconds
+	}
+	if deliveryRateRiskMetric(c.Metric) {
+		return c.RecoveryThreshold == c.Threshold-1 && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
 	}
 	if c.RecoverySustainSeconds == 0 {
 		return c.RecoveryThreshold == 0

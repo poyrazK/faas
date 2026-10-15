@@ -15,6 +15,10 @@ from ..models.event_subscription_rate_preview_coverage import (
     EventSubscriptionRatePreviewCoverage,
     check_event_subscription_rate_preview_coverage,
 )
+from ..models.event_subscription_rate_preview_deadline_coverage import (
+    EventSubscriptionRatePreviewDeadlineCoverage,
+    check_event_subscription_rate_preview_deadline_coverage,
+)
 from ..models.event_subscription_rate_preview_sample_limit import (
     EventSubscriptionRatePreviewSampleLimit,
     check_event_subscription_rate_preview_sample_limit,
@@ -67,6 +71,13 @@ class EventSubscriptionRatePreview:
     already_expired_count: int
     deadline_risks: list[EventSubscriptionRateDeadlineRisk]
     risks_truncated: bool
+    deadline_coverage: EventSubscriptionRatePreviewDeadlineCoverage | Unset = UNSET
+    """Explicit evidence marker for earliest-deadline monitoring; absent on older responses."""
+    deadline_recipients: int | Unset = UNSET
+    """Sampled pending recipients with an effective delivery deadline, including expired rows."""
+    earliest_deadline_at: datetime.datetime | Unset = UNSET
+    """Earliest effective deadline in the sampled pending rows, independent of modeled admission risk; omitted when
+    deadline_recipients is zero."""
     rate_only_drain_millis: int | Unset = UNSET
     """Modeled admission span for the sample, assuming all unexpired sampled recipients are admitted once, no new
     arrivals, oldest-first order and no blocking from pause/circuit/capacity/leases or execution. Includes scheduled
@@ -124,6 +135,16 @@ class EventSubscriptionRatePreview:
 
         risks_truncated = self.risks_truncated
 
+        deadline_coverage: str | Unset = UNSET
+        if not isinstance(self.deadline_coverage, Unset):
+            deadline_coverage = self.deadline_coverage
+
+        deadline_recipients = self.deadline_recipients
+
+        earliest_deadline_at: str | Unset = UNSET
+        if not isinstance(self.earliest_deadline_at, Unset):
+            earliest_deadline_at = self.earliest_deadline_at.isoformat()
+
         rate_only_drain_millis = self.rate_only_drain_millis
 
         field_dict: dict[str, Any] = {}
@@ -154,6 +175,12 @@ class EventSubscriptionRatePreview:
                 "risks_truncated": risks_truncated,
             }
         )
+        if deadline_coverage is not UNSET:
+            field_dict["deadline_coverage"] = deadline_coverage
+        if deadline_recipients is not UNSET:
+            field_dict["deadline_recipients"] = deadline_recipients
+        if earliest_deadline_at is not UNSET:
+            field_dict["earliest_deadline_at"] = earliest_deadline_at
         if rate_only_drain_millis is not UNSET:
             field_dict["rate_only_drain_millis"] = rate_only_drain_millis
 
@@ -221,6 +248,22 @@ class EventSubscriptionRatePreview:
 
         risks_truncated = d.pop("risks_truncated")
 
+        _deadline_coverage = d.pop("deadline_coverage", UNSET)
+        deadline_coverage: EventSubscriptionRatePreviewDeadlineCoverage | Unset
+        if isinstance(_deadline_coverage, Unset):
+            deadline_coverage = UNSET
+        else:
+            deadline_coverage = check_event_subscription_rate_preview_deadline_coverage(_deadline_coverage)
+
+        deadline_recipients = d.pop("deadline_recipients", UNSET)
+
+        _earliest_deadline_at = d.pop("earliest_deadline_at", UNSET)
+        earliest_deadline_at: datetime.datetime | Unset
+        if isinstance(_earliest_deadline_at, Unset):
+            earliest_deadline_at = UNSET
+        else:
+            earliest_deadline_at = datetime.datetime.fromisoformat(_earliest_deadline_at)
+
         rate_only_drain_millis = d.pop("rate_only_drain_millis", UNSET)
 
         event_subscription_rate_preview = cls(
@@ -246,6 +289,9 @@ class EventSubscriptionRatePreview:
             already_expired_count=already_expired_count,
             deadline_risks=deadline_risks,
             risks_truncated=risks_truncated,
+            deadline_coverage=deadline_coverage,
+            deadline_recipients=deadline_recipients,
+            earliest_deadline_at=earliest_deadline_at,
             rate_only_drain_millis=rate_only_drain_millis,
         )
 

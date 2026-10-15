@@ -73422,6 +73422,9 @@ components:
       description: One snapshot of current controls and a hypothetical rate-only admission model. The deterministic oldest-first model is not an ordering guarantee, completion ETA or deadline-safety certificate. Full pending coverage excludes processing, unattributed receipts and future arrivals.
       required: [coverage, app_id, subscription_id, observed_at, advisory, read_only, expected_revision, current, projected, paused, legacy_rate_per_second, circuit_state, capacity_blocking_scopes, constraints, sample_limit, sampled_pending, complete, truncated, deadline_risk_count, already_expired_count, deadline_risks, risks_truncated]
       properties:
+        deadline_coverage: { type: string, enum: [sampled_effective_pending_deadlines], description: "Explicit evidence marker for earliest-deadline monitoring; absent on older responses." }
+        deadline_recipients: { type: integer, minimum: 0, maximum: 1000, description: "Sampled pending recipients with an effective delivery deadline, including expired rows." }
+        earliest_deadline_at: { type: string, format: date-time, description: "Earliest effective deadline in the sampled pending rows, independent of modeled admission risk; omitted when deadline_recipients is zero." }
         coverage: { type: string, enum: [retained_captured_pending_application_recipients] }
         app_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }

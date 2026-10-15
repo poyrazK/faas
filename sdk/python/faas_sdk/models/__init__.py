@@ -1430,6 +1430,7 @@ from .event_subscription_rate_preview_capacity_blocking_scopes_item import (
     EventSubscriptionRatePreviewCapacityBlockingScopesItem,
 )
 from .event_subscription_rate_preview_coverage import EventSubscriptionRatePreviewCoverage
+from .event_subscription_rate_preview_deadline_coverage import EventSubscriptionRatePreviewDeadlineCoverage
 from .event_subscription_rate_preview_request import EventSubscriptionRatePreviewRequest
 from .event_subscription_rate_preview_sample_limit import EventSubscriptionRatePreviewSampleLimit
 from .event_subscription_rate_request import EventSubscriptionRateRequest
@@ -6087,6 +6088,7 @@ __all__ = (
     "EventSubscriptionRatePreview",
     "EventSubscriptionRatePreviewCapacityBlockingScopesItem",
     "EventSubscriptionRatePreviewCoverage",
+    "EventSubscriptionRatePreviewDeadlineCoverage",
     "EventSubscriptionRatePreviewRequest",
     "EventSubscriptionRatePreviewSampleLimit",
     "EventSubscriptionRateRequest",

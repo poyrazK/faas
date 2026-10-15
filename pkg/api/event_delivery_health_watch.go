@@ -14,6 +14,7 @@ import (
 // EventDeliveryHealthWatchOptions selects opt-in conditions. Zero disables a
 // threshold. Circuit/capacity durations measure consecutive local fresh reads.
 type EventDeliveryHealthWatchOptions struct {
+	RateRisk *EventDeliveryRateRiskOptions
 	// Nil RecordingSince uses verified server inventory; a timestamp is an operator override.
 	ProcessingMetricsRecordingSince                               *time.Time
 	ProcessingRenewalRejectionFraction, ProcessingLeaseExpiryRate float64
@@ -45,6 +46,7 @@ type EventDeliveryHealthWatchOptions struct {
 }
 
 type EventDeliveryHealthAlert struct {
+	RateConstraints        string     `json:"rate_constraints,omitempty"`
 	MetricRecordingSince   *time.Time `json:"metric_recording_since,omitempty"`
 	RecoveryThreshold      float64    `json:"recovery_threshold,omitempty"`
 	RecoverySustainSeconds float64    `json:"recovery_sustain_seconds,omitempty"`
@@ -77,6 +79,7 @@ type EventDeliveryHealthCondition struct {
 }
 
 type EventDeliveryHealthWatchResult struct {
+	RateEvidence   *EventDeliveryRateEvidence          `json:"rate_evidence,omitempty"`
 	Confirmations  []EventDeliveryHealthConfirmation   `json:"confirmations,omitempty"`
 	Checkpoint     *EventDeliveryHealthCheckpoint      `json:"checkpoint,omitempty"`
 	SLO            []EventDeliveryHealthSLOObservation `json:"slo,omitempty"`
@@ -119,7 +122,10 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 	if err := validateProcessingWindowWatch(o); err != nil {
 		return err
 	}
-	enabled := o.ProcessingRenewalRejectionFraction > 0 || o.ProcessingLeaseExpiryRate > 0
+	if err := validateRateRiskOptions(o.RateRisk); err != nil {
+		return err
+	}
+	enabled := o.RateRisk != nil || o.ProcessingRenewalRejectionFraction > 0 || o.ProcessingLeaseExpiryRate > 0
 	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused, o.ReceiptBudgetFull, o.ProcessingOldest, o.ProcessingLeaseRisk, o.ProcessingExpired} {
 		if d < 0 || d > EventDeliveryHealthWatchThresholdMax || (d > 0 && d < EventDeliveryHealthWatchThresholdMin) {
 			return ErrValidation("invalid delivery health duration threshold")
@@ -231,6 +237,7 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.Metric, State: "unknown", Threshold: v.Threshold, MinimumSamples: o.SLO.MinimumSamples, SustainSeconds: o.SLO.Sustain.Seconds()}})
 		}
 	}
+	out = append(out, newRateRiskConditions(o.RateRisk)...)
 	return out
 }
 
@@ -239,6 +246,10 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 // persist progress before delivering notifications. PollAcknowledgements can
 // remove processed alerts between observations through the same progress hook.
 func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
+	if o.RateRisk != nil {
+		snapshot := *o.RateRisk
+		o.RateRisk = &snapshot
+	}
 	if o.SLO != nil {
 		snapshot := *o.SLO
 		o.SLO = &snapshot
@@ -272,15 +283,27 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	appID := out.AppID
+	rateTracker := deliveryRateTracker{}
+	// Historical timestamps prevent replay; counts and sustain proof are not restored.
+	for _, condition := range conditions {
+		if deliveryRateRiskMetric(condition.Metric) && condition.observedAt.After(rateTracker.lastObserved) {
+			rateTracker.lastObserved = condition.observedAt
+		}
+	}
+
 	collectDeliveryHealthConditions(&out, conditions)
 	for {
 		out.Alerts = []EventDeliveryHealthAlert{}
 		if err := pollDeliveryHealthAcknowledgements(ctx, o, &out); err != nil {
 			return out, err
 		}
+		if o.RateRisk != nil {
+			out.RateEvidence = &EventDeliveryRateEvidence{Status: "unknown", Reason: "health_read_failure", Contributors: "evidence_unavailable"}
+		}
 		health, err := c.GetEventConsumerDeliveryHealth(ctx, app, sub, o.Window)
 		now := time.Now()
 		if err != nil {
+			rateTracker.previous = nil
 			for _, condition := range conditions {
 				updateDeliveryHealthCondition(&out, condition, 0, false, time.Time{}, now, o.MaxAge)
 			}
@@ -309,7 +332,21 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 		}
 		out.AppID = appID
 		binding = binding && strings.EqualFold(appID, health.Routing.AppID)
+		if o.RateRisk != nil {
+			if binding {
+				out.RateEvidence = c.readDeliveryRateEvidence(ctx, app, sub, appID, &rateTracker, o.MaxAge)
+			} else {
+				rateTracker.previous = nil
+				out.RateEvidence = &EventDeliveryRateEvidence{Status: "unknown", Reason: "binding_mismatch", Contributors: "evidence_unavailable"}
+			}
+			now = time.Now()
+		}
+
 		for _, condition := range conditions {
+			if deliveryRateRiskMetric(condition.Metric) {
+				updateDeliveryRateRiskCondition(&out, condition, now, o.MaxAge, binding)
+				continue
+			}
 			if processingWindowMetric(condition.Metric) {
 				updateProcessingWindowCondition(&out, condition, health, o, binding, now)
 				continue
@@ -419,7 +456,7 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 		}
 	}
 	c.Value = value
-	if c.Metric == "capacity_command_receipt_budget_used_slots" && c.RecoverySustainSeconds > 0 {
+	if (c.Metric == "capacity_command_receipt_budget_used_slots" || deliveryRateRiskMetric(c.Metric)) && c.RecoverySustainSeconds > 0 {
 		updateDeliveryHealthReceiptBudgetRecovery(out, c, value, now)
 		return
 	}
@@ -470,6 +507,12 @@ func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deli
 
 func appendDeliveryHealthAlert(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, transition, reason string) {
 	alert := EventDeliveryHealthAlert{MetricRecordingSince: c.MetricRecordingSince, RecoveryThreshold: c.RecoveryThreshold, RecoverySustainSeconds: c.RecoverySustainSeconds, AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold, MinimumSamples: c.MinimumSamples, SustainSeconds: c.SustainSeconds}
+	if deliveryRateRiskMetric(c.Metric) {
+		alert.RateConstraints = "evidence_unavailable"
+		if out.RateEvidence != nil && out.RateEvidence.Status == "eligible" && transition != "confirmation_lost" {
+			alert.RateConstraints = out.RateEvidence.Contributors
+		}
+	}
 	out.Alerts = append(out.Alerts, alert)
 	if out.Checkpoint != nil {
 		out.Checkpoint.Pending = append(out.Checkpoint.Pending, alert)

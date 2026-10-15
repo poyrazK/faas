@@ -79,6 +79,12 @@ without any configuration mutation.
 
 ## Deadline risks
 
+New responses include `deadline_coverage: sampled_effective_pending_deadlines`,
+an explicit `deadline_recipients` count and, when nonzero, `earliest_deadline_at`.
+These describe all sampled effective deadlines, including expired rows, independently
+of modeled admission risk. Older responses omit this optional metadata; absence
+is unknown rather than zero. Pending-sample truncation still limits coverage.
+
 Each risk item contains event source/ID, acceptance time, effective delivery
 deadline, reason and an optional modeled admission time. Event payloads are never
 returned. Deadlines respect captured delivery-age policy and replay age overrides;
@@ -92,3 +98,7 @@ recipient with no modeled risk may still expire because of omitted waits, new
 work, retries or different scheduling. Review actual pause/circuit/capacity state
 and refresh the preview before applying consequential changes. No preview or
 configuration change extends delivery deadlines, retention or deduplication.
+
+The Go SDK can monitor these previews continuously through opt-in
+[rate-risk watch conditions](event-delivery-rate-risk-alerts.md), with sustained
+warning/recovery confirmation and the existing durable alert outbox.
