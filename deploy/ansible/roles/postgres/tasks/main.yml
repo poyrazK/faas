@@ -297,12 +297,12 @@
   failed_when: false
   notify: reload postgresql
 
-# ADR-1331 §3: bound the data-loss window. Without archive_timeout a quiet
+# ADR-1344 §3: bound the data-loss window. Without archive_timeout a quiet
 # server can hold committed WAL in the current segment indefinitely, so the
 # off-host copy (and a restore from it) can be arbitrarily far behind.
 # Forcing a segment switch every 60 s caps the RPO of an off-host restore at
 # about a minute. Reload-only (PGC_SIGHUP).
-- name: postgres — set archive_timeout = 60s (reload-only) — ADR-1331
+- name: postgres — set archive_timeout = 60s (reload-only) — ADR-1344
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_timeout\\s*="

@@ -619,7 +619,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
-	// ADR-1331 §5 rule 4: a schedd that waited for Postgres at boot holds
+	// ADR-1344 §5 rule 4: a schedd that waited for Postgres at boot holds
 	// its liveness verdicts for a full staleness window; every heartbeat is
 	// old because nobody could write.
 	storeOutageAtStartup := bootWait.Waited()

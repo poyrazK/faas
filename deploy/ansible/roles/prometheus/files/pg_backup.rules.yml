@@ -58,7 +58,7 @@ groups:
             prune journal and off-host object-store reachability before deleting files.
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
 
-      # ADR-1331 §3: the WAL off-host copy bounds the region-loss RPO. The
+      # ADR-1344 §3: the WAL off-host copy bounds the region-loss RPO. The
       # metrics come from faas-postgres-connection-metrics (postgres role).
       - alert: PgWalArchiveStalled
         # archive_timeout = 60s forces a segment switch every minute on a

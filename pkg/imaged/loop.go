@@ -700,7 +700,7 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 
 // runFCSweep is the F2 startup body: detect this host's Firecracker
 // version and evict stale rows past retention. It no longer marks rows
-// of other FC versions stale (ADR-1331 §6, see the body). Returns true
+// of other FC versions stale (ADR-1344 §6, see the body). Returns true
 // when FC detection succeeded. Run() uses the return
 // value to decide whether to drain fcCh; on failure the channel stays
 // open so the next tick retries the detect call (F-08). Errors are
@@ -736,7 +736,7 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		l.runAppProtocolSweep(ctx)
 		return false
 	}
-	// ADR-1331 §6: no fleet-wide FC stale-mark here. imaged runs on every
+	// ADR-1344 §6: no fleet-wide FC stale-mark here. imaged runs on every
 	// compute node, so marking every snapshot whose fc_version differs from
 	// this host's binary meant the first node upgraded in a rolling
 	// Firecracker upgrade retired the warm snapshots of every node still on

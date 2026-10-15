@@ -22,7 +22,7 @@ const computeGatewayPoolTTL = 5 * time.Second
 const computeGatewayDialTimeout = 2 * time.Second
 
 // computeGatewayPoolStaleTTL bounds how long the last successful inventory
-// keeps routing traffic while the registry cannot be read (ADR-1331 §5 rule
+// keeps routing traffic while the registry cannot be read (ADR-1344 §5 rule
 // 1). It matches the gateway's stale route tier (ADR-190). A stale entry is
 // cheap to keep: a node removed during the outage fails its dial and the
 // pool moves on to the next one.
@@ -59,7 +59,7 @@ type computeGatewayEndpoint struct {
 // transport grows per-node connection keys.
 //
 // A registry failure never turns into a data-plane failure while a recent
-// inventory exists (ADR-1331 §5): once the TTL expires, requests keep using
+// inventory exists (ADR-1344 §5): once the TTL expires, requests keep using
 // the last successful inventory and one background read refreshes it.
 type computeGatewayPool struct {
 	store computeGatewayNodeLister
@@ -312,7 +312,7 @@ func (p *computeGatewayPool) WatchInvalidations(ctx context.Context, pool *pgxpo
 			}
 			if got.Channel == db.ResyncChannel {
 				// Node changes may have been missed while LISTEN was
-				// down (ADR-1331 §5 rule 3): re-read before routing.
+				// down (ADR-1344 §5 rule 3): re-read before routing.
 				p.invalidate()
 				continue
 			}

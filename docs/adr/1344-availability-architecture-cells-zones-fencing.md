@@ -1,4 +1,4 @@
-# ADR-1331 · Availability architecture: regional cells, three-zone Postgres HA, fenced compute
+# ADR-1344 · Availability architecture: regional cells, three-zone Postgres HA, fenced compute
 
 - **Status:** proposed
 - **Date:** 2026-10-13

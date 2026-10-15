@@ -1,5 +1,5 @@
-// adr: 1331
-// store_settle_test.go pins ADR-1331 §5 rule 4: after this schedd saw the
+// adr: 1344
+// store_settle_test.go pins ADR-1344 §5 rule 4: after this schedd saw the
 // store unavailable, liveness verdicts that compare durable heartbeat
 // timestamps with "now" wait until it has read the store without
 // interruption for a full staleness window, so a store outage cannot mark
@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-// adr: 1331
+// adr: 1344
 func TestStoreSettle(t *testing.T) {
 	var s storeSettle
 	t0 := time.Now()
@@ -72,7 +72,7 @@ func (s *deadNodeListFailStore) ListRunningInstancesOnDeadNodes(ctx context.Cont
 	return s.MemStore.ListRunningInstancesOnDeadNodes(ctx, threshold, limit)
 }
 
-// adr: 1331
+// adr: 1344
 // TestReconcileDeadNodeInstances_WaitsForStoreToSettle: right after a store
 // outage the sweep leaves stale-heartbeat rows alone; once the schedd has
 // read the store for the staleness window and the node is still silent, the
@@ -114,7 +114,7 @@ func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 	}
 }
 
-// adr: 1331
+// adr: 1344
 // TestReconcileDeadNodeInstances_StartupHoldNeedsAnOutage: a schedd that
 // started against a healthy store fails a dead node's instances on its first
 // sweep. One that saw the store unavailable before it started (a boot wait
@@ -158,7 +158,7 @@ func (s *nodeListFailStore) NodeList(ctx context.Context, lifecycle state.NodeLi
 	return s.MemStore.NodeList(ctx, lifecycle)
 }
 
-// adr: 1331
+// adr: 1344
 // TestHeartbeat_StalePeerObserverWaitsForStoreToSettle: right after a store
 // outage every peer's heartbeat is old because nobody could write it, so the
 // observer must not mark peers unavailable until it has read the store for a
