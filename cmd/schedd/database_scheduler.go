@@ -47,6 +47,11 @@ type DatabaseSchedulerConfig struct {
 	// draining (needs shared_archive); MoveTimeout bounds one move's copy.
 	EvacuateDraining bool          `toml:"evacuate_draining"`
 	MoveTimeout      time.Duration `toml:"move_timeout"`
+	// AutoFailoverAfter fails a running production-class database over to
+	// its synchronized standby once its primary's node has not answered
+	// for this long (default 30s; negative leaves it to the operator's
+	// lost-node mark).
+	AutoFailoverAfter time.Duration `toml:"auto_failover_after"`
 	// SharedArchive: every database node's dbbackupd uploads to the same
 	// bucket and prefix, so restores may run on any node (ADR-1027).
 	SharedArchive bool                 `toml:"shared_archive"`
@@ -142,7 +147,7 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 	vmm := dbsched.NewGRPCVMM(vmmTLS)
 	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout, SharedArchive: cfg.SharedArchive,
 		WakeQueueWait: cfg.WakeQueueWait, EvictIdleAfter: cfg.EvictIdleAfter,
-		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout}, log)
+		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
 		return nil, fmt.Errorf("schedd: recover databases: %w", err)

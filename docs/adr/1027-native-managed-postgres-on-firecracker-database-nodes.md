@@ -983,6 +983,30 @@ synchronized is parked as before (`node_lost`) and restored from the
 archive if its node does not return. After a failover the monitor places
 and seeds a new standby elsewhere.
 
+**Automatic failover.** The standby monitor fails over without the
+operator too. Its probe of a running replicated database's primary (3 s
+timeout) may get no answer from the node (gRPC unavailable or deadline;
+a missing VM on a node that answers does not count). If that lasts for
+`auto_failover_after` (default 30 s, negative turns it off) and the
+standby is synchronized, schedd probes the standby. Only if the standby
+answers and is replaying does it run the same fence-promote-switch.
+
+- If schedd cannot reach the standby's node either, it is more likely cut
+  off itself, and it does nothing.
+- Any answer from the node restarts its clock.
+- If only the link from schedd to the old primary is down, the old primary
+  can no longer commit (its synchronous standby is gone). The orphan sweep
+  stops it and frees its volume once its node answers again.
+- PostgreSQL's synchronous replication caveat applies. A client that
+  cancels its wait (`statement_timeout`, a cancel request) gets a warning
+  and a commit made only locally. Such a commit on a partitioned old
+  primary is lost with it.
+
+Metal (`TestMetalAutomaticFailoverOnASilentPrimaryNode`): the primary
+node's vmmd stopped answering while its VM ran on. The database failed
+over 3.5 s later (threshold 3 s) with all 5,000 acknowledged rows. The
+stale primary stopped and its volume went once the node answered again.
+
 Metal (`TestMetalProductionClassFailover`), two nodes through vmmd's
 handlers:
 
@@ -1004,8 +1028,9 @@ Not yet done:
   standby is not an in-place resize. Resizing a production database grows
   the standby's volume at its next attach, but the standby node's volume
   capacity is not checked at resize time.
-- **Failover is triggered by the operator's lost-node mark.** It is not
-  automatic on missed heartbeats.
+- **Parked databases fail over only through the operator's lost-node
+  mark.** Automatic failover covers running databases, whose primaries the
+  monitor probes.
 - **After every wake the primary runs asynchronous until its standby
   syncs**, typically a few seconds. A node loss in that window falls back
   to the archive (up to 60 s of loss), as for other classes.

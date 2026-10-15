@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
@@ -302,12 +305,19 @@ func (s *Scheduler) CheckStandbys(ctx context.Context) (int, error) {
 // it gave the standby up.
 func (s *Scheduler) checkStandby(ctx context.Context, vm VM, primary, standby Node, standbyGone bool) bool {
 	id := vm.DatabaseID
-	status, err := s.vmm.Replication(ctx, primary, id, "", "")
+	probe, cancel := context.WithTimeout(ctx, standbyProbeTimeout)
+	status, err := s.vmm.Replication(probe, primary, id, "", "")
+	cancel()
 	if err != nil {
 		// An unreachable primary cannot be made asynchronous: its commits
-		// wait, as they must, until it is reachable or lost.
+		// wait, as they must, until it is reachable again or its standby
+		// takes over.
+		if unreachable(err) {
+			s.autoFailover(ctx, vm, primary, standby)
+		}
 		return false
 	}
+	s.nodeFailing.Delete(primary.ID)
 	switch {
 	case standbyGone || (status.Mode == dbguest.ReplicationSync && !status.Synchronous):
 		s.unsyncedSince.Delete(id)
@@ -457,4 +467,45 @@ func (s *Scheduler) failover(ctx context.Context, id string, lost Node) error {
 	s.attachTried.Delete(id)
 	s.log.Warn("dbsched: failed over to the standby", "database_id", id, "from", lost.ID, "to", after.NodeID, "state", after.State, "promote_pending", after.PromotePending)
 	return nil
+}
+
+// standbyProbeTimeout bounds one probe of a node, so an unreachable node
+// cannot stall the monitor.
+const standbyProbeTimeout = 3 * time.Second
+
+// unreachable reports an error that says the node did not answer, as
+// opposed to the node answering that something is wrong.
+func unreachable(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded:
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// autoFailover fails a running database over to its synchronized standby
+// once its primary's node has not answered for AutoFailoverAfter, if the
+// standby's node answers now and the standby is replaying. When schedd
+// cannot reach the standby's node either, it is more likely cut off
+// itself, and it does nothing. A primary that is merely cut off from
+// schedd cannot commit once its synchronous standby is promoted; the
+// orphan sweep stops it when its node is reachable again.
+func (s *Scheduler) autoFailover(ctx context.Context, vm VM, primary, standby Node) {
+	first, _ := s.nodeFailing.LoadOrStore(primary.ID, s.now())
+	if s.cfg.AutoFailoverAfter < 0 || s.now().Sub(first.(time.Time)) < s.cfg.AutoFailoverAfter || !vm.StandbySynced {
+		return
+	}
+	probe, cancel := context.WithTimeout(ctx, standbyProbeTimeout)
+	resp, err := s.vmm.Control(probe, standby, vm.DatabaseID, dbguest.Request{Op: dbguest.OpStatus})
+	cancel()
+	if err != nil || resp.State != dbguest.StateStandby {
+		s.log.Warn("dbsched: primary unreachable, but its standby is not answering either; no failover", "database_id", vm.DatabaseID,
+			"node_id", primary.ID, "standby_node", standby.ID, "err", err)
+		return
+	}
+	s.log.Warn("dbsched: primary unreachable; failing over to its synchronized standby", "database_id", vm.DatabaseID,
+		"node_id", primary.ID, "unreachable_for", s.now().Sub(first.(time.Time)))
+	if err := s.failover(ctx, vm.DatabaseID, primary); err != nil {
+		s.log.Warn("dbsched: automatic failover failed", "database_id", vm.DatabaseID, "err", err)
+	}
 }

@@ -154,3 +154,82 @@ func TestMetalProductionClassFailover(t *testing.T) {
 	t.Logf("wake + admin + standby synchronous %v / %v; failover of both %v; parked failover's promotion boot %v",
 		attach[running].Round(time.Millisecond), attach[parked].Round(time.Millisecond), settle.Round(time.Millisecond), promoteBoot.Round(time.Millisecond))
 }
+
+// adr: 1027 — automatic failover: the primary's node stops answering while
+// its VM runs on (a partition). The monitor fails over to the synchronized
+// standby without losing an acknowledged commit, and once the node answers
+// again the orphan sweep stops the stale primary and frees its volume.
+func TestMetalAutomaticFailoverOnASilentPrimaryNode(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	}
+	bucket := &dbarchive.FileRemote{Dir: filepath.Join(workdir, "afbucket")}
+	t.Cleanup(func() { _ = os.RemoveAll(bucket.Dir) })
+	a := newMetalNode(t, workdir, map[int]string{17: base}, "fa", 20<<30, &rangeLeaser{next: fcvm.MaxSlots - 40}, bucket)
+	b := newMetalNode(t, workdir, map[int]string{17: base}, "fb", 10<<30, &rangeLeaser{next: fcvm.MaxSlots - 60}, bucket)
+	store := NewMemStore()
+	seedNodes(t, store, a.node, b.node)
+	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	})
+	t.Cleanup(func() { _ = vmm.Close() })
+	s := New(store, vmm, Config{IdleTimeout: time.Hour, ReadyTimeout: time.Minute, SharedArchive: true, AutoFailoverAfter: 3 * time.Second}, nil)
+	t.Cleanup(s.standbyWG.Wait)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	id, password := uuid.NewString(), uuid.NewString()
+	t.Cleanup(func() { _ = s.Delete(context.Background(), id) })
+	if _, err := s.Provision(ctx, ProvisionRequest{DatabaseID: id, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, Replicated: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{"CREATE ROLE app LOGIN PASSWORD '" + password + "'", "CREATE DATABASE app OWNER app"} {
+		if resp, err := s.Admin(ctx, id, sql); err != nil || resp.Error != "" {
+			t.Fatalf("admin: %+v %v", resp, err)
+		}
+	}
+	s.standbyWG.Wait()
+	if got, _ := store.Get(ctx, id); !got.StandbySynced {
+		t.Fatalf("no synchronized standby: %+v", got)
+	}
+	query(ctx, t, a.rt, id, password, "CREATE TABLE kept(v text); INSERT INTO kept SELECT 'acknowledged' FROM generate_series(1, 5000)")
+
+	a.partition()
+	silent := time.Now()
+	for {
+		if _, err := s.CheckStandbys(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := store.Get(ctx, id); got.NodeID == "fb" {
+			break
+		}
+		if time.Since(silent) > time.Minute {
+			t.Fatal("no automatic failover within a minute of the primary's node going silent")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	failedOver := time.Since(silent)
+	if got := query(ctx, t, b.rt, id, password, "SELECT count(*)::text FROM kept"); got != "5000" {
+		t.Fatalf("rows on the new primary = %s; want every acknowledged commit (5000)", got)
+	}
+	if !a.rt.Running(id) {
+		t.Fatal("the partitioned primary's VM should still run until its node answers")
+	}
+
+	a.heal(t)
+	for deadline := time.Now().Add(2 * time.Minute); a.rt.Running(id) || fileExists(a.rt.VolumePath(id)); {
+		if _, err := s.CollectOrphans(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the stale primary survived its node answering again (running %v)", a.rt.Running(id))
+		}
+		time.Sleep(time.Second)
+	}
+	t.Logf("silent primary node -> failed over in %v (threshold 3 s); stale primary stopped once its node answered", failedOver.Round(time.Millisecond))
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

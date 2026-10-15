@@ -260,3 +260,74 @@ func TestStandbyVolumesSurviveTheOrphanSweepAndGoWithTheDatabase(t *testing.T) {
 		t.Fatalf("calls %s; want the standby volume discarded and the primary deleted", calls)
 	}
 }
+
+// clock lets a test move the scheduler's time.
+type clock struct{ now time.Time }
+
+func (c *clock) advance(d time.Duration) { c.now = c.now.Add(d) }
+
+func TestAutoFailoverOnceThePrimaryNodeStopsAnswering(t *testing.T) {
+	s, store, vmm := newStandbyScheduler(t, "db-a", "db-b", "db-c")
+	ctx := context.Background()
+	vm := wakeReplicated(t, s)
+	c := &clock{now: time.Now()}
+	s.now = func() time.Time { return c.now }
+	vmm.setDown("db-a", true)
+	if _, err := s.CheckStandbys(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.advance(20 * time.Second)
+	_, _ = s.CheckStandbys(ctx)
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.NodeID != "db-a" {
+		t.Fatalf("failed over after 20 s: %+v", got)
+	}
+	// Answering again restarts the clock.
+	vmm.setDown("db-a", false)
+	_, _ = s.CheckStandbys(ctx)
+	vmm.setDown("db-a", true)
+	c.advance(20 * time.Second)
+	_, _ = s.CheckStandbys(ctx)
+	c.advance(20 * time.Second)
+	_, _ = s.CheckStandbys(ctx)
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.NodeID != "db-a" {
+		t.Fatalf("an answer did not restart the clock: %+v", got)
+	}
+	c.advance(15 * time.Second)
+	_, _ = s.CheckStandbys(ctx)
+	got, _ := store.Get(ctx, vm.DatabaseID)
+	if got.NodeID != "db-b" || got.State != StateRunning || got.LastError != errCodeFailedOver || vmm.callCount("promote") != 1 {
+		t.Fatalf("after 35 s unanswered: %+v (promotions %d); want running on db-b", got, vmm.callCount("promote"))
+	}
+}
+
+func TestNoAutoFailoverWhenSchedulerCannotReachTheStandbyEither(t *testing.T) {
+	s, store, vmm := newStandbyScheduler(t, "db-a", "db-b")
+	ctx := context.Background()
+	vm := wakeReplicated(t, s)
+	c := &clock{now: time.Now()}
+	s.now = func() time.Time { return c.now }
+	vmm.setDown("db-a", true)
+	vmm.setDown("db-b", true)
+	_, _ = s.CheckStandbys(ctx)
+	c.advance(time.Minute)
+	_, _ = s.CheckStandbys(ctx)
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.NodeID != "db-a" || vmm.callCount("promote") != 0 {
+		t.Fatalf("failed over with both nodes silent: %+v", got)
+	}
+}
+
+func TestAutoFailoverCanBeLeftToTheOperator(t *testing.T) {
+	s, store, vmm := newStandbyScheduler(t, "db-a", "db-b")
+	ctx := context.Background()
+	vm := wakeReplicated(t, s)
+	s.cfg.AutoFailoverAfter = -1
+	c := &clock{now: time.Now()}
+	s.now = func() time.Time { return c.now }
+	vmm.setDown("db-a", true)
+	_, _ = s.CheckStandbys(ctx)
+	c.advance(time.Hour)
+	_, _ = s.CheckStandbys(ctx)
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.NodeID != "db-a" {
+		t.Fatalf("failed over with automatic failover off: %+v", got)
+	}
+}

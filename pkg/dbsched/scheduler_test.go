@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/codes"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
@@ -67,12 +69,14 @@ type fakeVMM struct {
 	standbyErr error
 	// imports is each database's import, as its guest reports it.
 	imports map[string]dbguest.ImportStatus
+	// down are nodes whose vmmd does not answer.
+	down map[string]bool
 }
 
 func newFakeVMM() *fakeVMM {
 	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
-		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}}
+		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{}}
 }
 
 func (f *fakeVMM) record(call string) {
@@ -194,6 +198,9 @@ func (f *fakeVMM) Stop(_ context.Context, node Node, id string) error {
 	defer f.mu.Unlock()
 	f.record("stop")
 	f.onNode = append(f.onNode, "stop@"+node.ID)
+	if f.down[node.ID] {
+		return errNodeDown
+	}
 	if f.standbyOn[id] == node.ID {
 		delete(f.standbyOn, id)
 		return nil
@@ -211,6 +218,9 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 	defer f.mu.Unlock()
 	if f.controlErr != nil {
 		return dbguest.Response{}, f.controlErr
+	}
+	if f.down[node.ID] {
+		return dbguest.Response{}, errNodeDown
 	}
 	if f.standbyOn[id] == node.ID && f.primaryOn[id] != node.ID {
 		return f.standbyControl(node, id, req), nil
@@ -528,6 +538,9 @@ func (f *fakeVMM) StartStandby(_ context.Context, node, primary Node, vm VM) err
 func (f *fakeVMM) Replication(_ context.Context, node Node, id string, mode dbguest.ReplicationMode, standbyNode string) (dbguest.ReplicationStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.down[node.ID] {
+		return dbguest.ReplicationStatus{}, errNodeDown
+	}
 	if !f.running[id] || f.primaryOn[id] != node.ID {
 		return dbguest.ReplicationStatus{}, ErrVMNotRunning
 	}
@@ -592,4 +605,14 @@ func (f *fakeVMM) setImport(id string, state dbguest.ImportState) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.imports[id] = dbguest.ImportStatus{State: state}
+}
+
+// errNodeDown is what gRPC reports for a node that does not answer.
+var errNodeDown = status.Error(codes.Unavailable, "connection refused")
+
+// setDown makes a node answer or not.
+func (f *fakeVMM) setDown(node string, down bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.down[node] = down
 }

@@ -186,6 +186,11 @@ type Config struct {
 	// and is not being attached by this process is given up after this
 	// long (default 15 min); another replica may still be seeding it.
 	StandbyStaleClaim time.Duration
+	// AutoFailoverAfter fails a running replicated database over to its
+	// synchronized standby once its primary's node has not answered for
+	// this long (default 30 s; negative leaves failover to the operator's
+	// lost-node mark).
+	AutoFailoverAfter time.Duration
 }
 
 // Scheduler is schedd's database scheduler. Operations on one database are
@@ -213,6 +218,8 @@ type Scheduler struct {
 	attachTried   sync.Map // database id -> time.Time
 	unsyncedSince sync.Map // database id -> time.Time
 	standbyWG     sync.WaitGroup
+	// nodeFailing is since when each node's vmmd has not answered.
+	nodeFailing sync.Map // node id -> time.Time
 }
 
 // nodeEvents is a per-node broadcast: wait returns a channel the next
@@ -294,6 +301,9 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.StandbyStaleClaim <= 0 {
 		cfg.StandbyStaleClaim = 15 * time.Minute
+	}
+	if cfg.AutoFailoverAfter == 0 {
+		cfg.AutoFailoverAfter = 30 * time.Second
 	}
 	if log == nil {
 		log = slog.Default()

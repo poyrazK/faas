@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +32,38 @@ type metalNode struct {
 	rt         *dbvm.Runtime
 	archive    *dbarchive.LocalStore
 	archiveDir string
+	// sock is where vmmd serves; partition and heal stop and resume it
+	// while the node's VMs keep running.
+	sock string
+	vmmd *vmmdgrpc.Server
+	mu   sync.Mutex
+	gsrv *grpc.Server
 }
+
+func (n *metalNode) serve(t *testing.T) {
+	t.Helper()
+	_ = os.Remove(n.sock)
+	lis, err := net.Listen("unix", n.sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gsrv := grpc.NewServer()
+	vmmdpb.RegisterVmmdServer(gsrv, n.vmmd)
+	go func() { _ = gsrv.Serve(lis) }()
+	n.mu.Lock()
+	n.gsrv = gsrv
+	n.mu.Unlock()
+}
+
+// partition makes the node's vmmd stop answering; its VMs run on.
+func (n *metalNode) partition() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.gsrv.Stop()
+}
+
+// heal makes the node's vmmd answer again.
+func (n *metalNode) heal(t *testing.T) { n.serve(t) }
 
 func newMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases dbvm.Leaser, bucket dbarchive.Remote) *metalNode {
 	t.Helper()
@@ -77,20 +109,17 @@ func newMetalNode(t *testing.T, workdir string, bases map[int]string, name strin
 		t.Fatal(err)
 	}
 	sock := filepath.Join(dir, "v.sock")
-	lis, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gsrv := grpc.NewServer()
 	// Standbys here reach their primaries' nodes over the same unix
 	// sockets, without TLS.
 	peers := func(_ context.Context, target, _ string) (*grpc.ClientConn, error) {
 		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
-	vmmdpb.RegisterVmmdServer(gsrv, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt).WithDatabasePeers(peers))
-	go func() { _ = gsrv.Serve(lis) }()
-	t.Cleanup(gsrv.Stop)
-	return &metalNode{rt: rt, archive: archive, archiveDir: archiveDir, node: Node{ID: name, TargetURL: "unix://" + sock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: capacity, Lifecycle: NodeActive}}
+	n := &metalNode{rt: rt, archive: archive, archiveDir: archiveDir, sock: sock,
+		vmmd: vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt).WithDatabasePeers(peers),
+		node: Node{ID: name, TargetURL: "unix://" + sock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: capacity, Lifecycle: NodeActive}}
+	n.serve(t)
+	t.Cleanup(n.partition)
+	return n
 }
 
 func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
