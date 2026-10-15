@@ -29,6 +29,7 @@ var databaseMethods = map[string]bool{
 	vmmdpb.Vmmd_GrowDatabaseVolume_FullMethodName:   true,
 	vmmdpb.Vmmd_PruneDatabaseArchive_FullMethodName: true,
 	vmmdpb.Vmmd_DatabaseArchiveBytes_FullMethodName: true,
+	vmmdpb.Vmmd_DatabaseArchiveHold_FullMethodName:  true,
 	vmmdpb.Vmmd_ExportDatabaseVolume_FullMethodName: true,
 	vmmdpb.Vmmd_ImportDatabaseVolume_FullMethodName: true,
 	vmmdpb.Vmmd_SyncDatabaseArchive_FullMethodName:  true,
