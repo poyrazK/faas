@@ -8,6 +8,7 @@ import (
 )
 
 type testDigestComparisonReport struct {
+	Environments []testEnvironmentComparison `json:"environment_comparisons"`
 	BaselineSources testReportSourceSummary `json:"baseline_sources"`
 	CurrentSources testReportSourceSummary `json:"current_sources"`
 	SchemaVersion int                         `json:"schema_version"`
@@ -17,6 +18,7 @@ type testDigestComparisonReport struct {
 }
 
 type testDigestComparisonRecord struct {
+	Environment *testEnvironmentComparison `json:"environment,omitempty"`
 	ConfigurationSHA256 string                         `json:"configuration_sha256,omitempty"`
 	Key                 testFailureGroupKey            `json:"key"`
 	Status              string                         `json:"status"`
@@ -39,13 +41,14 @@ type testDigestComparisonObservation struct {
 
 func marshalTestDigestComparison(before, after []testRunReceipt, baselineURL, currentURL string) ([]byte, error) {
 	report := testDigestComparisonReport{
-		SchemaVersion: 1, Informational: true, BaselineSources: summarizeTestReportSources(before), CurrentSources: summarizeTestReportSources(after),
+		SchemaVersion: 1, Informational: true, Environments: compareTestEnvironments(before, after), BaselineSources: summarizeTestReportSources(before), CurrentSources: summarizeTestReportSources(after),
 		Counts: map[string]int{"newly_observed": 0, "persisting": 0, "no_longer_observed": 0, "not_comparable": 0},
 		Comparisons: make([]testDigestComparisonRecord, 0),
 	}
 	for _, c := range compareTestDigestGroups(before, after) {
 		report.Counts[c.status]++
 		report.Comparisons = append(report.Comparisons, testDigestComparisonRecord{
+			Environment: findTestEnvironmentComparison(report.Environments, c.key, c.fingerprint),
 			ConfigurationSHA256: c.fingerprint, Key: c.key, Status: c.status, Reason: c.reason, FrequencyDeltaPP: c.delta,
 			Baseline: testDigestComparisonObservationFor(c.before, c.beforeRuns, baselineURL),
 			Current: testDigestComparisonObservationFor(c.after, c.afterRuns, currentURL),

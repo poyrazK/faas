@@ -193,6 +193,7 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
+	Environment *testEnvironmentSnapshot `json:"environment,omitempty"`
 	SourceRevision *testSourceRevision `json:"source_revision,omitempty"`
 	ReportMergeRevisionOverride bool `json:"report_merge_revision_override,omitempty"`
 	ReportProvenance []testReportProvenance `json:"report_provenance,omitempty"`
@@ -1372,6 +1373,14 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	previousStdout := osStdout
 	if jsonOutput {
 		osStdout = osStderr
+	}
+	receipt.Environment = &testEnvironmentSnapshot{SchemaVersion: 1, Workloads: make(map[string]testWorkloadEnvironment)}
+	for _, workload := range workloads {
+		spec := scenario.Services[workload.name]
+		if workload.name == scenario.Project {
+			spec = testService{Postgres: scenario.Postgres, TCPPorts: scenario.TCPPorts}
+		}
+		receipt.Environment.Workloads[workload.name] = testEnvironmentFromApp(workload.session.App, spec)
 	}
 	receipt.SourceRevision = &testSourceRevision{SchemaVersion: 1, ExpectedWorkloads: make([]string, 0, len(workloads)), Workloads: make(map[string]testWorkloadSourceRevision)}
 	for _, workload := range workloads {

@@ -76,9 +76,11 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 		decisions, err := json.Marshal(struct {
 			Decisions []testCampaignPolicyDecision `json:"decisions"`
 			RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
+			Environments []testEnvironmentComparison `json:"environment_comparisons"`
+			EnvironmentDecisions []testCampaignEnvironmentDecision `json:"environment_decisions"`
 			BaselineSources testReportSourceSummary `json:"baseline_sources"`
 			CurrentSources testReportSourceSummary `json:"current_sources"`
-		}{result.Decisions, result.RequiredCoverage, result.Comparisons.BaselineSources, result.Comparisons.CurrentSources})
+		}{result.Decisions, result.RequiredCoverage, result.Comparisons.Environments, result.EnvironmentDecisions, result.Comparisons.BaselineSources, result.Comparisons.CurrentSources})
 		if err != nil {
 			return nil, err
 		}

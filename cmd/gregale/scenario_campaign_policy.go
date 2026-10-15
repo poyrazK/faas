@@ -15,6 +15,7 @@ import (
 )
 
 type testCampaignPolicy struct {
+	Environment *testCampaignEnvironmentPolicy `yaml:"environment,omitempty"`
 	RequiredCoverage []testCampaignCoverageRequirement `yaml:"required_coverage,omitempty"`
 	Rules []testCampaignScopedRule `yaml:"rules,omitempty"`
 	SchemaVersion         int      `yaml:"schema_version"`
@@ -65,10 +66,14 @@ func readTestCampaignPolicy(path string) (testCampaignPolicy, error) {
 	if err := validateTestCampaignRequiredCoverage(policy.RequiredCoverage); err != nil {
 		return policy, err
 	}
+	if err := validateTestCampaignEnvironmentPolicy(policy.Environment); err != nil {
+		return policy, err
+	}
 	return policy, nil
 }
 
 type testCampaignPolicyViolation struct {
+	Environment *testEnvironmentComparison `json:"environment,omitempty"`
 	Requirement *testCampaignRequiredCoverageResult `json:"requirement,omitempty"`
 	PolicyRule string `json:"policy_rule"`
 	EffectivePolicy *testCampaignPolicySettings `json:"effective_policy,omitempty"`
@@ -82,6 +87,7 @@ type testCampaignPolicyViolation struct {
 }
 
 type testCampaignPolicyResult struct {
+	EnvironmentDecisions []testCampaignEnvironmentDecision `json:"environment_decisions"`
 	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
 	Decisions []testCampaignPolicyDecision `json:"decisions"`
 	SchemaVersion int                           `json:"schema_version"`
@@ -179,6 +185,7 @@ func evaluateTestCampaignPolicy(policy testCampaignPolicy, before, after []testR
 	if err := json.Unmarshal(body, &result.Comparisons); err != nil {
 		return result, err
 	}
+	applyTestCampaignEnvironmentContexts(policy, &result)
 	for index, row := range result.Comparisons.Comparisons {
 		selected, ruleID := selectTestCampaignPolicy(policy, row.Key, row.ConfigurationSHA256, false)
 		settings := testCampaignSettings(selected)
@@ -189,6 +196,36 @@ func evaluateTestCampaignPolicy(policy testCampaignPolicy, before, after []testR
 				Rule: rule, Reason: reason, PolicyRule: ruleID, EffectivePolicy: &settings, Configuration: row.ConfigurationSHA256, Context: row.Key,
 				BeforeRuns: row.Baseline.ExecutedRuns, AfterRuns: row.Current.ExecutedRuns, Comparison: &copy,
 			})
+		}
+		if action := testCampaignEnvironmentAction(selected, row.Environment); action != "ignore" {
+			reason := "environment metadata is unavailable"
+			if row.Environment != nil {
+				reason = row.Environment.Reason
+			}
+			record := &result.Comparisons.Comparisons[index]
+			if record.Status != "not_comparable" {
+				result.Comparisons.Counts[record.Status]--
+				result.Comparisons.Counts["not_comparable"]++
+			}
+			record.Status, record.Reason, record.FrequencyDeltaPP = "not_comparable", reason, nil
+			if action == "fail" || selected.NotComparable == "fail" {
+				if !testCampaignHasEnvironmentViolation(result.Violations, row.Environment, ruleID) {
+					kind := "not_comparable"
+					if action == "fail" {
+						kind = "environment_mismatch"
+						if row.Environment == nil || row.Environment.Status == "unknown" {
+							kind = "environment_unknown"
+						}
+					}
+					copy := *record
+					result.Violations = append(result.Violations, testCampaignPolicyViolation{
+						Rule: kind, PolicyRule: ruleID, Reason: reason, EffectivePolicy: &settings, Environment: row.Environment,
+						Context: row.Key, Configuration: row.ConfigurationSHA256, Comparison: &copy,
+						BeforeRuns: row.Baseline.ExecutedRuns, AfterRuns: row.Current.ExecutedRuns,
+					})
+				}
+			}
+			continue
 		}
 		if row.Status == "not_comparable" {
 			if selected.NotComparable == "fail" {

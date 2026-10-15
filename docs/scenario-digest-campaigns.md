@@ -458,3 +458,63 @@ current; provenance does not change configuration matching or policy verdicts.
 These fields do not authenticate edited reports or prove environment equivalence.
 Git metadata is available only when the source directory is a readable checkout;
 local and simulated executions currently have unknown source identity.
+
+## Environment compatibility
+
+Native receipts add an allowlisted `environment` snapshot from the provisioned
+app responses before deployment and test traffic. It records each logical
+workload's app type, runtime label, RAM, vCPU, CPU share, concurrency limits,
+timeouts, minimum instances, declared Postgres use, fixture type/failure count,
+and TCP ports. Workload resource values are observations at capture time, not
+proof that configuration stayed fixed throughout execution.
+
+Secrets, environment variables, credentials, endpoint URLs, app/deployment IDs,
+and transient hostnames are excluded. Dependency declarations do not disclose
+connection strings. Remote database versions, external dependency resources,
+platform binary versions, and exact runtime binary versions are not available
+from the current capture API. Platform/runtime versions are explicitly null,
+rather than copied from the CLI host. The API runtime label is still recorded.
+
+Comparison JSON exposes `environment_comparisons` for every executed
+configuration/scenario/profile/engine/case context, including all-passing ones.
+Each includes baseline/current snapshots, counts, supporting receipt indexes,
+field-level differences, and unknown fields. Status is compatible, incompatible,
+or unknown. Different or internally varying observed fields are incompatible;
+missing snapshots, contexts, fingerprints, versions, or required resource fields
+prevent a complete compatibility claim. Complete metadata is required for
+compatible; equal recorded resources with unavailable versions remain unknown.
+
+Snapshot equality is conservative. Multiple distinct snapshots within either
+side are incompatible even if both reports contain the same mixtures. A field
+with missing version evidence is reported as unknown rather than a proven
+version mismatch. Differences list sorted JSON value strings for each side.
+
+An optional policy block controls handling:
+
+```yaml
+environment:
+  on_mismatch: fail
+  on_unknown: ignore
+```
+
+Both actions must explicitly be fail, not_comparable, or ignore. Omitting the
+block preserves existing behavior by ignoring environment compatibility.
+Scoped rules can replace the entire block; they inherit it when omitted.
+
+Fail rejects the environment condition and suppresses associated application
+frequency checks. Not_comparable suppresses those checks and follows the
+selected `on_not_comparable` setting. Ignore retains normal comparison
+behavior while preserving compatibility diagnostics. Policy-adjusted comparison
+counts and deltas reflect not-comparable groups; raw digest comparison JSON
+remains descriptive and retains its original group statuses.
+
+Whole-context checks use only context-level scoped rules, independently of
+assertion-specific exceptions. An assertion rule cannot waive a broader
+context-level environment requirement. JSON preview includes matched
+`environment_decisions`, effective settings, and any violations with full
+environment evidence. JUnit failures include the same diagnostics; accepted
+policy system-out includes environment comparisons and decisions.
+
+Legacy, local, and simulated reports remain readable with unknown metadata.
+This change does not add network version probes, infer equivalence from missing
+fields, or alter original application test verdicts.

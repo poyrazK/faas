@@ -20,6 +20,7 @@ type testCampaignPolicySelector struct {
 }
 
 type testCampaignScopedRule struct {
+	Environment *testCampaignEnvironmentPolicy `yaml:"environment,omitempty" json:"environment,omitempty"`
 	Name                  string                     `yaml:"name" json:"name"`
 	Match                 testCampaignPolicySelector `yaml:"match" json:"match"`
 	FailNewFailures       *bool                      `yaml:"fail_new_failures,omitempty" json:"fail_new_failures,omitempty"`
@@ -31,6 +32,7 @@ type testCampaignScopedRule struct {
 }
 
 type testCampaignPolicySettings struct {
+	Environment testCampaignEnvironmentPolicy `json:"environment"`
 	FailNewFailures      bool     `json:"fail_new_failures"`
 	MaxFrequencyIncrease *float64 `json:"max_frequency_increase_percentage_points"`
 	MinExecutedRuns      int      `json:"min_executed_runs"`
@@ -45,7 +47,9 @@ type testCampaignPolicyDecision struct {
 }
 
 func testCampaignSettings(p testCampaignPolicy) testCampaignPolicySettings {
-	return testCampaignPolicySettings{p.FailNewFailures, p.MaxFrequencyIncrease, p.MinExecutedRuns, p.NotComparable, p.InsufficientSamples}
+	return testCampaignPolicySettings{Environment: testCampaignEnvironmentSettings(p),
+		FailNewFailures: p.FailNewFailures, MaxFrequencyIncrease: p.MaxFrequencyIncrease, MinExecutedRuns: p.MinExecutedRuns,
+		NotComparable: p.NotComparable, InsufficientSamples: p.InsufficientSamples}
 }
 
 func validateTestCampaignScopedRules(rules []testCampaignScopedRule) error {
@@ -58,6 +62,9 @@ func validateTestCampaignScopedRules(rules []testCampaignScopedRule) error {
 			return fmt.Errorf("scoped rule names must be unique, nonempty and not default")
 		}
 		seen[r.Name] = true
+		if err := validateTestCampaignEnvironmentPolicy(r.Environment); err != nil {
+			return fmt.Errorf("rule %q: %w", r.Name, err)
+		}
 		m := r.Match
 		if m.Configuration == nil && m.Scenario == nil && m.Profile == nil && m.Engine == nil && m.Case == nil &&
 			m.Step == nil && m.Phase == nil && m.Kind == nil && m.Assertion == nil && m.Request == nil {
@@ -75,7 +82,7 @@ func validateTestCampaignScopedRules(rules []testCampaignScopedRule) error {
 			}
 		}
 		if r.FailNewFailures == nil && r.MaxFrequencyIncrease == nil && !r.DisableFrequencyCheck &&
-			r.MinExecutedRuns == nil && r.NotComparable == nil && r.InsufficientSamples == nil {
+			r.MinExecutedRuns == nil && r.NotComparable == nil && r.InsufficientSamples == nil && r.Environment == nil {
 			return fmt.Errorf("rule %q must override at least one setting", r.Name)
 		}
 	}
@@ -107,6 +114,9 @@ func selectTestCampaignPolicy(policy testCampaignPolicy, key testFailureGroupKey
 		}
 		if !matched {
 			continue
+		}
+		if rule.Environment != nil {
+			policy.Environment = rule.Environment
 		}
 		if rule.FailNewFailures != nil {
 			policy.FailNewFailures = *rule.FailNewFailures
