@@ -15,27 +15,34 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/authsettings"
 )
 
 // Application Auth (ADR-1190): a pinned GoTrue server deployed as an ordinary
 // app, bound to the customer's database through the `auth` credential mode.
 const (
-	authAudience        = "authenticated"
-	authSigningKeysName = "AUTH_JWT_KEYS"
-	authJWTSecretName   = "AUTH_JWT_SECRET"
-	authEventsKeyName   = "AUTH_EVENTS_KEY"
+	authAudience      = "authenticated"
+	authJWTSecretName = "AUTH_JWT_SECRET"
+	authEventsKeyName = "AUTH_EVENTS_KEY"
 )
 
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth <create|status|admin-key|import>", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|import>", "auth")
 		return 1
 	}
 	switch args[0] {
+	case "config":
+		return cmdAuthConfig(args[1:])
+	case "providers":
+		return cmdAuthProviders(args[1:])
+	case "keys":
+		return cmdAuthKeys(args[1:])
 	case "create":
 		return cmdAuthCreate(args[1:])
 	case "status":
@@ -49,7 +56,7 @@ func cmdAuth(args []string) int {
 		// Gregale account; other CLIs use the same verbs for account login.
 		return printErr("Not an account command", errors.New("`gregale auth` manages application Auth; use `gregale "+args[0]+"` for your Gregale account"))
 	default:
-		return printErr("Unknown auth command", errors.New("use create, status, admin-key or import"))
+		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key or import"))
 	}
 }
 
@@ -198,17 +205,25 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		return err
 	}
 	present := map[string]bool{}
+	hasSigningKey := false
 	for _, secret := range existing.Secrets {
 		if secret.Scope == "" || secret.Scope == opts.scope {
 			present[secret.Key] = true
+			hasSigningKey = hasSigningKey || authSigningKeyName.MatchString(secret.Key)
 		}
 	}
-	if !present[authSigningKeysName] {
-		keys, err := newAuthSigningKeys()
+	if !hasSigningKey {
+		// The key is written before the marker that makes it sign.
+		id, jwk, err := newAuthSigningKey()
 		if err != nil {
 			return err
 		}
-		settings[authSigningKeysName] = keys
+		if err := client.SetSecretWithScope(ctx, app.Slug, authSigningKeyPrefix+id, jwk, opts.scope); err != nil {
+			return err
+		}
+		if err := client.SetSecretWithScope(ctx, app.Slug, authSignerPrefix+id, strconv.FormatInt(time.Now().Unix(), 10), opts.scope); err != nil {
+			return err
+		}
 	}
 	if opts.workflows && !present[authEventsKeyName] {
 		// The key can only publish events: a compromised Auth app cannot
@@ -229,7 +244,7 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 		settings[authJWTSecretName] = secret
 	}
-	for _, key := range []string{"AUTH_APP_SLUG", "AUTH_GREGALE_API_URL", "AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", "AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY", authSigningKeysName, authJWTSecretName} {
+	for _, key := range []string{"AUTH_APP_SLUG", "AUTH_GREGALE_API_URL", "AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", "AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY", authJWTSecretName} {
 		value, ok := settings[key]
 		if !ok {
 			continue
@@ -321,20 +336,7 @@ func authFlag(enabled bool) string {
 
 // authRedirectURL mirrors the template's validation: HTTPS, or HTTP only on a
 // loopback development host; never credentials or fragments.
-func authRedirectURL(value string) bool {
-	u, err := url.Parse(value)
-	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
-		return false
-	}
-	switch u.Scheme {
-	case "https":
-		return true
-	case "http":
-		host := u.Hostname()
-		return host == "localhost" || host == "127.0.0.1" || host == "::1"
-	}
-	return false
-}
+func authRedirectURL(value string) bool { return authsettings.RedirectURL(value) }
 
 func authExternalOrigin(app api.AppResponse) (string, error) {
 	address := app.CanonicalURL
@@ -348,28 +350,29 @@ func authExternalOrigin(app api.AppResponse) (string, error) {
 	return "https://" + u.Host, nil
 }
 
-// newAuthSigningKeys returns GoTrue's GOTRUE_JWT_KEYS value: one ES256
-// private JWK that signs and verifies. The key leaves this process only as a
-// sealed app secret and is never printed.
-func newAuthSigningKeys() (string, error) {
+// newAuthSigningKey returns a key ID and one ES256 private JWK for the
+// AUTH_JWT_KEY_<ID> secret. The key leaves this process only as a sealed app
+// secret and is never printed.
+func newAuthSigningKey() (string, string, error) {
 	private, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
-		return "", fmt.Errorf("generate signing key: %w", err)
+		return "", "", fmt.Errorf("generate signing key: %w", err)
 	}
 	point := private.PublicKey().Bytes() // 0x04 || X || Y
-	var id [8]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		return "", fmt.Errorf("generate key id: %w", err)
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", "", fmt.Errorf("generate key id: %w", err)
 	}
+	id := strings.ToUpper(hex.EncodeToString(raw[:]))
 	b64 := base64.RawURLEncoding.EncodeToString
-	keys, err := json.Marshal([]map[string]any{{
-		"kty": "EC", "crv": "P-256", "alg": "ES256", "kid": "gregale-" + hex.EncodeToString(id[:]),
-		"key_ops": []string{"sign", "verify"}, "x": b64(point[1:33]), "y": b64(point[33:65]), "d": b64(private.Bytes()),
-	}})
+	jwk, err := json.Marshal(map[string]string{
+		"kty": "EC", "crv": "P-256", "alg": "ES256", "kid": authKeyKID(id),
+		"x": b64(point[1:33]), "y": b64(point[33:65]), "d": b64(private.Bytes()),
+	})
 	if err != nil {
-		return "", fmt.Errorf("encode signing key: %w", err)
+		return "", "", fmt.Errorf("encode signing key: %w", err)
 	}
-	return string(keys), nil
+	return id, string(jwk), nil
 }
 
 func randomAuthSecret() (string, error) {

@@ -21,6 +21,9 @@ import (
 const (
 	imageRunPollInterval = 2 * time.Second
 	imageRunPullTimeout  = 10 * time.Minute
+	// imageRunAttachWait bounds the wait for an interactive run's VM: queueing
+	// behind the plan's concurrency plus boot.
+	imageRunAttachWait = 5 * time.Minute
 )
 
 // imageRunEnvFlags collects repeatable KEY=VALUE flags.
@@ -68,14 +71,27 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	pull := fs.String("pull", api.ImageRunPullMissing, "pull policy: missing|always")
 	detach := fs.Bool("detach", false, "queue the run and print its id without waiting")
 	fs.BoolVar(detach, "d", false, "shorthand for --detach")
+	var interactive, tty, both bool
+	fs.BoolVar(&interactive, "interactive", false, "attach stdin and run until the command exits (ADR-1330)")
+	fs.BoolVar(&interactive, "i", false, "shorthand for --interactive")
+	fs.BoolVar(&tty, "tty", false, "give the command a terminal; requires --interactive")
+	fs.BoolVar(&tty, "t", false, "shorthand for --tty")
+	fs.BoolVar(&both, "it", false, "shorthand for --interactive --tty")
+	fs.BoolVar(&both, "ti", false, "shorthand for --interactive --tty")
 	if err := fs.Parse(args); err != nil {
 		return imageRunOptions{}, false
 	}
-	if strings.TrimSpace(*image) == "" || *ram < 0 || *timeout < 0 || *timeout%time.Second != 0 {
-		PrintUsage(osStderr, "usage: gregale run --image IMAGE [--entrypoint CMD] [-e KEY=VALUE]... [--ram MB] [--timeout D] [--pull missing|always] [--detach] [ARG...]", "run")
+	interactive, tty = interactive || both, tty || both
+	if strings.TrimSpace(*image) == "" || *ram < 0 || *timeout < 0 || *timeout%time.Second != 0 || (tty && !interactive) {
+		PrintUsage(osStderr, "usage: gregale run [-i [-t]] --image IMAGE [--entrypoint CMD] [-e KEY=VALUE]... [--ram MB] [--timeout D] [--pull missing|always] [--detach] [ARG...]", "run")
 		return imageRunOptions{}, false
 	}
-	req := api.CreateImageRunRequest{Image: *image, RAMMB: *ram, TimeoutSec: int(*timeout / time.Second), Pull: *pull}
+	if interactive && (*detach || jsonOutput) {
+		PrintFail(osStderr, "--interactive cannot be combined with --detach or --json")
+		return imageRunOptions{}, false
+	}
+	req := api.CreateImageRunRequest{Image: *image, RAMMB: *ram, TimeoutSec: int(*timeout / time.Second), Pull: *pull,
+		Interactive: interactive, TTY: tty}
 	if len(env) > 0 {
 		req.Env = env
 	}
@@ -99,6 +115,9 @@ func cmdRunImage(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if opts.request.Interactive {
+		return runInteractiveImage(ctx, client, opts.request)
+	}
 	queued, err := startImageRun(ctx, client, opts.request)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -148,6 +167,37 @@ func startImageRun(ctx context.Context, client *api.Client, req api.CreateImageR
 			return resp, fmt.Errorf("waiting for %s: %w", resp.Image, err)
 		}
 	}
+}
+
+// runInteractiveImage is `gregale run -it --image` (ADR-1330): create the
+// run, attach to its task once the VM is up, and relay the session. The exit
+// code is the command's. Leaving before the session starts cancels the run.
+func runInteractiveImage(ctx context.Context, client *api.Client, req api.CreateImageRunRequest) int {
+	stdinFile, tty := interactiveStdin(req.TTY)
+	req.TTY = tty
+	queued, err := startImageRun(ctx, client, req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return 130
+		}
+		return printErr("Could not start the image run", err)
+	}
+	if queued.Attach == nil || queued.Attach.Token == "" {
+		cancelImageRun(ctx, client, queued)
+		return printErr("Interactive session unavailable", errors.New("the server did not return attach credentials"))
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, imageRunAttachWait)
+	defer cancel()
+	conn, err := dialAttach(waitCtx, client, *queued.Attach, tty, stdinFile)
+	if err != nil {
+		cancelImageRun(ctx, client, queued)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return 130
+		}
+		return printErr("Could not attach to the session", err)
+	}
+	defer func() { _ = conn.Close() }()
+	return relayAttachedSession(ctx, conn, tty, stdinFile)
 }
 
 func reportDetachedImageRun(resp api.ImageRunResponse) int {

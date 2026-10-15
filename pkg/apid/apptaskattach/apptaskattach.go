@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,12 +51,14 @@ func Session(interactive, tty bool, token string) (*state.AppTaskInteractive, er
 }
 
 // Respond adds the one-time credential to a create response. The token is
-// shown once, so the response must never be cached.
+// shown once, so the response must never be cached or stored for
+// Idempotency-Key replay.
 func Respond(w http.ResponseWriter, resp *api.AppTaskResponse, slug, token string) {
 	if token == "" {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	httpkit.SkipIdempotentReplay(w)
 	resp.Interactive = true
 	resp.Attach = &api.AppTaskAttachInfo{
 		Token: token, Path: api.AppTaskAttachPath(slug, resp.ID), Subprotocol: api.AppTaskAttachSubprotocol,

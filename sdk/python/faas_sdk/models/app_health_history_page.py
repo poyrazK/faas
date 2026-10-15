@@ -30,7 +30,7 @@ class AppHealthHistoryPage:
     """Minimum target spacing per app; fleet load and failures can delay observations."""
     next_cursor: UUID | Unset = UNSET
     latest: AppHealthResponse | Unset = UNSET
-    """Read-only observed health of default-scope HTTP serving workloads."""
+    """Read-only observed health of selected-scope HTTP serving workloads."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = self.app_id

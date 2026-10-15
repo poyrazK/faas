@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/authsettings"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -23,7 +24,7 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data := dashboard.AuthAdminData{Slug: app.Slug}
+	data := dashboard.AuthAdminData{Slug: app.Slug, Providers: authsettings.Providers, Changed: r.URL.Query().Get("changed"), Error: r.URL.Query().Get("error")}
 	isAuth, err := s.appHasAuthBinding(ctx, acct, app)
 	switch {
 	case err != nil:
@@ -37,12 +38,13 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 		if policy, ok := httpsec.CSPWithConnectOrigin(httpsec.NonceFromContext(ctx), origin); ok {
 			w.Header().Set("Content-Security-Policy", policy)
 			data.AuthOrigin = origin
+			data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID, app.ID)
 		} else {
 			data.Message = "This app has no HTTPS address the dashboard can reach."
 		}
 	}
 	count, _ := s.store.CountDeployedApps(ctx, acct.ID)
-	page := dashboard.Page{Title: "Auth users — " + app.Slug, Body: "auth_admin", Account: dashboardAccountView(acct, count), Data: data}
+	page := dashboard.Page{Title: "Auth — " + app.Slug, Body: "auth_admin", Account: dashboardAccountView(acct, count), Data: data}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(ctx), page); err != nil {
 		renderProblem(w, s.log, err)
 	}

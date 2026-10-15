@@ -486,6 +486,22 @@
     "kind": "operational"
   },
   {
+    "table": "app_environment_route_budgets",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "environment_id",
+      "inherit",
+      "project_id",
+      "revision",
+      "routes",
+      "scope",
+      "updated_at"
+    ]
+  },
+  {
     "table": "app_environment_secret_ref_suppressions",
     "columns": [
       "account_id",
@@ -2825,7 +2841,10 @@
       "path",
       "request_id",
       "rule_id",
-      "user_agent"
+      "user_agent",
+      "waf_categories",
+      "waf_rule_ids",
+      "waf_score"
     ],
     "kind": "operational"
   },
@@ -3263,6 +3282,18 @@
     "kind": "operational"
   },
   {
+    "table": "environment_route_budget_receipts",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "request_hash",
+      "request_id",
+      "response"
+    ]
+  },
+  {
     "table": "environment_workload_graphs",
     "columns": [
       "created_at",
@@ -3385,10 +3416,76 @@
       "ledger_baseline_known",
       "ledger_lost_through_at",
       "ledger_started_at",
+      "lineage_repair_progress",
       "loss_reason",
       "lost_at",
+      "reconciliation_requested_at",
       "started_at",
       "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_lineage_cases",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "diagnostic_id",
+      "outbox_id",
+      "reason",
+      "recorded_at",
+      "retain_until",
+      "retry_count",
+      "revision",
+      "root_created_at",
+      "root_invocation_id",
+      "status",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_lineage_retries",
+    "columns": [
+      "expected_revision",
+      "outbox_id",
+      "request_id",
+      "result",
+      "retain_until",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_lineage_retry_control_receipts",
+    "columns": [
+      "account_id",
+      "action",
+      "app_id",
+      "command_id",
+      "expected_created_at",
+      "job_request_id",
+      "recorded_at",
+      "result",
+      "retain_until",
+      "sequence",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_lineage_retry_jobs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "request_id",
+      "retain_until",
+      "snapshot",
+      "state",
+      "subscription_id",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -3740,10 +3837,25 @@
     "kind": "operational"
   },
   {
+    "table": "event_subscription_capacity_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_subscription_delivery_controls",
     "columns": [
       "account_id",
       "app_id",
+      "max_pending_deliveries",
       "paused",
       "paused_at",
       "rate_per_second",
@@ -4766,6 +4878,17 @@
     "kind": "configuration"
   },
   {
+    "table": "job_run_attach_sessions",
+    "columns": [
+      "attach_timeout_s",
+      "attach_token_sha256",
+      "created_at",
+      "run_id",
+      "tty"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "job_runs",
     "columns": [
       "account_id",
@@ -5251,6 +5374,22 @@
       "source_database_id",
       "source_resource_id",
       "spec"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_restore_verifications",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "backend_id",
+      "database_id",
+      "evidence",
+      "generation",
+      "point_in_time",
+      "provider_resource_id",
+      "source_resource_id",
+      "verified_at"
     ],
     "kind": "operational"
   },

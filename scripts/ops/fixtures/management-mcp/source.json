@@ -1,0 +1,57 @@
+{
+  "nonproduction": true,
+  "account_id": "REPLACE_ACCOUNT_ID",
+  "target": {
+    "app": "acceptance-request",
+    "app_id": "REPLACE_APP_ID",
+    "scope": "default"
+  },
+  "steps": [
+    {
+      "id": "plan",
+      "tool": "gregale_plan_source_deploy",
+      "arguments": {
+        "app": "acceptance-request",
+        "repo": "REPLACE_OWNER/REPLACE_REPO",
+        "ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Native source build acceptance"
+      },
+      "expect": {
+        "source.commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "id": "apply",
+      "tool": "gregale_apply_deploy",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "deployment.app_id": "REPLACE_APP_ID"
+      },
+      "replay": [
+        "deployment.id"
+      ]
+    },
+    {
+      "id": "build",
+      "tool": "gregale_wait_deployment",
+      "arguments": {
+        "app": "acceptance-request",
+        "deployment_id": {
+          "ref": "apply.deployment.id"
+        },
+        "wait_seconds": 1
+      },
+      "poll": true,
+      "timeout_seconds": 1200,
+      "expect": {
+        "deployment.status": "live",
+        "deployment.traffic_percent": 0,
+        "deployment.commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ]
+}

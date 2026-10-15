@@ -45,6 +45,7 @@ func generateDataAPIContract(ctx context.Context, client *api.Client, slug strin
 
 func cmdDataAPIDiff(args []string) int {
 	fs := newFlagSet("data-api diff", flag.ContinueOnError)
+	dependencies := fs.String("dependencies", "", "JSON manifest of saved-view and RPC contract dependencies")
 	baseline := fs.String("baseline", "", "saved JSON contract from data-api types --snapshot")
 	current := fs.String("current", "", "compare a saved current contract offline instead of inspecting an app")
 	check := fs.Bool("check", false, "fail if the database contract contains unapproved breaking changes")
@@ -57,7 +58,7 @@ func cmdDataAPIDiff(args []string) int {
 	}
 	validTarget := (*current == "" && fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))) || (*current != "" && fs.NArg() == 0)
 	if !validTarget || *baseline == "" || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check | --check-compatible] [--approval FILE] [--accept-contract FILE] [--timeout DURATION]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api diff [NAME | --current FILE] --baseline FILE [--check | --check-compatible] [--approval FILE] [--accept-contract FILE] [--dependencies FILE] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	if *acceptContract != "" {
@@ -65,6 +66,14 @@ func cmdDataAPIDiff(args []string) int {
 			if input != "" && dataAPIContractOutputAliases(*acceptContract, input) {
 				return printErr("Invalid accepted contract output", errors.New("output must not replace a comparison input"))
 			}
+		}
+	}
+	var consumers []dataAPIConsumer
+	if *dependencies != "" {
+		var err error
+		consumers, err = readDataAPIConsumers(*dependencies)
+		if err != nil {
+			return printErr("Invalid dependency manifest", err)
 		}
 	}
 	// Read and validate the baseline before starting any remote task.
@@ -102,6 +111,9 @@ func cmdDataAPIDiff(args []string) int {
 	if err != nil {
 		return printErr("Invalid current contract", err)
 	}
+	if err := validateDataAPIConsumers(consumers, before.Parsed, after.Parsed); err != nil {
+		return printErr("Invalid dependency manifest", err)
+	}
 	changes := diffDataAPISnapshots(before.Parsed, after.Parsed)
 	if err := applyDataAPIApproval(approval, before.Fingerprint, after.Fingerprint, changes); err != nil {
 		return printErr("Invalid compatibility approval", err)
@@ -125,8 +137,9 @@ func cmdDataAPIDiff(args []string) int {
 			return printErr("Could not write accepted contract policy", err)
 		}
 	}
+	impacts := dataAPIConsumerImpacts(consumers, changes)
 	if jsonOutput {
-		if err := writeJSON(map[string]any{"app": fs.Arg(0), "task_id": task.ID, "deployment_id": task.DeploymentID, "baseline_fingerprint": before.Fingerprint, "current_fingerprint": after.Fingerprint, "breaking": breaking, "approved": approved, "unapproved": breaking - approved, "changes": changes}); err != nil {
+		if err := writeJSON(map[string]any{"impacts": impacts, "dependency_coverage": "declared", "app": fs.Arg(0), "task_id": task.ID, "deployment_id": task.DeploymentID, "baseline_fingerprint": before.Fingerprint, "current_fingerprint": after.Fingerprint, "breaking": breaking, "approved": approved, "unapproved": breaking - approved, "changes": changes}); err != nil {
 			return 1
 		}
 	} else {
@@ -140,6 +153,16 @@ func cmdDataAPIDiff(args []string) int {
 			}
 			if _, err := fmt.Fprintf(osStdout, "%s %q: %s\n", label, change.Path, change.Reason); err != nil {
 				return printErr("Could not write diff", err)
+			}
+		}
+		for _, impact := range impacts {
+			if _, err := fmt.Fprintf(osStdout, "affected %s %q: %d contract changes\n", impact.Kind, impact.Name, len(impact.Changes)); err != nil {
+				return 1
+			}
+		}
+		if *dependencies != "" {
+			if _, err := fmt.Fprintln(osStdout, "Impact coverage: declared dependencies only"); err != nil {
+				return 1
 			}
 		}
 		if _, err := fmt.Fprintf(osStdout, "%d changes, %d breaking, %d approved, %d unapproved\n", len(changes), breaking, approved, breaking-approved); err != nil {
@@ -186,6 +209,16 @@ func diffDataAPISnapshots(before, after dataAPISnapshot) []dataAPIChange {
 			add(key, "relation changed between table and view", true)
 		}
 		changes = append(changes, diffDataAPIRelationships(before, old, current)...)
+		oldKey, _ := json.Marshal(old.PrimaryKey)
+		newKey, _ := json.Marshal(current.PrimaryKey)
+		if string(oldKey) != string(newKey) {
+			add(key+".primary_key", "primary key metadata changed; review keyed consumers", old.PrimaryKey != nil)
+		}
+		oldConcurrency, _ := json.Marshal(old.Concurrency)
+		newConcurrency, _ := json.Marshal(current.Concurrency)
+		if string(oldConcurrency) != string(newConcurrency) {
+			add(key+".concurrency", "concurrency metadata changed; review version-checked writes", old.Concurrency != nil)
+		}
 		columns := map[string]dataAPIColumn{}
 		for _, column := range current.Columns {
 			columns[column.Name] = column

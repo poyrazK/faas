@@ -1411,6 +1411,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if identityRecvErr != nil {
 		log.Warn("vmmd: workload identity receiver unavailable", "err", identityRecvErr, "goos", runtime.GOOS)
 	} else {
+		identityRecv.UseMetrics(newWorkloadIdentityMetrics(ops.Registry()))
 		defer identityRecv.Close()
 	}
 	// ADR-989: apps reach managed outbound integrations through a loopback

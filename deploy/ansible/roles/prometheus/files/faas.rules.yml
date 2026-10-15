@@ -2250,6 +2250,17 @@ groups:
           description: "vmmd cannot accept the required {{ $labels.receiver }} channel through a Firecracker per-instance Unix bridge. The node is not traffic-ready until the receiver recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasVMMDGuestReceiverDown.md"
 
+      - alert: FaasWorkloadIdentityNotConfigured
+        expr: increase(vmmd_workload_identity_tokens_total{result="not_configured"}[15m]) > 0
+        labels:
+          severity: warn
+          component: vmmd
+          family: guest_receiver
+        annotations:
+          summary: "Apps on {{ $labels.instance }} ask for workload tokens but vmmd has no signing key"
+          description: "vmmd answered workload-identity requests with identity_not_configured. Queue-lease consumers, Flags and cloud federation in those apps fail until the cluster workload-identity key is installed (ADR-1141)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkloadIdentityNotConfigured.md"
+
       - alert: FaasMeterdFleetEgressStreamsMissing
         expr: meterd_fleet_egress_expected_streams > meterd_fleet_egress_connected_streams
         for: 2m
@@ -5010,7 +5021,11 @@ groups:
           description: "{{ $labels.job }} on {{ $labels.instance }} has subscribers but no hub connection, so FAAS_DB_NOTIFY_HUB=0 is set and each subscriber holds its own LISTEN connection. Not an outage; it consumes the pre-hub connection count against max_connections."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
       - alert: FaasDBPoolNearCap
-        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
+        # Only acquired connections are in use. A grown pool's idle connections
+        # also report under <daemon>_db_pool_conns{state="idle"}; summing every
+        # state read apid's 1 acquired + 11 idle as 12/12 and fired on every
+        # daemon after rc.263 activated this rule.
+        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns",state="acquired"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
         for: 10m
         labels:
           severity: warn

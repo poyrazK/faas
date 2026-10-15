@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;margin:2rem auto;padding:0 1rem;max-width: 60rem}main{max-width: 60rem}code{overflow-wrap:anywhere}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.5rem;border-bottom:1px solid #888}button{font:inherit;padding:.6rem 1rem}small{display:block}dt{font-weight:600}dd{margin:0 0 1rem}</style></head>
+<body><main><p>Gregale</p><h1>{{.Title}}</h1>
+{{if index .Data "Error"}}<p role="alert">{{index .Data "Error"}}</p><p>No new approval was issued.</p>
+{{else if index .Data "Approved"}}<p>You approved this exact promotion. Return to your agent to continue.</p><p>Gregale will check the release and configuration again before deployment.</p>
+{{else}}
+<p>An agent requested permission to change serving releases in a protected environment.</p>
+<dl><dt>Account</dt><dd>{{index .Data "Account"}} <small>{{index .Data "AccountID"}}</small></dd>
+<dt>Project</dt><dd>{{index .Data "Project"}} <small>{{index .Data "ProjectID"}}</small></dd>
+<dt>Source → target</dt><dd>{{index .Data "From"}} → <strong>{{index .Data "To"}}</strong><small>{{index .Data "FromID"}} → {{index .Data "ToID"}}</small></dd>
+<dt>Reason supplied by the agent</dt><dd>{{index .Data "Reason"}}</dd>
+<dt>Promotion hash</dt><dd><code>{{index .Data "Hash"}}</code></dd><dt>Review expires</dt><dd>{{index .Data "ExpiresAt"}}</dd></dl>
+<table><caption>Serving release changes</caption><thead><tr><th>Workload</th><th>Current target</th><th>Reviewed source</th></tr></thead><tbody>
+{{range index .Data "Changes"}}<tr><td>{{.WorkloadSlug}}</td><td><code>{{.TargetDeploymentID}}</code></td><td><code>{{.SourceDeploymentID}}</code></td></tr>{{end}}</tbody></table>
+<p>Approval lets the agent deploy these source artifacts and change target traffic. Target configuration and secrets are preserved. This can incur costs.</p>
+<form method="post" action="/cli-auth"><input type="hidden" name="approval" value="{{index .Data "Ticket"}}"><input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}"><button type="submit">Approve this promotion</button></form>
+<p>To decline, close this page. The request expires after five minutes.</p>
+{{end}}</main></body></html>

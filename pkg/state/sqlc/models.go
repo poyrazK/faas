@@ -593,6 +593,19 @@ type AppEnv struct {
 	Scope     string
 }
 
+type AppEnvironmentRouteBudget struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Inherit       bool
+	Enabled       bool
+	Revision      int64
+	Routes        []byte
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AppEnvironmentSecretRef struct {
 	AccountID     pgtype.UUID
 	ProjectID     pgtype.UUID
@@ -2479,18 +2492,21 @@ type EdgeRuleChangeLog struct {
 }
 
 type EdgeRuleEvent struct {
-	ID         int64
-	RuleID     pgtype.UUID
-	AppID      pgtype.UUID
-	OccurredAt pgtype.Timestamptz
-	Outcome    string
-	RequestID  string
-	Method     string
-	Host       string
-	Path       string
-	ClientIp   *netip.Addr
-	Country    string
-	UserAgent  string
+	ID            int64
+	RuleID        pgtype.UUID
+	AppID         pgtype.UUID
+	OccurredAt    pgtype.Timestamptz
+	Outcome       string
+	RequestID     string
+	Method        string
+	Host          string
+	Path          string
+	ClientIp      *netip.Addr
+	Country       string
+	UserAgent     string
+	WafRuleIds    []int32
+	WafCategories []string
+	WafScore      int32
 }
 
 type EdgeRuleHitCount struct {
@@ -2824,6 +2840,15 @@ type EnvironmentQualificationSnapshotReceipt struct {
 	RecordedAt pgtype.Timestamptz
 }
 
+type EnvironmentRouteBudgetReceipt struct {
+	AccountID   pgtype.UUID
+	RequestID   pgtype.UUID
+	AppID       pgtype.UUID
+	RequestHash string
+	Response    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
 type EnvironmentWorkloadGraph struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID
@@ -2927,16 +2952,70 @@ type EventDeliverySlot struct {
 }
 
 type EventExecutionCoverage struct {
-	SubscriptionID      pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	StartedAt           pgtype.Timestamptz
-	BaselineKnown       bool
-	LostAt              pgtype.Timestamptz
-	LossReason          string
-	LedgerStartedAt     pgtype.Timestamptz
-	LedgerBaselineKnown bool
-	LedgerLostThroughAt pgtype.Timestamptz
+	SubscriptionID            pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	StartedAt                 pgtype.Timestamptz
+	BaselineKnown             bool
+	LostAt                    pgtype.Timestamptz
+	LossReason                string
+	LedgerStartedAt           pgtype.Timestamptz
+	LedgerBaselineKnown       bool
+	LedgerLostThroughAt       pgtype.Timestamptz
+	ReconciliationRequestedAt pgtype.Timestamptz
+	LineageRepairProgress     []byte
+}
+
+type EventExecutionLineageCase struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	DiagnosticID     pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	RootInvocationID string
+	RootCreatedAt    pgtype.Timestamptz
+	Status           string
+	Reason           string
+	Revision         int64
+	RetryCount       int64
+	RecordedAt       pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetry struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	RequestID        pgtype.UUID
+	ExpectedRevision int64
+	Result           []byte
+	RetainUntil      pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetryControlReceipt struct {
+	SubscriptionID    pgtype.UUID
+	JobRequestID      pgtype.UUID
+	CommandID         pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Action            string
+	ExpectedCreatedAt pgtype.Timestamptz
+	Sequence          int64
+	Result            []byte
+	RecordedAt        pgtype.Timestamptz
+	RetainUntil       pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetryJob struct {
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	State          string
+	Snapshot       []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
 }
 
 type EventExecutionOutcome struct {
@@ -3255,6 +3334,17 @@ type EventSubscription struct {
 	SchemaVersions     []string
 }
 
+type EventSubscriptionCapacityCommand struct {
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
 type EventSubscriptionCircuitBreaker struct {
 	SubscriptionID pgtype.UUID
 	AccountID      pgtype.UUID
@@ -3265,15 +3355,16 @@ type EventSubscriptionCircuitBreaker struct {
 }
 
 type EventSubscriptionDeliveryControl struct {
-	SubscriptionID  pgtype.UUID
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	Paused          bool
-	RatePerSecond   int32
-	WindowStartedAt pgtype.Timestamptz
-	WindowCount     int32
-	UpdatedAt       pgtype.Timestamptz
-	PausedAt        pgtype.Timestamptz
+	SubscriptionID       pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Paused               bool
+	RatePerSecond        int32
+	WindowStartedAt      pgtype.Timestamptz
+	WindowCount          int32
+	UpdatedAt            pgtype.Timestamptz
+	PausedAt             pgtype.Timestamptz
+	MaxPendingDeliveries int32
 }
 
 type EventSubscriptionWorkBinding struct {
@@ -4172,6 +4263,14 @@ type JobRun struct {
 	ExclusiveGeneration         pgtype.Int8
 }
 
+type JobRunAttachSession struct {
+	RunID             pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	AttachTimeoutS    int32
+	CreatedAt         pgtype.Timestamptz
+}
+
 type JobTask struct {
 	RunID           pgtype.UUID
 	TaskIndex       int32
@@ -4589,6 +4688,19 @@ type ManagedPostgresRestoreProof struct {
 	Generation         int64
 	ObservedAt         pgtype.Timestamptz
 	DataResourceID     pgtype.Text
+}
+
+type ManagedPostgresRestoreVerification struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Generation         int64
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Evidence           string
+	VerifiedAt         pgtype.Timestamptz
 }
 
 type ManagedPostgresUsage struct {

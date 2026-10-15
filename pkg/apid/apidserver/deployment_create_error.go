@@ -12,6 +12,9 @@ import (
 // capacity failures. CreateDeployment uses ErrNotFound when the app vanished
 // or became terminal after the handler's initial lookup.
 func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
+	if writeReleaseReviewError(w, err) {
+		return
+	}
 	if p := routeRemovalBlockedProblem(err); p != nil {
 		api.WriteProblem(w, p)
 		return

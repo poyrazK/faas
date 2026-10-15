@@ -22,6 +22,9 @@ const (
 	// are kept as full events, bounded per gateway.
 	edgeRuleEventsPerRule  = 10
 	edgeRuleEventMaxQueued = 2_000
+	// ADR-831 amendment 5: kind=waf detections get their own per-rule
+	// budget, so ordinary matches never use it up.
+	edgeRuleDetectionEventsPerRule = 10
 )
 
 type edgeRuleHitCount struct {
@@ -42,7 +45,8 @@ type edgeRuleHitCounter struct {
 
 	eventsMu      sync.Mutex
 	events        []gateway.EdgeRuleEvent
-	droppedEvents int64 // guarded by eventsMu
+	droppedEvents int64          // guarded by eventsMu
+	detections    map[string]int // detection events sampled per rule this interval; guarded by eventsMu
 }
 
 func newEdgeRuleHitCounter() *edgeRuleHitCounter {
@@ -82,6 +86,23 @@ func (c *edgeRuleHitCounter) SampleEdgeRuleEvent(ruleID string) bool {
 	return n != nil && n.sampled.Add(1) <= edgeRuleEventsPerRule
 }
 
+// SampleEdgeRuleDetection implements gateway.WAFEventRecorder: it admits the
+// first edgeRuleDetectionEventsPerRule kind=waf detections of a rule per
+// interval, independently of match sampling.
+func (c *edgeRuleHitCounter) SampleEdgeRuleDetection(ruleID string) bool {
+	c.eventsMu.Lock()
+	defer c.eventsMu.Unlock()
+	if c.detections == nil {
+		c.detections = map[string]int{}
+	}
+	n, ok := c.detections[ruleID]
+	if !ok && len(c.detections) >= edgeRuleHitMaxRules {
+		return false
+	}
+	c.detections[ruleID] = n + 1
+	return n < edgeRuleDetectionEventsPerRule
+}
+
 // RecordEdgeRuleEvent queues a sampled event for the next flush.
 func (c *edgeRuleHitCounter) RecordEdgeRuleEvent(ev gateway.EdgeRuleEvent) {
 	c.eventsMu.Lock()
@@ -97,18 +118,22 @@ func (c *edgeRuleHitCounter) RecordEdgeRuleEvent(ev gateway.EdgeRuleEvent) {
 func (c *edgeRuleHitCounter) drainEvents() ([]state.EdgeRuleEvent, int64) {
 	c.eventsMu.Lock()
 	queued, dropped := c.events, c.droppedEvents
-	c.events, c.droppedEvents = nil, 0
+	c.events, c.droppedEvents, c.detections = nil, 0, nil
 	c.eventsMu.Unlock()
 	out := make([]state.EdgeRuleEvent, 0, len(queued))
 	for _, ev := range queued {
 		outcome := state.EdgeRuleHitMatched
-		if ev.Logged {
+		switch {
+		case ev.Outcome != "":
+			outcome = ev.Outcome
+		case ev.Logged:
 			outcome = state.EdgeRuleHitLogged
 		}
 		out = append(out, state.EdgeRuleEvent{
 			RuleID: ev.RuleID, AppID: ev.AppID, OccurredAt: ev.At, Outcome: outcome,
 			RequestID: ev.RequestID, Method: ev.Method, Host: ev.Host, Path: ev.Path,
 			ClientIP: ev.ClientIP, Country: ev.Country, UserAgent: ev.UserAgent,
+			WAFRuleIDs: ev.WAFRuleIDs, WAFCategories: ev.WAFCategories, WAFScore: ev.WAFScore,
 		})
 	}
 	return out, dropped

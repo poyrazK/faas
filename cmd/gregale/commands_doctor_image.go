@@ -224,11 +224,12 @@ func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 	if hc := cfg.Healthcheck; hc != nil {
 		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS, ImageTiming: hc.ImageTiming}
 	}
-	if m.User == "" || m.User == "1000" {
-		m.User = api.DefaultAppUser
-	}
+	// Report the user imaged actually starts the process as. ADR-1239 runs an
+	// image without USER as root, like Docker; the manifest default ("app") is
+	// for platform-built runtimes, so showing it here told the customer the
+	// opposite of what runs (H10-58).
+	m.User = oci.ImageProcessUser(cfg.User)
 	if manifest, err := oci.ManifestFromConfig(oci.Config{Entrypoint: cfg.Entrypoint, Cmd: cfg.Cmd, User: cfg.User, ExposedPorts: cfg.ExposedPorts}); err == nil {
-		m.User = manifest.EffectiveUser()
 		m.ServingPort = manifest.EffectivePort()
 	}
 	if m.WorkingDir == "" {

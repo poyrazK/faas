@@ -241,6 +241,10 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string) (*exec.Cmd, *syscall.Credential, *apptaskproto.Result) {
 	argv := append([]string(nil), req.Command...)
 	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
+	// Like the app process, a task needs a writable HOME: with HOME=/ every
+	// release command logged mise's "failed create_dir_all:
+	// /.local/state/mise/tracked-configs: Permission denied" (SB-10).
+	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)

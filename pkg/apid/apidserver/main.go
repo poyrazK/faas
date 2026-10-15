@@ -1453,6 +1453,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
+		WithInteractiveImageRunsEnabled(imagerun.InteractiveEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
@@ -1470,6 +1471,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.operation.StartOperationNotifications(ctx)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
+		return err
+	}
+	if err := srv.configureWorkloadTrust(*cfg, deps.getenv); err != nil {
 		return err
 	}
 	if err := srv.configureAIGateway(*cfg, deps.getenv); err != nil {

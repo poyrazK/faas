@@ -71,6 +71,7 @@ func main() {
 	printFile := flag.String("print-file", "", "print this file to stdout and exit (a shell-free cat for fork exec tests)")
 	crashCapture := flag.Bool("crash-capture", false, "serve /boom, which asks for an ADR-733 crash capture of itself")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
+	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
 	flag.Parse()
 	if *echoSession {
 		runEchoSession()
@@ -138,6 +139,9 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	if *identityProbe {
+		serveIdentityProbe(mux)
+	}
 	if *durableCounter {
 		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
 	}

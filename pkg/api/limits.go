@@ -8904,8 +8904,12 @@ const (
 	// operator incident inbox. The inbox composes several already-bounded
 	// read paths, so its page stays small enough for a terminal or console
 	// poll while leaving the larger fleet list caps unchanged.
-	ObsIncidentLimitDefault = 50
-	ObsIncidentLimitMax     = 200
+	ObsIncidentLimitDefault  = 50
+	ObsIncidentLimitMax      = 200
+	ObsIncidentStuckAfter    = 5 * time.Minute
+	ObsOverviewTopN          = 5
+	ObsOverviewAuditWindow   = 24 * time.Hour
+	ObsOverviewFailureWindow = time.Hour
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.
@@ -10467,6 +10471,20 @@ const (
 	AuthImportBatch    = 100
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
+	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a
+	// standby key and previous keys whose tokens have not yet expired.
+	AuthMaxSigningKeys = 4
+	// AuthKeyChangeWait bounds how long `gregale auth keys` waits for the
+	// restarted Auth app to publish a key change.
+	AuthKeyChangeWait = 5 * time.Minute
+	// AuthPasswordMinLength bounds the configurable minimum password length:
+	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
+	AuthPasswordMinLengthFloor   = 6
+	AuthPasswordMinLengthCeiling = 72
+	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
+	// provider credentials; Apple's client secret is a signed JWT.
+	AuthProviderClientIDMaxBytes = 512
+	AuthProviderSecretMaxBytes   = 4096
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.
@@ -11036,6 +11054,58 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Bounded scheduler work for legacy execution-ledger reconciliation.
+const EventExecutionReconciliationBatch = 100
+
+const EventExecutionLineageRepairBatch = 100
+
+const EventExecutionLineageCasesPageDefault = 50
+const EventExecutionLineageCasesPageMax = 200
+
+// Bulk lineage retries persist a bounded fixed selection and evaluate at most this many cases per sweep.
+const EventExecutionLineageRetryJobMaxCases = 200
+const EventExecutionLineageRetryJobBatch = 100
+const EventExecutionLineageRetryJobBodyMaxBytes = 65536
+const EventExecutionLineageRetryReasonMaxBytes = 128
+
+// Diagnostic lineage case backfills share a global bounded receipt budget per sweep.
+const EventExecutionLineageCaseBackfillBatch = 100
+
+// Retained bulk lineage retry job discovery is bounded independently of case selections.
+const EventExecutionLineageRetryJobsPageDefault = 50
+const EventExecutionLineageRetryJobsPageMax = 200
+const EventExecutionLineageRetryJobsCursorMaxBytes = 128
+
+// Control receipts live until the parent retry job expires; repeated command IDs spend no new slot.
+const EventExecutionLineageRetryControlMaxReceipts = 128
+const EventExecutionLineageRetryControlPageDefault = 50
+const EventExecutionLineageRetryControlPageMax = 200
+
+// Local control-history artifacts contain bounded receipt metadata, not event payloads.
+const EventExecutionLineageRetryControlExportMaxBytes = 256 * 1024
+
+// Retry-job health is bounded separately from retained execution roots and windows.
+const EventExecutionLineageRetryHealthJobsMax = 500
+const EventExecutionLineageRetryHealthSampleMax = 10
+const EventExecutionLineageRetryInactivityWarning = 15 * time.Minute
+const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour
+
+// Reviewed CLI control plans are fixed selections, independent of health sampling.
+const EventExecutionLineageControlPlanMaxJobs = 200
+const EventExecutionLineageControlPlanMaxBytes = 128 * 1024
+const EventExecutionLineageControlReportMaxBytes = 1024 * 1024
+
+// Capacity command evidence is bounded independently of delivery slots.
+const EventSubscriptionCapacityCommandPageDefault = 25
+const EventSubscriptionCapacityCommandPageMax = 100
+const EventSubscriptionCapacityCommandCursorMaxBytes = 512
+
+const EventSubscriptionCapacityCommandMaxReceipts = 128
+const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second
+const EventSubscriptionCapacityCommandRecoverySustainDefault = 30 * time.Second
+const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
+const EventSubscriptionCapacityCommandPruneBatch = 500
 
 // WorkflowInitialRecoveryReviewLifetime bounds first-recovery approval freshness.
 const WorkflowInitialRecoveryReviewLifetime = EventRecoveryJobLifetime

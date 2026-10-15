@@ -78,8 +78,17 @@ export function upstreamPath(url) {
   return null
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin } = {}) {
+// /settings/v1 is public: the CLI and the dashboard read the running app's
+// configuration here because app secrets are write-only.
+function serveSettings(req, res, settings) {
+  if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' })
+  res.end(JSON.stringify(settings))
+}
+
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings } = {}) {
   return http.createServer((req, res) => {
+    if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
     if (authz && req.url.startsWith(authzPrefix)) return authz(req, res, '/' + req.url.slice(authzPrefix.length).split('?')[0])
@@ -142,8 +151,8 @@ export function start(env = process.env) {
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrueAdmin(signingKey(env.AUTH_JWT_KEYS)), keys: adminKeyHashes(env), origins: dashboard })
-  const server = createServer({ authz, ui, realtime, admin })
+  const admin = createAdminHandler({ pool, admin: goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS)), keys: adminKeyHashes(env), origins: dashboard })
+  const server = createServer({ authz, ui, realtime, admin, settings: config.settings })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -167,5 +168,38 @@ func TestQueueMessageDue(t *testing.T) {
 		if got := queueMessageDue(tc.payload, "a"); got != tc.want {
 			t.Errorf("queueMessageDue(%s) = %v, want %v", tc.payload, got, tc.want)
 		}
+	}
+}
+
+// A nack's error is cut to errorMaxBytes on a rune boundary: Postgres
+// rejects the invalid UTF-8 a byte cut through "é" would store.
+func TestNackTruncatesErrorOnRuneBoundary(t *testing.T) {
+	f := newLeaseFixture(t)
+	f.enqueue(t)
+	code, leased := f.lease(t, `{}`)
+	if code != http.StatusOK || len(leased.Messages) != 1 {
+		t.Fatalf("lease: status %d, %d messages", code, len(leased.Messages))
+	}
+	msg := leased.Messages[0]
+	body, err := json.Marshal(api.QueueLeaseReceiptsRequest{Receipts: []string{msg.Receipt},
+		Error: strings.Repeat("x", errorMaxBytes-1) + "é tail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/waiter/queues/jobs/leases/nack", strings.NewReader(string(body)))
+	r.SetPathValue("slug", "waiter")
+	r.SetPathValue("queue", "jobs")
+	w := httptest.NewRecorder()
+	Service{Host: f.host}.Nack(w, r, f.account, f.app, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("nack: status %d, body %s", w.Code, w.Body.String())
+	}
+	inv, err := f.host.store.InvocationByID(context.Background(), msg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(inv.LastError) || len(inv.LastError) != errorMaxBytes-1 {
+		t.Errorf("stored error: %d bytes, valid UTF-8 %v; want the %d bytes before the split rune",
+			len(inv.LastError), utf8.ValidString(inv.LastError), errorMaxBytes-1)
 	}
 }

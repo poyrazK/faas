@@ -44,6 +44,12 @@ func getSubscriptionControl(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 		out.RatePerSecond = int(row.RatePerSecond)
 		out.UpdatedAt = timestamptzToTimePtr(row.UpdatedAt)
 	}
+	if err == nil {
+		out.MaxPendingDeliveries = int(row.MaxPendingDeliveries)
+	}
+	if err = populateEventSubscriptionCapacity(ctx, q, db, account, app, sub, &out); err != nil {
+		return out, err
+	}
 	breaker, err := readCircuit(ctx, q, db, account, app, sub)
 	if err != nil {
 		return out, err
@@ -67,18 +73,23 @@ func (s *PgStore) GetEventSubscriptionDeliveryControl(ctx context.Context, accou
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err = q.EventSubscriptionControlTarget(ctx, tx, sqlc.EventSubscriptionControlTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err = q.EventConsumerPressureTarget(ctx, tx, sqlc.EventConsumerPressureTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
 	} else if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
+	now := time.Now().UTC()
 	out, err := getSubscriptionControl(ctx, q, tx, account, app, sub)
+	if err != nil {
+		return out, err
+	}
+	out.CapacityCommandBudget, err = readCapacityCommandBudget(ctx, q, tx, account, app, sub, now)
 	if err != nil {
 		return out, err
 	}
@@ -162,14 +173,15 @@ func eventSubscriptionControlProgress(previous PublishedEventRecipientProgress, 
 }
 
 type memEventSubscriptionControl struct {
-	AccountID   string
-	AppID       string
-	Paused      bool
-	Rate        int
-	WindowAt    time.Time
-	WindowCount int
-	PausedAt    time.Time
-	UpdatedAt   time.Time
+	MaxPendingDeliveries int
+	AccountID            string
+	AppID                string
+	Paused               bool
+	Rate                 int
+	WindowAt             time.Time
+	WindowCount          int
+	PausedAt             time.Time
+	UpdatedAt            time.Time
 }
 
 func (m *MemStore) eventSubscriptionControlTargetLocked(account, app, sub string) bool {
@@ -189,10 +201,14 @@ func (m *MemStore) eventSubscriptionControlResponseLocked(account, app, sub stri
 	out := api.EventSubscriptionDeliveryControl{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app)}
 	if c := m.eventSubscriptionControls[out.SubscriptionID]; c != nil && sameMemUUID(c.AccountID, account) && sameMemUUID(c.AppID, app) {
 		out.Paused = c.Paused
+		out.MaxPendingDeliveries = c.MaxPendingDeliveries
 		out.RatePerSecond = c.Rate
 		t := c.UpdatedAt
 		out.UpdatedAt = &t
 	}
+	limits := m.eventDeliveryLimitsLocked(account)
+	out.EffectiveMaxPendingDeliveries = effectiveEventConsumerCapacity(limits.PerConsumer, out.MaxPendingDeliveries)
+	out.LiveDeliveries, _, _ = m.eventDeliveryCountsLocked(eventDeliverySlot{account, app, canonicalMemUUID(sub)}, nil)
 	if breaker := m.eventCircuitBreakers[out.SubscriptionID]; breaker != nil {
 		status := circuitResponse(sub, breaker, out.Paused, time.Now().UTC())
 		out.CircuitBreaker = &status
@@ -235,7 +251,11 @@ func (m *MemStore) GetEventSubscriptionDeliveryControl(ctx context.Context, acco
 	if !m.eventSubscriptionControlTargetLocked(account, app, sub) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
 	}
-	return m.eventSubscriptionControlResponseLocked(account, app, sub), nil
+	now := time.Now().UTC()
+	out := m.eventSubscriptionControlResponseLocked(account, app, sub)
+	var err error
+	out.CapacityCommandBudget, err = m.capacityCommandBudgetLocked(ctx, account, app, sub, now)
+	return out, err
 }
 func (m *MemStore) SetEventSubscriptionDeliveryControl(ctx context.Context, account, app, sub string, paused bool, rate int) (api.EventSubscriptionDeliveryControl, error) {
 	if err := ctx.Err(); err != nil {

@@ -79,10 +79,10 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", err)
 	}
 	if err := e.verifyPrimeLayer(ctx, app.ID, request.ArtifactKey); err != nil {
-		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task artifact: %w", err)
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("prime_layer", fmt.Errorf("sched: resolve app task artifact: %w", err))
 	}
 	task, err := e.store.AppTaskByID(ctx, request.AccountID, request.AppID, request.ID)
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
@@ -90,7 +90,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, task.Kind == state.AppTaskKindRelease)
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("sealed_env", fmt.Errorf("sched: resolve app task sealed env: %w", err))
 	}
 	apiEnv, err := appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, runtimeValues.MainSecrets.Entries, dep)
 	if err != nil {
@@ -100,7 +100,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
 	if err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: request.ArtifactKey,
@@ -131,7 +131,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
 	}); err != nil {
-		return ResolvedAppTaskRuntime{}, err
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("admission", err)
 	}
 	return ResolvedAppTaskRuntime{
 		NodeID: placement.NodeID,

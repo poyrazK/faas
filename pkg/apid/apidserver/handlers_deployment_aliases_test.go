@@ -88,3 +88,38 @@ func TestDeploymentAliasesCRUD(t *testing.T) {
 		t.Fatalf("missing DELETE status=%d, want 404; body=%s", missing.Code, missing.Body.String())
 	}
 }
+
+// TestDeploymentAliasSupersededTargetSaysWhy covers H10-61: pointing an alias
+// at a superseded revision answered only "no routable deployment for this
+// app", as if the revision did not exist.
+func TestDeploymentAliasSupersededTargetSaysWhy(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedDeployment(t, e, "alias-old")
+	app, err := (*e.Store()).AppBySlug(t.Context(), "alias-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := (*e.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Status: state.DeploySuperseded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.Do(t, http.MethodPut, "/v1/apps/alias-old/deployment-aliases/pinned",
+		api.SetDeploymentAliasRequest{DeploymentID: old.ID}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	var problem struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(problem.Detail, "is superseded") || !strings.Contains(problem.Detail, "only at a live or in-progress deployment") {
+		t.Fatalf("detail = %q, want the target's status and the alias rule", problem.Detail)
+	}
+	unknown := e.Do(t, http.MethodPut, "/v1/apps/alias-old/deployment-aliases/pinned",
+		api.SetDeploymentAliasRequest{DeploymentID: "00000000-0000-0000-0000-000000000000"}, nil)
+	if unknown.Code != http.StatusNotFound || !strings.Contains(unknown.Body.String(), "no deployment") {
+		t.Fatalf("unknown target = %d %s", unknown.Code, unknown.Body.String())
+	}
+}

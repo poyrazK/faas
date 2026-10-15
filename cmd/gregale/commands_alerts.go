@@ -129,7 +129,7 @@ func cmdAlertAdd(args []string) int {
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
-	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
+	webhookURL := fs.String("webhook-url", "", "webhook URL (required, http(s)://...; https recommended)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")

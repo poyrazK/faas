@@ -243,15 +243,12 @@ JobConcurrentByAccount
 JobGetByName
 JobRunIncrementDeadLetter
 JobRunListByAccount
-JobRunListByJob
 JobRunReopenDeadLetter
-JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
 JobTaskList
 JobTaskRequeue
-JobTaskRetry
 JobUpdate
 LatestBuilderHeartbeatStats
 LatestDeployment
@@ -359,6 +356,7 @@ ListMirrorResults
 ListMirrorRules
 ListOIDCTrustPoliciesForAccount
 ListOpenStatusIncidents
+ListOperatorIncidents
 ListOperatorIntentsByTraceID
 ListOrgAPIKeys
 ListOrgInvitationsForOrg
@@ -434,7 +432,10 @@ NodeMarkRecovered
 OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
+OperatorAuditTraceCoverage
 OperatorIntentOutcomeMissingCounts
+OperatorOverviewActivity
+OperatorTenantCounts
 OrgByID
 OrgByPersonalAccount
 OrgBySlug
@@ -492,6 +493,7 @@ RequestTelemetryAnalyticsTimeseriesGrouped
 RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
+RequestTelemetryErrorsByRoute
 RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
