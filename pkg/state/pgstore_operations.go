@@ -253,7 +253,8 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 		return Operation{}, false, mapErr(err)
 	}
 	limits := api.MustLimitsFor(api.Plan(plan))
-	now := time.Now().UTC()
+	// Postgres keeps microseconds; the returned Operation must equal the stored one.
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	op, inv, key, fingerprint, err := prepareOperationAdmission(def, admission, limits, now)
 	if err != nil {
 		return Operation{}, false, err

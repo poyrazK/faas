@@ -369,6 +369,9 @@ type authPublicSettings struct {
 	Email struct {
 		Configured bool `json:"configured"`
 	} `json:"email"`
+	Events struct {
+		Lifecycle bool `json:"lifecycle"`
+	} `json:"events"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

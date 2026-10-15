@@ -196,3 +196,50 @@ func TestAuthProvidersEnableReplacesAndDisableRemoves(t *testing.T) {
 		t.Fatal("enabled an unknown provider")
 	}
 }
+
+func TestAuthConfigEventsMintsThePublishOnlyKeyOnce(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		resetJSONEnv(t)
+		sealed, minted, restarts := map[string]string{}, 0, 0
+		authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+			switch {
+			case r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth/secrets":
+				list := api.AppSecretListResponse{}
+				if existing {
+					list.Secrets = []api.AppSecretResponse{{Key: authEventsKeyName, Scope: api.DefaultEnvScope}}
+				}
+				writeJSONTest(w, list)
+			case r.Method == "POST" && r.URL.Path == "/v1/keys":
+				var body api.CreateKeyRequest
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				if !reflect.DeepEqual(body.Scopes, []string{api.ScopeEventsPublish}) {
+					t.Errorf("events key scopes = %v", body.Scopes)
+				}
+				minted++
+				writeJSONTest(w, api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_events_only"})
+			case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/"):
+				var body api.PutAppSecretRequest
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				sealed[strings.TrimPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/")] = body.Value
+				writeJSONTest(w, map[string]any{})
+			case r.Method == "POST" && r.URL.Path == "/v1/apps/shop-auth/restart":
+				restarts++
+				writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+			default:
+				return false
+			}
+			return true
+		})
+		captureAuthStdout(t)
+		if code := cmdAuth([]string{"config", "shop-auth", "--events", "on"}); code != 0 {
+			t.Fatalf("events on = %d", code)
+		}
+		wantMinted := map[bool]int{false: 1, true: 0}[existing]
+		if minted != wantMinted || sealed["AUTH_LIFECYCLE_EVENTS"] != "1" || restarts != 1 || (wantMinted == 1) != (sealed[authEventsKeyName] == "fp_live_events_only") {
+			t.Fatalf("existing=%v: minted %d, sealed %v", existing, minted, sealed)
+		}
+		if code := cmdAuth([]string{"config", "shop-auth", "--events", "off"}); code != 0 || sealed["AUTH_LIFECYCLE_EVENTS"] != "0" || minted != wantMinted {
+			t.Fatalf("events off = %d, minted %d", code, minted)
+		}
+	}
+}
