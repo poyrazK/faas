@@ -896,7 +896,7 @@ func (s *server) retryWorkflowStep(w http.ResponseWriter, r *http.Request, acct 
 }
 
 // refuseOperationWorkflowCallback keeps operation approvals on their own
-// decision path (ADR-1156): a generic callback could forge the decision and
+// decision path (ADR-1194): a generic callback could forge the decision and
 // would record no approver.
 func (s *server) refuseOperationWorkflowCallback(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) bool {
 	adapter, ok := s.store.(state.WorkflowOperationStore)

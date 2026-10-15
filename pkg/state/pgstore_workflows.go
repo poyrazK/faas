@@ -1380,7 +1380,7 @@ func (s *PgStore) ParkWorkflowTimer(ctx context.Context, runID, stepName string,
 	`, runID, stepName, deadline); err != nil {
 		return time.Time{}, fmt.Errorf("pgstore: schedule workflow timer: %w", err)
 	}
-	// ADR-1156: a parked operation is waiting in the same transaction.
+	// ADR-1194: a parked operation is waiting in the same transaction.
 	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
 		return time.Time{}, err
 	}

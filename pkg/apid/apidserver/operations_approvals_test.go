@@ -1,6 +1,6 @@
 package apidserver_test
 
-// ADR-1156: only the declared approver decides a waiting operation, through
+// ADR-1194: only the declared approver decides a waiting operation, through
 // the approval routes; generic callbacks cannot resume an operation run.
 
 import (

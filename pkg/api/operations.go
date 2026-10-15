@@ -18,7 +18,7 @@ const (
 	OperationFailed                   OperationState = "failed"
 	OperationCancelled                OperationState = "cancelled"
 	OperationRequiresReconciliation   OperationState = "requires_reconciliation"
-	OperationWaiting                  OperationState = "waiting" // ADR-1156: parked on a timer or approval
+	OperationWaiting                  OperationState = "waiting" // ADR-1194: parked on a timer or approval
 	OperationRecoveryReconcile                       = "reconcile_on_unknown"
 	OperationRecoverySafeRetry                       = "safe_retry"
 	OperationOwnerPlatformTenant                     = "platform_tenant"

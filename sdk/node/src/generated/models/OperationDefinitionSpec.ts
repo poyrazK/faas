@@ -10,7 +10,7 @@ import type { OperationWorkflowStep } from './OperationWorkflowStep.js';
  */
 export type OperationDefinitionSpec = {
   /**
-   * ADR-1156 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
+   * ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
    */
   approvals?: Array<OperationApprovalSpec>;
   /**

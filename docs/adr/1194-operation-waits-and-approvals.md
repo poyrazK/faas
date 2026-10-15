@@ -1,4 +1,4 @@
-# ADR-1156 · Operation waits and approvals
+# ADR-1194 · Operation waits and approvals
 
 - **Status:** accepted for implementation; admission stays behind the ADR-521 preview gate
 - **Date:** 2026-10-13

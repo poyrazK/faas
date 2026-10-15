@@ -4411,7 +4411,7 @@ export class OperationsService {
     });
   }
   /**
-   * Decide an account approval on waiting work (ADR-1156).
+   * Decide an account approval on waiting work (ADR-1194).
    * Requires deploy:write and MFA. Only a step whose definition names the account approver. The same decision is idempotent; a different one conflicts. Rejection settles the operation failed with approval_rejected.
    * @returns OperationResponse The decision is recorded; the operation resumes or settles approval_rejected.
    * @throws ApiError
@@ -4786,7 +4786,7 @@ export class OperationsService {
     });
   }
   /**
-   * Decide this customer's approval on its waiting operation (ADR-1156).
+   * Decide this customer's approval on its waiting operation (ADR-1194).
    * Requires platform_tenant:operations:manage. Only a step whose definition names the customer approver, on the customer's own operation. The same decision is idempotent; a different one conflicts.
    * @returns OperationResponse The customer's decision is recorded; its operation resumes or settles approval_rejected.
    * @throws ApiError

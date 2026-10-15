@@ -54,7 +54,7 @@ class OperationDefinitionSpec:
     """Bundled schema for the business result selected by the execution target."""
     progress_stages: list[str]
     approvals: list[OperationApprovalSpec] | Unset = UNSET
-    """ADR-1156 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the
+    """ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the
     named approver."""
     milestones: OperationDefinitionSpecMilestones | Unset = UNSET
     """Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most

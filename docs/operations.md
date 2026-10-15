@@ -156,7 +156,7 @@ never require reconciliation, and cancelling a waiting operation settles it
 `cancelled`. Generic workflow callback completion is refused for operation runs,
 so only the approval endpoints can resume an approval. Event waits, condition
 checks and branches remain unavailable to operations. See
-[ADR-1156](adr/1156-operation-waits-and-approvals.md).
+[ADR-1194](adr/1194-operation-waits-and-approvals.md).
 
 ## Contract
 

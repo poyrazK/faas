@@ -1,4 +1,4 @@
--- ADR-1156: a workflow operation parked on a timer or approval is waiting.
+-- ADR-1194: a workflow operation parked on a timer or approval is waiting.
 -- +goose Up
 ALTER TABLE customer_operations DROP CONSTRAINT IF EXISTS customer_operations_state_check;
 ALTER TABLE customer_operations ADD CONSTRAINT customer_operations_state_check

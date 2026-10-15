@@ -1511,7 +1511,7 @@ func (o *WorkflowOrchestrator) CancelRun(ctx context.Context, runID string) erro
 	return nil
 }
 
-// operationApprovalRejected reports a rejected ADR-1156 approval. Only the
+// operationApprovalRejected reports a rejected ADR-1194 approval. Only the
 // operation approval path writes this payload: generic callback completion is
 // refused for operation-linked runs, so other runs never take this branch.
 func (o *WorkflowOrchestrator) operationApprovalRejected(ctx context.Context, run *state.WorkflowRun, stepName string, payload json.RawMessage) bool {

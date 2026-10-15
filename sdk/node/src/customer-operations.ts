@@ -6,7 +6,7 @@ import { parseFrame } from './sse.js';
 import type { OperationWorkflowStep } from './generated/models/OperationWorkflowStep.js';
 
 export type OperationState = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
-/** ADR-1156: why a waiting operation holds no execution, and until when. */
+/** ADR-1194: why a waiting operation holds no execution, and until when. */
 export interface OperationWaitingState { kind: 'timer' | 'approval'; step: string; since: string; until?: string; approver?: 'account' | 'customer' }
 export interface OperationProgress { stage: string; completed: number; total: number; attempt: number; updated_at: string }
 export interface OperationDelivery { state: string; delivery_id?: string; attempts: number; last_error?: string; next_attempt_at?: string }
@@ -448,7 +448,7 @@ export class GregaleOperationClient {
     if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
     return this.request(operationPath(id) + '/cancel', 'POST', { expected_generation: generation }, undefined, signal);
   }
-  /** ADR-1156: decide an approval this customer owns on a waiting operation. */
+  /** ADR-1194: decide an approval this customer owns on a waiting operation. */
   decideApproval<T = unknown>(id: string, step: string, generation: number, decision: 'approved' | 'rejected', comment?: string, signal?: AbortSignal): Promise<Operation<T>> {
     if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(step)) throw new Error('Invalid approval step');

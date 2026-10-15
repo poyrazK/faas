@@ -804,7 +804,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
 			return method == http.MethodGet
 		}
-		// ADR-1156: a customer decides approvals its operation's definition assigns to it.
+		// ADR-1194: a customer decides approvals its operation's definition assigns to it.
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "approvals" && parts[3] != "" {
 			return method == http.MethodPost
 		}

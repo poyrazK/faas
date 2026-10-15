@@ -1,4 +1,4 @@
-// ADR-1156: workflow operations park on timers and declared approvals without
+// ADR-1194: workflow operations park on timers and declared approvals without
 // an execution, and wait failures are certain rather than reconciliations.
 package acceptance_test
 

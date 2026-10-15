@@ -110,7 +110,7 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 		}
 		failed := step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead
 		// A timer or approval performs no external effect, so its failure is
-		// certain (ADR-1156); a rejected or expired approval names its cause.
+		// certain (ADR-1194); a rejected or expired approval names its cause.
 		if wait, ok := waits[name]; ok {
 			if failed && wait.Kind == api.OperationWaitApproval && failureCode == "" {
 				failureCode = api.OperationFailureApprovalExpiry

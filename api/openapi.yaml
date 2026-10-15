@@ -46663,7 +46663,7 @@ paths:
       tags:
       - operations
       operationId: decideOperationApproval
-      summary: Decide an account approval on waiting work (ADR-1156).
+      summary: Decide an account approval on waiting work (ADR-1194).
       description: Requires deploy:write and MFA. Only a step whose definition names the account approver. The same decision is idempotent; a different one conflicts. Rejection settles the operation failed with approval_rejected.
       parameters:
       - $ref: '#/components/parameters/Slug'
@@ -46991,7 +46991,7 @@ paths:
       tags:
       - operations
       operationId: decidePlatformTenantSelfOperationApproval
-      summary: Decide this customer's approval on its waiting operation (ADR-1156).
+      summary: Decide this customer's approval on its waiting operation (ADR-1194).
       description: Requires platform_tenant:operations:manage. Only a step whose definition names the customer approver, on the customer's own operation. The same decision is idempotent; a different one conflicts.
       parameters:
       - $ref: '#/components/parameters/OperationId'
@@ -55726,7 +55726,7 @@ components:
         approvals:
           type: array
           maxItems: 64
-          description: ADR-1156 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
+          description: ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
           items:
             $ref: '#/components/schemas/OperationApprovalSpec'
         milestones:

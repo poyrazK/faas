@@ -9,7 +9,7 @@ import (
 // ValidateWorkflow bounds the first execution adapter without weakening the
 // native workflow contract. Progress has one ordered stage per step. Besides
 // HTTP actions, the chain may park on a timer or a declared approval
-// (ADR-1156); the last step is an HTTP action that produces the result.
+// (ADR-1194); the last step is an HTTP action that produces the result.
 func ValidateWorkflow(operation api.OperationDefinitionSpec, workflow api.WorkflowSpec, plan api.Plan) error {
 	if operation.Workflow != workflow.Name {
 		return fmt.Errorf("operation workflow does not match the captured definition")

@@ -41,7 +41,7 @@ func TestWorkflowOperationContractRejectsReplayAndControlActions(t *testing.T) {
 	}
 }
 
-// ADR-1156: timers and declared approvals join the linear chain; every other
+// ADR-1194: timers and declared approvals join the linear chain; every other
 // wait or control action stays excluded and the result comes from an action.
 func TestWorkflowOperationContractAdmitsTimersAndApprovals(t *testing.T) {
 	for _, test := range []struct {

@@ -11100,7 +11100,7 @@ Request cancellation at an observed generation
 
 ### customer-operations approve
 
-Decide a declared approval on a waiting operation (ADR-1156)
+Decide a declared approval on a waiting operation (ADR-1194)
 
 `gregale customer-operations approve [--app <SLUG>] [--timeout <D>] --expected-generation <N> --step <STEP> --decision <DECISION> [--comment <TEXT>] <id>`
 
