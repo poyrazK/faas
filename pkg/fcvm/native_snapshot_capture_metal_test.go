@@ -325,7 +325,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 		if outcome == "lost_resume" {
 			want += "resume\n"
 		}
-		if captureErr == nil || info != (SnapshotInfo{}) || log.String() != want {
+		if captureErr == nil || !info.IsZero() || log.String() != want {
 			t.Fatal("uncertain native control replayed or supplied completion:", info, captureErr, log.String())
 		}
 		if entries, err := os.ReadDir(objectRoot); err != nil || len(entries) != 0 {

@@ -355,7 +355,7 @@ jobs:
         if: steps.migrations.outputs.changed == 'true'
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.migrations.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: bash scripts/ci/migrations-replay-safety.sh
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4

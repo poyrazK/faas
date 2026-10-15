@@ -22,20 +22,28 @@ func TestMemStoreListInstancesForLifecycleReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp other: %v", err)
 	}
-	deleted := AppDeleted
-	if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &deleted}); err != nil {
-		t.Fatalf("UpdateApp deleted: %v", err)
+	var deployments []Deployment
+	for _, appID := range []string{app.ID, app.ID, other.ID} {
+		deployment, err := store.CreateDeployment(ctx, Deployment{AppID: appID, Kind: DeploymentKindImage})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployments = append(deployments, deployment)
 	}
 
-	deletedInstance, err := store.CreateInstance(ctx, app.ID, "dep-1", string(StateRunning), 128, "node-a", "")
+	deletedInstance, err := store.CreateInstance(ctx, app.ID, deployments[0].ID, string(StateRunning), 128, "node-a", "")
 	if err != nil {
 		t.Fatalf("CreateInstance deleted app: %v", err)
 	}
-	if _, err := store.CreateInstance(ctx, app.ID, "dep-2", string(StateParked), 128, "node-a", ""); err != nil {
+	if _, err := store.CreateInstance(ctx, app.ID, deployments[1].ID, string(StateParked), 128, "node-a", ""); err != nil {
 		t.Fatalf("CreateInstance parked: %v", err)
 	}
-	if _, err := store.CreateInstance(ctx, other.ID, "dep-3", string(StateRunning), 128, "node-b", ""); err != nil {
+	if _, err := store.CreateInstance(ctx, other.ID, deployments[2].ID, string(StateRunning), 128, "node-b", ""); err != nil {
 		t.Fatalf("CreateInstance other: %v", err)
+	}
+	deleted := AppDeleted
+	if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &deleted}); err != nil {
+		t.Fatalf("UpdateApp deleted: %v", err)
 	}
 
 	rows, err := store.ListInstancesForLifecycleReconciliation(ctx, "node-a", 10)

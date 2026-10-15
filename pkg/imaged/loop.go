@@ -303,6 +303,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// expire on time regardless of disk pressure.
 	go l.runCrashCaptureCrypto(ctx)
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
+	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecuritySignatures(ctx, l.now())
 

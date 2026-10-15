@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/qualificationwire"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -572,10 +573,12 @@ type AppSpec struct {
 // Networkless is reserved for the runtime snapshot catalog and is only
 // serialized by RestoreExecution; ordinary app wakes leave it false.
 type SnapshotRef struct {
-	DeploymentID string
-	VMStatePath  string
-	FCVersion    string
-	StorageKey   string
+	// Storage-owned capture reference; never inferred from a caller label.
+	ApplicationStandardCaptureToken string
+	DeploymentID                    string
+	VMStatePath                     string
+	FCVersion                       string
+	StorageKey                      string
 	// VMStateStorageKey is the canonical StorageBackend key for the
 	// vmstate blob (issue #121 / ADR-025 axis 2 slice 4). Empty on
 	// default-local; populated on remote compute nodes.
@@ -597,6 +600,8 @@ type SnapshotBytes struct {
 	MemBytes     int64
 	VMStateBytes int64
 	StoredBytes  int64
+	Capture      runtimeadmission.SnapshotCapture
+	CaptureToken string
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -612,6 +617,9 @@ type SnapshotBytes struct {
 // side; we keep the wire shape as a structpb.Struct here so the
 // proto side stays narrow.
 type WakeOutcome struct {
+	// Populated only by CreateAdmittedRuntime after exact receipt validation.
+	RuntimeAdmissionReceipt *runtimeadmission.Receipt
+
 	Instance              string
 	LeaseUID              int32
 	HostIP                string
@@ -1133,7 +1141,7 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
 		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -1150,7 +1158,15 @@ func (c *VMMClient) WarmSnapshot(ctx context.Context, instance, storageKey, vmst
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+}
+
+func snapshotBytesFromProto(resp *vmmdpb.SnapshotResponse, instance, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+	capture, err := runtimeadmission.CheckSnapshotResponse(resp, instance, storageKey, vmstateStorageKey)
+	if err != nil {
+		return SnapshotBytes{}, fmt.Errorf("vmmd returned invalid native snapshot evidence: %w", err)
+	}
+	return SnapshotBytes{MemBytes: resp.MemBytes, VMStateBytes: resp.VmstateBytes, StoredBytes: resp.StoredBytes, Capture: capture}, nil
 }
 
 // WarmSnapshotSealed is WarmSnapshot for an ADR-733 crash capture on a
@@ -1294,6 +1310,30 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 		EgressPortsSet:  true,
 	}); err != nil {
 		return liftErr(err)
+	}
+	return nil
+}
+
+// UpdateAppEgressPolicy sends a complete revisioned projection. An old node
+// refuses the distinct RPC, and a missing or mismatched acknowledgment fails.
+func (c *VMMClient) UpdateAppEgressPolicy(ctx context.Context, appID string, revision int64, allowlist []netip.Prefix, ports []int) error {
+	wirePorts := make([]uint32, len(ports))
+	for i, port := range ports {
+		if _, forbidden := api.TenantEgressForbiddenPort(port); port < 1 || port > 65535 || forbidden {
+			return fmt.Errorf("invalid revisioned egress policy port")
+		}
+		wirePorts[i] = uint32(port)
+	}
+	ss := make([]string, len(allowlist))
+	for i, prefix := range allowlist {
+		ss[i] = prefix.String()
+	}
+	ack, err := c.cli.UpdateAppEgressPolicy(ctx, &vmmdpb.UpdateAppEgressPolicyRequest{AppId: appID, Revision: revision, EgressAllowlist: ss, EgressPorts: wirePorts})
+	if err != nil {
+		return liftErr(err)
+	}
+	if ack.GetRevision() != revision {
+		return fmt.Errorf("vmmd egress acknowledgment does not match requested revision")
 	}
 	return nil
 }

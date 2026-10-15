@@ -38,6 +38,7 @@ export { ManagedPostgresService } from './generated/services/ManagedPostgresServ
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
 export { OperationsService } from './generated/services/OperationsService.js';
+export { OrgsService } from './generated/services/OrgsService.js';
 export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { TriggersService } from './generated/services/TriggersService.js';
