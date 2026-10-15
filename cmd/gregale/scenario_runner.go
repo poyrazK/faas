@@ -193,59 +193,59 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
-	CampaignRecovery []testCampaignRecoveryEvidence `json:"campaign_recovery,omitempty"`
-	Environment *testEnvironmentSnapshot `json:"environment,omitempty"`
-	SourceRevision *testSourceRevision `json:"source_revision,omitempty"`
-	ReportMergeRevisionOverride bool `json:"report_merge_revision_override,omitempty"`
-	ReportProvenance []testReportProvenance `json:"report_provenance,omitempty"`
-	CampaignSeed           *testCampaignSeedSetting           `json:"campaign_seed,omitempty"`
-	Minimization           *testFaultMinimizationEvidence     `json:"minimization,omitempty"`
-	Replay                 *testReplayManifest                `json:"replay,omitempty"`
-	ReplayOf               string                             `json:"replay_of,omitempty"`
-	FailureDiagnostics     *testRecoveryFailureDiagnostics    `json:"failure_diagnostics,omitempty"`
-	RecoveryRegression     *testRecoveryRegressionEvidence    `json:"recovery_regression,omitempty"`
-	ConfigurationSHA256    string                             `json:"configuration_sha256,omitempty"`
-	RecoveryWorkloadSHA256 string                             `json:"recovery_workload_sha256,omitempty"`
-	SweepRegression        *testSweepRegressionEvidence       `json:"sweep_regression,omitempty"`
-	Sweep                  *testFaultSweepSetting             `json:"sweep,omitempty"`
-	FaultMatrix            *testFaultMatrixEvidence           `json:"fault_matrix,omitempty"`
-	Resilience             *testResilienceEvidence            `json:"resilience,omitempty"`
-	Suite                  string                             `json:"suite,omitempty"`
-	Scenario               string                             `json:"scenario"`
-	Profile                string                             `json:"profile"`
-	Engine                 string                             `json:"engine"`
-	Case                   string                             `json:"case,omitempty"`
-	Attempt                int                                `json:"attempt"`
-	StartedAt              time.Time                          `json:"started_at"`
-	FinishedAt             time.Time                          `json:"finished_at"`
-	DurationMS             int64                              `json:"duration_ms"`
-	Phases                 []testPhaseEvidence                `json:"phases,omitempty"`
-	RunID                  string                             `json:"run_id,omitempty"`
-	AppSlug                string                             `json:"app_slug,omitempty"`
-	DeploymentID           string                             `json:"deployment_id,omitempty"`
-	SourceSHA256           string                             `json:"source_sha256,omitempty"`
-	Services               map[string]string                  `json:"services,omitempty"`
-	WorkloadAppIDs         map[string]string                  `json:"workload_app_ids,omitempty"`
-	AsyncRoutes            map[string][]string                `json:"async_routes,omitempty"`
-	ServiceWake            map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
-	ServiceHot             map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
-	Status                 string                             `json:"status"`
-	SkipReason             string                             `json:"skip_reason,omitempty"`
-	Error                  string                             `json:"error,omitempty"`
-	CleanupError           string                             `json:"cleanup_error,omitempty"`
-	Buckets                []string                           `json:"buckets,omitempty"`
-	Evidence               *testWakeEvidence                  `json:"evidence,omitempty"`
-	Outputs                []testOutputEvidence               `json:"outputs,omitempty"`
-	Invocations            []testInvocationEvidence           `json:"invocations,omitempty"`
-	Deliveries             []testDeliveryEvidence             `json:"deliveries,omitempty"`
-	QueueIdle              bool                               `json:"queue_idle,omitempty"`
-	Diagnostics            map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
-	Requests               []testHTTPRequestEvidence          `json:"requests,omitempty"`
-	Steps                  []testScenarioStepEvidence         `json:"steps,omitempty"`
-	Load                   *testLoadEvidence                  `json:"load,omitempty"`
-	LocalApp               *testLocalAppEvidence              `json:"local_app,omitempty"`
-	Chaos                  *testChaosEvidence                 `json:"chaos,omitempty"`
-	Baseline               *testBaselineEvidence              `json:"baseline,omitempty"`
+	CampaignRecovery            []testCampaignRecoveryEvidence     `json:"campaign_recovery,omitempty"`
+	Environment                 *testEnvironmentSnapshot           `json:"environment,omitempty"`
+	SourceRevision              *testSourceRevision                `json:"source_revision,omitempty"`
+	ReportMergeRevisionOverride bool                               `json:"report_merge_revision_override,omitempty"`
+	ReportProvenance            []testReportProvenance             `json:"report_provenance,omitempty"`
+	CampaignSeed                *testCampaignSeedSetting           `json:"campaign_seed,omitempty"`
+	Minimization                *testFaultMinimizationEvidence     `json:"minimization,omitempty"`
+	Replay                      *testReplayManifest                `json:"replay,omitempty"`
+	ReplayOf                    string                             `json:"replay_of,omitempty"`
+	FailureDiagnostics          *testRecoveryFailureDiagnostics    `json:"failure_diagnostics,omitempty"`
+	RecoveryRegression          *testRecoveryRegressionEvidence    `json:"recovery_regression,omitempty"`
+	ConfigurationSHA256         string                             `json:"configuration_sha256,omitempty"`
+	RecoveryWorkloadSHA256      string                             `json:"recovery_workload_sha256,omitempty"`
+	SweepRegression             *testSweepRegressionEvidence       `json:"sweep_regression,omitempty"`
+	Sweep                       *testFaultSweepSetting             `json:"sweep,omitempty"`
+	FaultMatrix                 *testFaultMatrixEvidence           `json:"fault_matrix,omitempty"`
+	Resilience                  *testResilienceEvidence            `json:"resilience,omitempty"`
+	Suite                       string                             `json:"suite,omitempty"`
+	Scenario                    string                             `json:"scenario"`
+	Profile                     string                             `json:"profile"`
+	Engine                      string                             `json:"engine"`
+	Case                        string                             `json:"case,omitempty"`
+	Attempt                     int                                `json:"attempt"`
+	StartedAt                   time.Time                          `json:"started_at"`
+	FinishedAt                  time.Time                          `json:"finished_at"`
+	DurationMS                  int64                              `json:"duration_ms"`
+	Phases                      []testPhaseEvidence                `json:"phases,omitempty"`
+	RunID                       string                             `json:"run_id,omitempty"`
+	AppSlug                     string                             `json:"app_slug,omitempty"`
+	DeploymentID                string                             `json:"deployment_id,omitempty"`
+	SourceSHA256                string                             `json:"source_sha256,omitempty"`
+	Services                    map[string]string                  `json:"services,omitempty"`
+	WorkloadAppIDs              map[string]string                  `json:"workload_app_ids,omitempty"`
+	AsyncRoutes                 map[string][]string                `json:"async_routes,omitempty"`
+	ServiceWake                 map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
+	ServiceHot                  map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
+	Status                      string                             `json:"status"`
+	SkipReason                  string                             `json:"skip_reason,omitempty"`
+	Error                       string                             `json:"error,omitempty"`
+	CleanupError                string                             `json:"cleanup_error,omitempty"`
+	Buckets                     []string                           `json:"buckets,omitempty"`
+	Evidence                    *testWakeEvidence                  `json:"evidence,omitempty"`
+	Outputs                     []testOutputEvidence               `json:"outputs,omitempty"`
+	Invocations                 []testInvocationEvidence           `json:"invocations,omitempty"`
+	Deliveries                  []testDeliveryEvidence             `json:"deliveries,omitempty"`
+	QueueIdle                   bool                               `json:"queue_idle,omitempty"`
+	Diagnostics                 map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
+	Requests                    []testHTTPRequestEvidence          `json:"requests,omitempty"`
+	Steps                       []testScenarioStepEvidence         `json:"steps,omitempty"`
+	Load                        *testLoadEvidence                  `json:"load,omitempty"`
+	LocalApp                    *testLocalAppEvidence              `json:"local_app,omitempty"`
+	Chaos                       *testChaosEvidence                 `json:"chaos,omitempty"`
+	Baseline                    *testBaselineEvidence              `json:"baseline,omitempty"`
 }
 
 type testScenarioStepEvidence struct {
@@ -1101,8 +1101,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return
 	}
 	receipt.RunID = hex.EncodeToString(random)
- journal,journalErr:=newTestCampaignRunJournal(os.Getenv(testCampaignJournalEnv),name,profile,receipt.RunID,scenario)
- if journalErr!=nil{receipt.Error="create durable run journal: "+journalErr.Error();return}
+	journal, journalErr := newTestCampaignRunJournal(os.Getenv(testCampaignJournalEnv), name, profile, receipt.RunID, scenario)
+	if journalErr != nil {
+		receipt.Error = "create durable run journal: " + journalErr.Error()
+		return
+	}
 	runSecretBytes := make([]byte, 32)
 	if _, err := rand.Read(runSecretBytes); err != nil {
 		receipt.Error = fmt.Sprintf("create test run secret: %v", err)
@@ -1129,8 +1132,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.Error = fmt.Sprintf("detect app shape: %v", err)
 		return
 	}
-	if err:=journal.update(scenario.Project,"","creating");err!=nil{receipt.Error="persist provisioning intent: "+err.Error();return}
- session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
+	if err := journal.update(scenario.Project, "", "creating"); err != nil {
+		receipt.Error = "persist provisioning intent: " + err.Error()
+		return
+	}
+	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create isolated test environment: %v", err)
 		return
@@ -1151,14 +1157,18 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		allDestroyed := true
 		for i := len(workloads) - 1; i >= 0; i-- {
 			// Cleanup proceeds even if journaling fails; failures remain explicit.
-            if err:=journal.update(workloads[i].name,workloads[i].session.App.ID,"cleanup_started");err!=nil{receipt.addCleanupError("persist cleanup intent: "+err.Error())}
-            state:="deleted"
-            if err := client.DestroyDevSession(cleanupCtx, workloads[i].project, receipt.RunID); err != nil {
-                receipt.addCleanupError(fmt.Sprintf("destroy test workload %s: %v", workloads[i].name, err))
-                allDestroyed = false
-                state="cleanup_failed"
-            }
-            if err:=journal.update(workloads[i].name,workloads[i].session.App.ID,state);err!=nil{receipt.addCleanupError("persist cleanup result: "+err.Error())}
+			if err := journal.update(workloads[i].name, workloads[i].session.App.ID, "cleanup_started"); err != nil {
+				receipt.addCleanupError("persist cleanup intent: " + err.Error())
+			}
+			state := "deleted"
+			if err := client.DestroyDevSession(cleanupCtx, workloads[i].project, receipt.RunID); err != nil {
+				receipt.addCleanupError(fmt.Sprintf("destroy test workload %s: %v", workloads[i].name, err))
+				allDestroyed = false
+				state = "cleanup_failed"
+			}
+			if err := journal.update(workloads[i].name, workloads[i].session.App.ID, state); err != nil {
+				receipt.addCleanupError("persist cleanup result: " + err.Error())
+			}
 		}
 		if registered && allDestroyed {
 			if err := client.DeleteScenarioTest(cleanupCtx, receipt.RunID); err != nil {
@@ -1166,8 +1176,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			}
 		}
 	}()
- if err:=journal.update(scenario.Project,session.App.ID,"provisioned");err!=nil{receipt.Error="persist workload identity: "+err.Error();return}
- diagnosticSecrets := append(testDiagnosticScenarioSecrets(scenario), client.Token(), runSecret)
+	if err := journal.update(scenario.Project, session.App.ID, "provisioned"); err != nil {
+		receipt.Error = "persist workload identity: " + err.Error()
+		return
+	}
+	diagnosticSecrets := append(testDiagnosticScenarioSecrets(scenario), client.Token(), runSecret)
 	defer func() {
 		if receipt.Error == "" && receipt.CleanupError == "" {
 			return
@@ -1218,15 +1231,21 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		projectName := scenario.Project + "-" + serviceName
-		if err:=journal.update(serviceName,"","creating");err!=nil{receipt.Error="persist service provisioning intent: "+err.Error();return}
- serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
+		if err := journal.update(serviceName, "", "creating"); err != nil {
+			receipt.Error = "persist service provisioning intent: " + err.Error()
+			return
+		}
+		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
 		if err != nil {
 			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
 			return
 		}
 		workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, sourceDir: serviceDir, config: serviceConfig, session: serviceSession})
 		receipt.WorkloadAppIDs[serviceName] = serviceSession.App.ID
-		if err:=journal.update(serviceName,serviceSession.App.ID,"provisioned");err!=nil{receipt.Error="persist service identity: "+err.Error();return}
+		if err := journal.update(serviceName, serviceSession.App.ID, "provisioned"); err != nil {
+			receipt.Error = "persist service identity: " + err.Error()
+			return
+		}
 	}
 	members := make([]api.ScenarioTestWorkload, 0, len(workloads))
 	for _, workload := range workloads {

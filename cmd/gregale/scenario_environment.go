@@ -11,27 +11,27 @@ import (
 )
 
 type testEnvironmentSnapshot struct {
-	SchemaVersion int `json:"schema_version"`
-	PlatformVersion *string `json:"platform_version"`
-	Workloads map[string]testWorkloadEnvironment `json:"workloads"`
+	SchemaVersion   int                                `json:"schema_version"`
+	PlatformVersion *string                            `json:"platform_version"`
+	Workloads       map[string]testWorkloadEnvironment `json:"workloads"`
 }
 
 type testWorkloadEnvironment struct {
-	Type string `json:"type"`
-	Runtime string `json:"runtime"`
-	RuntimeVersion *string `json:"runtime_version"`
-	RAMMB int `json:"ram_mb"`
-	VCPU int `json:"vcpu"`
-	CPUMillicores int `json:"cpu_millicores"`
-	MaxConcurrency int `json:"max_concurrency"`
-	ConcurrencyPerVM int `json:"concurrency_per_vm"`
-	IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
-	RequestTimeoutSeconds int `json:"request_timeout_seconds"`
-	MinInstances int `json:"min_instances"`
-	Postgres bool `json:"postgres"`
-	Fixture string `json:"fixture,omitempty"`
-	FailFirst int `json:"fail_first"`
-	TCPPorts []int `json:"tcp_ports"`
+	Type                  string  `json:"type"`
+	Runtime               string  `json:"runtime"`
+	RuntimeVersion        *string `json:"runtime_version"`
+	RAMMB                 int     `json:"ram_mb"`
+	VCPU                  int     `json:"vcpu"`
+	CPUMillicores         int     `json:"cpu_millicores"`
+	MaxConcurrency        int     `json:"max_concurrency"`
+	ConcurrencyPerVM      int     `json:"concurrency_per_vm"`
+	IdleTimeoutSeconds    int     `json:"idle_timeout_seconds"`
+	RequestTimeoutSeconds int     `json:"request_timeout_seconds"`
+	MinInstances          int     `json:"min_instances"`
+	Postgres              bool    `json:"postgres"`
+	Fixture               string  `json:"fixture,omitempty"`
+	FailFirst             int     `json:"fail_first"`
+	TCPPorts              []int   `json:"tcp_ports"`
 }
 
 func testEnvironmentFromApp(app api.AppResponse, spec testService) testWorkloadEnvironment {
@@ -46,33 +46,33 @@ func testEnvironmentFromApp(app api.AppResponse, spec testService) testWorkloadE
 }
 
 type testEnvironmentVariant struct {
-	SHA256 string `json:"sha256"`
-	Snapshot *testEnvironmentSnapshot `json:"snapshot"`
-	Runs int `json:"executed_runs"`
-	ReceiptIndexes []int `json:"supporting_receipt_indexes"`
+	SHA256         string                   `json:"sha256"`
+	Snapshot       *testEnvironmentSnapshot `json:"snapshot"`
+	Runs           int                      `json:"executed_runs"`
+	ReceiptIndexes []int                    `json:"supporting_receipt_indexes"`
 }
 
 type testEnvironmentSide struct {
-	ExecutedRuns int `json:"executed_runs"`
-	UnknownRuns int `json:"unknown_snapshot_runs"`
-	Variants []testEnvironmentVariant `json:"variants"`
+	ExecutedRuns int                      `json:"executed_runs"`
+	UnknownRuns  int                      `json:"unknown_snapshot_runs"`
+	Variants     []testEnvironmentVariant `json:"variants"`
 }
 
 type testEnvironmentDifference struct {
-	Field string `json:"field"`
+	Field    string   `json:"field"`
 	Baseline []string `json:"baseline_values"`
-	Current []string `json:"current_values"`
+	Current  []string `json:"current_values"`
 }
 
 type testEnvironmentComparison struct {
-	Configuration string `json:"configuration_sha256,omitempty"`
-	Context testFailureGroupKey `json:"context"`
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-	UnknownFields []string `json:"unknown_fields"`
-	Differences []testEnvironmentDifference `json:"differences"`
-	Baseline testEnvironmentSide `json:"baseline"`
-	Current testEnvironmentSide `json:"current"`
+	Configuration string                      `json:"configuration_sha256,omitempty"`
+	Context       testFailureGroupKey         `json:"context"`
+	Status        string                      `json:"status"`
+	Reason        string                      `json:"reason,omitempty"`
+	UnknownFields []string                    `json:"unknown_fields"`
+	Differences   []testEnvironmentDifference `json:"differences"`
+	Baseline      testEnvironmentSide         `json:"baseline"`
+	Current       testEnvironmentSide         `json:"current"`
 }
 
 func testEnvironmentFields(snapshot *testEnvironmentSnapshot) (map[string]string, []string, bool) {
@@ -175,7 +175,7 @@ func compareTestEnvironments(before, after []testRunReceipt) []testEnvironmentCo
 	results := make([]testEnvironmentComparison, 0, len(keys))
 	for _, key := range keys {
 		row := testEnvironmentComparison{Configuration: key.Hash,
-			Context: testFailureGroupKey{Scenario: key.Scope.scenario, Profile: key.Scope.profile, Engine: key.Scope.engine, Case: key.Scope.caseName},
+			Context:  testFailureGroupKey{Scenario: key.Scope.scenario, Profile: key.Scope.profile, Engine: key.Scope.engine, Case: key.Scope.caseName},
 			Baseline: old[key], Current: current[key], UnknownFields: make([]string, 0), Differences: make([]testEnvironmentDifference, 0)}
 		values := [2]map[string]map[string]bool{make(map[string]map[string]bool), make(map[string]map[string]bool)}
 		unknown := make(map[string]bool)
@@ -244,7 +244,7 @@ func findTestEnvironmentComparison(rows []testEnvironmentComparison, key testFai
 
 type testCampaignEnvironmentPolicy struct {
 	OnMismatch string `yaml:"on_mismatch" json:"on_mismatch"`
-	OnUnknown string `yaml:"on_unknown" json:"on_unknown"`
+	OnUnknown  string `yaml:"on_unknown" json:"on_unknown"`
 }
 
 func validateTestCampaignEnvironmentPolicy(policy *testCampaignEnvironmentPolicy) error {

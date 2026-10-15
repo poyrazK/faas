@@ -7,39 +7,39 @@ import (
 )
 
 type testEnvironmentPlanCheck struct {
-	Field string `json:"field"`
-	Source string `json:"source"`
-	Status string `json:"status"`
+	Field    string          `json:"field"`
+	Source   string          `json:"source"`
+	Status   string          `json:"status"`
 	Expected json.RawMessage `json:"expected"`
 	Declared json.RawMessage `json:"declared"`
 }
 
 type testEnvironmentPlanSide struct {
-	Action string `json:"action"`
-	Reason string `json:"reason,omitempty"`
-	ReportReplacementRequired bool `json:"report_replacement_required"`
+	Action                    string `json:"action"`
+	Reason                    string `json:"reason,omitempty"`
+	ReportReplacementRequired bool   `json:"report_replacement_required"`
 }
 
 type testEnvironmentPlanEntry struct {
-	AllProfiles bool `json:"all_profiles,omitempty"`
-	Requirement string `json:"requirement"`
-	Configuration string `json:"configuration_sha256,omitempty"`
-	Context testFailureGroupKey `json:"context"`
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-	ManifestChecks []testEnvironmentPlanCheck `json:"manifest_checks"`
-	PlatformFields []string `json:"platform_fields"`
-	VersionFields []string `json:"version_fields"`
-	Baseline testEnvironmentPlanSide `json:"baseline"`
-	Current testEnvironmentPlanSide `json:"current"`
-	Evidence *testRequiredEnvironmentResult `json:"evidence,omitempty"`
+	AllProfiles    bool                           `json:"all_profiles,omitempty"`
+	Requirement    string                         `json:"requirement"`
+	Configuration  string                         `json:"configuration_sha256,omitempty"`
+	Context        testFailureGroupKey            `json:"context"`
+	Status         string                         `json:"status"`
+	Reason         string                         `json:"reason,omitempty"`
+	ManifestChecks []testEnvironmentPlanCheck     `json:"manifest_checks"`
+	PlatformFields []string                       `json:"platform_fields"`
+	VersionFields  []string                       `json:"version_fields"`
+	Baseline       testEnvironmentPlanSide        `json:"baseline"`
+	Current        testEnvironmentPlanSide        `json:"current"`
+	Evidence       *testRequiredEnvironmentResult `json:"evidence,omitempty"`
 }
 
 type testEnvironmentPlanBlocker struct {
 	Requirement string `json:"requirement"`
-	Side string `json:"side"`
-	Action string `json:"action"`
-	Reason string `json:"reason"`
+	Side        string `json:"side"`
+	Action      string `json:"action"`
+	Reason      string `json:"reason"`
 }
 
 func testEnvironmentPlanDeclarations(scenario testScenario, expected testEnvironmentExpectation) ([]testEnvironmentPlanCheck, []string, []string) {
@@ -58,7 +58,9 @@ func testEnvironmentPlanDeclarations(scenario testScenario, expected testEnviron
 		versions = append(versions, "platform_version")
 	}
 	names := make([]string, 0, len(expected.Workloads))
-	for name := range expected.Workloads { names = append(names, name) }
+	for name := range expected.Workloads {
+		names = append(names, name)
+	}
 	sort.Strings(names)
 	for _, name := range names {
 		want := expected.Workloads[name]
@@ -69,24 +71,48 @@ func testEnvironmentPlanDeclarations(scenario testScenario, expected testEnviron
 		}
 		prefix := "workloads." + name + "."
 		check(prefix+"present", true, exists, true)
-		if want.Postgres != nil { check(prefix+"postgres", want.Postgres, spec.Postgres, exists) }
-		if want.Fixture != nil { check(prefix+"fixture", want.Fixture, spec.Fixture, exists) }
-		if want.FailFirst != nil { check(prefix+"fail_first", want.FailFirst, spec.FailFirst, exists) }
+		if want.Postgres != nil {
+			check(prefix+"postgres", want.Postgres, spec.Postgres, exists)
+		}
+		if want.Fixture != nil {
+			check(prefix+"fixture", want.Fixture, spec.Fixture, exists)
+		}
+		if want.FailFirst != nil {
+			check(prefix+"fail_first", want.FailFirst, spec.FailFirst, exists)
+		}
 		if want.TCPPorts != nil {
 			ports, declared := append([]int{}, (*want.TCPPorts)...), append([]int{}, spec.TCPPorts...)
 			sort.Ints(ports)
 			sort.Ints(declared)
 			check(prefix+"tcp_ports", ports, declared, exists)
 		}
-		if want.Type != nil { platform = append(platform, prefix+"type") }
-		if want.Runtime != nil { platform = append(platform, prefix+"runtime") }
-		if want.RAMMB != nil { platform = append(platform, prefix+"ram_mb") }
-		if want.VCPU != nil { platform = append(platform, prefix+"vcpu") }
-		if want.CPUMillicores != nil { platform = append(platform, prefix+"cpu_millicores") }
-		if want.MaxConcurrency != nil { platform = append(platform, prefix+"max_concurrency") }
-		if want.ConcurrencyPerVM != nil { platform = append(platform, prefix+"concurrency_per_vm") }
-		if want.MinInstances != nil { platform = append(platform, prefix+"min_instances") }
-		if want.RuntimeVersion != nil || want.RequireRuntimeVersion { versions = append(versions, prefix+"runtime_version") }
+		if want.Type != nil {
+			platform = append(platform, prefix+"type")
+		}
+		if want.Runtime != nil {
+			platform = append(platform, prefix+"runtime")
+		}
+		if want.RAMMB != nil {
+			platform = append(platform, prefix+"ram_mb")
+		}
+		if want.VCPU != nil {
+			platform = append(platform, prefix+"vcpu")
+		}
+		if want.CPUMillicores != nil {
+			platform = append(platform, prefix+"cpu_millicores")
+		}
+		if want.MaxConcurrency != nil {
+			platform = append(platform, prefix+"max_concurrency")
+		}
+		if want.ConcurrencyPerVM != nil {
+			platform = append(platform, prefix+"concurrency_per_vm")
+		}
+		if want.MinInstances != nil {
+			platform = append(platform, prefix+"min_instances")
+		}
+		if want.RuntimeVersion != nil || want.RequireRuntimeVersion {
+			versions = append(versions, prefix+"runtime_version")
+		}
 	}
 	sort.Strings(platform)
 	sort.Strings(versions)
@@ -144,8 +170,8 @@ func buildTestEnvironmentPlan(policy testCampaignPolicy, scenarios map[string]te
 	for _, requirement := range policy.RequiredEnvironments {
 		name := testRequiredSelectorValue(requirement.Match.Scenario)
 		base := testEnvironmentPlanEntry{Requirement: requirement.Name,
-			Context: testFailureGroupKey{Scenario: name, Profile: testRequiredSelectorValue(requirement.Match.Profile), Engine: "real-vm", Case: testRequiredSelectorValue(requirement.Match.Case)},
-			Configuration: testRequiredSelectorValue(requirement.Match.Configuration),
+			Context:        testFailureGroupKey{Scenario: name, Profile: testRequiredSelectorValue(requirement.Match.Profile), Engine: "real-vm", Case: testRequiredSelectorValue(requirement.Match.Case)},
+			Configuration:  testRequiredSelectorValue(requirement.Match.Configuration),
 			ManifestChecks: make([]testEnvironmentPlanCheck, 0), PlatformFields: make([]string, 0), VersionFields: make([]string, 0)}
 		blocked := func(status, reason string) {
 			entry := base
@@ -174,12 +200,18 @@ func buildTestEnvironmentPlan(policy testCampaignPolicy, scenarios map[string]te
 			profiles = selected
 		}
 		candidates, err := testCampaignPlanCandidates(scenario)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		matched := make(map[testCampaignCoverageKey]bool)
 		count := 0
 		for _, candidate := range candidates {
-			if requirement.Match.Case != nil && *requirement.Match.Case != candidate.Case { continue }
-			if requirement.Match.Configuration != nil && *requirement.Match.Configuration != candidate.Hash { continue }
+			if requirement.Match.Case != nil && *requirement.Match.Case != candidate.Case {
+				continue
+			}
+			if requirement.Match.Configuration != nil && *requirement.Match.Configuration != candidate.Hash {
+				continue
+			}
 			for _, profile := range profiles {
 				count++
 				entry := base
@@ -195,18 +227,26 @@ func buildTestEnvironmentPlan(policy testCampaignPolicy, scenarios map[string]te
 					}
 				}
 				var oldSide, currentSide *testRequiredEnvironmentSide
-				if entry.Evidence != nil { oldSide, currentSide = &entry.Evidence.Baseline, &entry.Evidence.Current }
+				if entry.Evidence != nil {
+					oldSide, currentSide = &entry.Evidence.Baseline, &entry.Evidence.Current
+				}
 				entry.Baseline = testEnvironmentPlanDisposition(entry.ManifestChecks, entry.PlatformFields, entry.VersionFields, oldSide)
 				entry.Current = testEnvironmentPlanDisposition(entry.ManifestChecks, entry.PlatformFields, entry.VersionFields, currentSide)
 				entry.Status = entry.Baseline.Action
-				if entry.Current.Action != entry.Status { entry.Status = "side_actions_required" }
+				if entry.Current.Action != entry.Status {
+					entry.Status = "side_actions_required"
+				}
 				entries = append(entries, entry)
 			}
 		}
-		if count == 0 { blocked("unavailable_configuration", "required case or configuration fingerprint is absent from manifest candidates") }
+		if count == 0 {
+			blocked("unavailable_configuration", "required case or configuration fingerprint is absent from manifest candidates")
+		}
 		for i := range observed {
 			r := &observed[i]
-			if r.Name != requirement.Name || (r.Baseline.ExecutedRuns == 0 && r.Current.ExecutedRuns == 0) { continue }
+			if r.Name != requirement.Name || (r.Baseline.ExecutedRuns == 0 && r.Current.ExecutedRuns == 0) {
+				continue
+			}
 			key := testCampaignCoverageKey{Hash: r.Configuration, Scope: testFailureGroupScope{scenario: r.Context.Scenario, profile: r.Context.Profile, engine: r.Context.Engine, caseName: r.Context.Case}}
 			if !matched[key] {
 				entry := base
@@ -229,13 +269,24 @@ func applyTestEnvironmentPlan(plan *testCampaignPolicyPlan) {
 		blockedSides := make(map[string]bool)
 		for _, environment := range plan.Environments {
 			if environment.Context.Scenario != entry.Context.Scenario || environment.Context.Engine != entry.Context.Engine ||
-				(!environment.AllProfiles && environment.Context.Profile != "" && environment.Context.Profile != entry.Context.Profile) { continue }
-			for _, side := range []struct{name string; value testEnvironmentPlanSide}{{"baseline", environment.Baseline}, {"current", environment.Current}} {
-				if side.value.Action == "ready" || side.value.Action == "ready_preflight" || side.value.Action == "collect_execution_evidence" { continue }
+				(!environment.AllProfiles && environment.Context.Profile != "" && environment.Context.Profile != entry.Context.Profile) {
+				continue
+			}
+			for _, side := range []struct {
+				name  string
+				value testEnvironmentPlanSide
+			}{{"baseline", environment.Baseline}, {"current", environment.Current}} {
+				if side.value.Action == "ready" || side.value.Action == "ready_preflight" || side.value.Action == "collect_execution_evidence" {
+					continue
+				}
 				if side.value.Action == "ready_existing_evidence" {
 					needsMore := false
-					for _, command := range entry.Suggestions { needsMore = needsMore || command.Side == side.name }
-					if !needsMore { continue }
+					for _, command := range entry.Suggestions {
+						needsMore = needsMore || command.Side == side.name
+					}
+					if !needsMore {
+						continue
+					}
 				}
 				blockedSides[side.name] = true
 				entry.EnvironmentBlockers = append(entry.EnvironmentBlockers, testEnvironmentPlanBlocker{
@@ -243,15 +294,21 @@ func applyTestEnvironmentPlan(plan *testCampaignPolicyPlan) {
 				})
 			}
 		}
-		if len(blockedSides) == 0 { continue }
+		if len(blockedSides) == 0 {
+			continue
+		}
 		commands := make([]testCampaignPlanCommand, 0)
 		for _, command := range entry.Suggestions {
-			if !blockedSides[command.Side] { commands = append(commands, command) }
+			if !blockedSides[command.Side] {
+				commands = append(commands, command)
+			}
 		}
 		entry.Suggestions = commands
 		if entry.Status == "needs_runs" || entry.Status == "covered" {
 			entry.Status = "environment_blocked"
-			if len(commands) > 0 { entry.Status = "partially_environment_blocked" }
+			if len(commands) > 0 {
+				entry.Status = "partially_environment_blocked"
+			}
 			entry.Reason = fmt.Sprintf("%d environment prerequisites block suggested batches; see environment_blockers", len(entry.EnvironmentBlockers))
 		}
 	}

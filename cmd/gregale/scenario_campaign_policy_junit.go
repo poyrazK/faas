@@ -43,17 +43,17 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 			return nil, err
 		}
 		detail, err := json.MarshalIndent(struct {
-			BaselineSources testReportSourceSummary `json:"baseline_sources"`
-			CurrentSources testReportSourceSummary `json:"current_sources"`
-			Rule                 string                       `json:"rule"`
-			Reason               string                       `json:"reason"`
-			FailNewFailures      bool                         `json:"fail_new_failures"`
-			MaxFrequencyIncrease *float64                     `json:"max_frequency_increase_percentage_points"`
-			MinExecutedRuns      int                          `json:"min_executed_runs"`
-			NotComparable        string                       `json:"on_not_comparable"`
-			InsufficientSamples  string                       `json:"on_insufficient_samples"`
-			BaselineURL          string                       `json:"baseline_evidence_url,omitempty"`
-			CurrentURL           string                       `json:"current_evidence_url,omitempty"`
+			BaselineSources      testReportSourceSummary     `json:"baseline_sources"`
+			CurrentSources       testReportSourceSummary     `json:"current_sources"`
+			Rule                 string                      `json:"rule"`
+			Reason               string                      `json:"reason"`
+			FailNewFailures      bool                        `json:"fail_new_failures"`
+			MaxFrequencyIncrease *float64                    `json:"max_frequency_increase_percentage_points"`
+			MinExecutedRuns      int                         `json:"min_executed_runs"`
+			NotComparable        string                      `json:"on_not_comparable"`
+			InsufficientSamples  string                      `json:"on_insufficient_samples"`
+			BaselineURL          string                      `json:"baseline_evidence_url,omitempty"`
+			CurrentURL           string                      `json:"current_evidence_url,omitempty"`
 			Violation            testCampaignPolicyViolation `json:"violation"`
 		}{
 			BaselineSources: result.Comparisons.BaselineSources, CurrentSources: result.Comparisons.CurrentSources,
@@ -67,20 +67,20 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 			return nil, err
 		}
 		suite.Cases = append(suite.Cases, testCampaignJUnitCase{
-			Name: fmt.Sprintf("%s / %s [%d] configuration=%s context=%s", violation.PolicyRule, violation.Rule, index+1, violation.Configuration, context),
+			Name:      fmt.Sprintf("%s / %s [%d] configuration=%s context=%s", violation.PolicyRule, violation.Rule, index+1, violation.Configuration, context),
 			Classname: "gregale.campaign-policy",
-			Failure: &testCampaignJUnitFailure{Message: violation.Reason, Type: violation.Rule, Body: string(detail)},
+			Failure:   &testCampaignJUnitFailure{Message: violation.Reason, Type: violation.Rule, Body: string(detail)},
 		})
 	}
 	if len(suite.Cases) == 0 {
 		decisions, err := json.Marshal(struct {
-			Decisions []testCampaignPolicyDecision `json:"decisions"`
-			RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
-			RequiredEnvironments []testRequiredEnvironmentResult `json:"required_environments"`
-			Environments []testEnvironmentComparison `json:"environment_comparisons"`
-			EnvironmentDecisions []testCampaignEnvironmentDecision `json:"environment_decisions"`
-			BaselineSources testReportSourceSummary `json:"baseline_sources"`
-			CurrentSources testReportSourceSummary `json:"current_sources"`
+			Decisions            []testCampaignPolicyDecision         `json:"decisions"`
+			RequiredCoverage     []testCampaignRequiredCoverageResult `json:"required_coverage"`
+			RequiredEnvironments []testRequiredEnvironmentResult      `json:"required_environments"`
+			Environments         []testEnvironmentComparison          `json:"environment_comparisons"`
+			EnvironmentDecisions []testCampaignEnvironmentDecision    `json:"environment_decisions"`
+			BaselineSources      testReportSourceSummary              `json:"baseline_sources"`
+			CurrentSources       testReportSourceSummary              `json:"current_sources"`
 		}{result.Decisions, result.RequiredCoverage, result.RequiredEnvironments, result.Comparisons.Environments, result.EnvironmentDecisions, result.Comparisons.BaselineSources, result.Comparisons.CurrentSources})
 		if err != nil {
 			return nil, err

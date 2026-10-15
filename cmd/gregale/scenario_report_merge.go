@@ -21,13 +21,13 @@ type testReportProvenance struct {
 }
 
 type testReportMergeState struct {
-	SourceIdentities map[testReportSourceContext]string
+	SourceIdentities    map[testReportSourceContext]string
 	AllowMixedRevisions bool
-	RunIDs     map[string]string
-	Sources    map[string]bool
-	Origins    map[string]bool
-	InputBytes int
-	Nodes      int
+	RunIDs              map[string]string
+	Sources             map[string]bool
+	Origins             map[string]bool
+	InputBytes          int
+	Nodes               int
 }
 
 func cmdTestReport(args []string) int {

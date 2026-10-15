@@ -15,16 +15,16 @@ import (
 )
 
 type testCampaignPolicy struct {
-	RequiredEnvironments []testRequiredEnvironment `yaml:"required_environments,omitempty"`
-	Environment *testCampaignEnvironmentPolicy `yaml:"environment,omitempty"`
-	RequiredCoverage []testCampaignCoverageRequirement `yaml:"required_coverage,omitempty"`
-	Rules []testCampaignScopedRule `yaml:"rules,omitempty"`
-	SchemaVersion         int      `yaml:"schema_version"`
-	FailNewFailures       bool     `yaml:"fail_new_failures"`
-	MaxFrequencyIncrease  *float64 `yaml:"max_frequency_increase_percentage_points"`
-	MinExecutedRuns       int      `yaml:"min_executed_runs"`
-	NotComparable         string   `yaml:"on_not_comparable"`
-	InsufficientSamples   string   `yaml:"on_insufficient_samples"`
+	RequiredEnvironments []testRequiredEnvironment         `yaml:"required_environments,omitempty"`
+	Environment          *testCampaignEnvironmentPolicy    `yaml:"environment,omitempty"`
+	RequiredCoverage     []testCampaignCoverageRequirement `yaml:"required_coverage,omitempty"`
+	Rules                []testCampaignScopedRule          `yaml:"rules,omitempty"`
+	SchemaVersion        int                               `yaml:"schema_version"`
+	FailNewFailures      bool                              `yaml:"fail_new_failures"`
+	MaxFrequencyIncrease *float64                          `yaml:"max_frequency_increase_percentage_points"`
+	MinExecutedRuns      int                               `yaml:"min_executed_runs"`
+	NotComparable        string                            `yaml:"on_not_comparable"`
+	InsufficientSamples  string                            `yaml:"on_insufficient_samples"`
 }
 
 func readTestCampaignPolicy(path string) (testCampaignPolicy, error) {
@@ -77,31 +77,31 @@ func readTestCampaignPolicy(path string) (testCampaignPolicy, error) {
 }
 
 type testCampaignPolicyViolation struct {
-	EnvironmentRequirement *testRequiredEnvironmentResult `json:"environment_requirement,omitempty"`
-	Environment *testEnvironmentComparison `json:"environment,omitempty"`
-	Requirement *testCampaignRequiredCoverageResult `json:"requirement,omitempty"`
-	PolicyRule string `json:"policy_rule"`
-	EffectivePolicy *testCampaignPolicySettings `json:"effective_policy,omitempty"`
-	Rule          string                      `json:"rule"`
-	Reason        string                      `json:"reason"`
-	Configuration string                      `json:"configuration_sha256,omitempty"`
-	Context       testFailureGroupKey         `json:"context"`
-	BeforeRuns    int                         `json:"baseline_executed_runs"`
-	AfterRuns     int                         `json:"current_executed_runs"`
-	Comparison    *testDigestComparisonRecord `json:"comparison,omitempty"`
+	EnvironmentRequirement *testRequiredEnvironmentResult      `json:"environment_requirement,omitempty"`
+	Environment            *testEnvironmentComparison          `json:"environment,omitempty"`
+	Requirement            *testCampaignRequiredCoverageResult `json:"requirement,omitempty"`
+	PolicyRule             string                              `json:"policy_rule"`
+	EffectivePolicy        *testCampaignPolicySettings         `json:"effective_policy,omitempty"`
+	Rule                   string                              `json:"rule"`
+	Reason                 string                              `json:"reason"`
+	Configuration          string                              `json:"configuration_sha256,omitempty"`
+	Context                testFailureGroupKey                 `json:"context"`
+	BeforeRuns             int                                 `json:"baseline_executed_runs"`
+	AfterRuns              int                                 `json:"current_executed_runs"`
+	Comparison             *testDigestComparisonRecord         `json:"comparison,omitempty"`
 }
 
 type testCampaignPolicyResult struct {
-	RequiredEnvironments []testRequiredEnvironmentResult `json:"required_environments"`
-	EnvironmentDecisions []testCampaignEnvironmentDecision `json:"environment_decisions"`
-	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
-	Decisions []testCampaignPolicyDecision `json:"decisions"`
-	SchemaVersion int                           `json:"schema_version"`
-	BaselineURL   string                        `json:"baseline_evidence_url,omitempty"`
-	CurrentURL    string                        `json:"current_evidence_url,omitempty"`
-	Passed        bool                          `json:"passed"`
-	Violations    []testCampaignPolicyViolation `json:"violations"`
-	Comparisons   testDigestComparisonReport    `json:"comparison_report"`
+	RequiredEnvironments []testRequiredEnvironmentResult      `json:"required_environments"`
+	EnvironmentDecisions []testCampaignEnvironmentDecision    `json:"environment_decisions"`
+	RequiredCoverage     []testCampaignRequiredCoverageResult `json:"required_coverage"`
+	Decisions            []testCampaignPolicyDecision         `json:"decisions"`
+	SchemaVersion        int                                  `json:"schema_version"`
+	BaselineURL          string                               `json:"baseline_evidence_url,omitempty"`
+	CurrentURL           string                               `json:"current_evidence_url,omitempty"`
+	Passed               bool                                 `json:"passed"`
+	Violations           []testCampaignPolicyViolation        `json:"violations"`
+	Comparisons          testDigestComparisonReport           `json:"comparison_report"`
 }
 
 // cmdTestCompare routes here only when --policy explicitly selects campaign mode.
@@ -365,7 +365,7 @@ func testCampaignPolicyCoverage(policy testCampaignPolicy, before, after []testR
 		if rule != "" {
 			violations = append(violations, testCampaignPolicyViolation{
 				Rule: rule, Reason: reason, PolicyRule: ruleID, EffectivePolicy: &settings, Configuration: key.Hash,
-				Context: testFailureGroupKey{Scenario: key.Scope.scenario, Profile: key.Scope.profile, Engine: key.Scope.engine, Case: key.Scope.caseName},
+				Context:    testFailureGroupKey{Scenario: key.Scope.scenario, Profile: key.Scope.profile, Engine: key.Scope.engine, Case: key.Scope.caseName},
 				BeforeRuns: old[key], AfterRuns: current[key],
 			})
 		}

@@ -1,10 +1,10 @@
 package main
 
 type testCampaignEnvironmentDecision struct {
-	EnvironmentIndex int `json:"environment_index"`
-	PolicyRule string `json:"policy_rule"`
-	Action string `json:"action"`
-	EffectivePolicy testCampaignPolicySettings `json:"effective_policy"`
+	EnvironmentIndex int                        `json:"environment_index"`
+	PolicyRule       string                     `json:"policy_rule"`
+	Action           string                     `json:"action"`
+	EffectivePolicy  testCampaignPolicySettings `json:"effective_policy"`
 }
 
 func applyTestCampaignEnvironmentContexts(policy testCampaignPolicy, result *testCampaignPolicyResult) {

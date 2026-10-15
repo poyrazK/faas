@@ -11,40 +11,40 @@ import (
 )
 
 type testCampaignPolicyPlan struct {
-	Recovery *testCampaignRecoveryLink `json:"recovery,omitempty"`
-	Execution *testCampaignExecutionBinding `json:"execution,omitempty"`
-	Costs *testCampaignPlanCosts `json:"costs,omitempty"`
-	Batches []testCampaignCostBatch `json:"batches,omitempty"`
-	Preflight *testPlanPreflightSummary `json:"preflight,omitempty"`
-	Environments []testEnvironmentPlanEntry `json:"environment_requirements"`
-	SchemaVersion int                          `json:"schema_version"`
-	Informational bool                         `json:"informational"`
-	Notes []string `json:"notes"`
+	Recovery      *testCampaignRecoveryLink     `json:"recovery,omitempty"`
+	Execution     *testCampaignExecutionBinding `json:"execution,omitempty"`
+	Costs         *testCampaignPlanCosts        `json:"costs,omitempty"`
+	Batches       []testCampaignCostBatch       `json:"batches,omitempty"`
+	Preflight     *testPlanPreflightSummary     `json:"preflight,omitempty"`
+	Environments  []testEnvironmentPlanEntry    `json:"environment_requirements"`
+	SchemaVersion int                           `json:"schema_version"`
+	Informational bool                          `json:"informational"`
+	Notes         []string                      `json:"notes"`
 	Entries       []testCampaignPolicyPlanEntry `json:"entries"`
 }
 
 type testCampaignPolicyPlanEntry struct {
-	Planned *testCampaignPlannedCoverage `json:"planned,omitempty"`
+	Planned             *testCampaignPlannedCoverage `json:"planned,omitempty"`
 	EnvironmentBlockers []testEnvironmentPlanBlocker `json:"environment_blockers"`
-	Requirement       string              `json:"requirement"`
-	Configuration     string              `json:"configuration_sha256,omitempty"`
-	Context           testFailureGroupKey `json:"context"`
-	Status            string              `json:"status"`
-	Reason            string              `json:"reason,omitempty"`
-	MinCoveredRuns    int                 `json:"min_covered_runs"`
-	BaselineCovered   int                 `json:"baseline_covered_runs"`
-	CurrentCovered    int                 `json:"current_covered_runs"`
-	BaselineAdditional int                `json:"baseline_additional_runs"`
-	CurrentAdditional int                 `json:"current_additional_runs"`
-	RunsPerRepetition int                 `json:"runs_per_repetition"`
-	Suggestions       []testCampaignPlanCommand `json:"suggestions"`
+	Requirement         string                       `json:"requirement"`
+	Configuration       string                       `json:"configuration_sha256,omitempty"`
+	Context             testFailureGroupKey          `json:"context"`
+	Status              string                       `json:"status"`
+	Reason              string                       `json:"reason,omitempty"`
+	MinCoveredRuns      int                          `json:"min_covered_runs"`
+	BaselineCovered     int                          `json:"baseline_covered_runs"`
+	CurrentCovered      int                          `json:"current_covered_runs"`
+	BaselineAdditional  int                          `json:"baseline_additional_runs"`
+	CurrentAdditional   int                          `json:"current_additional_runs"`
+	RunsPerRepetition   int                          `json:"runs_per_repetition"`
+	Suggestions         []testCampaignPlanCommand    `json:"suggestions"`
 }
 
 type testCampaignPlanCommand struct {
-	Side                string   `json:"side"`
-	Repetitions         int      `json:"repetitions"`
-	RemainingRepetitions int     `json:"remaining_repetitions_after_command"`
-	Argv                []string `json:"argv"`
+	Side                 string   `json:"side"`
+	Repetitions          int      `json:"repetitions"`
+	RemainingRepetitions int      `json:"remaining_repetitions_after_command"`
+	Argv                 []string `json:"argv"`
 }
 
 type testCampaignPlanCandidate struct {
@@ -78,7 +78,9 @@ func cmdTestPolicyPlan(args []string) int {
 	}
 	preflightOptions := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "targets" || f.Name == "preflight-side" || f.Name == "preflight-max-age" { preflightOptions = true }
+		if f.Name == "targets" || f.Name == "preflight-side" || f.Name == "preflight-max-age" {
+			preflightOptions = true
+		}
 	})
 	if (*preflightPath == "" && preflightOptions) || (*preflightPath != "" && *targetsPath == "") {
 		return printErr("Invalid plan preflight options", errors.New("--preflight requires --targets; preflight settings require --preflight"))
@@ -109,7 +111,9 @@ func cmdTestPolicyPlan(args []string) int {
 	var preflight *testPlannerPreflight
 	if *preflightPath != "" {
 		preflight, err = readTestPlannerPreflight(*preflightPath, *targetsPath, manifest.Scenarios, *preflightSide, *preflightAge, time.Now().UTC())
-		if err != nil { return printErr("Invalid planner preflight", err) }
+		if err != nil {
+			return printErr("Invalid planner preflight", err)
+		}
 	}
 	plan, err := buildTestCampaignPolicyPlan(policy, manifest.Scenarios, *manifestPath, before, after, preflight)
 	if err != nil {
@@ -118,14 +122,18 @@ func cmdTestPolicyPlan(args []string) int {
 	if err := optimizeTestCampaignPlan(&plan, manifest.Scenarios, *manifestPath, testCampaignPlanBudget{Runs: *maxRuns, Deployments: *maxDeployments, WorkloadMinutes: *maxMinutes}); err != nil {
 		return printErr("Could not budget coverage plan", err)
 	}
-	plan.Execution = &testCampaignExecutionBinding{ManifestSHA256:testCampaignJSONHash(manifest.Scenarios), PolicySHA256:testCampaignJSONHash(policy)}
+	plan.Execution = &testCampaignExecutionBinding{ManifestSHA256: testCampaignJSONHash(manifest.Scenarios), PolicySHA256: testCampaignJSONHash(policy)}
 	if *from != "" {
 		_, plan.Execution.CurrentSHA256, err = readTestBaselineReport(*from, nil)
-		if err != nil { return printErr("Could not bind current report", err) }
+		if err != nil {
+			return printErr("Could not bind current report", err)
+		}
 	}
 	if *baseline != "" {
 		_, plan.Execution.BaselineSHA256, err = readTestBaselineReport(*baseline, nil)
-		if err != nil { return printErr("Could not bind baseline report", err) }
+		if err != nil {
+			return printErr("Could not bind baseline report", err)
+		}
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -178,7 +186,7 @@ func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string
 		name := testRequiredSelectorValue(requirement.Match.Scenario)
 		scenario, exists := scenarios[name]
 		base := testCampaignPolicyPlanEntry{Requirement: requirement.Name, MinCoveredRuns: requirement.MinExecutedRuns,
-			Context: testFailureGroupingKeyForRequirement(testRunReceipt{Scenario: name}, requirement.Match),
+			Context:            testFailureGroupingKeyForRequirement(testRunReceipt{Scenario: name}, requirement.Match),
 			BaselineAdditional: requirement.MinExecutedRuns, CurrentAdditional: requirement.MinExecutedRuns,
 			Suggestions: make([]testCampaignPlanCommand, 0)}
 		if !exists {
@@ -235,7 +243,10 @@ func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string
 					if entry.BaselineAdditional == 0 && entry.CurrentAdditional == 0 {
 						entry.Status = "covered"
 					}
-					for _, side := range []struct{name string; deficit int}{{"baseline", entry.BaselineAdditional}, {"current", entry.CurrentAdditional}} {
+					for _, side := range []struct {
+						name    string
+						deficit int
+					}{{"baseline", entry.BaselineAdditional}, {"current", entry.CurrentAdditional}} {
 						if side.deficit == 0 {
 							continue
 						}
@@ -279,9 +290,13 @@ func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string
 		return plan, err
 	}
 	plan.Environments = environments
-	if len(preflight) > 1 { return plan, errors.New("only one side-specific preflight is supported per plan") }
+	if len(preflight) > 1 {
+		return plan, errors.New("only one side-specific preflight is supported per plan")
+	}
 	if len(preflight) == 1 && preflight[0] != nil {
-		if err := applyTestPlannerPreflight(&plan, policy, preflight[0]); err != nil { return plan, err }
+		if err := applyTestPlannerPreflight(&plan, policy, preflight[0]); err != nil {
+			return plan, err
+		}
 	}
 	applyTestEnvironmentPlan(&plan)
 	return plan, nil

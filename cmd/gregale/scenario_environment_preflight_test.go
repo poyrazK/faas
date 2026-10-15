@@ -13,16 +13,20 @@ import (
 )
 
 type environmentPreflightFakeClient struct {
-	Apps map[string]api.AppResponse
+	Apps   map[string]api.AppResponse
 	Errors map[string]error
-	Calls []string
+	Calls  []string
 }
 
 func (client *environmentPreflightFakeClient) GetApp(_ context.Context, slug string) (api.AppResponse, error) {
 	client.Calls = append(client.Calls, slug)
-	if err := client.Errors[slug]; err != nil { return api.AppResponse{}, err }
+	if err := client.Errors[slug]; err != nil {
+		return api.AppResponse{}, err
+	}
 	app, exists := client.Apps[slug]
-	if !exists { return api.AppResponse{}, errors.New("missing app") }
+	if !exists {
+		return api.AppResponse{}, errors.New("missing app")
+	}
 	return app, nil
 }
 
@@ -58,12 +62,18 @@ func TestEnvironmentPreflightReadsOnlyMappedResourcesAndCachesTargets(t *testing
 		t.Fatal("preflight invented execution context or lost observation times")
 	}
 	body, err := json.Marshal(report)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, forbidden := range []string{"secret-value", "transient-app-id", "host.test", "never-execute"} {
-		if strings.Contains(string(body), forbidden) { t.Fatalf("preflight leaked raw metadata %q", forbidden) }
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("preflight leaked raw metadata %q", forbidden)
+		}
 	}
 	var receipts []testRunReceipt
-	if err := json.Unmarshal(body, &receipts); err == nil { t.Fatal("preflight document was accepted as execution receipts") }
+	if err := json.Unmarshal(body, &receipts); err == nil {
+		t.Fatal("preflight document was accepted as execution receipts")
+	}
 }
 
 func TestEnvironmentPreflightDetectsMismatchAndUnknownVersions(t *testing.T) {
@@ -78,14 +88,18 @@ func TestEnvironmentPreflightDetectsMismatchAndUnknownVersions(t *testing.T) {
 		found = found || (check.Field == "workloads.checkout.ram_mb" && check.Status == "mismatch" &&
 			string(check.Expected) == "128" && string(check.Observed) == "256")
 	}
-	if report.Ready || !found { t.Fatal("live resource mismatch was hidden") }
+	if report.Ready || !found {
+		t.Fatal("live resource mismatch was hidden")
+	}
 	policy.RequiredEnvironments[0].Expect.RequirePlatformVersion = true
 	report = inspectTestEnvironmentPreflight(context.Background(), client, policy, scenarios, targets, "")
 	found = false
 	for _, check := range report.Requirements[0].Checks {
 		found = found || (check.Field == "platform_version.known" && check.Status == "unavailable" && string(check.Observed) == "null")
 	}
-	if !found || report.Ready { t.Fatal("unknown platform version was inferred") }
+	if !found || report.Ready {
+		t.Fatal("unknown platform version was inferred")
+	}
 }
 
 func TestEnvironmentPreflightDoesNotTreatDeclarationsAsLiveDependencyProof(t *testing.T) {
@@ -106,8 +120,12 @@ func TestEnvironmentPreflightDoesNotTreatDeclarationsAsLiveDependencyProof(t *te
 			unavailable = unavailable || (check.Source == "platform" && check.Status == "unavailable")
 		}
 	}
-	if report.Ready || !declared || !unavailable { t.Fatal("manifest Postgres declaration became live proof") }
-	if _, exists := report.Requirements[0].Workloads[0].Fields["postgres"]; exists { t.Fatal("fabricated Postgres observation") }
+	if report.Ready || !declared || !unavailable {
+		t.Fatal("manifest Postgres declaration became live proof")
+	}
+	if _, exists := report.Requirements[0].Workloads[0].Fields["postgres"]; exists {
+		t.Fatal("fabricated Postgres observation")
+	}
 }
 
 func TestEnvironmentPreflightHandlesReadFailuresWithoutLeakingErrors(t *testing.T) {
@@ -119,16 +137,22 @@ func TestEnvironmentPreflightHandlesReadFailuresWithoutLeakingErrors(t *testing.
 		t.Fatal("failed target read was hidden")
 	}
 	body, err := json.Marshal(report)
-	if err != nil || strings.Contains(string(body), "secret-value") || strings.Contains(string(body), "private.test") { t.Fatal("raw API error leaked") }
+	if err != nil || strings.Contains(string(body), "secret-value") || strings.Contains(string(body), "private.test") {
+		t.Fatal("raw API error leaked")
+	}
 	policy, scenarios, targets, client = environmentPreflightTestInputs()
 	delete(targets.Scenarios["checkout"], "checkout")
 	report = inspectTestEnvironmentPreflight(context.Background(), client, policy, scenarios, targets, "")
-	if report.Ready || len(client.Calls) != 0 || report.Requirements[0].Workloads[0].ReadStatus != "unmapped" { t.Fatal("unmapped workload was guessed") }
+	if report.Ready || len(client.Calls) != 0 || report.Requirements[0].Workloads[0].ReadStatus != "unmapped" {
+		t.Fatal("unmapped workload was guessed")
+	}
 	policy, scenarios, targets, client = environmentPreflightTestInputs()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	report = inspectTestEnvironmentPreflight(ctx, client, policy, scenarios, targets, "")
-	if report.Ready || len(client.Calls) != 0 { t.Fatal("preflight continued reading after cancellation") }
+	if report.Ready || len(client.Calls) != 0 {
+		t.Fatal("preflight continued reading after cancellation")
+	}
 }
 
 func TestEnvironmentPreflightTargetsAreStrictAndExplicit(t *testing.T) {
@@ -144,12 +168,20 @@ func TestEnvironmentPreflightTargetsAreStrictAndExplicit(t *testing.T) {
 		strings.Replace(valid, "    checkout:", "    unknown-workload:", 1),
 		strings.Replace(valid, "  checkout:", "  unknown-scenario:", 1),
 	} {
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil { t.Fatal(err) }
-		if _, _, err := readTestEnvironmentPreflightTargets(path, scenarios); err == nil { t.Fatal("invalid target mapping accepted") }
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := readTestEnvironmentPreflightTargets(path, scenarios); err == nil {
+			t.Fatal("invalid target mapping accepted")
+		}
 	}
-	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	targets, digest, err := readTestEnvironmentPreflightTargets(path, scenarios)
-	if err != nil || len(digest) != 64 || targets.Scenarios["checkout"]["checkout"] != "live-checkout" { t.Fatal("valid target mapping rejected") }
+	if err != nil || len(digest) != 64 || targets.Scenarios["checkout"]["checkout"] != "live-checkout" {
+		t.Fatal("valid target mapping rejected")
+	}
 }
 
 func TestEnvironmentPreflightRejectsAliasedTargetsAndMismatchedResponses(t *testing.T) {
@@ -160,8 +192,12 @@ func TestEnvironmentPreflightRejectsAliasedTargetsAndMismatchedResponses(t *test
 	scenarios["checkout"] = scenario
 	path := filepath.Join(t.TempDir(), "targets.yaml")
 	body := "schema_version: 1\nscenarios:\n  checkout:\n    checkout: live-checkout\n    database: live-checkout\n"
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil { t.Fatal(err) }
-	if _, _, err := readTestEnvironmentPreflightTargets(path, scenarios); err == nil { t.Fatal("aliased logical targets accepted") }
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readTestEnvironmentPreflightTargets(path, scenarios); err == nil {
+		t.Fatal("aliased logical targets accepted")
+	}
 	app := client.Apps["live-checkout"]
 	app.Slug = "different-app"
 	client.Apps["live-checkout"] = app

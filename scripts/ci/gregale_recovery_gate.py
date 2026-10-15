@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "./cmd/gregale"
 FILTER = (
     "^(TestCampaign(Runner|Recovery|Bundle|Journal|Cancellation|Cleanup|Status)"
-    "|TestRecoveryAssessment|TestCompletion|TestCleanupObservation|TestPortableJournal)"
+    "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
     "TestCampaignRecoveryAcceptanceCrashHandoffCleanupAndReconciliation",

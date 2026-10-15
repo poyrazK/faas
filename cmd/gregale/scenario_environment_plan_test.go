@@ -35,7 +35,9 @@ func TestEnvironmentPlanBlocksMissingDependencies(t *testing.T) {
 			found = true
 		}
 	}
-	if !found { t.Fatal("missing dependency did not identify the manifest change") }
+	if !found {
+		t.Fatal("missing dependency did not identify the manifest change")
+	}
 }
 
 func TestEnvironmentPlanSeparatesPlatformEvidenceFromDeclarations(t *testing.T) {
@@ -116,12 +118,12 @@ func TestEnvironmentPlanAppliesMatrixBlockerToSiblingCommands(t *testing.T) {
 	plan := testCampaignPolicyPlan{
 		Entries: []testCampaignPolicyPlanEntry{{
 			Context: testFailureGroupKey{Scenario: "checkout", Engine: "real-vm", Profile: "warm", Case: "case-b"},
-			Status: "needs_runs", Suggestions: []testCampaignPlanCommand{{Side: "baseline"}, {Side: "current"}},
+			Status:  "needs_runs", Suggestions: []testCampaignPlanCommand{{Side: "baseline"}, {Side: "current"}},
 		}},
 		Environments: []testEnvironmentPlanEntry{{
 			Requirement: "case-a-resources", Context: testFailureGroupKey{Scenario: "checkout", Engine: "real-vm", Profile: "warm", Case: "case-a"},
 			Baseline: testEnvironmentPlanSide{Action: "ready"},
-			Current: testEnvironmentPlanSide{Action: "platform_evidence_required", Reason: "confirm resources"},
+			Current:  testEnvironmentPlanSide{Action: "platform_evidence_required", Reason: "confirm resources"},
 		}},
 	}
 	applyTestEnvironmentPlan(&plan)

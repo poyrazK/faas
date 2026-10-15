@@ -140,7 +140,7 @@ func collectTestDigestIssues(r testRunReceipt, root int, cleanup, other *[]testD
 			knownError = knownError || step.Status == "failed"
 		}
 		if summary.Assertion == nil && (knownError || r.CleanupError == "") {
-			*other = append(*other, testDigestIssue{root: root, text: r.Scenario+": "+summary.Failure})
+			*other = append(*other, testDigestIssue{root: root, text: r.Scenario + ": " + summary.Failure})
 		}
 	}
 	if r.FaultMatrix != nil {

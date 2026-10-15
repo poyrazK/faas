@@ -53,7 +53,7 @@ func (r testRunReceipt) FailureSummary() *testFailureSummary {
 		summarizeTestFailedLoad(summary, step.Load)
 		if !summary.phaseSelected && len(summary.Matches) == 0 {
 			summary.Matches = testFailureMatchSummary(step.Chaos)
-		summary.FaultEvidence = testFailureFaultRecords(step.Chaos)
+			summary.FaultEvidence = testFailureFaultRecords(step.Chaos)
 		}
 		break
 	}

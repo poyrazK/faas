@@ -20,15 +20,15 @@ type testCampaignRequiredCoverageSide struct {
 }
 
 type testCampaignRequiredCoverageResult struct {
-	Name            string                          `json:"name"`
-	Match           testCampaignPolicySelector      `json:"match"`
-	Configuration   string                          `json:"configuration_sha256,omitempty"`
-	Context         testFailureGroupKey             `json:"context"`
-	MinExecutedRuns int                             `json:"min_executed_runs"`
+	Name            string                           `json:"name"`
+	Match           testCampaignPolicySelector       `json:"match"`
+	Configuration   string                           `json:"configuration_sha256,omitempty"`
+	Context         testFailureGroupKey              `json:"context"`
+	MinExecutedRuns int                              `json:"min_executed_runs"`
 	Baseline        testCampaignRequiredCoverageSide `json:"baseline"`
 	Current         testCampaignRequiredCoverageSide `json:"current"`
-	Passed          bool                            `json:"passed"`
-	Reason          string                          `json:"reason,omitempty"`
+	Passed          bool                             `json:"passed"`
+	Reason          string                           `json:"reason,omitempty"`
 }
 
 func testRequiredSelectorValue(value *string) string {

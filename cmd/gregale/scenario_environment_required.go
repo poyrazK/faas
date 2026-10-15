@@ -9,62 +9,62 @@ import (
 )
 
 type testRequiredEnvironment struct {
-	Name string `yaml:"name" json:"name"`
-	Match testCampaignPolicySelector `yaml:"match" json:"match"`
+	Name   string                     `yaml:"name" json:"name"`
+	Match  testCampaignPolicySelector `yaml:"match" json:"match"`
 	Expect testEnvironmentExpectation `yaml:"expect" json:"expect"`
 }
 
 type testEnvironmentExpectation struct {
-	PlatformVersion *string `yaml:"platform_version,omitempty" json:"platform_version,omitempty"`
-	RequirePlatformVersion bool `yaml:"require_platform_version,omitempty" json:"require_platform_version,omitempty"`
-	Workloads map[string]testWorkloadExpectation `yaml:"workloads,omitempty" json:"workloads,omitempty"`
+	PlatformVersion        *string                            `yaml:"platform_version,omitempty" json:"platform_version,omitempty"`
+	RequirePlatformVersion bool                               `yaml:"require_platform_version,omitempty" json:"require_platform_version,omitempty"`
+	Workloads              map[string]testWorkloadExpectation `yaml:"workloads,omitempty" json:"workloads,omitempty"`
 }
 
 type testWorkloadExpectation struct {
-	Type *string `yaml:"type,omitempty" json:"type,omitempty"`
-	Runtime *string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
-	RuntimeVersion *string `yaml:"runtime_version,omitempty" json:"runtime_version,omitempty"`
-	RequireRuntimeVersion bool `yaml:"require_runtime_version,omitempty" json:"require_runtime_version,omitempty"`
-	RAMMB *int `yaml:"ram_mb,omitempty" json:"ram_mb,omitempty"`
-	VCPU *int `yaml:"vcpu,omitempty" json:"vcpu,omitempty"`
-	CPUMillicores *int `yaml:"cpu_millicores,omitempty" json:"cpu_millicores,omitempty"`
-	MaxConcurrency *int `yaml:"max_concurrency,omitempty" json:"max_concurrency,omitempty"`
-	ConcurrencyPerVM *int `yaml:"concurrency_per_vm,omitempty" json:"concurrency_per_vm,omitempty"`
-	MinInstances *int `yaml:"min_instances,omitempty" json:"min_instances,omitempty"`
-	Postgres *bool `yaml:"postgres,omitempty" json:"postgres,omitempty"`
-	Fixture *string `yaml:"fixture,omitempty" json:"fixture,omitempty"`
-	FailFirst *int `yaml:"fail_first,omitempty" json:"fail_first,omitempty"`
-	TCPPorts *[]int `yaml:"tcp_ports,omitempty" json:"tcp_ports,omitempty"`
+	Type                  *string `yaml:"type,omitempty" json:"type,omitempty"`
+	Runtime               *string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	RuntimeVersion        *string `yaml:"runtime_version,omitempty" json:"runtime_version,omitempty"`
+	RequireRuntimeVersion bool    `yaml:"require_runtime_version,omitempty" json:"require_runtime_version,omitempty"`
+	RAMMB                 *int    `yaml:"ram_mb,omitempty" json:"ram_mb,omitempty"`
+	VCPU                  *int    `yaml:"vcpu,omitempty" json:"vcpu,omitempty"`
+	CPUMillicores         *int    `yaml:"cpu_millicores,omitempty" json:"cpu_millicores,omitempty"`
+	MaxConcurrency        *int    `yaml:"max_concurrency,omitempty" json:"max_concurrency,omitempty"`
+	ConcurrencyPerVM      *int    `yaml:"concurrency_per_vm,omitempty" json:"concurrency_per_vm,omitempty"`
+	MinInstances          *int    `yaml:"min_instances,omitempty" json:"min_instances,omitempty"`
+	Postgres              *bool   `yaml:"postgres,omitempty" json:"postgres,omitempty"`
+	Fixture               *string `yaml:"fixture,omitempty" json:"fixture,omitempty"`
+	FailFirst             *int    `yaml:"fail_first,omitempty" json:"fail_first,omitempty"`
+	TCPPorts              *[]int  `yaml:"tcp_ports,omitempty" json:"tcp_ports,omitempty"`
 }
 
 type testRequiredEnvironmentIssue struct {
-	Code string `json:"code"`
-	ReceiptIndex *int `json:"receipt_index"`
-	RunID string `json:"run_id,omitempty"`
-	Field string `json:"field"`
-	Expected json.RawMessage `json:"expected"`
-	Observed json.RawMessage `json:"observed"`
-	Reason string `json:"reason"`
+	Code         string          `json:"code"`
+	ReceiptIndex *int            `json:"receipt_index"`
+	RunID        string          `json:"run_id,omitempty"`
+	Field        string          `json:"field"`
+	Expected     json.RawMessage `json:"expected"`
+	Observed     json.RawMessage `json:"observed"`
+	Reason       string          `json:"reason"`
 }
 
 type testRequiredEnvironmentSide struct {
-	ExecutedRuns int `json:"executed_runs"`
-	SatisfiedRuns int `json:"satisfied_runs"`
-	SupportingReceipts []int `json:"supporting_receipt_indexes"`
-	Issues []testRequiredEnvironmentIssue `json:"issues"`
-	OmittedIssues int `json:"omitted_issues"`
+	ExecutedRuns       int                            `json:"executed_runs"`
+	SatisfiedRuns      int                            `json:"satisfied_runs"`
+	SupportingReceipts []int                          `json:"supporting_receipt_indexes"`
+	Issues             []testRequiredEnvironmentIssue `json:"issues"`
+	OmittedIssues      int                            `json:"omitted_issues"`
 }
 
 type testRequiredEnvironmentResult struct {
-	Name string `json:"name"`
-	Match testCampaignPolicySelector `json:"match"`
-	Expect testEnvironmentExpectation `json:"expect"`
-	Configuration string `json:"configuration_sha256,omitempty"`
-	Context testFailureGroupKey `json:"context"`
-	Baseline testRequiredEnvironmentSide `json:"baseline"`
-	Current testRequiredEnvironmentSide `json:"current"`
-	Passed bool `json:"passed"`
-	Reason string `json:"reason,omitempty"`
+	Name          string                      `json:"name"`
+	Match         testCampaignPolicySelector  `json:"match"`
+	Expect        testEnvironmentExpectation  `json:"expect"`
+	Configuration string                      `json:"configuration_sha256,omitempty"`
+	Context       testFailureGroupKey         `json:"context"`
+	Baseline      testRequiredEnvironmentSide `json:"baseline"`
+	Current       testRequiredEnvironmentSide `json:"current"`
+	Passed        bool                        `json:"passed"`
+	Reason        string                      `json:"reason,omitempty"`
 }
 
 func validateTestRequiredEnvironments(requirements []testRequiredEnvironment) error {
@@ -203,23 +203,45 @@ func checkTestEnvironmentExpectation(snapshot *testEnvironmentSnapshot, expected
 			check(prefix+"present", true, false, true)
 			continue
 		}
-		if want.Type != nil { check(prefix+"type", want.Type, got.Type, got.Type != "") }
-		if want.Runtime != nil { check(prefix+"runtime", want.Runtime, got.Runtime, got.Runtime != "") }
+		if want.Type != nil {
+			check(prefix+"type", want.Type, got.Type, got.Type != "")
+		}
+		if want.Runtime != nil {
+			check(prefix+"runtime", want.Runtime, got.Runtime, got.Runtime != "")
+		}
 		if want.RuntimeVersion != nil {
 			check(prefix+"runtime_version", want.RuntimeVersion, got.RuntimeVersion, got.RuntimeVersion != nil && *got.RuntimeVersion != "")
 		} else if want.RequireRuntimeVersion {
 			known := got.RuntimeVersion != nil && *got.RuntimeVersion != ""
 			check(prefix+"runtime_version.known", true, known, known)
 		}
-		if want.RAMMB != nil { check(prefix+"ram_mb", want.RAMMB, got.RAMMB, got.RAMMB > 0) }
-		if want.VCPU != nil { check(prefix+"vcpu", want.VCPU, got.VCPU, got.VCPU > 0) }
-		if want.CPUMillicores != nil { check(prefix+"cpu_millicores", want.CPUMillicores, got.CPUMillicores, got.CPUMillicores > 0) }
-		if want.MaxConcurrency != nil { check(prefix+"max_concurrency", want.MaxConcurrency, got.MaxConcurrency, got.MaxConcurrency > 0) }
-		if want.ConcurrencyPerVM != nil { check(prefix+"concurrency_per_vm", want.ConcurrencyPerVM, got.ConcurrencyPerVM, got.ConcurrencyPerVM > 0) }
-		if want.MinInstances != nil { check(prefix+"min_instances", want.MinInstances, got.MinInstances, got.MinInstances >= 0) }
-		if want.Postgres != nil { check(prefix+"postgres", want.Postgres, got.Postgres, true) }
-		if want.Fixture != nil { check(prefix+"fixture", want.Fixture, got.Fixture, true) }
-		if want.FailFirst != nil { check(prefix+"fail_first", want.FailFirst, got.FailFirst, got.FailFirst >= 0) }
+		if want.RAMMB != nil {
+			check(prefix+"ram_mb", want.RAMMB, got.RAMMB, got.RAMMB > 0)
+		}
+		if want.VCPU != nil {
+			check(prefix+"vcpu", want.VCPU, got.VCPU, got.VCPU > 0)
+		}
+		if want.CPUMillicores != nil {
+			check(prefix+"cpu_millicores", want.CPUMillicores, got.CPUMillicores, got.CPUMillicores > 0)
+		}
+		if want.MaxConcurrency != nil {
+			check(prefix+"max_concurrency", want.MaxConcurrency, got.MaxConcurrency, got.MaxConcurrency > 0)
+		}
+		if want.ConcurrencyPerVM != nil {
+			check(prefix+"concurrency_per_vm", want.ConcurrencyPerVM, got.ConcurrencyPerVM, got.ConcurrencyPerVM > 0)
+		}
+		if want.MinInstances != nil {
+			check(prefix+"min_instances", want.MinInstances, got.MinInstances, got.MinInstances >= 0)
+		}
+		if want.Postgres != nil {
+			check(prefix+"postgres", want.Postgres, got.Postgres, true)
+		}
+		if want.Fixture != nil {
+			check(prefix+"fixture", want.Fixture, got.Fixture, true)
+		}
+		if want.FailFirst != nil {
+			check(prefix+"fail_first", want.FailFirst, got.FailFirst, got.FailFirst >= 0)
+		}
 		if want.TCPPorts != nil {
 			ports, observed := append([]int{}, (*want.TCPPorts)...), append([]int{}, got.TCPPorts...)
 			sort.Ints(ports)
@@ -246,7 +268,9 @@ func evaluateTestRequiredEnvironments(policy testCampaignPolicy, before, after [
 					}
 					key := testCampaignCoverageKey{Hash: hash, Scope: testFailureScope(leaf)}
 					counts, exists := sides[side][key]
-					if !exists { counts = emptyTestRequiredEnvironmentSide() }
+					if !exists {
+						counts = emptyTestRequiredEnvironmentSide()
+					}
 					if leaf.Status == "passed" || leaf.Status == "failed" {
 						testRequiredEnvironmentRun(leaf, root, requirement.Expect, &counts)
 					}
@@ -258,7 +282,10 @@ func evaluateTestRequiredEnvironments(policy testCampaignPolicy, before, after [
 		seen := make(map[testCampaignCoverageKey]bool)
 		for _, counts := range sides {
 			for key := range counts {
-				if !seen[key] { seen[key] = true; keys = append(keys, key) }
+				if !seen[key] {
+					seen[key] = true
+					keys = append(keys, key)
+				}
 			}
 		}
 		sort.Slice(keys, func(i, j int) bool {
@@ -276,7 +303,9 @@ func evaluateTestRequiredEnvironments(policy testCampaignPolicy, before, after [
 			counts := [2]testRequiredEnvironmentSide{}
 			for side := range sides {
 				value, exists := sides[side][key]
-				if !exists { value = emptyTestRequiredEnvironmentSide() }
+				if !exists {
+					value = emptyTestRequiredEnvironmentSide()
+				}
 				if value.ExecutedRuns == 0 {
 					addTestRequiredEnvironmentIssue(&value, testRequiredEnvironmentIssue{
 						Code: "missing_context", Field: "executed_runs", Expected: json.RawMessage("1"), Observed: json.RawMessage("0"), Reason: "no matching executed context",
@@ -285,7 +314,7 @@ func evaluateTestRequiredEnvironments(policy testCampaignPolicy, before, after [
 				counts[side] = value
 			}
 			result := testRequiredEnvironmentResult{Name: requirement.Name, Match: requirement.Match, Expect: requirement.Expect, Configuration: key.Hash,
-				Context: testFailureGroupKey{Scenario: key.Scope.scenario, Profile: key.Scope.profile, Engine: key.Scope.engine, Case: key.Scope.caseName},
+				Context:  testFailureGroupKey{Scenario: key.Scope.scenario, Profile: key.Scope.profile, Engine: key.Scope.engine, Case: key.Scope.caseName},
 				Baseline: counts[0], Current: counts[1]}
 			result.Passed = counts[0].ExecutedRuns > 0 && counts[1].ExecutedRuns > 0 &&
 				counts[0].SatisfiedRuns == counts[0].ExecutedRuns && counts[1].SatisfiedRuns == counts[1].ExecutedRuns

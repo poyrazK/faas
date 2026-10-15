@@ -165,7 +165,8 @@ as mutating even though it does not delete sessions. POSIX command strings are
 for compatible shells; other consumers should use the argument arrays.
 
 The suggested reconciliation directory defaults to the campaign directory plus
-`-recovery`. Override it with `--output-directory`; assessment never creates
+`-recovery`; imported work defaults to a sibling of the import root so the
+suggested output remains outside immutable imported evidence. Override it with `--output-directory`; assessment never creates
 that directory. Reconciliation commands are conditional next steps after the
 worker is inactive and cleanup is resolved; they do not promise that missing
 test evidence or recorded cleanup errors can be repaired automatically.
@@ -349,7 +350,8 @@ A formatting failure cannot be waived by successful tests.
 
 `.github/workflows/gregale-recovery.yml` runs this command for relevant pull
 requests, main pushes, pushes to the current recovery feature branch, and manual
-dispatch. It uses a read-only token and uploads evidence even on failure, with
+dispatch. It uses a read-only token, restores existing light-tier Go caches without saving
+new cache entries, and uploads evidence even on failure, with
 14-day retention. Compiler/formatting diagnostics are also printed to job logs.
 It neither opens nor merges a PR and does not replace the repository's existing
 required checks.

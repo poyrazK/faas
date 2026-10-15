@@ -13,14 +13,14 @@ import (
 )
 
 type testSourceRevision struct {
-	SchemaVersion int                             `json:"schema_version"`
-	ExpectedWorkloads []string                   `json:"expected_workloads"`
-	Workloads map[string]testWorkloadSourceRevision `json:"workloads"`
+	SchemaVersion     int                                   `json:"schema_version"`
+	ExpectedWorkloads []string                              `json:"expected_workloads"`
+	Workloads         map[string]testWorkloadSourceRevision `json:"workloads"`
 }
 
 type testWorkloadSourceRevision struct {
 	GitCommit      string `json:"git_commit,omitempty"`
-	TrackedChanges *bool `json:"tracked_changes"`
+	TrackedChanges *bool  `json:"tracked_changes"`
 	SourceSHA256   string `json:"source_sha256"`
 	DeploymentID   string `json:"deployment_id,omitempty"`
 	Runtime        string `json:"runtime"`
@@ -96,30 +96,30 @@ func testSourceRevisionIdentity(revision *testSourceRevision) (string, error) {
 }
 
 type testReportSourceIdentity struct {
-	Scenario string `json:"scenario"`
-	Engine string `json:"engine"`
-	IdentitySHA256 string `json:"identity_sha256"`
-	Revision *testSourceRevision `json:"revision"`
-	Runs int `json:"executed_runs"`
-	ReceiptIndexes []int `json:"supporting_receipt_indexes"`
+	Scenario       string              `json:"scenario"`
+	Engine         string              `json:"engine"`
+	IdentitySHA256 string              `json:"identity_sha256"`
+	Revision       *testSourceRevision `json:"revision"`
+	Runs           int                 `json:"executed_runs"`
+	ReceiptIndexes []int               `json:"supporting_receipt_indexes"`
 }
 
 type testReportSourceSummary struct {
-	Identities []testReportSourceIdentity `json:"identities"`
-	UnknownRuns int `json:"unknown_source_runs"`
-	MergeOverride bool `json:"merge_revision_override"`
+	Identities    []testReportSourceIdentity `json:"identities"`
+	UnknownRuns   int                        `json:"unknown_source_runs"`
+	MergeOverride bool                       `json:"merge_revision_override"`
 }
 
 type testReportSourceContext struct {
 	Scenario string
-	Engine string
+	Engine   string
 }
 
 func summarizeTestReportSources(receipts []testRunReceipt) testReportSourceSummary {
 	summary := testReportSourceSummary{Identities: make([]testReportSourceIdentity, 0)}
 	type key struct {
 		Context testReportSourceContext
-		Hash string
+		Hash    string
 	}
 	indexes := make(map[key]int)
 	for root, receipt := range receipts {

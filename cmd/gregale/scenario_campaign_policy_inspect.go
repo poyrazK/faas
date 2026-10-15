@@ -9,10 +9,10 @@ import (
 )
 
 type testCampaignPolicyDiagnostic struct {
-	Code       string `json:"code"`
-	Rule       string `json:"rule"`
+	Code        string `json:"code"`
+	Rule        string `json:"rule"`
 	EarlierRule string `json:"earlier_rule,omitempty"`
-	Message    string `json:"message"`
+	Message     string `json:"message"`
 }
 
 type testCampaignPolicyUsage struct {
@@ -22,23 +22,35 @@ type testCampaignPolicyUsage struct {
 }
 
 type testCampaignPolicyInspection struct {
-	RequiredEnvironments []testRequiredEnvironmentResult `json:"required_environments,omitempty"`
-	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage,omitempty"`
-	SchemaVersion int                            `json:"schema_version"`
-	Informational bool                           `json:"informational"`
-	ObservationsSupplied bool                    `json:"observations_supplied"`
-	Diagnostics   []testCampaignPolicyDiagnostic `json:"diagnostics"`
-	Usage         []testCampaignPolicyUsage      `json:"rule_usage"`
-	Preview       *testCampaignPolicyResult      `json:"prospective_result,omitempty"`
+	RequiredEnvironments []testRequiredEnvironmentResult      `json:"required_environments,omitempty"`
+	RequiredCoverage     []testCampaignRequiredCoverageResult `json:"required_coverage,omitempty"`
+	SchemaVersion        int                                  `json:"schema_version"`
+	Informational        bool                                 `json:"informational"`
+	ObservationsSupplied bool                                 `json:"observations_supplied"`
+	Diagnostics          []testCampaignPolicyDiagnostic       `json:"diagnostics"`
+	Usage                []testCampaignPolicyUsage            `json:"rule_usage"`
+	Preview              *testCampaignPolicyResult            `json:"prospective_result,omitempty"`
 }
 
 func cmdTestPolicy(args []string) int {
-	if len(args)>0 && args[0]=="recover" {return cmdTestCampaignRecover(args[1:])}
-	if len(args)>0 && (args[0]=="cancel" || args[0]=="cleanup") { return cmdTestCampaignControl(args[0],args[1:]) }
-	if len(args)>0 && args[0]=="bundle" { return cmdTestCampaignBundle(args[1:]) }
-	if len(args) > 0 && args[0] == "status" { return cmdTestCampaignStatus(args[1:]) }
-	if len(args) > 0 && args[0] == "reconcile" { return cmdTestCampaignReconcile(args[1:]) }
-	if len(args) > 0 && args[0] == "run" { return cmdTestCampaignRun(args[1:]) }
+	if len(args) > 0 && args[0] == "recover" {
+		return cmdTestCampaignRecover(args[1:])
+	}
+	if len(args) > 0 && (args[0] == "cancel" || args[0] == "cleanup") {
+		return cmdTestCampaignControl(args[0], args[1:])
+	}
+	if len(args) > 0 && args[0] == "bundle" {
+		return cmdTestCampaignBundle(args[1:])
+	}
+	if len(args) > 0 && args[0] == "status" {
+		return cmdTestCampaignStatus(args[1:])
+	}
+	if len(args) > 0 && args[0] == "reconcile" {
+		return cmdTestCampaignReconcile(args[1:])
+	}
+	if len(args) > 0 && args[0] == "run" {
+		return cmdTestCampaignRun(args[1:])
+	}
 	if len(args) > 0 && args[0] == "preflight" {
 		return cmdTestPolicyEnvironmentPreflight(args[1:])
 	}
@@ -135,8 +147,8 @@ func inspectTestCampaignPolicy(policy testCampaignPolicy, before, after []testRu
 		Diagnostics: make([]testCampaignPolicyDiagnostic, 0), Usage: make([]testCampaignPolicyUsage, 0),
 	}
 	type observation struct {
-		key testFailureGroupKey
-		hash string
+		key         testFailureGroupKey
+		hash        string
 		contextOnly bool
 	}
 	var observations []observation
@@ -158,7 +170,7 @@ func inspectTestCampaignPolicy(policy testCampaignPolicy, before, after []testRu
 					}
 					seen[context] = true
 					observations = append(observations, observation{
-						key: testFailureGroupKey{Scenario: leaf.Scenario, Profile: leaf.Profile, Engine: leaf.Engine, Case: leaf.Case},
+						key:  testFailureGroupKey{Scenario: leaf.Scenario, Profile: leaf.Profile, Engine: leaf.Engine, Case: leaf.Case},
 						hash: hash, contextOnly: true,
 					})
 				}

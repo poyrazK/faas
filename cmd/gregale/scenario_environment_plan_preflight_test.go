@@ -18,7 +18,7 @@ func plannerPreflightTestInputs() (testCampaignPolicy, map[string]testScenario, 
 	digest := strings.Repeat("b", 64)
 	report := inspectTestEnvironmentPreflight(context.Background(), client, policy, scenarios, targets, digest)
 	return policy, scenarios, &testPlannerPreflight{Report: report, ReportSHA256: strings.Repeat("a", 64),
-		Targets: targets, TargetsSHA256: digest, Side: "current", Now: report.FinishedAt.Add(time.Second), MaxAge: 15*time.Minute}
+		Targets: targets, TargetsSHA256: digest, Side: "current", Now: report.FinishedAt.Add(time.Second), MaxAge: 15 * time.Minute}
 }
 
 func TestPlannerPreflightResolvesOnlySelectedSideWithoutCoverageCredit(t *testing.T) {
@@ -50,7 +50,7 @@ func TestPlannerPreflightRejectsStaleMismappedOrInvalidDocuments(t *testing.T) {
 			policy, scenarios, source := plannerPreflightTestInputs()
 			switch kind {
 			case "stale":
-				source.Now = source.Now.Add(16*time.Minute)
+				source.Now = source.Now.Add(16 * time.Minute)
 			case "mapping":
 				source.TargetsSHA256 = strings.Repeat("c", 64)
 			case "future":
@@ -84,7 +84,9 @@ func TestPlannerPreflightRechecksRawValuesAgainstCurrentRequirements(t *testing.
 	}
 	policy, scenarios, source = plannerPreflightTestInputs()
 	source.Report.Ready, source.Report.Requirements[0].Ready = false, false
-	for i := range source.Report.Requirements[0].Checks { source.Report.Requirements[0].Checks[i].Status = "unavailable" }
+	for i := range source.Report.Requirements[0].Checks {
+		source.Report.Requirements[0].Checks[i].Status = "unavailable"
+	}
 	plan, err = buildTestCampaignPolicyPlan(policy, scenarios, "manifest.yaml", nil, nil, source)
 	if err != nil || plan.Preflight.Resolutions[0].Status != "resolved" {
 		t.Fatal("derived status flags replaced raw field verification")
@@ -113,7 +115,9 @@ func TestPlannerPreflightCannotWaiveReportReplacementOrVersionLimits(t *testing.
 		t.Fatal("live metadata waived a bad execution report")
 	}
 	for _, command := range plan.Entries[0].Suggestions {
-		if command.Side == "current" { t.Fatal("current bad batch received extra repetitions") }
+		if command.Side == "current" {
+			t.Fatal("current bad batch received extra repetitions")
+		}
 	}
 	policy, scenarios, source = plannerPreflightTestInputs()
 	policy.RequiredEnvironments[0].Expect.RequirePlatformVersion = true
@@ -130,16 +134,28 @@ func TestPlannerPreflightReaderBindsTargetFileAndReportBytes(t *testing.T) {
 	dir := t.TempDir()
 	targetsPath, reportPath := filepath.Join(dir, "targets.yaml"), filepath.Join(dir, "preflight.json")
 	targets := "schema_version: 1\nscenarios:\n  checkout:\n    checkout: live-checkout\n"
-	if err := os.WriteFile(targetsPath, []byte(targets), 0o600); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(targetsPath, []byte(targets), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	_, digest, err := readTestEnvironmentPreflightTargets(targetsPath, scenarios)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	source.Report.TargetsSHA256 = digest
 	body, err := json.Marshal(source.Report)
-	if err != nil { t.Fatal(err) }
-	if err := os.WriteFile(reportPath, body, 0o600); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reportPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	loaded, err := readTestPlannerPreflight(reportPath, targetsPath, scenarios, "current", 15*time.Minute, source.Now)
-	if err != nil || len(loaded.ReportSHA256) != 64 || loaded.TargetsSHA256 != digest { t.Fatal("valid source report rejected") }
-	if err := os.WriteFile(targetsPath, []byte(strings.ReplaceAll(targets, "live-checkout", "other-checkout")), 0o600); err != nil { t.Fatal(err) }
+	if err != nil || len(loaded.ReportSHA256) != 64 || loaded.TargetsSHA256 != digest {
+		t.Fatal("valid source report rejected")
+	}
+	if err := os.WriteFile(targetsPath, []byte(strings.ReplaceAll(targets, "live-checkout", "other-checkout")), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := readTestPlannerPreflight(reportPath, targetsPath, scenarios, "current", 15*time.Minute, source.Now); err == nil {
 		t.Fatal("different target mapping was accepted")
 	}

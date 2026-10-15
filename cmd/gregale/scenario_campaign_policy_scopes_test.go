@@ -58,7 +58,7 @@ func TestCampaignScopedPolicyJSONAndJUnitUseMatchedRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	var detail struct {
-		Limit float64 `json:"max_frequency_increase_percentage_points"`
+		Limit     float64                     `json:"max_frequency_increase_percentage_points"`
 		Violation testCampaignPolicyViolation `json:"violation"`
 	}
 	if err := json.Unmarshal([]byte(suite.Cases[0].Failure.Body), &detail); err != nil {

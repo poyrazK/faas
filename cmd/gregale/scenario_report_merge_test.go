@@ -60,7 +60,7 @@ func TestReportMergePreservesEvidenceAndRecordsProvenance(t *testing.T) {
 	}
 	var future struct {
 		Counter json.Number `json:"counter"`
-		Message string `json:"message"`
+		Message string      `json:"message"`
 	}
 	if err := json.Unmarshal(raw[0]["future_evidence"], &future); err != nil || future.Counter.String() != "9007199254740993" || future.Message != "<raw>&evidence" {
 		t.Fatal("unknown evidence changed or lost numeric precision")

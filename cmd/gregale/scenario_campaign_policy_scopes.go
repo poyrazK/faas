@@ -20,24 +20,24 @@ type testCampaignPolicySelector struct {
 }
 
 type testCampaignScopedRule struct {
-	Environment *testCampaignEnvironmentPolicy `yaml:"environment,omitempty" json:"environment,omitempty"`
-	Name                  string                     `yaml:"name" json:"name"`
-	Match                 testCampaignPolicySelector `yaml:"match" json:"match"`
-	FailNewFailures       *bool                      `yaml:"fail_new_failures,omitempty" json:"fail_new_failures,omitempty"`
-	MaxFrequencyIncrease  *float64                   `yaml:"max_frequency_increase_percentage_points,omitempty" json:"max_frequency_increase_percentage_points,omitempty"`
-	DisableFrequencyCheck bool                       `yaml:"disable_frequency_check,omitempty" json:"disable_frequency_check,omitempty"`
-	MinExecutedRuns       *int                       `yaml:"min_executed_runs,omitempty" json:"min_executed_runs,omitempty"`
-	NotComparable         *string                    `yaml:"on_not_comparable,omitempty" json:"on_not_comparable,omitempty"`
-	InsufficientSamples   *string                    `yaml:"on_insufficient_samples,omitempty" json:"on_insufficient_samples,omitempty"`
+	Environment           *testCampaignEnvironmentPolicy `yaml:"environment,omitempty" json:"environment,omitempty"`
+	Name                  string                         `yaml:"name" json:"name"`
+	Match                 testCampaignPolicySelector     `yaml:"match" json:"match"`
+	FailNewFailures       *bool                          `yaml:"fail_new_failures,omitempty" json:"fail_new_failures,omitempty"`
+	MaxFrequencyIncrease  *float64                       `yaml:"max_frequency_increase_percentage_points,omitempty" json:"max_frequency_increase_percentage_points,omitempty"`
+	DisableFrequencyCheck bool                           `yaml:"disable_frequency_check,omitempty" json:"disable_frequency_check,omitempty"`
+	MinExecutedRuns       *int                           `yaml:"min_executed_runs,omitempty" json:"min_executed_runs,omitempty"`
+	NotComparable         *string                        `yaml:"on_not_comparable,omitempty" json:"on_not_comparable,omitempty"`
+	InsufficientSamples   *string                        `yaml:"on_insufficient_samples,omitempty" json:"on_insufficient_samples,omitempty"`
 }
 
 type testCampaignPolicySettings struct {
-	Environment testCampaignEnvironmentPolicy `json:"environment"`
-	FailNewFailures      bool     `json:"fail_new_failures"`
-	MaxFrequencyIncrease *float64 `json:"max_frequency_increase_percentage_points"`
-	MinExecutedRuns      int      `json:"min_executed_runs"`
-	NotComparable        string   `json:"on_not_comparable"`
-	InsufficientSamples  string   `json:"on_insufficient_samples"`
+	Environment          testCampaignEnvironmentPolicy `json:"environment"`
+	FailNewFailures      bool                          `json:"fail_new_failures"`
+	MaxFrequencyIncrease *float64                      `json:"max_frequency_increase_percentage_points"`
+	MinExecutedRuns      int                           `json:"min_executed_runs"`
+	NotComparable        string                        `json:"on_not_comparable"`
+	InsufficientSamples  string                        `json:"on_insufficient_samples"`
 }
 
 type testCampaignPolicyDecision struct {

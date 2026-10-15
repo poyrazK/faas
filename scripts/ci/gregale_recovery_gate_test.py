@@ -1,6 +1,7 @@
 """Contract tests for gate failure propagation and acceptance-test accounting."""
 import importlib.util
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -33,6 +34,12 @@ class RecoveryGateEventsTest(unittest.TestCase):
     def test_package_failure_is_not_masked_by_passed_tests(self):
         events = self.passed() + [{"Action": "fail", "Package": "cli"}]
         self.assertEqual(["cli"], self.events(events)["failed"])
+
+    def test_filter_selects_recovery_without_shell_completion_dependencies(self):
+        for name in GATE.REQUIRED | {"TestRecoveryCompletionSessionAbsenceDoesNotCompleteMissingTest"}:
+            self.assertIsNotNone(re.search(GATE.FILTER, name))
+        self.assertIsNone(re.search(GATE.FILTER, "TestCompletion_FishScriptIsSyntacticallyValid"))
+        self.assertIsNone(re.search(GATE.FILTER, "TestCompletion_ZshScriptIsSyntacticallyValid"))
 
     def test_malformed_json_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:

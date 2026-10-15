@@ -15,14 +15,14 @@ type testDigestComparisonSide struct {
 
 type testDigestGroupChange struct {
 	fingerprint string
-	key        testFailureGroupKey
-	status     string
-	reason     string
-	before     testDigestGroup
-	after      testDigestGroup
-	beforeRuns int
-	afterRuns  int
-	delta      *float64
+	key         testFailureGroupKey
+	status      string
+	reason      string
+	before      testDigestGroup
+	after       testDigestGroup
+	beforeRuns  int
+	afterRuns   int
+	delta       *float64
 }
 
 func buildTestDigestComparisonSide(receipts []testRunReceipt) testDigestComparisonSide {

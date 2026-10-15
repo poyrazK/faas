@@ -143,7 +143,7 @@ func TestPolicyComparisonKeepsBaselineAndCurrentSourceRevisionsSeparate(t *testi
 	}
 	var detail struct {
 		Before testReportSourceSummary `json:"baseline_sources"`
-		After testReportSourceSummary `json:"current_sources"`
+		After  testReportSourceSummary `json:"current_sources"`
 	}
 	if err := json.Unmarshal([]byte(suite.Cases[0].Failure.Body), &detail); err != nil ||
 		len(detail.Before.Identities) != 1 || len(detail.After.Identities) != 1 {
