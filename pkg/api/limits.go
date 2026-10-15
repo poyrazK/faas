@@ -11147,3 +11147,6 @@ const EventProcessingAlertSustain = 30 * time.Second
 // Outcome history coalesces repeated operations per attempt and outcome kind.
 const EventAcknowledgmentHistoryLimit = 100
 const EventAcknowledgmentHistoryRetention = 7 * 24 * time.Hour
+
+const EventAcknowledgmentHistoryCursorMaxBytes = 2048
+const EventAcknowledgmentHistoryCursorLifetime = time.Hour

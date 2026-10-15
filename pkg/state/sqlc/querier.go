@@ -716,6 +716,7 @@ type Querier interface {
 	EventAckNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	EventAckOffer(ctx context.Context, db DBTX, arg EventAckOfferParams) error
 	EventAckOutcomeHistory(ctx context.Context, db DBTX, arg EventAckOutcomeHistoryParams) ([]EventAcknowledgmentOutcome, error)
+	EventAckOutcomeHistoryPage(ctx context.Context, db DBTX, arg EventAckOutcomeHistoryPageParams) ([]EventAcknowledgmentOutcome, error)
 	EventAckOutcomePrune(ctx context.Context, db DBTX, batchLimit int32) error
 	EventAckOutcomeRecord(ctx context.Context, db DBTX, arg EventAckOutcomeRecordParams) error
 	EventAckPhase(ctx context.Context, db DBTX, arg EventAckPhaseParams) error

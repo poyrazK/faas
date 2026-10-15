@@ -570,6 +570,8 @@ export type { EnvironmentWorkloadSource } from './models/EnvironmentWorkloadSour
 export type { EnvScope } from './models/EnvScope.js';
 export type { ErrorNewWebhookPayload } from './models/ErrorNewWebhookPayload.js';
 export type { EventAcknowledgmentHistory } from './models/EventAcknowledgmentHistory.js';
+export type { EventAcknowledgmentHistoryPage } from './models/EventAcknowledgmentHistoryPage.js';
+export type { EventAcknowledgmentHistoryQuery } from './models/EventAcknowledgmentHistoryQuery.js';
 export type { EventAcknowledgmentOutcome } from './models/EventAcknowledgmentOutcome.js';
 export type { EventAcknowledgmentPolicy } from './models/EventAcknowledgmentPolicy.js';
 export type { EventAcknowledgmentPolicyRequest } from './models/EventAcknowledgmentPolicyRequest.js';

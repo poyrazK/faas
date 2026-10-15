@@ -1115,6 +1115,10 @@ from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_acknowledgment_history import EventAcknowledgmentHistory
 from .event_acknowledgment_history_coverage import EventAcknowledgmentHistoryCoverage
+from .event_acknowledgment_history_page import EventAcknowledgmentHistoryPage
+from .event_acknowledgment_history_page_coverage import EventAcknowledgmentHistoryPageCoverage
+from .event_acknowledgment_history_query import EventAcknowledgmentHistoryQuery
+from .event_acknowledgment_history_query_kind import EventAcknowledgmentHistoryQueryKind
 from .event_acknowledgment_outcome import EventAcknowledgmentOutcome
 from .event_acknowledgment_outcome_kind import EventAcknowledgmentOutcomeKind
 from .event_acknowledgment_policy import EventAcknowledgmentPolicy
@@ -1811,6 +1815,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
 from .list_event_execution_lineage_retry_job_controls_credential_type import (
@@ -5774,6 +5779,10 @@ __all__ = (
     "ErrorNewWebhookPayload",
     "EventAcknowledgmentHistory",
     "EventAcknowledgmentHistoryCoverage",
+    "EventAcknowledgmentHistoryPage",
+    "EventAcknowledgmentHistoryPageCoverage",
+    "EventAcknowledgmentHistoryQuery",
+    "EventAcknowledgmentHistoryQueryKind",
     "EventAcknowledgmentOutcome",
     "EventAcknowledgmentOutcomeKind",
     "EventAcknowledgmentPolicy",
@@ -6434,6 +6443,7 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
     "ListEventExecutionLineageRetryJobControlsCredentialType",

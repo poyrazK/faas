@@ -20230,3 +20230,16 @@ AND i.headers->>'x-gregale-event-subscription-id'=sqlc.arg(subscription_id)::tex
 AND (sqlc.arg(delivery_id)::text='' OR i.id::text=sqlc.arg(delivery_id)::text)
 AND o.retain_until>clock_timestamp()
 ORDER BY o.last_at DESC,o.invocation_id,o.attempt,o.replay_generation,o.kind LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: EventAckOutcomeHistoryPage :many
+SELECT o.* FROM event_acknowledgment_outcomes o JOIN invocations i ON i.id=o.invocation_id
+JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted'
+AND i.headers->>'x-gregale-event-subscription-id'=sqlc.arg(subscription_id)::text
+AND (sqlc.arg(delivery_id)::text='' OR i.id::text=sqlc.arg(delivery_id)::text)
+AND (sqlc.arg(kind_filter)::text='' OR o.kind=sqlc.arg(kind_filter)::text)
+AND o.retain_until>clock_timestamp() AND o.first_at<=sqlc.arg(cutoff)::timestamptz
+AND (sqlc.narg(from_at)::timestamptz IS NULL OR o.first_at>=sqlc.narg(from_at)::timestamptz)
+AND (sqlc.narg(until_at)::timestamptz IS NULL OR o.first_at<sqlc.narg(until_at)::timestamptz)
+AND (NOT sqlc.arg(has_after)::boolean OR (o.first_at,o.invocation_id,o.attempt,o.replay_generation,o.kind)<(sqlc.arg(after_at)::timestamptz,sqlc.arg(after_id)::uuid,sqlc.arg(after_attempt)::integer,sqlc.arg(after_generation)::bigint,sqlc.arg(after_kind)::text))
+ORDER BY o.first_at DESC,o.invocation_id DESC,o.attempt DESC,o.replay_generation DESC,o.kind DESC LIMIT sqlc.arg(row_limit)::integer;

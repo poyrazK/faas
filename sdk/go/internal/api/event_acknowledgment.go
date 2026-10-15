@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -112,6 +113,52 @@ func (c *Client) ListEventAcknowledgmentHistory(ctx context.Context, app, sub, d
 	path := "/v1/apps/" + url.PathEscape(app) + "/event-subscriptions/" + url.PathEscape(sub) + "/acknowledgment-history"
 	if deliveryID != "" {
 		path += "?invocation_id=" + url.QueryEscape(deliveryID)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+// Time filters select groups by immutable first occurrence, not individual operations.
+type EventAcknowledgmentHistoryQuery struct {
+	InvocationID string     `json:"invocation_id,omitempty"`
+	Kind         string     `json:"kind,omitempty"`
+	From         *time.Time `json:"from,omitempty"`
+	Until        *time.Time `json:"until,omitempty"`
+	Limit        int        `json:"limit,omitempty"`
+	Cursor       string     `json:"cursor,omitempty"`
+}
+type EventAcknowledgmentHistoryPage struct {
+	Outcomes   []EventAcknowledgmentOutcome `json:"outcomes"`
+	HasMore    bool                         `json:"has_more"`
+	NextCursor string                       `json:"next_cursor,omitempty"`
+	Cutoff     time.Time                    `json:"cutoff"`
+	Coverage   string                       `json:"coverage"`
+}
+
+func (c *Client) ListEventAcknowledgmentHistoryPage(ctx context.Context, app, sub string, query EventAcknowledgmentHistoryQuery) (EventAcknowledgmentHistoryPage, error) {
+	var out EventAcknowledgmentHistoryPage
+	values := url.Values{}
+	if query.InvocationID != "" {
+		values.Set("invocation_id", query.InvocationID)
+	}
+	if query.Kind != "" {
+		values.Set("kind", query.Kind)
+	}
+	if query.From != nil {
+		values.Set("from", query.From.Format(time.RFC3339Nano))
+	}
+	if query.Until != nil {
+		values.Set("until", query.Until.Format(time.RFC3339Nano))
+	}
+	if query.Limit != 0 {
+		values.Set("limit", strconv.Itoa(query.Limit))
+	}
+	if query.Cursor != "" {
+		values.Set("cursor", query.Cursor)
+	}
+	path := "/v1/apps/" + url.PathEscape(app) + "/event-subscriptions/" + url.PathEscape(sub) + "/acknowledgment-history/pages"
+	if len(values) > 0 {
+		path += "?" + values.Encode()
 	}
 	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err

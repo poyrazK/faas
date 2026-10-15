@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -121,4 +123,64 @@ func (s *Service) ListEventAcknowledgmentHistory(w http.ResponseWriter, r *http.
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+func parseAcknowledgmentHistoryQuery(r *http.Request) (api.EventAcknowledgmentHistoryQuery, error) {
+	v := r.URL.Query()
+	q := api.EventAcknowledgmentHistoryQuery{InvocationID: v.Get("invocation_id"), Kind: v.Get("kind"), Cursor: v.Get("cursor")}
+	if raw := v.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > api.EventAcknowledgmentHistoryLimit {
+			return q, state.ErrInvalidArgument
+		}
+		q.Limit = n
+	}
+	for key, target := range map[string]**time.Time{"from": &q.From, "until": &q.Until} {
+		if raw := v.Get(key); raw != "" {
+			t, err := time.Parse(time.RFC3339Nano, raw)
+			if err != nil {
+				return q, state.ErrInvalidArgument
+			}
+			*target = &t
+		}
+	}
+	return q, nil
+}
+func (s *Service) ListEventAcknowledgmentHistoryPage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventSubscriptionControlTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.Host.Store().(state.EventAcknowledgmentHistoryPageStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("acknowledgment history page"))
+		return
+	}
+	query, err := parseAcknowledgmentHistoryQuery(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("provide a valid history cursor, limit, outcome kind and RFC3339 time range"))
+		return
+	}
+	out, err := store.ListEventAcknowledgmentHistoryPage(ctx, acct.ID, app.ID, r.PathValue("subscriptionID"), query)
+	if writeAcknowledgmentHistoryPageError(w, err) {
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+func writeAcknowledgmentHistoryPageError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.ErrValidation("provide a valid, unexpired history cursor with matching scope, filters and page size"))
+		return true
+	case errors.Is(err, context.DeadlineExceeded):
+		api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout, api.CodeInternal, "History read timed out", "retry the page with the same filters and cursor"))
+		return true
+	default:
+		return writeAcknowledgmentError(w, err)
+	}
 }

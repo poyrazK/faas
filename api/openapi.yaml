@@ -49718,6 +49718,67 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages:
+    get:
+      tags: [events]
+      operationId: listEventAcknowledgmentHistoryPage
+      summary: Page through retained acknowledgment outcome groups.
+      description: 'Requires apps:read or admin. Orders immutable first occurrence and identity fields descending so renewals cannot move groups between pages. A fixed first-page cutoff excludes later-created groups. Counts and last_at remain live; deletion, retention and initially uncommitted inserts prevent a database snapshot guarantee. Filters select groups by first_at, not individual occurrences. Repeat all filters and the page size with the cursor. Cursors expire one hour after the cutoff and grant no authority. The existing acknowledgment-history operation keeps its latest-update ordering.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug owning the paginated outcome view.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Consumer subscription used to bind page cursors.
+          schema: { type: string, format: uuid }
+        - name: invocation_id
+          in: query
+          description: Restrict all pages to the specified delivery UUID.
+          schema: { type: string, format: uuid }
+        - name: kind
+          in: query
+          description: Restrict pages to one deferred outcome kind.
+          schema: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired] }
+        - name: from
+          in: query
+          description: Inclusive first occurrence lower bound, normalized to UTC microseconds.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive first occurrence upper bound, normalized to UTC microseconds.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Maximum groups per page, fixed for the cursor traversal.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: cursor
+          in: query
+          description: Opaque continuation bound to account, application, consumer, filters and page size.
+          schema: { type: string, maxLength: 2048 }
+      responses:
+        '200':
+          description: Retained outcome page with stable ordering and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentHistoryPage' }
+        '400':
+          description: Invalid, expired or mismatched history page cursor or filters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Paginated acknowledgment read exceeded its request deadline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history:
     get:
       tags: [events]
@@ -50532,6 +50593,30 @@ components:
         last_at: { type: string, format: date-time, description: Database time of the latest retained occurrence. }
         occurrences: { type: integer, format: int64, minimum: 1, maximum: 2147483647, description: Coalesced count saturating at the documented maximum. }
         retain_until: { type: string, format: date-time, description: Fixed history expiry anchored to the attempt deadline. }
+    EventAcknowledgmentHistoryQuery:
+      type: object
+      description: Scope-bound page options selecting coalesced groups by first occurrence.
+      properties:
+        invocation_id: { type: string, format: uuid, description: Delivery filter shared by every continuation request. }
+        kind: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired], description: Outcome kind shared by the page traversal. }
+        from: { type: string, format: date-time, description: Inclusive first_at bound for the traversal. }
+        until: { type: string, format: date-time, description: Exclusive first_at bound for the traversal. }
+        limit: { type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding. }
+        cursor: { type: string, maxLength: 2048, description: Previous page continuation retaining its initial cutoff. }
+    EventAcknowledgmentHistoryPage:
+      type: object
+      description: Bounded page of coalesced outcomes ordered by immutable group identity.
+      required: [outcomes, has_more, cutoff, coverage]
+      properties:
+        outcomes:
+          type: array
+          maxItems: 100
+          description: Groups ordered by first_at, invocation UUID, attempt, generation and kind descending.
+          items: { $ref: '#/components/schemas/EventAcknowledgmentOutcome' }
+        has_more: { type: boolean, description: Another retained matching group existed in this read. }
+        next_cursor: { type: string, maxLength: 2048, description: Continuation emitted only when has_more is true. }
+        cutoff: { type: string, format: date-time, description: Fixed initial read time excluding groups with later first occurrences. }
+        coverage: { type: string, enum: [retained_coalesced_deferred_outcomes], description: Retained diagnostic groups with live aggregate values and no historical snapshot guarantee. }
     EventAcknowledgmentHistory:
       type: object
       description: Most recently updated retained outcome groups for a scoped consumer.

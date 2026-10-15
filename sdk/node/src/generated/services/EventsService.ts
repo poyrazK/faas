@@ -12,6 +12,7 @@ import type { ControlEventExecutionLineageRetryJobRequest } from '../models/Cont
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
 import type { EventAcknowledgmentHistory } from '../models/EventAcknowledgmentHistory.js';
+import type { EventAcknowledgmentHistoryPage } from '../models/EventAcknowledgmentHistoryPage.js';
 import type { EventAcknowledgmentPolicy } from '../models/EventAcknowledgmentPolicy.js';
 import type { EventAcknowledgmentPolicyRequest } from '../models/EventAcknowledgmentPolicyRequest.js';
 import type { EventAcknowledgmentRequest } from '../models/EventAcknowledgmentRequest.js';
@@ -5228,6 +5229,79 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Page through retained acknowledgment outcome groups.
+   * Requires apps:read or admin. Orders immutable first occurrence and identity fields descending so renewals cannot move groups between pages. A fixed first-page cutoff excludes later-created groups. Counts and last_at remain live; deletion, retention and initially uncommitted inserts prevent a database snapshot guarantee. Filters select groups by first_at, not individual occurrences. Repeat all filters and the page size with the cursor. Cursors expire one hour after the cutoff and grant no authority. The existing acknowledgment-history operation keeps its latest-update ordering.
+   * @returns EventAcknowledgmentHistoryPage Retained outcome page with stable ordering and an optional continuation cursor.
+   * @throws ApiError
+   */
+  public static listEventAcknowledgmentHistoryPage({
+    slug,
+    subscriptionId,
+    invocationId,
+    kind,
+    from,
+    until,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * Application slug owning the paginated outcome view.
+     */
+    slug: string,
+    /**
+     * Consumer subscription used to bind page cursors.
+     */
+    subscriptionId: string,
+    /**
+     * Restrict all pages to the specified delivery UUID.
+     */
+    invocationId?: string,
+    /**
+     * Restrict pages to one deferred outcome kind.
+     */
+    kind?: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired',
+    /**
+     * Inclusive first occurrence lower bound, normalized to UTC microseconds.
+     */
+    from?: string,
+    /**
+     * Exclusive first occurrence upper bound, normalized to UTC microseconds.
+     */
+    until?: string,
+    /**
+     * Maximum groups per page, fixed for the cursor traversal.
+     */
+    limit?: number,
+    /**
+     * Opaque continuation bound to account, application, consumer, filters and page size.
+     */
+    cursor?: string,
+  }): CancelablePromise<EventAcknowledgmentHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'invocation_id': invocationId,
+        'kind': kind,
+        'from': from,
+        'until': until,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `Invalid, expired or mismatched history page cursor or filters.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Paginated acknowledgment read exceeded its request deadline.`,
       },
     });
   }

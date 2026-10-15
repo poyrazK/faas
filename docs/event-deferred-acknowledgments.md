@@ -191,3 +191,32 @@ The ledger starts empty at rollout and reconstructs no prior operations.
 The health field `renewal_failure_coverage=not_recorded` remains unchanged because
 that aggregate does not yet read the ledger. Groups spanning a window boundary
 cannot serve as precise windowed failure-rate denominators.
+
+## Paginated outcome investigation
+
+Use `GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages`
+for investigations exceeding the original latest-update view. That original
+endpoint and its ordering remain unchanged. The new Go method is
+`ListEventAcknowledgmentHistoryPage(ctx, app, subscription, query)`; generated
+Node and Python clients expose the same operation.
+
+Optional filters are `invocation_id`, `kind`, `from` (inclusive), and `until`
+(exclusive). Time bounds select a group's **first occurrence**, normalize to UTC
+microseconds, and require `from < until` when both are supplied. They do not
+select individual renewals within a coalesced group. `limit` defaults to 100 and
+accepts 1–100. A page returns `has_more`, `next_cursor` when more groups exist,
+and the initial `cutoff`. Request the next page with that cursor and the same
+filters and effective page size. Cursors are bound to account, application,
+consumer and normalized options, expire one hour after the cutoff, and never
+grant access without the normal application read authorization. Invalid,
+expired and mismatched cursors return HTTP 400.
+
+Pages order `(first_at, invocation_id, attempt, replay_generation, kind)`
+descending, using an exclusive continuation boundary and a fixed first-page
+cutoff. These fields are immutable, so ongoing renewals cannot move a group
+between pages. Groups first recorded after the cutoff are excluded. Counts and
+`last_at` remain live and may include operations after the cutoff; this is not
+an exported database snapshot. Retention and invocation deletion can remove
+groups between pages, and an insert uncommitted at the initial read may become
+visible later if its first timestamp precedes the cutoff. Refresh without a
+cursor to begin a new traversal. No events or tokens are copied into the cursor.

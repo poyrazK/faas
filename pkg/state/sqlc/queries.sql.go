@@ -14188,6 +14188,83 @@ func (q *Queries) EventAckOutcomeHistory(ctx context.Context, db DBTX, arg Event
 	return items, nil
 }
 
+const eventAckOutcomeHistoryPage = `-- name: EventAckOutcomeHistoryPage :many
+SELECT o.invocation_id, o.attempt, o.replay_generation, o.kind, o.first_at, o.last_at, o.occurrences, o.retain_until FROM event_acknowledgment_outcomes o JOIN invocations i ON i.id=o.invocation_id
+JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid AND a.status<>'deleted'
+AND i.headers->>'x-gregale-event-subscription-id'=$3::text
+AND ($4::text='' OR i.id::text=$4::text)
+AND ($5::text='' OR o.kind=$5::text)
+AND o.retain_until>clock_timestamp() AND o.first_at<=$6::timestamptz
+AND ($7::timestamptz IS NULL OR o.first_at>=$7::timestamptz)
+AND ($8::timestamptz IS NULL OR o.first_at<$8::timestamptz)
+AND (NOT $9::boolean OR (o.first_at,o.invocation_id,o.attempt,o.replay_generation,o.kind)<($10::timestamptz,$11::uuid,$12::integer,$13::bigint,$14::text))
+ORDER BY o.first_at DESC,o.invocation_id DESC,o.attempt DESC,o.replay_generation DESC,o.kind DESC LIMIT $15::integer
+`
+
+type EventAckOutcomeHistoryPageParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  string
+	DeliveryID      string
+	KindFilter      string
+	Cutoff          pgtype.Timestamptz
+	FromAt          pgtype.Timestamptz
+	UntilAt         pgtype.Timestamptz
+	HasAfter        bool
+	AfterAt         pgtype.Timestamptz
+	AfterID         pgtype.UUID
+	AfterAttempt    int32
+	AfterGeneration int64
+	AfterKind       string
+	RowLimit        int32
+}
+
+func (q *Queries) EventAckOutcomeHistoryPage(ctx context.Context, db DBTX, arg EventAckOutcomeHistoryPageParams) ([]EventAcknowledgmentOutcome, error) {
+	rows, err := db.Query(ctx, eventAckOutcomeHistoryPage,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.DeliveryID,
+		arg.KindFilter,
+		arg.Cutoff,
+		arg.FromAt,
+		arg.UntilAt,
+		arg.HasAfter,
+		arg.AfterAt,
+		arg.AfterID,
+		arg.AfterAttempt,
+		arg.AfterGeneration,
+		arg.AfterKind,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventAcknowledgmentOutcome{}
+	for rows.Next() {
+		var i EventAcknowledgmentOutcome
+		if err := rows.Scan(
+			&i.InvocationID,
+			&i.Attempt,
+			&i.ReplayGeneration,
+			&i.Kind,
+			&i.FirstAt,
+			&i.LastAt,
+			&i.Occurrences,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventAckOutcomePrune = `-- name: EventAckOutcomePrune :exec
 DELETE FROM event_acknowledgment_outcomes WHERE (invocation_id,attempt,replay_generation,kind) IN (
  SELECT invocation_id,attempt,replay_generation,kind FROM event_acknowledgment_outcomes
