@@ -91,6 +91,21 @@ Prototype (`TestMetalFreezeThawCycle`, this ADR): see "Prototype results".
 6. **Host swap is compressed and memory-only.** Compute hosts get zswap with
    writeback disabled for tenant slices. Without it, freezing still reclaims
    clean file pages; the frozen budget measures what is actually resident.
+   (Amended 2026-10-15, as built: the `zswap` Ansible role, off by default
+   per host, enables zswap with lz4 and no shrinker in front of a swapfile
+   that only provides slots, sets `memory.zswap.writeback=0` and
+   `MemoryZSwapMax` on `faas-tenant.slice`, and `MemorySwapMax=0` on the
+   control-plane, builder, system and user slices. vmmd writes
+   `memory.swap.max=0` on every running VM and opens swap only while a VM is
+   frozen, and only when it finds zswap enabled, a swap device and writeback
+   disabled on an ancestor of the VM's cgroup; the fence keeps the value. A
+   freeze does not reclaim by default, so a thaw stays fast. Under memory
+   pressure schedd first asks vmmd to compress a frozen VM (FreezeInstance
+   with reclaim on a frozen instance): if that frees at least half its
+   memory, the VM stays frozen and its reservation books the smaller
+   footprint; otherwise, or on a host without the role
+   (`frozen_compress_unavailable`), it parks as before.
+   `schedd_frozen_compress_total{outcome}` counts the outcomes.)
 7. **Reclaim asks only for what can go.** vmmd requests the cgroup's file
    pages, plus its anonymous pages when the cgroup can swap, in 16 MiB
    chunks, and stops at the first `EAGAIN` or after 2 s. On the swapless n2
@@ -102,7 +117,8 @@ Prototype (`TestMetalFreezeThawCycle`, this ADR): see "Prototype results".
 1. vmmd `Manager.Freeze` / `Thaw` and `JailerVMM.PauseVM` /
    `ReclaimVMMemory`, with unit and metal tests. This is the prototype.
 2. Host zswap (`systemd_slices` / `host_hardening` roles) with
-   `memory.zswap.writeback = 0` on tenant slices.
+   `memory.zswap.writeback = 0` on tenant slices. (Built 2026-10-15 as the
+   `zswap` role; see decision 6.)
 3. vmmd RPC, schedd `frozen` state (CHECK constraint, migration), frozen
    budget and TTL in `pkg/api/limits.go`, gateway thaw path, metrics
    (`vmmd_freeze_seconds`, `vmmd_thaw_seconds`, `node_frozen_resident_bytes`).

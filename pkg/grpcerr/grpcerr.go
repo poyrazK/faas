@@ -77,7 +77,7 @@ func codeToGRPC(code string) codes.Code {
 		// stale route and wakes the instance through schedd.
 		return codes.Unavailable
 	case api.CodeBeforeCheckpointFailed, api.CodeDatabaseCutoverFenced, api.CodeEnvironmentQualificationUnconfirmed,
-		api.CodeInstanceNotFreezable, api.CodeInstanceBusy, api.CodeFrozenInstanceRefused:
+		api.CodeInstanceNotFreezable, api.CodeInstanceBusy, api.CodeFrozenInstanceRefused, api.CodeFrozenCompressUnavailable:
 		return codes.FailedPrecondition
 	case api.CodeBillingPastDue,
 		api.CodeUnauthorized:
