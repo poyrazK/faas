@@ -3294,6 +3294,20 @@
     "kind": "operational"
   },
   {
+    "table": "event_acknowledgment_metric_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "kind",
+      "occurrences",
+      "retain_until",
+      "saturated",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_acknowledgment_outcomes",
     "columns": [
       "attempt",
