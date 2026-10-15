@@ -118,3 +118,22 @@ after continuation ownership is established is rejected.
 Bundle integrity and portability do not waive native source/configuration checks,
 budget ceilings, incomplete evidence or cleanup/reconciliation failures. Shared
 claims coordinate only workers using the same claim store.
+
+
+## Campaign cancellation and cleanup recovery (2026-10-15)
+
+A plan-bound durable cancellation request stops new scheduling and drains active
+native batches. The scheduler persists halted state without replacing completed
+receipts; interrupted or incomplete runs retain uncertain status. Reconciliation
+is required for continuation, with existing attempted-budget reservations.
+
+An explicit cleanup command defaults to inspection and requires an inactive,
+unsealed, owned campaign. It validates the saved plan, manifest, policy, report,
+terminal native run identities, configuration and revision, and recorded workload
+app IDs. All live identities are inspected before mutations and rechecked before
+session deletion. Only the recorded run workspace may be deleted. Missing or
+changed identities fail closed. The session API has no conditional delete by
+app ID, so a final lookup/deletion race remains bounded by the unique native
+run namespace. Shared import claims and runner locks protect normal campaign
+ownership. Raw receipts remain immutable; observations cannot waive fixture or
+consumer cleanup failures or refund execution cost.

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"time"
 )
 
 type testCampaignBatchLauncher func(context.Context,testCampaignCostBatch,string) error
@@ -41,6 +42,7 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 	}
 	if _,err := os.Lstat(filepath.Join(directory,testCampaignHandoffName)); !os.IsNotExist(err) { return errors.New("campaign ownership was handed off") }
 	path := filepath.Join(directory,"checkpoint.json")
+	if err:=testCampaignCancellationRequested(directory,plan);err!=nil { checkpoint.Halted=true; if writeErr:=writeTestCampaignJSON(path,checkpoint);writeErr!=nil{return writeErr};return err }
 	allowed := make(map[string]testCampaignCostBatch)
 	for _, batch := range plan.Batches { if batch.Side == checkpoint.Side { allowed[batch.ID] = batch } }
 	for id, saved := range checkpoint.Batches {
@@ -54,13 +56,27 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 	results := make(chan result,concurrency)
 	next,active := 0,0
 	var stopped error
+	ticker:=time.NewTicker(250*time.Millisecond)
+	defer ticker.Stop()
+	checkCancellation:=func(){
+		if stopped!=nil{return}
+		if err:=testCampaignCancellationRequested(directory,plan);err!=nil{
+			checkpoint.Halted=true
+			stopped=err
+			if err:=writeTestCampaignJSON(path,checkpoint);err!=nil{stopped=err}
+		}
+	}
 	for next < len(plan.Batches) || active > 0 {
 		for stopped == nil && ctx.Err() == nil && active < concurrency && next < len(plan.Batches) {
+			checkCancellation()
+			if stopped!=nil{break}
 			batch := plan.Batches[next]
 			next++
 			if batch.Side != checkpoint.Side { continue }
 			if _, done := checkpoint.Batches[batch.ID]; done { continue }
 			if err := guard(batch); err != nil { stopped = err; break }
+			checkCancellation()
+			if stopped!=nil{break}
 			if _, err := os.Lstat(filepath.Join(directory,"batch-"+batch.ID+".json")); !os.IsNotExist(err) {
 				stopped = errors.New("uncheckpointed batch output exists; refusing to overwrite or repeat it")
 				break
@@ -73,7 +89,14 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 		}
 		if ctx.Err() != nil && stopped == nil { stopped = ctx.Err() }
 		if active == 0 { break }
-		completed := <-results
+		var completed result
+		waiting:=true
+		for waiting {
+			select {
+			case completed= <-results: waiting=false
+			case <-ticker.C: checkCancellation()
+			}
+		}
 		active--
 		batch := completed.batch
 		hash, cleanup, err := validateTestCampaignBatchReport(filepath.Join(directory,"batch-"+batch.ID+".json"),batch,scenarios[batch.Scenario],checkpoint.Revision)
@@ -99,6 +122,7 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 		checkpoint.Batches[batch.ID] = saved
 		if err := writeTestCampaignJSON(path,checkpoint); err != nil && stopped == nil { stopped = err }
 	}
+	checkCancellation()
 	return stopped
 }
 

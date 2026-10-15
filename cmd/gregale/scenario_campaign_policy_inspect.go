@@ -33,6 +33,7 @@ type testCampaignPolicyInspection struct {
 }
 
 func cmdTestPolicy(args []string) int {
+	if len(args)>0 && (args[0]=="cancel" || args[0]=="cleanup") { return cmdTestCampaignControl(args[0],args[1:]) }
 	if len(args)>0 && args[0]=="bundle" { return cmdTestCampaignBundle(args[1:]) }
 	if len(args) > 0 && args[0] == "status" { return cmdTestCampaignStatus(args[1:]) }
 	if len(args) > 0 && args[0] == "reconcile" { return cmdTestCampaignReconcile(args[1:]) }
@@ -44,7 +45,7 @@ func cmdTestPolicy(args []string) int {
 		return cmdTestPolicyPlan(args[1:])
 	}
 	if len(args) == 0 || (args[0] != "lint" && args[0] != "preview") {
-		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan, preflight, run, reconcile, status or bundle"))
+		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan, preflight, run, reconcile, status, bundle, cancel or cleanup"))
 	}
 	mode := args[0]
 	fs := newFlagSet("test policy "+mode, flag.ContinueOnError)
