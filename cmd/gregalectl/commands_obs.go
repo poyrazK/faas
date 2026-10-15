@@ -61,6 +61,8 @@ const subObsIncidents = "incidents"
 
 const subObsEvidence = "evidence"
 
+const subObsContext = "context"
+
 const subObsOverview = "overview"
 
 const subObsCapacity = "capacity"
@@ -80,7 +82,7 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|evidence|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|evidence|context|overview|capacity")
 		return 2
 	}
 	switch args[0] {
@@ -90,6 +92,8 @@ func cmdObsDispatch(args []string) int {
 		return cmdObsIncidents(args[1:])
 	case subObsEvidence:
 		return cmdObsEvidence(args[1:])
+	case subObsContext:
+		return cmdObsContext(args[1:])
 	case subObsOverview:
 		return cmdObsOverview(args[1:])
 	case subObsCapacity:

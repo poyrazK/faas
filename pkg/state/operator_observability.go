@@ -71,6 +71,7 @@ func operatorIncidentEvidenceLimit(limit int) int {
 // OperatorObservabilityReader keeps fleet projections bounded at their source.
 // Store embeds it so store adapters preserve these reads as well.
 type OperatorObservabilityReader interface {
+	OperatorIncidentContextReader
 	// OperatorOverview reads all overview projections from one consistent snapshot.
 	OperatorOverview(context.Context, time.Time) (api.ObsOverviewResponse, error)
 	OperatorAuditTraceCoverage(context.Context, time.Time) (float64, error)

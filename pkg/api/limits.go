@@ -8860,6 +8860,11 @@ const (
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100
+	ObsIncidentContextLimitDefault  = 25
+	ObsIncidentContextLimitMax      = 100
+	ObsIncidentContextWindow        = 24 * time.Hour
+	ObsIncidentContextCursorTTL     = 15 * time.Minute
+	ObsIncidentContextBudget        = 5 * time.Second
 
 	// Operator health has one shared Prometheus budget, including freshness
 	// reads, so an outage cannot multiply the per-query timeout by six.

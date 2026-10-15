@@ -988,6 +988,19 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  subObsContext,
+				Short: "Inspect current incident exposure and related evidence",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "limit", Short: "maximum related resources (1..100; default 25)"},
+					{Name: "history-limit", Short: "maximum related timeline entries (1..100; default 25)"},
+					{Name: "cursor", Short: "opaque next_cursor from this incident; expires after 15 minutes"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+				},
+			},
+			{
 				Name:  subObsEvidence,
 				Short: "Inspect current resource state and bounded incident history",
 				Flags: []cliFlag{

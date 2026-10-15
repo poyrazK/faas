@@ -2324,6 +2324,7 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 var storeDispatched = map[string]bool{
 	"OperatorAlertEpisodes":                         true,
 	"OperatorAlertEpisode":                          true,
+	"OperatorIncidentContext":                       true,
 	"OperatorAlertCollectionStatus":                 true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
@@ -2958,6 +2959,15 @@ func (s *Store) OperatorAlertEpisode(ctx context.Context, id string) (state.Oper
 		return o.OperatorAlertEpisode(ctx, id)
 	}
 	return s.Store.OperatorAlertEpisode(ctx, id)
+}
+
+func (s *Store) OperatorIncidentContext(ctx context.Context, f state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error) {
+	if o, ok := s.over.(interface {
+		OperatorIncidentContext(context.Context, state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error)
+	}); ok {
+		return o.OperatorIncidentContext(ctx, f)
+	}
+	return s.Store.OperatorIncidentContext(ctx, f)
 }
 func (s *Store) OperatorAlertCollectionStatus(ctx context.Context) (state.OperatorAlertCollection, error) {
 	if o, ok := s.over.(interface {

@@ -338,6 +338,23 @@ inspection path, and a runbook link. Use the existing `deployments`, `jobs`,
 and `compute-nodes` commands for explicit retry, cancellation, or drain
 actions after reviewing the inbox.
 
+Inspect an incident's current potential exposure and related evidence:
+
+```
+gregalectl obs context --incident compute_node/NODE_UUID
+gregalectl obs context --incident deployment/DEPLOYMENT_UUID --limit 25 --history-limit 25 --json
+gregalectl obs context --incident platform_alert/EPISODE_HASH --cursor OPAQUE_CURSOR --json
+```
+
+Counts cover the full current relationship set. Resource pages have a separate,
+bounded timeline covering the incident scope and returned resource IDs, with
+exact match metadata and trace links. `as_of` describes current relationships;
+`incident_observed_at` describes the incident. These relationships establish
+potential exposure, not historical impact or root cause. Unknown scope has
+null counts and an explicit reason. The 24-hour timeline window stays fixed
+while paging; cursors expire after fifteen minutes. Database failures return
+503, and retained alert context works without contacting Prometheus.
+
 ### Fleet overview and capacity
 
 Read the provider-wide KPI and placement snapshots without querying the

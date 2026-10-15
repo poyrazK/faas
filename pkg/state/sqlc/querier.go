@@ -2829,6 +2829,17 @@ type Querier interface {
 	// share one custom bucket, keeping the result bounded as the fleet grows.
 	// Aggregate instances before joining so app reservations are counted once.
 	OperatorCapacityProfiles(ctx context.Context, db DBTX, resourceProfiles []byte) ([]OperatorCapacityProfilesRow, error)
+	OperatorContextAccountExists(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
+	OperatorContextAppOwner(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
+	OperatorContextNodeExists(ctx context.Context, db DBTX, nodeID pgtype.UUID) (bool, error)
+	// Materialize the relationship set once: exact counts do not depend on the
+	// returned page. App scope takes precedence over node scope. No account-wide
+	// expansion and no recursive traversal through a shared node are permitted.
+	OperatorContextResources(ctx context.Context, db DBTX, arg OperatorContextResourcesParams) (OperatorContextResourcesRow, error)
+	OperatorContextRoot(ctx context.Context, db DBTX, arg OperatorContextRootParams) (OperatorContextRootRow, error)
+	// Bound each indexed source per verified target before merging. Account rows
+	// are deliberately excluded: an account match is not incident correlation.
+	OperatorContextTimeline(ctx context.Context, db DBTX, arg OperatorContextTimelineParams) ([]OperatorContextTimelineRow, error)
 	// Each branch uses an exact-resource index and is independently bounded before
 	// the merge. Payload references use the partial operator-resource index.
 	OperatorIncidentEvidence(ctx context.Context, db DBTX, arg OperatorIncidentEvidenceParams) ([]OperatorIncidentEvidenceRow, error)
