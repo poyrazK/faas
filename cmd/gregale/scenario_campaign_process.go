@@ -160,12 +160,12 @@ func runTestCampaignTrackedWorker(command *exec.Cmd, directory, batchID string) 
 		// A starting record is intentionally conservative even on launch failure.
 		return err
 	}
-	identity, identityErr := readTestCampaignProcessIdentity(command.Process.Pid)
-	if identityErr == nil {
-		record.Process, record.State = &identity, "started"
-		identityErr = persistTestCampaignProcess(path, record)
-	}
-	if identityErr != nil {
+	// Missing platform verification must block recovery, not ordinary execution.
+	// Persist the PID even when its domain/start identity cannot be established.
+	identity, _ := readTestCampaignProcessIdentity(command.Process.Pid)
+	identity.PID = command.Process.Pid
+	record.Process, record.State = &identity, "started"
+	if identityErr := persistTestCampaignProcess(path, record); identityErr != nil {
 		// Never return while an untracked child can continue doing work.
 		_ = command.Process.Kill()
 		_ = command.Wait()

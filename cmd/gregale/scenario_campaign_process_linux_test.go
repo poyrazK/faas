@@ -289,6 +289,15 @@ func TestCampaignRecoveryProcessIdentityGuards(t *testing.T) {
 	if err != nil || result.Recoverable || result.Workers[0].Status != "unverifiable" {
 		t.Fatalf("PID-less startup window permitted recovery: %+v %v", result, err)
 	}
+	record.State = "started"
+	record.Process = &testCampaignProcessIdentity{PID: os.Getpid()}
+	if err := writeTestCampaignJSON(filepath.Join(dir, "b.json"), record); err != nil {
+		t.Fatal(err)
+	}
+	result, err = releaseTestCampaignRunnerLock(f.directory, f.plan)
+	if err != nil || result.Recoverable || result.Workers[0].Status != "unverifiable" {
+		t.Fatalf("PID-only record permitted recovery: %+v %v", result, err)
+	}
 	if err := os.WriteFile(filepath.Join(f.directory, "runner.lock"), []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
