@@ -369,6 +369,11 @@ func (m *MemStore) Resize(_ context.Context, id string, shape Shape, at time.Tim
 	if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
 		return err
 	}
+	if standby, ok := m.nodes[vm.StandbyNode]; ok {
+		if err := standbyResizeFits(standby, usage[standby.ID], vm, shape); err != nil {
+			return err
+		}
+	}
 	var standby string
 	if shape.Replicated && !vm.Replicated {
 		nodes := make([]Node, 0, len(m.nodes))

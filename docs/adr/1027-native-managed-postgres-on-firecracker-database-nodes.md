@@ -1172,6 +1172,12 @@ shows a shape that matches no class.
   reports none. Joining production again before then reuses the slot.
 - **Driver.** `Update` now moves between any classes; it refused moves
   into and out of production before.
+- **Growing a production database's storage** is checked against the
+  standby's node too, which holds a second copy of the volume. Without
+  room there the resize is refused (`ErrNoCapacity`) and nothing changes.
+  The standby's volume grows at its next attach. A standby node that
+  drains or is unavailable is not checked, since its standby moves to a
+  node with room. The Postgres store locks both nodes in one order.
 - **Evidence.** Both stores' contract test covers:
   - placing the standby and counting its volume on its node;
   - refusing to drop replication while the standby runs;
@@ -1189,9 +1195,6 @@ Not yet done:
 - **Standby metering.** The standby's vCPUs and volume are allocated but
   not metered. Whether production is priced as two VMs or carried in its
   class price is an owner decision against the financial model.
-- **Storage resize of a production database** grows the standby's volume
-  at its next attach, but the standby node's volume capacity is not
-  checked at resize time.
 - **After every wake the primary runs asynchronous until its standby
   syncs**, typically a few seconds. A node loss in that window falls back
   to the archive (up to 60 s of loss), as for other classes.

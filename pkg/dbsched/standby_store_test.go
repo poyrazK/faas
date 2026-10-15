@@ -277,3 +277,46 @@ func TestStoreResizeChangesReplication(t *testing.T) {
 		})
 	}
 }
+
+// Growing a production database's volume needs room on its standby's
+// node too; a standby node that drains is not checked, since its standby
+// moves.
+func TestStoreResizeChecksTheStandbysNode(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx, at := factory(t), context.Background(), time.Now()
+			seedNodes(t, s,
+				Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 20 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 3 << 30, Lifecycle: NodeActive},
+			)
+			vm := newVM(1<<30, 384)
+			vm.Replicated = true
+			placed, err := s.Place(ctx, vm)
+			if err != nil || placed.StandbyNode != "db-b" {
+				t.Fatalf("placed %+v, %v", placed, err)
+			}
+			if err := s.Transition(ctx, placed.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			grown := Shape{VcpuCount: 1, MemMiB: 384, VolumeBytes: 4 << 30, Replicated: true}
+			if err := s.Resize(ctx, placed.DatabaseID, grown, at); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("growing past the standby's node = %v, want ErrNoCapacity", err)
+			}
+			if got, _ := s.Get(ctx, placed.DatabaseID); got.VolumeBytes != 1<<30 || got.ResizePending {
+				t.Fatalf("after the refusal: %+v", got)
+			}
+			fits := grown
+			fits.VolumeBytes = 3 << 30
+			if err := s.Resize(ctx, placed.DatabaseID, fits, at); err != nil {
+				t.Fatalf("growing to what the standby's node holds = %v", err)
+			}
+			seedNodes(t, s, Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 3 << 30, Lifecycle: NodeDraining})
+			if err := s.FinishResize(ctx, placed.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Resize(ctx, placed.DatabaseID, grown, at); err != nil {
+				t.Fatalf("growing with the standby's node draining = %v", err)
+			}
+		})
+	}
+}

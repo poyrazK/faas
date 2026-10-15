@@ -275,6 +275,20 @@ func resizeFits(node Node, u nodeUsage, vm VM, shape Shape) error {
 	return nil
 }
 
+// standbyResizeFits checks a replicated database's grown volume against
+// its standby's node, which holds a second copy. A standby node that is
+// draining or unavailable is not checked: the standby monitor replaces
+// that standby, on a node with room.
+func standbyResizeFits(standby Node, u nodeUsage, vm VM, shape Shape) error {
+	if !vm.Replicated || !shape.Replicated || vm.StandbyNode == "" || shape.VolumeBytes <= vm.VolumeBytes || standby.Lifecycle != NodeActive {
+		return nil
+	}
+	if standby.VolumeCapacityBytes-u.volumeBytes+vm.VolumeBytes < shape.VolumeBytes {
+		return fmt.Errorf("%w: the standby's node %s has no room for the larger volume", ErrNoCapacity, standby.ID)
+	}
+	return nil
+}
+
 // checkResize is what every store refuses before a resize.
 func checkResize(vm VM, shape Shape) error {
 	if vm.State != StateParked && vm.State != StateRunning {

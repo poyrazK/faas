@@ -474,6 +474,14 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		if vm.shape() == shape {
 			return VM{}, nil
 		}
+		// The primary's node and a kept standby's, in one order.
+		locked := []Node{{ID: vm.NodeID}}
+		if vm.Replicated && shape.Replicated && vm.StandbyNode != "" {
+			locked = append(locked, Node{ID: vm.StandbyNode})
+		}
+		if err := s.lockNodes(ctx, tx, locked...); err != nil {
+			return VM{}, err
+		}
 		row, err := s.q.LockDatabaseNode(ctx, tx, vm.NodeID)
 		if err != nil {
 			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.NodeID, err)
@@ -485,6 +493,16 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		}
 		if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
 			return VM{}, err
+		}
+		if len(locked) == 2 {
+			row, err := s.q.LockDatabaseNode(ctx, tx, vm.StandbyNode)
+			if err != nil {
+				return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.StandbyNode, err)
+			}
+			standby := Node{ID: row.ID, VolumeCapacityBytes: row.VolumeCapacityBytes, Lifecycle: row.Lifecycle}
+			if err := standbyResizeFits(standby, usage[standby.ID], vm, shape); err != nil {
+				return VM{}, err
+			}
 		}
 		var standby string
 		if shape.Replicated && !vm.Replicated {
