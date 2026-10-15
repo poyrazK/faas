@@ -353,6 +353,9 @@ var dtoExclude = map[string]bool{
 	"EventSubscriptionCapacityCommandsQuery": true,
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
+	// ADR-732: a fork's and a fork command's failure is an inline object
+	// of their responses in the spec, not a named schema.
+	"AppForkFailure": true,
 	// Edge-protection summary parts are inline objects of
 	// EdgeProtectionResponse in the spec, not named schemas.
 	"EdgeProtectionCount":     true,
@@ -1149,6 +1152,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_subscription_control.go"),
 		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
+		filepath.Join(root, "pkg", "api", "app_forks.go"),       // ADR-732 production forks
+		filepath.Join(root, "pkg", "api", "app_fork_execs.go"),  // ADR-732 fork exec
+		filepath.Join(root, "pkg", "api", "crash_snapshots.go"), // ADR-733 crash snapshots
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
