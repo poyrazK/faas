@@ -44,8 +44,8 @@ class EventConsumerDeliveryHealth:
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""
     processing: EventConsumerProcessingHealth | Unset = UNSET
-    """Current retained deferred invocation counts plus issue-to-completion latency of retained completed claims;
-    pruned history and rejected renewals are excluded."""
+    """Current retained deferred invocation gauges, retained completion latency and optional durable full-minute
+    renewal metrics with independent coverage."""
     capacity_pressure: EventConsumerCapacityPressure | Unset = UNSET
     """Read-only current live slot usage and effective capacity waiting reasons from one owned subscription
     snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after

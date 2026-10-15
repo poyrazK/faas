@@ -188,9 +188,10 @@ expired groups; scheduler ticks delete bounded batches, so cleanup may lag.
 Invocation pruning also deletes its groups; deleting a consumer removes access.
 The ledger starts empty at rollout and reconstructs no prior operations.
 `coverage=retained_coalesced_deferred_outcomes` describes these limits.
-The health field `renewal_failure_coverage=not_recorded` remains unchanged because
-that aggregate does not yet read the ledger. Groups spanning a window boundary
-cannot serve as precise windowed failure-rate denominators.
+The legacy health field `renewal_failure_coverage=not_recorded` remains unchanged
+for compatibility. The independent minute-bucket summary described below supplies
+windowed counts; coalesced groups spanning a window boundary cannot supply those
+denominators.
 
 ## Paginated outcome investigation
 
@@ -220,3 +221,57 @@ an exported database snapshot. Retention and invocation deletion can remove
 groups between pages, and an insert uncommitted at the initial read may become
 visible later if its first timestamp precedes the cutoff. Refresh without a
 cursor to begin a new traversal. No events or tokens are copied into the cursor.
+
+## Windowed renewal and expiry metrics
+
+The existing subscription delivery-health response now includes
+`processing.renewal_window` when supported by the server. The CLI's
+`events subscription-delivery-health` command displays the same summary, and
+Go, Node and Python SDKs expose its typed fields. Existing alerts and watch
+thresholds are unchanged.
+
+The summary selects only whole UTC minutes wholly inside the requested health
+window and excludes the open minute. Its own `window_start` and `window_end`
+are the effective bounds: a five-minute request at 12:05:30 summarizes
+12:01:00–12:05:00, not partial boundary minutes. Sub-minute requests can have an
+empty effective window; both rate fields are then absent. This alignment is
+independent of the retained completion-latency window and current-state gauges.
+
+Each consumer has at most three counters per minute: successful explicit
+renewals, current-token renewal rejections, and deferred-awaiting expiry
+transitions. Initial handoff, idempotent completion repeats, ordinary HTTP
+completions, malformed requests, wrong tokens and replaced-attempt tokens are
+not renewal samples. Authorization and infrastructure errors are not measured
+by this rejection fraction. Valid current-token conflicts after completion or lease
+expiry are samples. Expiries are counted when the scheduler transitions the
+expired attempt, not retrospectively at its lease deadline. Delayed commits
+can make previously closed buckets visible in a later read.
+
+`renewal_attempts = renewal_successes + renewal_rejections`.
+`renewal_rejection_fraction` divides rejections by these **recorded operations**;
+it is absent without samples. Repeated valid-token rejections are individual
+operations, not deduplicated deliveries. `lease_expiry_rate_per_second` divides
+expiry transitions by effective window seconds. It is an event frequency, not
+a delivery-failure probability. Counts saturate at 2,147,483,647 per bucket;
+`saturated=true` makes totals lower bounds and omits both rate fields.
+
+`coverage=recorded_full_minute_buckets` covers instrumented operations only.
+No pre-upgrade history is backfilled; a mixed-version rollout omits operations
+handled by older writers. Zero samples do not prove that no historical activity
+occurred. The parent `processing.complete` describes retained invocation gauges,
+not metric rollout completeness. The deprecated non-windowed
+`renewal_failure_coverage=not_recorded` field retains its old value for SDK
+compatibility; use the nested summary and its independent coverage instead.
+
+Counters contain account/app/consumer scope, minute, outcome kind, count,
+saturation and retention metadata only. They contain no invocation IDs, tokens,
+digests, payloads or customer error strings. Writes commit atomically with the
+existing acknowledgment transaction, including valid-token rejection diagnostics.
+Recording errors fail the operation instead of losing its counter. Shared
+expiry counters are acquired in account/app/consumer order within sweep batches.
+
+Retention ends 48 hours after bucket start, independently of invocation pruning.
+Reads exclude expired buckets immediately. Scheduler ticks prune bounded batches;
+physical cleanup can lag during outages. App/account deletion cascades metric
+removal. A deleted subscription does not prevent an already accepted delivery
+from completing: metric rows deliberately have no subscription foreign key.

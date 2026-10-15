@@ -286,6 +286,7 @@ func (m *MemStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (i
 			}
 		}
 	}
+	m.pruneAcknowledgmentMetricsLocked(now, limit)
 	count = 0
 	for id, ack := range m.eventAcknowledgments {
 		inv, ok := m.invocations[id]

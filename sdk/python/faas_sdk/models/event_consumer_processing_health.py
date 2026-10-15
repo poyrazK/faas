@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -17,13 +17,17 @@ from ..models.event_consumer_processing_health_renewal_failure_coverage import (
 )
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.event_acknowledgment_window_health import EventAcknowledgmentWindowHealth
+
+
 T = TypeVar("T", bound="EventConsumerProcessingHealth")
 
 
 @_attrs_define
 class EventConsumerProcessingHealth:
-    """Current retained deferred invocation counts plus issue-to-completion latency of retained completed claims; pruned
-    history and rejected renewals are excluded.
+    """Current retained deferred invocation gauges, retained completion latency and optional durable full-minute renewal
+    metrics with independent coverage.
 
     """
 
@@ -68,9 +72,13 @@ class EventConsumerProcessingHealth:
     """Maximum token-issue-to-completion seconds among acknowledgment samples; zero requires inspecting sample
     count."""
     renewal_failure_coverage: EventConsumerProcessingHealthRenewalFailureCoverage
-    """Rejected renewal calls are not durably recorded; no failure count is inferred."""
+    """Legacy non-windowed coverage marker retained for older clients; use renewal_window for durable recorded
+    operation counts."""
     oldest_processing_offered_at: datetime.datetime | Unset = UNSET
     """Oldest token issue time among live handed-off claims; includes initial dispatch time."""
+    renewal_window: EventAcknowledgmentWindowHealth | Unset = UNSET
+    """Recorded renewal and expiry operations in full UTC minute buckets; no pre-upgrade history or full rollout
+    completeness is inferred."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)
@@ -117,6 +125,10 @@ class EventConsumerProcessingHealth:
         if not isinstance(self.oldest_processing_offered_at, Unset):
             oldest_processing_offered_at = self.oldest_processing_offered_at.isoformat()
 
+        renewal_window: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.renewal_window, Unset):
+            renewal_window = self.renewal_window.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -145,11 +157,15 @@ class EventConsumerProcessingHealth:
         )
         if oldest_processing_offered_at is not UNSET:
             field_dict["oldest_processing_offered_at"] = oldest_processing_offered_at
+        if renewal_window is not UNSET:
+            field_dict["renewal_window"] = renewal_window
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_acknowledgment_window_health import EventAcknowledgmentWindowHealth
+
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
 
@@ -200,6 +216,13 @@ class EventConsumerProcessingHealth:
         else:
             oldest_processing_offered_at = datetime.datetime.fromisoformat(_oldest_processing_offered_at)
 
+        _renewal_window = d.pop("renewal_window", UNSET)
+        renewal_window: EventAcknowledgmentWindowHealth | Unset
+        if isinstance(_renewal_window, Unset):
+            renewal_window = UNSET
+        else:
+            renewal_window = EventAcknowledgmentWindowHealth.from_dict(_renewal_window)
+
         event_consumer_processing_health = cls(
             app_id=app_id,
             subscription_id=subscription_id,
@@ -222,6 +245,7 @@ class EventConsumerProcessingHealth:
             acknowledgment_latency_max_seconds=acknowledgment_latency_max_seconds,
             renewal_failure_coverage=renewal_failure_coverage,
             oldest_processing_offered_at=oldest_processing_offered_at,
+            renewal_window=renewal_window,
         )
 
         return event_consumer_processing_health

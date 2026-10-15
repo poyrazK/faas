@@ -294,5 +294,23 @@ func printEventConsumerProcessingHealth(p *api.EventConsumerProcessingHealth) {
 	if p.AcknowledgmentSamples > 0 {
 		latency = fmt.Sprintf("%.0fs", p.AcknowledgmentLatencyMaxSeconds)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Processing attempt age %.0fs | retained acknowledgment samples %d | maximum acknowledgment latency %s | renewal failures %s | coverage %s | complete %t | observed %s\n", p.OldestProcessingAgeSeconds, p.AcknowledgmentSamples, latency, oneLine(p.RenewalFailureCoverage), oneLine(p.Coverage), p.Complete, p.ObservedAt.Format(time.RFC3339))
+	renewalCoverage := p.RenewalFailureCoverage
+	if p.RenewalWindow != nil {
+		renewalCoverage = p.RenewalWindow.Coverage
+	}
+	_, _ = fmt.Fprintf(osStdout, "Processing attempt age %.0fs | retained acknowledgment samples %d | maximum acknowledgment latency %s | renewal failures %s | coverage %s | complete %t | observed %s\n", p.OldestProcessingAgeSeconds, p.AcknowledgmentSamples, latency, oneLine(renewalCoverage), oneLine(p.Coverage), p.Complete, p.ObservedAt.Format(time.RFC3339))
+	if p.RenewalWindow != nil {
+		printEventAcknowledgmentWindowHealth(p.RenewalWindow)
+	}
+}
+
+func printEventAcknowledgmentWindowHealth(p *api.EventAcknowledgmentWindowHealth) {
+	rejection, expiryRate := "unavailable", "unavailable"
+	if p.RenewalRejectionFraction != nil {
+		rejection = fmt.Sprintf("%.2f%%", *p.RenewalRejectionFraction*100)
+	}
+	if p.LeaseExpiryRatePerSecond != nil {
+		expiryRate = fmt.Sprintf("%.6f/s", *p.LeaseExpiryRatePerSecond)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Recorded renewal window %s to %s | successes %d | rejections %d / %d attempts (%s) | lease expiries %d (%s) | saturated %t | coverage %s\n", p.WindowStart.Format(time.RFC3339), p.WindowEnd.Format(time.RFC3339), p.RenewalSuccesses, p.RenewalRejections, p.RenewalAttempts, rejection, p.LeaseExpiries, expiryRate, p.Saturated, oneLine(p.Coverage))
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -200,21 +201,49 @@ func (s *PgStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (in
 	if err := q.EventAckOutcomePrune(ctx, tx, int32(limit)); err != nil {
 		return 0, err
 	}
+	if err := q.EventAckMetricPrune(ctx, tx, int32(limit)); err != nil {
+		return 0, err
+	}
 	rows, err := q.EventAckExpired(ctx, tx, int32(limit))
 	if err != nil {
 		return 0, err
 	}
+	// Preserve selection by lease expiry, but acquire shared metric/quota rows in scope order.
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.AccountID != b.AccountID {
+			return uuidString(a.AccountID) < uuidString(b.AccountID)
+		}
+		if a.AppID != b.AppID {
+			return uuidString(a.AppID) < uuidString(b.AppID)
+		}
+		asub, bsub := canonicalMemUUID(a.SubscriptionID), canonicalMemUUID(b.SubscriptionID)
+		if asub != bsub {
+			return asub < bsub
+		}
+		return uuidString(a.ID) < uuidString(b.ID)
+	})
+	previousAccount := ""
 	for _, row := range rows {
-		if err := recordAcknowledgmentOutcome(ctx, tx, uuidString(row.ID), "expired"); err != nil {
-			return 0, err
+		account := uuidString(row.AccountID)
+		if account != previousAccount {
+			// Lock even for unreserved attempts before touching this account's counters.
+			if err := q.EventAckMetricQuotaLock(ctx, tx, row.AccountID); err != nil {
+				return 0, err
+			}
+			previousAccount = account
 		}
 		if err := q.EventAckExpire(ctx, tx, sqlc.EventAckExpireParams{InvocationID: row.ID, MaxAttempts: row.MaxAttempts, RetryDelayMs: row.RetryDelayMs}); err != nil {
 			return 0, err
 		}
+		// Account quota precedes shared metric counters to avoid cross-app lock inversion.
 		if row.QuotaReserved {
 			if err := decrementAccountAsyncInflightTx(ctx, tx, uuidString(row.AccountID)); err != nil {
 				return 0, err
 			}
+		}
+		if err := recordAcknowledgmentOutcome(ctx, tx, uuidString(row.ID), "expired"); err != nil {
+			return 0, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

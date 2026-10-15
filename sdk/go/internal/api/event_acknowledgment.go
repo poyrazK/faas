@@ -67,27 +67,28 @@ func (c *Client) CompleteEventAcknowledgment(ctx context.Context, app, id string
 
 // Processing counts cover retained opted-in invocations, not pruned history.
 type EventConsumerProcessingHealth struct {
-	AppID                           string     `json:"app_id"`
-	SubscriptionID                  string     `json:"subscription_id"`
-	ObservedAt                      time.Time  `json:"observed_at"`
-	WindowStart                     time.Time  `json:"window_start"`
-	Coverage                        string     `json:"coverage"`
-	Complete                        bool       `json:"complete"`
-	Waiting                         int64      `json:"waiting"`
-	Delivering                      int64      `json:"delivering"`
-	Processing                      int64      `json:"processing"`
-	Expired                         int64      `json:"expired"`
-	Completed                       int64      `json:"completed"`
-	DeadLettered                    int64      `json:"dead_lettered"`
-	Failed                          int64      `json:"failed"`
-	Other                           int64      `json:"other"`
-	NearExpiry                      int64      `json:"near_expiry"`
-	NearExpirySeconds               int        `json:"near_expiry_seconds"`
-	OldestProcessingOfferedAt       *time.Time `json:"oldest_processing_offered_at,omitempty"`
-	OldestProcessingAgeSeconds      float64    `json:"oldest_processing_age_seconds"`
-	AcknowledgmentSamples           int64      `json:"acknowledgment_samples"`
-	AcknowledgmentLatencyMaxSeconds float64    `json:"acknowledgment_latency_max_seconds"`
-	RenewalFailureCoverage          string     `json:"renewal_failure_coverage"`
+	RenewalWindow                   *EventAcknowledgmentWindowHealth `json:"renewal_window,omitempty"`
+	AppID                           string                           `json:"app_id"`
+	SubscriptionID                  string                           `json:"subscription_id"`
+	ObservedAt                      time.Time                        `json:"observed_at"`
+	WindowStart                     time.Time                        `json:"window_start"`
+	Coverage                        string                           `json:"coverage"`
+	Complete                        bool                             `json:"complete"`
+	Waiting                         int64                            `json:"waiting"`
+	Delivering                      int64                            `json:"delivering"`
+	Processing                      int64                            `json:"processing"`
+	Expired                         int64                            `json:"expired"`
+	Completed                       int64                            `json:"completed"`
+	DeadLettered                    int64                            `json:"dead_lettered"`
+	Failed                          int64                            `json:"failed"`
+	Other                           int64                            `json:"other"`
+	NearExpiry                      int64                            `json:"near_expiry"`
+	NearExpirySeconds               int                              `json:"near_expiry_seconds"`
+	OldestProcessingOfferedAt       *time.Time                       `json:"oldest_processing_offered_at,omitempty"`
+	OldestProcessingAgeSeconds      float64                          `json:"oldest_processing_age_seconds"`
+	AcknowledgmentSamples           int64                            `json:"acknowledgment_samples"`
+	AcknowledgmentLatencyMaxSeconds float64                          `json:"acknowledgment_latency_max_seconds"`
+	RenewalFailureCoverage          string                           `json:"renewal_failure_coverage"`
 }
 
 // Repeated operations share a row; first/last timestamps bound the occurrences.
@@ -162,6 +163,23 @@ func (c *Client) ListEventAcknowledgmentHistoryPage(ctx context.Context, app, su
 	}
 	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
+}
+
+// Full-minute counts cover recorded operations since upgraded writers began recording.
+// Fractions describe recorded renewal operations, not unique deliveries.
+type EventAcknowledgmentWindowHealth struct {
+	WindowStart              time.Time `json:"window_start"`
+	WindowEnd                time.Time `json:"window_end"`
+	BucketSeconds            int       `json:"bucket_seconds"`
+	RetentionSeconds         int       `json:"retention_seconds"`
+	Coverage                 string    `json:"coverage"`
+	RenewalSuccesses         int64     `json:"renewal_successes"`
+	RenewalRejections        int64     `json:"renewal_rejections"`
+	RenewalAttempts          int64     `json:"renewal_attempts"`
+	LeaseExpiries            int64     `json:"lease_expiries"`
+	Saturated                bool      `json:"saturated"`
+	RenewalRejectionFraction *float64  `json:"renewal_rejection_fraction,omitempty"`
+	LeaseExpiryRatePerSecond *float64  `json:"lease_expiry_rate_per_second,omitempty"`
 }
 
 const EventProcessingNearExpiry = 30 * time.Second

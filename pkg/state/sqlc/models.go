@@ -2855,6 +2855,17 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
+type EventAcknowledgmentMetricBucket struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	BucketStart    pgtype.Timestamptz
+	Kind           string
+	Occurrences    int64
+	Saturated      bool
+	RetainUntil    pgtype.Timestamptz
+}
+
 type EventAcknowledgmentOutcome struct {
 	InvocationID     pgtype.UUID
 	Attempt          int32

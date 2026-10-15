@@ -38,6 +38,9 @@ func (s *PgStore) GetEventConsumerProcessingHealth(ctx context.Context, account,
 	out.AcknowledgmentSamples = row.AcknowledgmentSamples
 	out.AcknowledgmentLatencyMaxSeconds = row.AcknowledgmentLatencyMaxSeconds
 	setProcessingAge(&out)
+	if err := s.setAcknowledgmentMetricHealth(ctx, account, app, sub, window, &out); err != nil {
+		return api.EventConsumerProcessingHealth{}, err
+	}
 	return out, nil
 }
 func setProcessingAge(out *api.EventConsumerProcessingHealth) {
@@ -122,5 +125,6 @@ func (m *MemStore) GetEventConsumerProcessingHealth(ctx context.Context, account
 		}
 	}
 	setProcessingAge(&out)
+	m.setAcknowledgmentMetricHealthLocked(account, app, sub, window, &out)
 	return out, nil
 }

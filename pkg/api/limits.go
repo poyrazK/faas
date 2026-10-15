@@ -11150,3 +11150,7 @@ const EventAcknowledgmentHistoryRetention = 7 * 24 * time.Hour
 
 const EventAcknowledgmentHistoryCursorMaxBytes = 2048
 const EventAcknowledgmentHistoryCursorLifetime = time.Hour
+
+const EventAcknowledgmentMetricBucket = time.Minute
+const EventAcknowledgmentMetricRetention = 48 * time.Hour
+const EventAcknowledgmentMetricCountMax int64 = 1<<31 - 1

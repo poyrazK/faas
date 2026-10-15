@@ -13965,7 +13965,7 @@ func (q *Queries) EventAckExpire(ctx context.Context, db DBTX, arg EventAckExpir
 }
 
 const eventAckExpired = `-- name: EventAckExpired :many
-SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
 WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
 ORDER BY i.lease_expires_at,i.id LIMIT $1::integer FOR UPDATE OF i SKIP LOCKED
 `
@@ -13979,6 +13979,7 @@ type EventAckExpiredRow struct {
 	QuotaReserved    bool
 	MaxAttempts      int32
 	RetryDelayMs     int64
+	SubscriptionID   string
 }
 
 func (q *Queries) EventAckExpired(ctx context.Context, db DBTX, batchLimit int32) ([]EventAckExpiredRow, error) {
@@ -13999,6 +14000,7 @@ func (q *Queries) EventAckExpired(ctx context.Context, db DBTX, batchLimit int32
 			&i.QuotaReserved,
 			&i.MaxAttempts,
 			&i.RetryDelayMs,
+			&i.SubscriptionID,
 		); err != nil {
 			return nil, err
 		}
@@ -14091,6 +14093,92 @@ func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg Event
 		&i.Result,
 	)
 	return i, err
+}
+
+const eventAckMetricHealth = `-- name: EventAckMetricHealth :one
+SELECT coalesce(sum(occurrences) FILTER (WHERE kind='renewed'),0)::bigint AS renewal_successes,
+ coalesce(sum(occurrences) FILTER (WHERE kind='renewal_rejected'),0)::bigint AS renewal_rejections,
+ coalesce(sum(occurrences) FILTER (WHERE kind='expired'),0)::bigint AS lease_expiries,
+ coalesce(bool_or(saturated),false)::boolean AS saturated
+FROM event_acknowledgment_metric_buckets
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND bucket_start>=$4::timestamptz AND bucket_start<$5::timestamptz
+ AND retain_until>clock_timestamp()
+ AND EXISTS(SELECT 1 FROM apps WHERE id=$2::uuid AND account_id=$1::uuid AND status<>'deleted')
+`
+
+type EventAckMetricHealthParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	WindowStart    pgtype.Timestamptz
+	WindowEnd      pgtype.Timestamptz
+}
+
+type EventAckMetricHealthRow struct {
+	RenewalSuccesses  int64
+	RenewalRejections int64
+	LeaseExpiries     int64
+	Saturated         bool
+}
+
+func (q *Queries) EventAckMetricHealth(ctx context.Context, db DBTX, arg EventAckMetricHealthParams) (EventAckMetricHealthRow, error) {
+	row := db.QueryRow(ctx, eventAckMetricHealth,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.WindowStart,
+		arg.WindowEnd,
+	)
+	var i EventAckMetricHealthRow
+	err := row.Scan(
+		&i.RenewalSuccesses,
+		&i.RenewalRejections,
+		&i.LeaseExpiries,
+		&i.Saturated,
+	)
+	return i, err
+}
+
+const eventAckMetricPrune = `-- name: EventAckMetricPrune :exec
+DELETE FROM event_acknowledgment_metric_buckets WHERE (account_id,app_id,subscription_id,bucket_start,kind) IN (
+ SELECT account_id,app_id,subscription_id,bucket_start,kind FROM event_acknowledgment_metric_buckets
+ WHERE retain_until<=clock_timestamp() ORDER BY retain_until LIMIT $1::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+func (q *Queries) EventAckMetricPrune(ctx context.Context, db DBTX, batchLimit int32) error {
+	_, err := db.Exec(ctx, eventAckMetricPrune, batchLimit)
+	return err
+}
+
+const eventAckMetricQuotaLock = `-- name: EventAckMetricQuotaLock :exec
+SELECT account_id FROM account_async_quota WHERE account_id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) EventAckMetricQuotaLock(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, eventAckMetricQuotaLock, accountID)
+	return err
+}
+
+const eventAckMetricRecord = `-- name: EventAckMetricRecord :exec
+WITH clock AS MATERIALIZED (SELECT date_trunc('minute',clock_timestamp(),'UTC')::timestamptz AS bucket_start)
+INSERT INTO event_acknowledgment_metric_buckets AS b (account_id,app_id,subscription_id,bucket_start,kind,occurrences,saturated,retain_until)
+SELECT i.account_id,i.app_id,(i.headers->>'x-gregale-event-subscription-id')::uuid,c.bucket_start,$1::text,1,false,c.bucket_start+$2::integer*interval '1 second'
+FROM invocations i CROSS JOIN clock c WHERE i.id=$3::uuid
+ON CONFLICT(account_id,app_id,subscription_id,bucket_start,kind) DO UPDATE
+SET occurrences=least(b.occurrences+1,2147483647),saturated=b.saturated OR b.occurrences>=2147483647
+`
+
+type EventAckMetricRecordParams struct {
+	Kind             string
+	RetentionSeconds int32
+	InvocationID     pgtype.UUID
+}
+
+func (q *Queries) EventAckMetricRecord(ctx context.Context, db DBTX, arg EventAckMetricRecordParams) error {
+	_, err := db.Exec(ctx, eventAckMetricRecord, arg.Kind, arg.RetentionSeconds, arg.InvocationID)
+	return err
 }
 
 const eventAckNow = `-- name: EventAckNow :one

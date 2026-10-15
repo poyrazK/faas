@@ -1126,6 +1126,8 @@ from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyReques
 from .event_acknowledgment_request import EventAcknowledgmentRequest
 from .event_acknowledgment_status import EventAcknowledgmentStatus
 from .event_acknowledgment_status_processing_state import EventAcknowledgmentStatusProcessingState
+from .event_acknowledgment_window_health import EventAcknowledgmentWindowHealth
+from .event_acknowledgment_window_health_coverage import EventAcknowledgmentWindowHealthCoverage
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
 from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
@@ -5790,6 +5792,8 @@ __all__ = (
     "EventAcknowledgmentRequest",
     "EventAcknowledgmentStatus",
     "EventAcknowledgmentStatusProcessingState",
+    "EventAcknowledgmentWindowHealth",
+    "EventAcknowledgmentWindowHealthCoverage",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
     "EventBacklogConsumerPendingWaitingReasons",

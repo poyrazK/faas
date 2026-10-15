@@ -3,6 +3,7 @@ package faas
 import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 type (
+	EventAcknowledgmentWindowHealth  = api.EventAcknowledgmentWindowHealth
 	EventAcknowledgmentHistoryQuery  = api.EventAcknowledgmentHistoryQuery
 	EventAcknowledgmentHistoryPage   = api.EventAcknowledgmentHistoryPage
 	EventAcknowledgmentOutcome       = api.EventAcknowledgmentOutcome

@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventAcknowledgmentWindowHealth } from './EventAcknowledgmentWindowHealth.js';
 /**
- * Current retained deferred invocation counts plus issue-to-completion latency of retained completed claims; pruned history and rejected renewals are excluded.
+ * Current retained deferred invocation gauges, retained completion latency and optional durable full-minute renewal metrics with independent coverage.
  */
 export type EventConsumerProcessingHealth = {
   /**
@@ -87,8 +88,10 @@ export type EventConsumerProcessingHealth = {
    */
   acknowledgment_latency_max_seconds: number;
   /**
-   * Rejected renewal calls are not durably recorded; no failure count is inferred.
+   * Legacy non-windowed coverage marker retained for older clients; use renewal_window for durable recorded operation counts.
+   * @deprecated
    */
   renewal_failure_coverage: 'not_recorded';
+  renewal_window?: EventAcknowledgmentWindowHealth;
 };
 

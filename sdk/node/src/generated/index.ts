@@ -577,6 +577,7 @@ export type { EventAcknowledgmentPolicy } from './models/EventAcknowledgmentPoli
 export type { EventAcknowledgmentPolicyRequest } from './models/EventAcknowledgmentPolicyRequest.js';
 export type { EventAcknowledgmentRequest } from './models/EventAcknowledgmentRequest.js';
 export type { EventAcknowledgmentStatus } from './models/EventAcknowledgmentStatus.js';
+export type { EventAcknowledgmentWindowHealth } from './models/EventAcknowledgmentWindowHealth.js';
 export type { EventBacklogConsumer } from './models/EventBacklogConsumer.js';
 export type { EventBacklogRecipient } from './models/EventBacklogRecipient.js';
 export type { EventBacklogResponse } from './models/EventBacklogResponse.js';

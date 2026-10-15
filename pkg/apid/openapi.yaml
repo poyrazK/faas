@@ -72418,10 +72418,28 @@ components:
       properties:
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
 
+    EventAcknowledgmentWindowHealth:
+      type: object
+      additionalProperties: false
+      description: Recorded renewal and expiry operations in full UTC minute buckets; no pre-upgrade history or full rollout completeness is inferred.
+      required: [window_start, window_end, bucket_seconds, retention_seconds, coverage, renewal_successes, renewal_rejections, renewal_attempts, lease_expiries, saturated]
+      properties:
+        window_start: { type: string, format: date-time, description: Inclusive boundary of full minutes wholly inside the requested processing window. }
+        window_end: { type: string, format: date-time, description: Exclusive boundary excluding the currently open UTC minute. }
+        bucket_seconds: { type: integer, const: 60, description: Fixed width of each durable operation bucket. }
+        retention_seconds: { type: integer, const: 172800, description: Metric retention measured from bucket start independently of invocation pruning. }
+        coverage: { type: string, enum: [recorded_full_minute_buckets], description: Only instrumented writers contribute; missing pre-upgrade or mixed-version activity is not reconstructed and zero is not proof of historical completeness. }
+        renewal_successes: { type: integer, format: int64, minimum: 0, description: Explicit successful renewals recorded in selected complete buckets. }
+        renewal_rejections: { type: integer, format: int64, minimum: 0, description: Current-token renewal conflicts recorded after token and attempt verification. }
+        renewal_attempts: { type: integer, format: int64, minimum: 0, description: Sum of recorded successful and rejected renewals used as the fraction denominator. }
+        lease_expiries: { type: integer, format: int64, minimum: 0, description: Recorded deferred-awaiting scheduler expiry transitions in these minutes. }
+        saturated: { type: boolean, description: At least one bucket overflowed its saturating counter; totals are lower bounds and rate fields are omitted. }
+        renewal_rejection_fraction: { type: number, minimum: 0, maximum: 1, description: Recorded rejected renewals divided by recorded renewal attempts; absent without samples or complete minutes or after saturation. }
+        lease_expiry_rate_per_second: { type: number, minimum: 0, description: Recorded lease expiry transitions divided by the effective window duration; absent for an empty or saturated window. }
     EventConsumerProcessingHealth:
       type: object
       additionalProperties: false
-      description: Current retained deferred invocation counts plus issue-to-completion latency of retained completed claims; pruned history and rejected renewals are excluded.
+      description: Current retained deferred invocation gauges, retained completion latency and optional durable full-minute renewal metrics with independent coverage.
       required: [app_id, subscription_id, observed_at, window_start, coverage, complete, waiting, delivering, processing, expired, completed, dead_lettered, failed, other, near_expiry, near_expiry_seconds, oldest_processing_age_seconds, acknowledgment_samples, acknowledgment_latency_max_seconds, renewal_failure_coverage]
       properties:
         app_id: { type: string, format: uuid, description: Application owning this processing summary. }
@@ -72444,7 +72462,8 @@ components:
         oldest_processing_age_seconds: { type: number, minimum: 0, description: Age since oldest active processing token issue; zero when absent. }
         acknowledgment_samples: { type: integer, format: int64, minimum: 0, description: Retained matching explicit completions whose completion time falls inside the window. }
         acknowledgment_latency_max_seconds: { type: number, minimum: 0, description: Maximum token-issue-to-completion seconds among acknowledgment samples; zero requires inspecting sample count. }
-        renewal_failure_coverage: { type: string, enum: [not_recorded], description: Rejected renewal calls are not durably recorded; no failure count is inferred. }
+        renewal_failure_coverage: { type: string, enum: [not_recorded], deprecated: true, description: Legacy non-windowed coverage marker retained for older clients; use renewal_window for durable recorded operation counts. }
+        renewal_window: { $ref: '#/components/schemas/EventAcknowledgmentWindowHealth' }
     EventConsumerDeliveryHealth:
       type: object
       additionalProperties: false

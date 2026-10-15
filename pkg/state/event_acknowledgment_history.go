@@ -55,7 +55,13 @@ func validAcknowledgmentHistoryScope(account, app, sub, id string) error {
 	return nil
 }
 func recordAcknowledgmentOutcome(ctx context.Context, tx pgx.Tx, id, kind string) error {
-	return sqlc.New().EventAckOutcomeRecord(ctx, tx, sqlc.EventAckOutcomeRecordParams{InvocationID: mustPgUUID(id), Kind: kind, RetentionSeconds: int32(api.EventAcknowledgmentHistoryRetention / time.Second)})
+	if err := sqlc.New().EventAckOutcomeRecord(ctx, tx, sqlc.EventAckOutcomeRecordParams{InvocationID: mustPgUUID(id), Kind: kind, RetentionSeconds: int32(api.EventAcknowledgmentHistoryRetention / time.Second)}); err != nil {
+		return err
+	}
+	if !acknowledgmentMetricKind(kind) {
+		return nil
+	}
+	return sqlc.New().EventAckMetricRecord(ctx, tx, sqlc.EventAckMetricRecordParams{InvocationID: mustPgUUID(id), Kind: kind, RetentionSeconds: int32(api.EventAcknowledgmentMetricRetention / time.Second)})
 }
 
 // Rejections commit only after the current token and attempt have been verified.
@@ -92,6 +98,7 @@ func (s *PgStore) ListEventAcknowledgmentHistory(ctx context.Context, account, a
 	return acknowledgmentHistory(out), nil
 }
 func (m *MemStore) recordAcknowledgmentOutcomeLocked(inv Invocation, ack eventAcknowledgment, kind string, now time.Time) {
+	m.recordAcknowledgmentMetricLocked(inv, kind, now)
 	until := ack.deadline.Add(api.EventAcknowledgmentHistoryRetention)
 	if !until.After(now) {
 		return
