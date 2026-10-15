@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -19,29 +20,36 @@ func (s *server) dashboardIssueTrackerHealthHandler(w http.ResponseWriter, r *ht
 		writeDashboardUnauthorized(w, r)
 		return
 	}
-	policies, app, ok := s.issueTrackerAutoSyncAccess(w, r, acct)
+
+	id, err := uuid.Parse(r.PathValue("link_id"))
+	if err != nil || id == uuid.Nil {
+		api.WriteProblem(w, api.ErrValidation("link_id must be a nonzero UUID"))
+		return
+	}
+	r.SetPathValue("link_id", id.String())
+	st, app, ok := s.dashboardTrackerNotificationsAccess(w, r, acct)
 	if !ok {
 		return
 	}
-	if app.AccountID != acct.ID {
-		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the app owner may inspect sync history"))
-		return
-	}
-	st, ok := s.store.(state.IssueTrackerSyncHealthStore)
+	policies, ok := s.store.(state.IssueTrackerAutoSyncStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("sync health unavailable"))
 		return
 	}
-	row, err := policies.GetIssueTrackerAutoSync(r.Context(), app.ID, acct.ID, r.PathValue("issue_id"), r.PathValue("link_id"))
+	row, err := policies.GetIssueTrackerAutoSync(r.Context(), app.ID, app.AccountID, r.PathValue("issue_id"), r.PathValue("link_id"))
 	if err != nil {
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
-	health, err := st.GetIssueTrackerSyncHealth(r.Context(), app.ID, acct.ID, r.PathValue("issue_id"), r.PathValue("link_id"))
+	health, err := st.GetIssueTrackerNotificationHealth(r.Context(), app.ID, app.AccountID, acct.ID, r.PathValue("issue_id"), r.PathValue("link_id"))
 	if err != nil {
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
+	s.renderDashboardTrackerHealth(w, r, acct, app, row, health)
+}
+
+func (s *server) renderDashboardTrackerHealth(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, row state.IssueTrackerAutoSyncRecord, health state.IssueTrackerSyncHealth) {
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
@@ -50,6 +58,7 @@ func (s *server) dashboardIssueTrackerHealthHandler(w http.ResponseWriter, r *ht
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	view := dashboard.NewIssueTrackerSyncHealthView(app.Slug, r.PathValue("issue_id"), row.Policy.LinkID, row.Baseline.Provider, token, row.Policy, health)
+	view.CanManage = app.AccountID == acct.ID
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Tracker sync health", Body: "issue_tracker_sync_health", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
 		renderProblem(w, s.log, err)
 	}

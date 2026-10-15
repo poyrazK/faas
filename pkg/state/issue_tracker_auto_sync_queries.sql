@@ -92,3 +92,57 @@ DELETE FROM issue_tracker_sync_history h WHERE h.link_id=sqlc.arg(link_id) AND h
 -- name: IssueTrackerSyncHistoryList :many
 SELECT * FROM issue_tracker_sync_history WHERE link_id=$1 AND account_id=$2
 ORDER BY created_at DESC,id DESC LIMIT $3;
+
+-- name: IssueTrackerNotificationPolicyGet :one
+SELECT p.* FROM issue_tracker_sync_notification_policies p JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+WHERE p.app_id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted';
+-- name: IssueTrackerNotificationPolicyPut :one
+INSERT INTO issue_tracker_sync_notification_policies(app_id,account_id,enabled,failure_threshold)
+VALUES($1,$2,$3,$4) ON CONFLICT(app_id) DO UPDATE SET account_id=excluded.account_id,enabled=excluded.enabled,failure_threshold=excluded.failure_threshold,revision=issue_tracker_sync_notification_policies.revision+1,updated_at=clock_timestamp() RETURNING *;
+-- name: IssueTrackerIncidentGet :one
+SELECT * FROM issue_tracker_sync_incidents WHERE link_id=$1;
+-- name: IssueTrackerIncidentPut :exec
+INSERT INTO issue_tracker_sync_incidents(link_id,settings_revision,failures,incident_id,announced_kind,issue_id,team_id,recipient_account_ids)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(link_id) DO UPDATE SET settings_revision=excluded.settings_revision,failures=excluded.failures,incident_id=excluded.incident_id,announced_kind=excluded.announced_kind,issue_id=excluded.issue_id,team_id=excluded.team_id,recipient_account_ids=excluded.recipient_account_ids;
+-- name: IssueTrackerNotificationTarget :one
+SELECT i.id,i.assignee_account_id,i.assignee_team_id,a.slug FROM issue_tracker_links l
+JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id
+JOIN apps a ON a.id=i.app_id WHERE l.id=sqlc.arg(link_id) AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_at IS NULL AND a.status<>'deleted';
+-- name: IssueTrackerNotificationRecipients :many
+SELECT c.id FROM accounts c JOIN apps a ON a.id=sqlc.arg(app_id)
+WHERE (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+AND (c.id=sqlc.narg(assignee_account_id)::uuid OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=sqlc.narg(team_id)::uuid AND tm.account_id=c.id))
+ORDER BY c.id;
+-- name: IssueTrackerNotificationInsert :execrows
+INSERT INTO issue_tracker_sync_notifications(id,link_id,app_id,account_id,issue_id,incident_id,kind,outcome,reason,team_id,recipient_account_ids,payload)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(incident_id,kind) DO NOTHING;
+-- name: IssueTrackerNotificationPrune :exec
+DELETE FROM issue_tracker_sync_notifications n WHERE n.link_id=sqlc.arg(link_id) AND n.id IN (
+ SELECT old.id FROM issue_tracker_sync_notifications old WHERE old.link_id=sqlc.arg(link_id) ORDER BY old.created_at DESC,old.id DESC OFFSET sqlc.arg(retained_count));
+-- name: IssueTrackerNotificationList :many
+SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
+ i.id AS issue_id,i.title AS issue_title
+FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
+JOIN issue_tracker_links l ON l.id=n.link_id JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
+LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND (sqlc.narg(team_filter)::uuid IS NULL OR n.team_id=sqlc.narg(team_filter))
+AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+ sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))))
+AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (n.created_at,n.id)<(sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
+ORDER BY n.created_at DESC,n.id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueTrackerNotificationRecoveryRecipients :many
+SELECT c.id FROM accounts c JOIN apps a ON a.id=sqlc.arg(app_id)
+WHERE c.id=ANY(sqlc.arg(recipient_ids)::uuid[])
+AND (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+AND (sqlc.narg(team_id)::uuid IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm JOIN app_issue_teams t ON t.id=tm.team_id AND t.app_id=a.id WHERE tm.team_id=sqlc.narg(team_id) AND tm.account_id=c.id)) ORDER BY c.id;
+-- name: IssueTrackerNotificationCanRead :one
+SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
+AND a.deleted_at IS NULL AND a.status<>'deleted' AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR EXISTS(
+ SELECT 1 FROM issue_tracker_sync_notifications n WHERE n.app_id=a.id AND n.account_id=a.account_id
+ AND (sqlc.narg(link_id)::uuid IS NULL OR n.link_id=sqlc.narg(link_id))
+ AND sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id))))));

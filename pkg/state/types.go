@@ -3769,6 +3769,8 @@ const (
 	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
+	AppWebhookEventIssueTrackerSyncAttention        AppWebhookEvent = "issue.tracker_sync.attention"
+	AppWebhookEventIssueTrackerSyncRecovered        AppWebhookEvent = "issue.tracker_sync.recovered"
 	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
 	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
 	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
@@ -3839,6 +3841,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
 	AppWebhookEventRouteRequirementsRecovered,
+	AppWebhookEventIssueTrackerSyncAttention,
+	AppWebhookEventIssueTrackerSyncRecovered,
 	AppWebhookEventIssueCreated,
 	AppWebhookEventIssueAssigned,
 	AppWebhookEventIssueResolved,

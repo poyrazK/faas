@@ -16721,7 +16721,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -58872,3 +58872,40 @@ CREATE TABLE public.issue_tracker_sync_history (
  CONSTRAINT issue_tracker_sync_history_claim_key UNIQUE(link_id,claim_id)
 );
 CREATE INDEX issue_tracker_sync_history_page_idx ON public.issue_tracker_sync_history(link_id,created_at DESC,id DESC);
+
+CREATE TABLE public.issue_tracker_sync_notification_policies (
+ app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL,
+ enabled boolean NOT NULL DEFAULT false,
+ revision bigint NOT NULL DEFAULT 1 CHECK(revision>0),
+ failure_threshold integer NOT NULL CHECK(failure_threshold>0),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE public.issue_tracker_sync_incidents (
+ link_id uuid PRIMARY KEY REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
+ settings_revision bigint NOT NULL CHECK(settings_revision>0),
+ failures integer NOT NULL DEFAULT 0 CHECK(failures>=0),
+ incident_id uuid,
+ announced_kind text NOT NULL DEFAULT '' CHECK(announced_kind IN ('','paused','closure','failure')),
+ issue_id uuid,
+ team_id uuid,
+ recipient_account_ids uuid[] NOT NULL DEFAULT '{}'
+);
+CREATE TABLE public.issue_tracker_sync_notifications (
+ id uuid PRIMARY KEY,
+ link_id uuid NOT NULL REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL,
+ issue_id uuid NOT NULL,
+ incident_id uuid NOT NULL,
+ kind text NOT NULL CHECK(kind IN ('paused','closure','failure','recovered')),
+ outcome text NOT NULL CHECK(outcome IN ('matched','pending','applied','error','conflict','blocked','disabled')),
+ reason text NOT NULL DEFAULT '' CHECK(octet_length(reason)<=128),
+ team_id uuid,
+ recipient_account_ids uuid[] NOT NULL CHECK(cardinality(recipient_account_ids)>0),
+ payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object'),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(incident_id,kind)
+);
+CREATE INDEX issue_tracker_sync_notifications_page_idx ON public.issue_tracker_sync_notifications(app_id,created_at DESC,id DESC);
+CREATE INDEX issue_tracker_sync_notifications_link_idx ON public.issue_tracker_sync_notifications(link_id,created_at DESC,id DESC);

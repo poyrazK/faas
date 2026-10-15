@@ -1464,8 +1464,9 @@ writes and live worker leases must be reviewed before applying a pull.
 ### Inspect sync health and recover safely
 
 Use **Sync health and history** on an issue's tracker reference or in the review
-queue. The owner-only page loads local evidence, so it remains available during
-provider failures. It shows the last successful automatic check separately from
+queue. The page loads local evidence, so it remains available during provider failures.
+The owner and eligible captured notification recipients can read this history;
+provider inspection controls remain owner-only. It shows the last successful automatic check separately from
 retryable failures, paused conflicts and unconfirmed writes. Historical success
 is not confirmation of the provider's current status. No success is backfilled
 for policies created before health recording was introduced.
@@ -1497,3 +1498,51 @@ If explicitly disabling to end/reset delegation, inspect the ticket first. The
 disable receipt preserves the old pending lifecycle within the bounded history,
 but disabling clears active delegation and cannot recall an already dispatched
 write. Review the provider and Gregale lifecycles again before re-enabling.
+
+### Notify owners and teams about tracker sync incidents
+
+Open **Tracker sync notification inbox** from Issues or the tracker review queue.
+The app owner can opt in to notifications and configure how many consecutive
+failed automatic checks cause escalation (default 3, range 1–20). Notification
+settings are independent of automatic lifecycle delegation and are disabled by
+default. Opting out stops new notices; already queued external deliveries remain
+subject to the webhook subscription controls. Settings changes start tracking at the next automatic check; they do not
+replay holds that were already paused.
+
+Pauses and provider closures needing a fixing deployment notify immediately.
+Repeated failures notify at the configured threshold. The same incident kind does
+not notify again on every poll. A new kind can notify once within that incident.
+Only a confirmed successful automatic check without a pending write sends recovery;
+inspecting, enabling, disabling or manually pulling a lifecycle alone does not.
+Failure counts saturate at 20. Notifications never resend provider writes or resume
+a paused policy.
+
+Attention notices route to the current issue group's assigned team or account.
+Team recipients must still be app owners or active org members. Unassigned or
+ineligible/empty targets fall back to the app owner. Recovery uses the latest
+attention's captured recipients who are still eligible, without adding new members.
+A reassignment does not replay a paused incident; use normal ownership handoff and
+issue assignment events. The owner can inspect every app notice. Other readers
+must be captured recipients with active org access and current team membership for
+team notices. Membership alone does not grant access. Removed org/team members
+cannot read those notices while removed.
+
+Each link retains its latest 50 inbox notifications, with links to the affected
+issue and sync health/history page. Eligible captured recipients may read their
+retained notices and the linked local health history using the app owner’s Issues
+entitlement. This grants no general app or issue access; issue links and fresh
+provider inspection and resume controls remain owner-only. Loading the inbox or
+health page does not contact providers.
+
+For external delivery, subscribe an app webhook to
+`issue.tracker_sync.attention` and/or `issue.tracker_sync.recovered`. The existing
+webhook outbox provides retry, delivery history and source-event deduplication.
+Notices, incident changes and worker completion commit together; a failed enqueue
+cannot silently acknowledge the sync check. Inbox pruning does not discard queued
+webhook deliveries. This does not register email or chat destinations automatically.
+
+Notification payloads include version, incident identity, kind (`paused`, `closure`,
+`failure`, `recovered`), app/issue/link/provider, outcome and safe reason code,
+consecutive failure count/threshold, captured team/recipient IDs, and `issue_path`
+and `health_path`. App webhook receivers can route using these IDs. There are no
+credentials, raw provider diagnostics or occurrence payloads in these notifications.

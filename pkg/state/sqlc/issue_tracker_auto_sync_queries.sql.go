@@ -511,6 +511,371 @@ func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, li
 	return i, err
 }
 
+const issueTrackerIncidentGet = `-- name: IssueTrackerIncidentGet :one
+SELECT link_id, settings_revision, failures, incident_id, announced_kind, issue_id, team_id, recipient_account_ids FROM issue_tracker_sync_incidents WHERE link_id=$1
+`
+
+func (q *Queries) IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerSyncIncident, error) {
+	row := db.QueryRow(ctx, issueTrackerIncidentGet, linkID)
+	var i IssueTrackerSyncIncident
+	err := row.Scan(
+		&i.LinkID,
+		&i.SettingsRevision,
+		&i.Failures,
+		&i.IncidentID,
+		&i.AnnouncedKind,
+		&i.IssueID,
+		&i.TeamID,
+		&i.RecipientAccountIds,
+	)
+	return i, err
+}
+
+const issueTrackerIncidentPut = `-- name: IssueTrackerIncidentPut :exec
+INSERT INTO issue_tracker_sync_incidents(link_id,settings_revision,failures,incident_id,announced_kind,issue_id,team_id,recipient_account_ids)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(link_id) DO UPDATE SET settings_revision=excluded.settings_revision,failures=excluded.failures,incident_id=excluded.incident_id,announced_kind=excluded.announced_kind,issue_id=excluded.issue_id,team_id=excluded.team_id,recipient_account_ids=excluded.recipient_account_ids
+`
+
+type IssueTrackerIncidentPutParams struct {
+	LinkID              pgtype.UUID
+	SettingsRevision    int64
+	Failures            int32
+	IncidentID          pgtype.UUID
+	AnnouncedKind       string
+	IssueID             pgtype.UUID
+	TeamID              pgtype.UUID
+	RecipientAccountIds []pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerIncidentPut(ctx context.Context, db DBTX, arg IssueTrackerIncidentPutParams) error {
+	_, err := db.Exec(ctx, issueTrackerIncidentPut,
+		arg.LinkID,
+		arg.SettingsRevision,
+		arg.Failures,
+		arg.IncidentID,
+		arg.AnnouncedKind,
+		arg.IssueID,
+		arg.TeamID,
+		arg.RecipientAccountIds,
+	)
+	return err
+}
+
+const issueTrackerNotificationCanRead = `-- name: IssueTrackerNotificationCanRead :one
+SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=$1 AND a.account_id=$2
+AND a.deleted_at IS NULL AND a.status<>'deleted' AND (a.account_id=$3::uuid OR EXISTS(
+ SELECT 1 FROM issue_tracker_sync_notifications n WHERE n.app_id=a.id AND n.account_id=a.account_id
+ AND ($4::uuid IS NULL OR n.link_id=$4)
+ AND $3::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$3 AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$3)))))
+`
+
+type IssueTrackerNotificationCanReadParams struct {
+	AppID          pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	ActorAccountID pgtype.UUID
+	LinkID         pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerNotificationCanRead(ctx context.Context, db DBTX, arg IssueTrackerNotificationCanReadParams) (bool, error) {
+	row := db.QueryRow(ctx, issueTrackerNotificationCanRead,
+		arg.AppID,
+		arg.OwnerAccountID,
+		arg.ActorAccountID,
+		arg.LinkID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const issueTrackerNotificationInsert = `-- name: IssueTrackerNotificationInsert :execrows
+INSERT INTO issue_tracker_sync_notifications(id,link_id,app_id,account_id,issue_id,incident_id,kind,outcome,reason,team_id,recipient_account_ids,payload)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(incident_id,kind) DO NOTHING
+`
+
+type IssueTrackerNotificationInsertParams struct {
+	ID                  pgtype.UUID
+	LinkID              pgtype.UUID
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	IssueID             pgtype.UUID
+	IncidentID          pgtype.UUID
+	Kind                string
+	Outcome             string
+	Reason              string
+	TeamID              pgtype.UUID
+	RecipientAccountIds []pgtype.UUID
+	Payload             []byte
+}
+
+func (q *Queries) IssueTrackerNotificationInsert(ctx context.Context, db DBTX, arg IssueTrackerNotificationInsertParams) (int64, error) {
+	result, err := db.Exec(ctx, issueTrackerNotificationInsert,
+		arg.ID,
+		arg.LinkID,
+		arg.AppID,
+		arg.AccountID,
+		arg.IssueID,
+		arg.IncidentID,
+		arg.Kind,
+		arg.Outcome,
+		arg.Reason,
+		arg.TeamID,
+		arg.RecipientAccountIds,
+		arg.Payload,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const issueTrackerNotificationList = `-- name: IssueTrackerNotificationList :many
+SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
+ i.id AS issue_id,i.title AS issue_title
+FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
+JOIN issue_tracker_links l ON l.id=n.link_id JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
+LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND ($3::uuid IS NULL OR n.team_id=$3)
+AND (a.account_id=$4::uuid OR (
+ $4::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
+AND ($5::timestamptz IS NULL OR (n.created_at,n.id)<($5,$6::uuid))
+ORDER BY n.created_at DESC,n.id DESC LIMIT $7
+`
+
+type IssueTrackerNotificationListParams struct {
+	AppID          pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	TeamFilter     pgtype.UUID
+	ActorAccountID pgtype.UUID
+	CursorTime     pgtype.Timestamptz
+	CursorID       pgtype.UUID
+	PageLimit      int32
+}
+
+type IssueTrackerNotificationListRow struct {
+	ID         pgtype.UUID
+	LinkID     pgtype.UUID
+	Kind       string
+	Outcome    string
+	Reason     string
+	CreatedAt  pgtype.Timestamptz
+	TeamID     pgtype.UUID
+	TeamName   string
+	IssueID    pgtype.UUID
+	IssueTitle string
+}
+
+func (q *Queries) IssueTrackerNotificationList(ctx context.Context, db DBTX, arg IssueTrackerNotificationListParams) ([]IssueTrackerNotificationListRow, error) {
+	rows, err := db.Query(ctx, issueTrackerNotificationList,
+		arg.AppID,
+		arg.OwnerAccountID,
+		arg.TeamFilter,
+		arg.ActorAccountID,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerNotificationListRow{}
+	for rows.Next() {
+		var i IssueTrackerNotificationListRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LinkID,
+			&i.Kind,
+			&i.Outcome,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.TeamID,
+			&i.TeamName,
+			&i.IssueID,
+			&i.IssueTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerNotificationPolicyGet = `-- name: IssueTrackerNotificationPolicyGet :one
+SELECT p.app_id, p.account_id, p.enabled, p.revision, p.failure_threshold, p.updated_at FROM issue_tracker_sync_notification_policies p JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+WHERE p.app_id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+`
+
+type IssueTrackerNotificationPolicyGetParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerNotificationPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerNotificationPolicyGetParams) (IssueTrackerSyncNotificationPolicy, error) {
+	row := db.QueryRow(ctx, issueTrackerNotificationPolicyGet, arg.AppID, arg.AccountID)
+	var i IssueTrackerSyncNotificationPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.Revision,
+		&i.FailureThreshold,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueTrackerNotificationPolicyPut = `-- name: IssueTrackerNotificationPolicyPut :one
+INSERT INTO issue_tracker_sync_notification_policies(app_id,account_id,enabled,failure_threshold)
+VALUES($1,$2,$3,$4) ON CONFLICT(app_id) DO UPDATE SET account_id=excluded.account_id,enabled=excluded.enabled,failure_threshold=excluded.failure_threshold,revision=issue_tracker_sync_notification_policies.revision+1,updated_at=clock_timestamp() RETURNING app_id, account_id, enabled, revision, failure_threshold, updated_at
+`
+
+type IssueTrackerNotificationPolicyPutParams struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Enabled          bool
+	FailureThreshold int32
+}
+
+func (q *Queries) IssueTrackerNotificationPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerNotificationPolicyPutParams) (IssueTrackerSyncNotificationPolicy, error) {
+	row := db.QueryRow(ctx, issueTrackerNotificationPolicyPut,
+		arg.AppID,
+		arg.AccountID,
+		arg.Enabled,
+		arg.FailureThreshold,
+	)
+	var i IssueTrackerSyncNotificationPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.Revision,
+		&i.FailureThreshold,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueTrackerNotificationPrune = `-- name: IssueTrackerNotificationPrune :exec
+DELETE FROM issue_tracker_sync_notifications n WHERE n.link_id=$1 AND n.id IN (
+ SELECT old.id FROM issue_tracker_sync_notifications old WHERE old.link_id=$1 ORDER BY old.created_at DESC,old.id DESC OFFSET $2)
+`
+
+type IssueTrackerNotificationPruneParams struct {
+	LinkID        pgtype.UUID
+	RetainedCount int32
+}
+
+func (q *Queries) IssueTrackerNotificationPrune(ctx context.Context, db DBTX, arg IssueTrackerNotificationPruneParams) error {
+	_, err := db.Exec(ctx, issueTrackerNotificationPrune, arg.LinkID, arg.RetainedCount)
+	return err
+}
+
+const issueTrackerNotificationRecipients = `-- name: IssueTrackerNotificationRecipients :many
+SELECT c.id FROM accounts c JOIN apps a ON a.id=$1
+WHERE (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+AND (c.id=$2::uuid OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=$3::uuid AND tm.account_id=c.id))
+ORDER BY c.id
+`
+
+type IssueTrackerNotificationRecipientsParams struct {
+	AppID             pgtype.UUID
+	AssigneeAccountID pgtype.UUID
+	TeamID            pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerNotificationRecipients(ctx context.Context, db DBTX, arg IssueTrackerNotificationRecipientsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, issueTrackerNotificationRecipients, arg.AppID, arg.AssigneeAccountID, arg.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerNotificationRecoveryRecipients = `-- name: IssueTrackerNotificationRecoveryRecipients :many
+SELECT c.id FROM accounts c JOIN apps a ON a.id=$1
+WHERE c.id=ANY($2::uuid[])
+AND (c.id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=c.id AND m.removed_at IS NULL))
+AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm JOIN app_issue_teams t ON t.id=tm.team_id AND t.app_id=a.id WHERE tm.team_id=$3 AND tm.account_id=c.id)) ORDER BY c.id
+`
+
+type IssueTrackerNotificationRecoveryRecipientsParams struct {
+	AppID        pgtype.UUID
+	RecipientIds []pgtype.UUID
+	TeamID       pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerNotificationRecoveryRecipients(ctx context.Context, db DBTX, arg IssueTrackerNotificationRecoveryRecipientsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, issueTrackerNotificationRecoveryRecipients, arg.AppID, arg.RecipientIds, arg.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerNotificationTarget = `-- name: IssueTrackerNotificationTarget :one
+SELECT i.id,i.assignee_account_id,i.assignee_team_id,a.slug FROM issue_tracker_links l
+JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id
+JOIN apps a ON a.id=i.app_id WHERE l.id=$1 AND a.id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
+`
+
+type IssueTrackerNotificationTargetParams struct {
+	LinkID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type IssueTrackerNotificationTargetRow struct {
+	ID                pgtype.UUID
+	AssigneeAccountID pgtype.UUID
+	AssigneeTeamID    pgtype.UUID
+	Slug              string
+}
+
+func (q *Queries) IssueTrackerNotificationTarget(ctx context.Context, db DBTX, arg IssueTrackerNotificationTargetParams) (IssueTrackerNotificationTargetRow, error) {
+	row := db.QueryRow(ctx, issueTrackerNotificationTarget, arg.LinkID, arg.AppID, arg.AccountID)
+	var i IssueTrackerNotificationTargetRow
+	err := row.Scan(
+		&i.ID,
+		&i.AssigneeAccountID,
+		&i.AssigneeTeamID,
+		&i.Slug,
+	)
+	return i, err
+}
+
 const issueTrackerReviewQueue = `-- name: IssueTrackerReviewQueue :many
 SELECT p.link_id,p.direction,p.outcome,p.reason,p.pending_state,p.observed_state,p.source_state,p.revision,
  p.last_checked_at,p.last_successful_at,p.next_check_at,p.claim_until,p.updated_at,

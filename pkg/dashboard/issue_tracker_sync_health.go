@@ -6,6 +6,7 @@ import (
 )
 
 type IssueTrackerSyncHealthView struct {
+	CanManage                                         bool
 	AppSlug, IssueID, LinkID, Provider, CSRF, Summary string
 	Policy                                            api.IssueTrackerAutoSync
 	Health                                            state.IssueTrackerSyncHealth

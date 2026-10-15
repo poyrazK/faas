@@ -1692,9 +1692,20 @@ type Querier interface {
 	IssueTrackerInboundGuard(ctx context.Context, db DBTX, arg IssueTrackerInboundGuardParams) (int64, error)
 	IssueTrackerInboundGuardLock(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error)
+	IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerSyncIncident, error)
+	IssueTrackerIncidentPut(ctx context.Context, db DBTX, arg IssueTrackerIncidentPutParams) error
 	IssueTrackerLinearGet(ctx context.Context, db DBTX, arg IssueTrackerLinearGetParams) (IssueTrackerLinearConnection, error)
 	IssueTrackerLinearOwner(ctx context.Context, db DBTX, arg IssueTrackerLinearOwnerParams) (pgtype.UUID, error)
 	IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueTrackerLinearPutParams) (IssueTrackerLinearConnection, error)
+	IssueTrackerNotificationCanRead(ctx context.Context, db DBTX, arg IssueTrackerNotificationCanReadParams) (bool, error)
+	IssueTrackerNotificationInsert(ctx context.Context, db DBTX, arg IssueTrackerNotificationInsertParams) (int64, error)
+	IssueTrackerNotificationList(ctx context.Context, db DBTX, arg IssueTrackerNotificationListParams) ([]IssueTrackerNotificationListRow, error)
+	IssueTrackerNotificationPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerNotificationPolicyGetParams) (IssueTrackerSyncNotificationPolicy, error)
+	IssueTrackerNotificationPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerNotificationPolicyPutParams) (IssueTrackerSyncNotificationPolicy, error)
+	IssueTrackerNotificationPrune(ctx context.Context, db DBTX, arg IssueTrackerNotificationPruneParams) error
+	IssueTrackerNotificationRecipients(ctx context.Context, db DBTX, arg IssueTrackerNotificationRecipientsParams) ([]pgtype.UUID, error)
+	IssueTrackerNotificationRecoveryRecipients(ctx context.Context, db DBTX, arg IssueTrackerNotificationRecoveryRecipientsParams) ([]pgtype.UUID, error)
+	IssueTrackerNotificationTarget(ctx context.Context, db DBTX, arg IssueTrackerNotificationTargetParams) (IssueTrackerNotificationTargetRow, error)
 	IssueTrackerReviewQueue(ctx context.Context, db DBTX, arg IssueTrackerReviewQueueParams) ([]IssueTrackerReviewQueueRow, error)
 	IssueTrackerSourceRevision(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionParams) (int64, error)
 	// Acquire the fence only. Read the effective group revision in a new statement

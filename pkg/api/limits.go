@@ -10479,10 +10479,13 @@ const (
 
 // Automatic native tracker reconciliation is bounded independently of issue ingestion.
 const (
-	IssueTrackerSyncHistoryMax        = 50 // Recent receipts retained per linked ticket (ADR-1228).
-	IssueTrackerAutoSyncBatch         = 5
-	IssueTrackerAutoSyncCheckInterval = 5 * time.Minute
-	IssueTrackerAutoSyncLease         = 2 * IssueTrackerRequestTimeoutSeconds * time.Second
+	IssueTrackerSyncNotificationFailuresDefault = 3
+	IssueTrackerSyncNotificationFailuresMax     = 20
+	IssueTrackerSyncNotificationsMax            = 50
+	IssueTrackerSyncHistoryMax                  = 50 // Recent receipts retained per linked ticket (ADR-1228).
+	IssueTrackerAutoSyncBatch                   = 5
+	IssueTrackerAutoSyncCheckInterval           = 5 * time.Minute
+	IssueTrackerAutoSyncLease                   = 2 * IssueTrackerRequestTimeoutSeconds * time.Second
 )
 
 // Provider callbacks carry bounded refresh hints, never lifecycle authority.

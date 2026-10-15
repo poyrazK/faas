@@ -1,0 +1,138 @@
+package apidserver
+
+import (
+	"net/http"
+	"net/url"
+	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func (s *server) dashboardTrackerNotificationsAccess(w http.ResponseWriter, r *http.Request, acct state.Account) (state.IssueTrackerNotificationStore, state.App, bool) {
+
+	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		writeIssueError(w, err)
+		return nil, app, false
+	}
+	st, ok := s.store.(state.IssueTrackerNotificationStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("tracker notifications unavailable"))
+		return nil, app, false
+	}
+	allowed, err := st.CanReadIssueTrackerNotifications(r.Context(), app.ID, app.AccountID, acct.ID, r.PathValue("link_id"))
+	if err != nil {
+		writeIssueError(w, err)
+		return nil, app, false
+	}
+	if !allowed {
+		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "no such app"))
+		return nil, app, false
+	}
+	owner := acct
+	if acct.ID != app.AccountID {
+		owner, err = s.store.AccountByID(r.Context(), app.AccountID)
+		if err != nil {
+			writeIssueError(w, err)
+			return nil, app, false
+		}
+	}
+	if _, ok = s.issueStore(w, owner); !ok {
+		return nil, app, false
+	}
+	return st, app, true
+}
+
+func (s *server) dashboardTrackerNotificationsHandler(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	st, app, ok := s.dashboardTrackerNotificationsAccess(w, r, acct)
+	if !ok {
+		return
+	}
+	cursor, err := state.DecodeIssueCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	team := r.URL.Query().Get("team")
+	page, err := st.ListIssueTrackerSyncNotifications(r.Context(), app.ID, app.AccountID, acct.ID, team, cursor)
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	policy := state.IssueTrackerNotificationPolicy{}
+	if acct.ID == app.AccountID {
+		policy, err = st.GetIssueTrackerNotificationPolicy(r.Context(), app.ID, app.AccountID)
+		if err != nil {
+			writeIssueError(w, err)
+			return
+		}
+	}
+	s.renderDashboardTrackerNotifications(w, r, acct, app, team, policy, page)
+}
+func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, team string, policy state.IssueTrackerNotificationPolicy, page state.IssueTrackerNotificationPage) {
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	if err != nil {
+		renderProblem(w, s.log, err)
+		return
+	}
+	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
+	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+	view := dashboard.IssueTrackerNotificationsView{AppSlug: app.Slug, CSRF: token, TeamFilter: team, CanManage: app.AccountID == acct.ID, Policy: policy, Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
+	for _, item := range page.Items {
+		view.Reasons[item.ID] = dashboard.IssueTrackerSyncReason(item.Reason)
+	}
+	if page.NextCursor != "" {
+		view.NextURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/issues/tracker-notifications?team=" + url.QueryEscape(team) + "&cursor=" + url.QueryEscape(page.NextCursor)
+	}
+	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Tracker sync notifications", Body: "issue_tracker_notifications", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
+		renderProblem(w, s.log, err)
+	}
+}
+func (s *server) dashboardTrackerNotificationPolicyHandler(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, api.IssueEventMaxBytes)
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardIssueAction, acct.ID, dashboardIssueCookie); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid CSRF token; reload notifications"))
+		return
+	}
+	s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboardTrackerNotificationPolicyForAccount)))(w, r)
+}
+func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	st, app, ok := s.dashboardTrackerNotificationsAccess(w, r, acct)
+	if !ok {
+		return
+	}
+	if app.AccountID != acct.ID {
+		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may configure sync notifications"))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid notification settings"))
+		return
+	}
+	revision, e1 := strconv.ParseInt(r.PostForm.Get("expected_revision"), 10, 64)
+	threshold, e2 := strconv.Atoi(r.PostForm.Get("failure_threshold"))
+	if e1 != nil || e2 != nil {
+		api.WriteProblem(w, api.ErrValidation("reload notification settings"))
+		return
+	}
+	_, err := st.SetIssueTrackerNotificationPolicy(r.Context(), app.ID, acct.ID, state.IssueTrackerNotificationPolicy{Enabled: r.PostForm.Get("enabled") == "1", Revision: revision, FailureThreshold: threshold})
+	if err != nil {
+		writeNativeIssueTrackerError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(app.Slug)+"/issues/tracker-notifications?saved=1", http.StatusSeeOther)
+}

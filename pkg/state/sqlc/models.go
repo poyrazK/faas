@@ -4130,6 +4130,42 @@ type IssueTrackerSyncHistory struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type IssueTrackerSyncIncident struct {
+	LinkID              pgtype.UUID
+	SettingsRevision    int64
+	Failures            int32
+	IncidentID          pgtype.UUID
+	AnnouncedKind       string
+	IssueID             pgtype.UUID
+	TeamID              pgtype.UUID
+	RecipientAccountIds []pgtype.UUID
+}
+
+type IssueTrackerSyncNotification struct {
+	ID                  pgtype.UUID
+	LinkID              pgtype.UUID
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	IssueID             pgtype.UUID
+	IncidentID          pgtype.UUID
+	Kind                string
+	Outcome             string
+	Reason              string
+	TeamID              pgtype.UUID
+	RecipientAccountIds []pgtype.UUID
+	Payload             []byte
+	CreatedAt           pgtype.Timestamptz
+}
+
+type IssueTrackerSyncNotificationPolicy struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Enabled          bool
+	Revision         int64
+	FailureThreshold int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type Job struct {
 	ID                                pgtype.UUID
 	AccountID                         pgtype.UUID

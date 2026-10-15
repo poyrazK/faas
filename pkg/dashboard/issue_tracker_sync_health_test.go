@@ -41,6 +41,7 @@ func TestTrackerHealthRendersReceiptsWithoutDelegationControls(t *testing.T) {
 		{ID: "malformed", EventType: "<script>event</script>", Reason: "<script>reason</script>"},
 	}}
 	view := NewIssueTrackerSyncHealthView("app", "issue", "link", "github", "csrf", api.IssueTrackerAutoSync{Enabled: true, Outcome: "conflict", PendingState: "resolved"}, health)
+	view.CanManage = true
 	var body bytes.Buffer
 	if err = tmpl.ExecuteTemplate(&body, "issue_tracker_sync_health.html", Page{Data: view}); err != nil {
 		t.Fatal(err)

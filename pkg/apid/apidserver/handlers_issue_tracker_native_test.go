@@ -631,6 +631,7 @@ func TestNativeIssueLinearCreationRecoversUUIDAndRejectsRevokedConnections(t *te
 }
 
 type nativeLinearLifecycleFake struct {
+	readErr       error
 	status        issuetracker.Status
 	reads, writes int
 	unsupported   bool
@@ -661,6 +662,9 @@ func (p *nativeLinearLifecycleFake) ReadStatus(_ context.Context, _ string, toke
 	}
 	if token != "lin_api_secret" {
 		return issuetracker.Status{}, errors.New("wrong credential")
+	}
+	if p.readErr != nil {
+		return issuetracker.Status{}, p.readErr
 	}
 	if p.unsupported {
 		return issuetracker.Status{}, issuetracker.ErrUnsupportedStatus
@@ -1567,6 +1571,35 @@ func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
 				t.Fatal("invalid direction accepted", out.Code)
 			}
 			configure("inbound", 0)
+			if _, err := store.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Enabled: true, FailureThreshold: 2}); err != nil {
+				t.Fatal(err)
+			}
+			hook, err := apidserver.IssueNativeStore(e).CreateAppWebhook(t.Context(), state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://example.com/tracker-sync", Enabled: true, EventFilter: []string{"issue.tracker_sync.attention", "issue.tracker_sync.recovered"}, SecretSealed: []byte("test-sealed")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			notices := func(want int, kind string) {
+				page, err := store.ListIssueTrackerSyncNotifications(t.Context(), app.ID, app.AccountID, app.AccountID, "", state.IssueCursor{})
+				if err != nil || len(page.Items) != want || want > 0 && page.Items[0].Kind != kind {
+					t.Fatal("notification transition", page, err)
+				}
+			}
+			// Both providers use the real worker: consecutive read failures
+			// escalate once, and only a confirmed healthy check sends recovery.
+			ghProvider.readErr = errors.New("private-token-provider-diagnostic")
+			linearProvider.readErr = errors.New("private-token-provider-diagnostic")
+			run()
+			notices(0, "")
+			ghProvider.readErr = context.DeadlineExceeded
+			linearProvider.readErr = context.DeadlineExceeded
+			run()
+			notices(1, "failure")
+			run()
+			notices(1, "failure")
+			ghProvider.readErr = nil
+			linearProvider.readErr = nil
+			run()
+			notices(2, "recovered")
 			before, err := store.GetIssueTrackerSourceRevision(t.Context(), app.ID, app.AccountID, accepted.IssueID)
 			if err != nil {
 				t.Fatal(err)
@@ -1609,12 +1642,17 @@ func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
 			if out := policy(); out.Outcome != "conflict" || out.Reason != "source_intent_changed" {
 				t.Fatal("manual edit overwritten", out)
 			}
+			notices(3, "paused")
+			run()
+			notices(3, "paused")
 			configure("both", 1)
+			notices(3, "paused") // Enabling alone is not recovery.
 			act(api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID})
 			run()
 			if out := policy(); out.Outcome != "applied" || out.ProviderState != "resolved" || writes() != 1 {
 				t.Fatal("both direction local push failed", out, writes())
 			}
+			notices(4, "recovered")
 			setRemote("open")
 			run()
 			if out := policy(); out.Outcome != "applied" || out.SourceState != "open" || writes() != 1 {
@@ -1626,6 +1664,9 @@ func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
 			if held.Outcome != "blocked" || held.Reason != "fixing_deployment_required" || held.ObservedState != "resolved" || held.ProviderState != "open" || held.SourceState != "open" {
 				t.Fatal("resolution was not held", held)
 			}
+			notices(5, "closure")
+			run()
+			notices(5, "closure")
 			detail = apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", issuePath, nil, nil), 200)
 			if detail.Issue.State != "open" {
 				t.Fatal("provider closure resolved without deployment")
@@ -1633,6 +1674,28 @@ func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
 			paused := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", trackerPath+"/auto-sync", api.UpdateIssueTrackerAutoSyncRequest{Enabled: false, ExpectedRevision: 2}, nil), 200)
 			if paused.Enabled || paused.Direction != "both" || writes() != 1 {
 				t.Fatal("pause failed", paused)
+			}
+			notices(5, "closure")
+			relay := apidserver.IssueNativeStore(e).(state.AppWebhookEventOutboxStore)
+			if _, err := relay.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+				t.Fatal(err)
+			}
+			deliveries, _, err := apidserver.IssueNativeStore(e).ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 20, "")
+			if err != nil || len(deliveries) != 5 {
+				t.Fatal("webhook fanout", len(deliveries), err)
+			}
+			for _, delivery := range deliveries {
+				payload := string(delivery.Payload)
+				if strings.Contains(payload, "private-token") || !strings.Contains(payload, "health_path") {
+					t.Fatal("unsafe/incomplete notification", delivery)
+				}
+			}
+			if _, err := relay.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+				t.Fatal(err)
+			}
+			again, _, err := apidserver.IssueNativeStore(e).ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 20, "")
+			if err != nil || len(again) != 5 {
+				t.Fatal("notification replay duplicated fanout", len(again), err)
 			}
 		})
 	}
@@ -2109,5 +2172,304 @@ func TestNativeIssueSyncHealthReceiptsAndReadOnlyRecovery(t *testing.T) {
 	}
 	if err = st.RecordIssueTrackerSyncInspection(t.Context(), inspection); err == nil {
 		t.Fatal("stale inspection accepted")
+	}
+}
+
+// adr: 1229
+func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "sync-notifications")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "SyncNotification", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	full := apidserver.IssueNativeStore(e)
+	st := state.NewPgStore(*e.Pool())
+	org, err := full.CreateOrg(t.Context(), state.Org{Slug: "tracker-notify-" + uuid.NewString()[:8], Name: "Notify", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := full.CreateAccount(t.Context(), "notify-member-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsider, err := full.CreateAccount(t.Context(), "notify-outsider-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{app.AccountID, member.ID, outsider.ID} {
+		role := state.OrgRoleDeveloper
+		if id == app.AccountID {
+			role = state.OrgRoleOwner
+		}
+		if err = full.AddOrgMember(t.Context(), org.ID, id, role, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE apps SET org_id=$2 WHERE id=$1", app.ID, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	team, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "payments", api.PutIssueTeamRequest{Name: "Payments", MemberAccountIDs: []string{app.AccountID, member.ID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign", AssigneeTeamID: team.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	link, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, accepted.IssueID, app.AccountID, api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: api.IssueTrackerProviderStatus{Provider: "github", ID: "42", URL: link.URL, State: "open"}, Policy: api.IssueTrackerAutoSync{LinkID: link.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "open"}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := full.CreateAppWebhook(t.Context(), state.AppWebhook{AppID: app.ID, AccountID: app.AccountID, TargetURL: "https://example.com/sync", Enabled: true, EventFilter: []string{"issue.tracker_sync.attention", "issue.tracker_sync.recovered"}, SecretSealed: []byte("test-sealed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = hook
+	complete := func(outcome, reason string) {
+		if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+			t.Fatal(err)
+		}
+		claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		claim.Policy.Outcome = outcome
+		claim.Policy.Reason = reason
+		if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inbox := func(actor, filter string) state.IssueTrackerNotificationPage {
+		p, err := st.ListIssueTrackerSyncNotifications(t.Context(), app.ID, app.AccountID, actor, filter, state.IssueCursor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	initial, err := st.GetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID)
+	if err != nil || initial.Enabled || initial.Revision != 0 {
+		t.Fatal(initial, err)
+	}
+	complete("error", "provider_unavailable")
+	complete("error", "provider_unavailable")
+	if len(inbox(app.AccountID, "").Items) != 0 {
+		t.Fatal("notifications enabled by default")
+	}
+	policy, err := st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Enabled: true, FailureThreshold: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, outsider.ID, policy); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("member changed notification policy", err)
+	}
+	if _, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Enabled: true, FailureThreshold: 2}); err == nil {
+		t.Fatal("stale settings accepted")
+	}
+	if _, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Revision: 1, FailureThreshold: api.IssueTrackerSyncNotificationFailuresMax + 1}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal(err)
+	}
+	complete("error", "provider_unavailable")
+	if len(inbox(app.AccountID, "").Items) != 0 {
+		t.Fatal("historical failures replayed after opt-in")
+	}
+	complete("error", "provider_unavailable")
+	complete("error", "provider_unavailable")
+	if p := inbox(member.ID, team.ID); len(p.Items) != 1 || p.Items[0].Kind != "failure" || p.Items[0].TeamID != team.ID {
+		t.Fatal("team routing", p)
+	}
+	if p := inbox(outsider.ID, ""); len(p.Items) != 0 {
+		t.Fatal("unrelated org member read notifications", p)
+	}
+	// App members can read local health, while only the owner gets inspection controls.
+	getAs := func(account state.Account, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		saved := *e.Acct()
+		*e.Acct() = account
+		e.AddAdminSession(t, req)
+		*e.Acct() = saved
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	healthPath := "/dashboard/apps/" + app.Slug + "/issues/" + accepted.IssueID + "/tracker-sync/" + link.ID
+	if out := getAs(member, healthPath); out.Code != 200 || strings.Contains(out.Body.String(), `value="preview"`) {
+		t.Fatal("member health inspection authority", out.Code, out.Body.String())
+	}
+	pageURL := "/dashboard/apps/" + app.Slug + "/issues/tracker-notifications"
+	if out := getAs(member, pageURL); out.Code != 200 || strings.Contains(out.Body.String(), `name="failure_threshold"`) || !strings.Contains(out.Body.String(), "Payments") {
+		t.Fatal("member inbox", out.Code, out.Body.String())
+	}
+	if out := getAs(outsider, healthPath); out.Code != 404 {
+		t.Fatal("unrelated member read link health", out.Code, out.Body.String())
+	}
+	if out := getAs(outsider, pageURL); out.Code != 404 {
+		t.Fatal("unrelated member opened inbox", out.Code)
+	}
+	if err = full.RemoveOrgMember(t.Context(), org.ID, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox(member.ID, "").Items) != 0 {
+		t.Fatal("removed org member retained inbox access")
+	}
+	if _, err := st.GetIssueTrackerNotificationHealth(t.Context(), app.ID, app.AccountID, member.ID, accepted.IssueID, link.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed member retained health read", err)
+	}
+
+	inviteToken := []byte(strings.Repeat("n", 32))
+	if _, err = full.CreateOrgInvitation(t.Context(), state.OrgInvitation{OrgID: org.ID, Email: member.Email, Role: state.OrgRoleDeveloper, TokenHash: inviteToken, InvitedByAccountID: &app.AccountID, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = full.ConsumeOrgInvitation(t.Context(), inviteToken, member); err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "payments", api.PutIssueTeamRequest{Name: "Payments", MemberAccountIDs: []string{app.AccountID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox(member.ID, "").Items) != 0 {
+		t.Fatal("removed team member retained inbox access")
+	}
+	complete("matched", "")
+	p := inbox(app.AccountID, team.ID)
+	if len(p.Items) != 2 || p.Items[0].Kind != "recovered" {
+		t.Fatal("recovery routing", p)
+	}
+	if _, err = st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	complete("error", "provider_unavailable")
+	complete("error", "provider_unavailable")
+	if p := inbox(app.AccountID, ""); len(p.Items) != 3 || p.Items[0].TeamID != "" {
+		t.Fatal("owner fallback", p)
+	}
+	policy.Enabled = false
+	policy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete("matched", "")
+	if len(inbox(app.AccountID, "").Items) != 3 {
+		t.Fatal("opt-out sent recovery")
+	}
+	policy.Enabled = true
+	policy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete("matched", "")
+	if len(inbox(app.AccountID, "").Items) != 3 {
+		t.Fatal("settings change replayed old incident")
+	}
+	// Bounded per-link retention and app-wide keyset pagination with actor binding.
+	for range api.IssueTrackerSyncNotificationsMax/2 + 1 {
+		complete("error", "provider_unavailable")
+		complete("error", "provider_unavailable")
+		complete("matched", "")
+	}
+	var retained int
+	if err = (*e.Pool()).QueryRow(t.Context(), "SELECT count(*) FROM issue_tracker_sync_notifications WHERE link_id=$1", link.ID).Scan(&retained); err != nil || retained != api.IssueTrackerSyncNotificationsMax {
+		t.Fatal("unbounded notices", retained, err)
+	}
+	other, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, accepted.IssueID, app.AccountID, api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/43"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: api.IssueTrackerProviderStatus{Provider: "github", ID: "43", URL: other.URL, State: "open"}, Policy: api.IssueTrackerAutoSync{LinkID: other.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "open"}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil || claim.Policy.LinkID != other.ID {
+		t.Fatal(claim, err)
+	}
+	claim.Policy.Outcome = "blocked"
+	claim.Policy.Reason = "connection_required"
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+		t.Fatal(err)
+	}
+	p = inbox(app.AccountID, "")
+	if len(p.Items) != api.IssuePageSize || p.NextCursor == "" {
+		t.Fatal("missing next page", p)
+	}
+	cursor, err := state.DecodeIssueCursor(p.NextCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, err := st.ListIssueTrackerSyncNotifications(t.Context(), app.ID, app.AccountID, app.AccountID, "", cursor)
+	if err != nil || len(last.Items) != 1 || last.NextCursor != "" {
+		t.Fatal(last, err)
+	}
+	if _, err = st.ListIssueTrackerSyncNotifications(t.Context(), app.ID, app.AccountID, member.ID, "", cursor); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("cursor crossed actor", err)
+	}
+	// Outbox failure must roll back both completion and incident/notification state.
+	complete("error", "provider_unavailable")
+	if err = apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, err = st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.Policy.Outcome = "error"
+	claim.Policy.Reason = "provider_unavailable"
+	before, err := st.GetIssueTrackerSyncHealth(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), `CREATE FUNCTION reject_tracker_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event LIKE 'issue.tracker_sync.%' THEN RAISE EXCEPTION 'outbox unavailable'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_tracker_outbox BEFORE INSERT ON app_webhook_event_outbox FOR EACH ROW EXECUTE FUNCTION reject_tracker_outbox()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err == nil {
+		t.Fatal("outbox failure committed completion")
+	}
+	after, err := st.GetIssueTrackerSyncHealth(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil || after.History[0].ID != before.History[0].ID {
+		t.Fatal("partial completion", after, err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "DROP TRIGGER reject_tracker_outbox ON app_webhook_event_outbox; DROP FUNCTION reject_tracker_outbox()"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+		t.Fatal("completion not retryable after rollback", err)
+	}
+	// Owner settings forms preserve CSRF and revision checks without touching sync.
+	response := getAs(*e.Acct(), pageURL)
+	var csrf *http.Cookie
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == apidserver.DashboardIssueCookie {
+			csrf = cookie
+		}
+	}
+	if response.Code != 200 || csrf == nil {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	post := func(valid bool) *httptest.ResponseRecorder {
+		form := url.Values{"enabled": {"1"}, "expected_revision": {fmt.Sprint(policy.Revision)}, "failure_threshold": {"2"}}
+		if valid {
+			form.Set("csrf_token", csrf.Value)
+		}
+		req := httptest.NewRequest("POST", pageURL, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if valid {
+			req.AddCookie(csrf)
+		}
+		e.AddAdminSession(t, req)
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	if out := post(false); out.Code != 400 {
+		t.Fatal("CSRF bypass", out.Code)
+	}
+	if out := post(true); out.Code != 303 {
+		t.Fatal(out.Code, out.Body.String())
+	}
+	if out := post(true); out.Code != 409 {
+		t.Fatal("stale settings form accepted", out.Code)
 	}
 }

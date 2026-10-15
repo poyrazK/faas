@@ -14,10 +14,20 @@ func recordIssueTrackerSyncHistory(ctx context.Context, q *sqlc.Queries, tx pgx.
 	if err := q.IssueTrackerSyncHistoryAdd(ctx, tx, sqlc.IssueTrackerSyncHistoryAddParams{LinkID: issueUUID(r.Policy.LinkID), AppID: issueUUID(r.AppID), AccountID: issueUUID(r.AccountID), SourceIssueID: issueUUID(r.Policy.SourceIssueID), PolicyRevision: r.Policy.Revision, ClaimID: issueUUID(claim), EventType: event, Direction: r.Policy.Direction, Outcome: r.Policy.Outcome, Reason: r.Policy.Reason, SourceState: r.Policy.SourceState, ObservedState: r.Policy.ObservedState, PendingState: r.Policy.PendingState}); err != nil {
 		return err
 	}
-	return q.IssueTrackerSyncHistoryPrune(ctx, tx, sqlc.IssueTrackerSyncHistoryPruneParams{LinkID: issueUUID(r.Policy.LinkID), RetainedCount: api.IssueTrackerSyncHistoryMax})
+	if err := q.IssueTrackerSyncHistoryPrune(ctx, tx, sqlc.IssueTrackerSyncHistoryPruneParams{LinkID: issueUUID(r.Policy.LinkID), RetainedCount: api.IssueTrackerSyncHistoryMax}); err != nil {
+		return err
+	}
+	if event == "checked" {
+		return pgTrackerSyncNotifications(ctx, q, tx, r)
+	}
+	return nil
 }
 
 func (s *PgStore) GetIssueTrackerSyncHealth(ctx context.Context, app, account, issue, link string) (IssueTrackerSyncHealth, error) {
+	return s.getIssueTrackerSyncHealth(ctx, app, account, account, issue, link)
+}
+
+func (s *PgStore) getIssueTrackerSyncHealth(ctx context.Context, app, account, actor, issue, link string) (IssueTrackerSyncHealth, error) {
 	out := IssueTrackerSyncHealth{History: []IssueTrackerSyncHistory{}}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -25,6 +35,14 @@ func (s *PgStore) GetIssueTrackerSyncHealth(ctx context.Context, app, account, i
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+
+	allowed, e := q.IssueTrackerNotificationCanRead(ctx, tx, sqlc.IssueTrackerNotificationCanReadParams{AppID: issueUUID(app), OwnerAccountID: issueUUID(account), ActorAccountID: issueUUID(actor), LinkID: issueUUID(link)})
+	if e != nil {
+		return out, e
+	}
+	if !allowed {
+		return out, ErrNotFound
+	}
 	if _, err = autoSyncScope(ctx, q, tx, app, account, issue, link); err != nil {
 		return out, err
 	}
