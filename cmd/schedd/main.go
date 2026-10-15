@@ -1597,7 +1597,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
-		log.Info("frozen tier enabled (ADR-1151)",
+		if cfg.FrozenTierApps {
+			engine.EnableFrozenTierApps()
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	// The local Reader above deliberately contains only instances physically

@@ -296,6 +296,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_FREE_PAGE_REPORTING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+"},
 	{Name: "FAAS_FROZEN_TIER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for the ADR-1151 frozen tier; production default is off"},
+	{Name: "FAAS_FROZEN_TIER_APPS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off"},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_NODE22", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},

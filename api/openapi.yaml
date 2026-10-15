@@ -67493,6 +67493,11 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        pause:
+          type: string
+          enum: [between_requests, when_idle, never]
+          description: "When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never."
+          example: when_idle
         startup_deadline_s:
           type: integer
           minimum: 0
@@ -68143,6 +68148,11 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        pause:
+          type: string
+          enum: [between_requests, when_idle, never, ""]
+          description: "When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never. Omit to preserve; an empty string restores the default."
+          example: never
         startup_deadline_s:
           type: [integer, "null"]
           minimum: 0
@@ -68790,7 +68800,7 @@ components:
           example: 1.0
 
     AfterRestoreHook:
-      description: "Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."
+      description: "Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes, before the instance becomes ready."
       type: object
       properties:
         path:
@@ -68891,6 +68901,11 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        pause:
+          type: string
+          enum: [between_requests, when_idle, never]
+          description: "The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a function, when_idle for a request-mode app."
+          example: when_idle
         # M-2 (ADR-138 §Decision 3): upper bound on time-to-ready.
         # After this elapses, the instance transitions to FAILED
         # with lifecycle_failure_reason='startup_fail'. Per-plan
