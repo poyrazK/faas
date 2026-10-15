@@ -61,3 +61,14 @@ test('diagnostics consumes real runtime request records without exposing applica
   assert.equal(selected.matches[0].code, 'token_required')
   assert.equal(selected.matches[0].request_id, auth.request_id)
 })
+
+
+test('diagnostics retains read-only rejections without leaking signed identity metadata',{skip:!process.env.DATA_API_DEV_CLI},async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'gregale-read-only-diagnostics-'));t.after(()=>rm(directory,{recursive:true,force:true}))
+ const events=[],server=http.createServer((req,res)=>{traceRequest(req,res,event=>events.push(event));markRequest(res,'read_only_identity');res.statusCode=403;res.end('{}')})
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close()})
+ await(await fetch(`http://127.0.0.1:${server.address().port}/rest/v1/private-table`,{method:'POST',headers:{Authorization:'Bearer private-token'}})).text()
+ const path=join(directory,'log.ndjson');await writeFile(path,events.map(event=>JSON.stringify(event)).join('\n'))
+ const {stdout}=await command(process.env.DATA_API_DEV_CLI,['--json','data-api','diagnostics','--file',path],{env:{...process.env,FAAS_TOKEN:''}})
+ const result=JSON.parse(stdout);assert.equal(result.summary.requests,1);assert.equal(result.summary.errors,1);assert.equal(result.partial,false);assert.doesNotMatch(stdout,/private-token|private-table/)
+})

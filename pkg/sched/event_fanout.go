@@ -452,6 +452,11 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	}
 	l.runEventHistoryPrune(ctx, now)
 	if now.Sub(l.eventFanoutLastPrune) >= 10*time.Second {
+		if commands, ok := l.engine.store.(state.EventSubscriptionCapacityCommandRetentionStore); ok {
+			if _, err := commands.PruneEventSubscriptionCapacityCommands(ctx, now); err != nil && l.log != nil {
+				l.log.Warn("sched: prune capacity command receipts failed", "err", err)
+			}
+		}
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
 				if l.log != nil {

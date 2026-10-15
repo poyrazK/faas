@@ -124,7 +124,7 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
       document.querySelector('[name=tags]').value = 'one,,two';
       document.querySelector('#note-form').requestSubmit();
       await new Promise(resolve => setTimeout(resolve, 50));
-      return { body: document.querySelector('#body-error').textContent, tags: document.querySelector('#tags-error').textContent, tokenCleared: document.querySelector('[name=token]').value === '' };
+      return { body: document.querySelector('#insert-body-error').textContent, tags: document.querySelector('#tags-error').textContent, tokenCleared: document.querySelector('[name=token]').value === '' };
     })()`)
     assert.equal(invalidForm.body, 'Enter a note body.')
     assert.equal(invalidForm.tags, 'Enter a name for each tag; remove extra commas.')

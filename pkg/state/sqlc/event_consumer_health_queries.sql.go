@@ -82,3 +82,75 @@ func (q *Queries) EventConsumerHealthHistory(ctx context.Context, db DBTX, arg E
 	)
 	return i, err
 }
+
+const eventConsumerPressureTarget = `-- name: EventConsumerPressureTarget :one
+SELECT a.id FROM apps a WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted'
+ AND (EXISTS (SELECT 1 FROM event_subscriptions s WHERE s.id=$3::uuid AND s.app_id=a.id AND s.account_id=a.account_id)
+ OR EXISTS (SELECT 1 FROM event_subscription_delivery_controls c WHERE c.subscription_id=$3::uuid AND c.app_id=a.id AND c.account_id=a.account_id))
+`
+
+type EventConsumerPressureTargetParams struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) EventConsumerPressureTarget(ctx context.Context, db DBTX, arg EventConsumerPressureTargetParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventConsumerPressureTarget, arg.AppID, arg.AccountID, arg.SubscriptionID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const eventConsumerPressureWaits = `-- name: EventConsumerPressureWaits :one
+SELECT count(*) FILTER (WHERE observation.reason='capacity_consumer')::bigint AS consumer_waiting,
+ count(*) FILTER (WHERE observation.reason='capacity_app')::bigint AS app_waiting,
+ count(*) FILTER (WHERE observation.reason='capacity_account')::bigint AS account_waiting,
+ min(b.accepted_at) FILTER (WHERE observation.reason='capacity_consumer')::timestamptz AS consumer_oldest,
+ min(b.accepted_at) FILTER (WHERE observation.reason='capacity_app')::timestamptz AS app_oldest,
+ min(b.accepted_at) FILTER (WHERE observation.reason='capacity_account')::timestamptz AS account_oldest
+FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+
+LEFT JOIN LATERAL (SELECT event_recipient_order_blocker(b.outbox_id,b.subscription_id,
+ (SELECT item FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item WHERE item->>'id'=b.subscription_id LIMIT 1),b.routing_mode='recipient') AS blocker) ordering ON b.routing_state='pending'
+CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_id,b.app_id,b.subscription_id,$1::timestamptz) AS reason) control
+CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,$1::timestamptz) END AS reason) observation
+WHERE b.account_id=$2::uuid AND b.app_id=$3::uuid
+ AND b.subscription_id=$4::text AND b.consumer_kind='application'
+ AND b.routing_state='pending' AND b.accepted_at<=$1::timestamptz
+`
+
+type EventConsumerPressureWaitsParams struct {
+	ObservedAt     pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+type EventConsumerPressureWaitsRow struct {
+	ConsumerWaiting int64
+	AppWaiting      int64
+	AccountWaiting  int64
+	ConsumerOldest  pgtype.Timestamptz
+	AppOldest       pgtype.Timestamptz
+	AccountOldest   pgtype.Timestamptz
+}
+
+func (q *Queries) EventConsumerPressureWaits(ctx context.Context, db DBTX, arg EventConsumerPressureWaitsParams) (EventConsumerPressureWaitsRow, error) {
+	row := db.QueryRow(ctx, eventConsumerPressureWaits,
+		arg.ObservedAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var i EventConsumerPressureWaitsRow
+	err := row.Scan(
+		&i.ConsumerWaiting,
+		&i.AppWaiting,
+		&i.AccountWaiting,
+		&i.ConsumerOldest,
+		&i.AppOldest,
+		&i.AccountOldest,
+	)
+	return i, err
+}

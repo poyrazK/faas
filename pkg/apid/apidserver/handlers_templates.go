@@ -74,6 +74,10 @@ func templateDescription(name string) string {
 		return "Schema-generated Postgres REST API with JWT authentication and row-level security"
 	case "data-api-starter":
 		return "Versioned Data API migrations, a typed client, two-user RLS checks and application CI"
+	case "data-api-teams":
+		return "Tenant-aware team orders with typed clients, guarded workflows and a support dashboard"
+	case "data-api-support-console":
+		return "OIDC-authenticated customer support with scoped data, audit history and approved case actions"
 	case "customer-platform":
 		return "Node.js customer platform with tenant authentication and Postgres data isolation"
 	case "mcp-node":

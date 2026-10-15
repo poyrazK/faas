@@ -472,6 +472,7 @@ from .canary_route_gate_mode import CanaryRouteGateMode
 from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
+from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
 from .capabilities_response import CapabilitiesResponse
@@ -523,6 +524,8 @@ from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
+from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
 from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
@@ -595,6 +598,7 @@ from .create_environment_git_source_request import CreateEnvironmentGitSourceReq
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
 from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
 from .create_environment_git_source_request_provider import CreateEnvironmentGitSourceRequestProvider
+from .create_event_execution_lineage_retry_job_request import CreateEventExecutionLineageRetryJobRequest
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_financial_budget_request import CreateFinancialBudgetRequest
 from .create_image_run_request import CreateImageRunRequest
@@ -1117,6 +1121,11 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_capacity_pressure import EventConsumerCapacityPressure
+from .event_consumer_capacity_pressure_blocking_scope import EventConsumerCapacityPressureBlockingScope
+from .event_consumer_capacity_pressure_coverage import EventConsumerCapacityPressureCoverage
+from .event_consumer_capacity_scope import EventConsumerCapacityScope
+from .event_consumer_capacity_scope_scope import EventConsumerCapacityScopeScope
 from .event_consumer_capacity_waits import EventConsumerCapacityWaits
 from .event_consumer_capacity_waits_coverage import EventConsumerCapacityWaitsCoverage
 from .event_consumer_delivery_health import EventConsumerDeliveryHealth
@@ -1137,6 +1146,51 @@ from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
+from .event_execution_lineage_case import EventExecutionLineageCase
+from .event_execution_lineage_case_backfill import EventExecutionLineageCaseBackfill
+from .event_execution_lineage_case_backfill_status import EventExecutionLineageCaseBackfillStatus
+from .event_execution_lineage_case_status import EventExecutionLineageCaseStatus
+from .event_execution_lineage_cases import EventExecutionLineageCases
+from .event_execution_lineage_retry_job import EventExecutionLineageRetryJob
+from .event_execution_lineage_retry_job_attention_options import EventExecutionLineageRetryJobAttentionOptions
+from .event_execution_lineage_retry_job_attention_options_attention import (
+    EventExecutionLineageRetryJobAttentionOptionsAttention,
+)
+from .event_execution_lineage_retry_job_attention_page import EventExecutionLineageRetryJobAttentionPage
+from .event_execution_lineage_retry_job_attention_page_coverage import (
+    EventExecutionLineageRetryJobAttentionPageCoverage,
+)
+from .event_execution_lineage_retry_job_attention_page_filter import EventExecutionLineageRetryJobAttentionPageFilter
+from .event_execution_lineage_retry_job_control_filters import EventExecutionLineageRetryJobControlFilters
+from .event_execution_lineage_retry_job_control_filters_action import EventExecutionLineageRetryJobControlFiltersAction
+from .event_execution_lineage_retry_job_control_filters_credential_type import (
+    EventExecutionLineageRetryJobControlFiltersCredentialType,
+)
+from .event_execution_lineage_retry_job_control_receipt import EventExecutionLineageRetryJobControlReceipt
+from .event_execution_lineage_retry_job_control_receipt_action import EventExecutionLineageRetryJobControlReceiptAction
+from .event_execution_lineage_retry_job_control_receipt_actor_kind import (
+    EventExecutionLineageRetryJobControlReceiptActorKind,
+)
+from .event_execution_lineage_retry_job_control_receipt_credential_type import (
+    EventExecutionLineageRetryJobControlReceiptCredentialType,
+)
+from .event_execution_lineage_retry_job_control_receipt_result_status import (
+    EventExecutionLineageRetryJobControlReceiptResultStatus,
+)
+from .event_execution_lineage_retry_job_controls import EventExecutionLineageRetryJobControls
+from .event_execution_lineage_retry_job_health import EventExecutionLineageRetryJobHealth
+from .event_execution_lineage_retry_job_health_coverage import EventExecutionLineageRetryJobHealthCoverage
+from .event_execution_lineage_retry_job_health_sample import EventExecutionLineageRetryJobHealthSample
+from .event_execution_lineage_retry_job_health_sample_status import EventExecutionLineageRetryJobHealthSampleStatus
+from .event_execution_lineage_retry_job_item import EventExecutionLineageRetryJobItem
+from .event_execution_lineage_retry_job_item_status import EventExecutionLineageRetryJobItemStatus
+from .event_execution_lineage_retry_job_status import EventExecutionLineageRetryJobStatus
+from .event_execution_lineage_retry_job_summary import EventExecutionLineageRetryJobSummary
+from .event_execution_lineage_retry_job_summary_status import EventExecutionLineageRetryJobSummaryStatus
+from .event_execution_lineage_retry_jobs import EventExecutionLineageRetryJobs
+from .event_execution_lineage_retry_selection import EventExecutionLineageRetrySelection
+from .event_execution_reconciliation import EventExecutionReconciliation
+from .event_execution_reconciliation_status import EventExecutionReconciliationStatus
 from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
 from .event_fanout_attempt_history_response_coverage import EventFanoutAttemptHistoryResponseCoverage
 from .event_fanout_attempt_response import EventFanoutAttemptResponse
@@ -1326,6 +1380,14 @@ from .event_schema_rollout_retained import EventSchemaRolloutRetained
 from .event_schema_rollout_validation import EventSchemaRolloutValidation
 from .event_storage_usage_response import EventStorageUsageResponse
 from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
+from .event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
+from .event_subscription_capacity_command_budget_limit import EventSubscriptionCapacityCommandBudgetLimit
+from .event_subscription_capacity_command_receipt import EventSubscriptionCapacityCommandReceipt
+from .event_subscription_capacity_command_receipt_outcome import EventSubscriptionCapacityCommandReceiptOutcome
+from .event_subscription_capacity_commands import EventSubscriptionCapacityCommands
+from .event_subscription_capacity_commands_outcome import EventSubscriptionCapacityCommandsOutcome
+from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
+from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
@@ -1726,9 +1788,16 @@ from .list_durable_entity_registry_response_200 import ListDurableEntityRegistry
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
+from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
+from .list_event_execution_lineage_retry_job_controls_credential_type import (
+    ListEventExecutionLineageRetryJobControlsCredentialType,
+)
+from .list_event_execution_lineage_retry_jobs_attention import ListEventExecutionLineageRetryJobsAttention
+from .list_event_execution_lineage_retry_jobs_status import ListEventExecutionLineageRetryJobsStatus
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
+from .list_event_subscription_capacity_commands_outcome import ListEventSubscriptionCapacityCommandsOutcome
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -3638,6 +3707,7 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
@@ -3648,6 +3718,7 @@ from .resume_automation_failure_pause_request import ResumeAutomationFailurePaus
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
+from .retry_event_execution_lineage_case_request import RetryEventExecutionLineageCaseRequest
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
@@ -5051,6 +5122,7 @@ __all__ = (
     "CancelDeploymentRequest",
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
+    "CancelEventExecutionLineageRetryJobRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
     "CapabilitiesResponse",
@@ -5100,6 +5172,8 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ControlEventExecutionLineageCaseBackfillRequest",
+    "ControlEventExecutionLineageRetryJobRequest",
     "ControlRealtimeReplayJobAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
@@ -5172,6 +5246,7 @@ __all__ = (
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
     "CreateEnvironmentGitSourceRequestMode",
     "CreateEnvironmentGitSourceRequestProvider",
+    "CreateEventExecutionLineageRetryJobRequest",
     "CreateExecutionArtifactGrantRequest",
     "CreateFinancialBudgetRequest",
     "CreateImageRunRequest",
@@ -5674,6 +5749,11 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerCapacityPressure",
+    "EventConsumerCapacityPressureBlockingScope",
+    "EventConsumerCapacityPressureCoverage",
+    "EventConsumerCapacityScope",
+    "EventConsumerCapacityScopeScope",
     "EventConsumerCapacityWaits",
     "EventConsumerCapacityWaitsCoverage",
     "EventConsumerDeliveryHealth",
@@ -5694,6 +5774,39 @@ __all__ = (
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
+    "EventExecutionLineageCase",
+    "EventExecutionLineageCaseBackfill",
+    "EventExecutionLineageCaseBackfillStatus",
+    "EventExecutionLineageCases",
+    "EventExecutionLineageCaseStatus",
+    "EventExecutionLineageRetryJob",
+    "EventExecutionLineageRetryJobAttentionOptions",
+    "EventExecutionLineageRetryJobAttentionOptionsAttention",
+    "EventExecutionLineageRetryJobAttentionPage",
+    "EventExecutionLineageRetryJobAttentionPageCoverage",
+    "EventExecutionLineageRetryJobAttentionPageFilter",
+    "EventExecutionLineageRetryJobControlFilters",
+    "EventExecutionLineageRetryJobControlFiltersAction",
+    "EventExecutionLineageRetryJobControlFiltersCredentialType",
+    "EventExecutionLineageRetryJobControlReceipt",
+    "EventExecutionLineageRetryJobControlReceiptAction",
+    "EventExecutionLineageRetryJobControlReceiptActorKind",
+    "EventExecutionLineageRetryJobControlReceiptCredentialType",
+    "EventExecutionLineageRetryJobControlReceiptResultStatus",
+    "EventExecutionLineageRetryJobControls",
+    "EventExecutionLineageRetryJobHealth",
+    "EventExecutionLineageRetryJobHealthCoverage",
+    "EventExecutionLineageRetryJobHealthSample",
+    "EventExecutionLineageRetryJobHealthSampleStatus",
+    "EventExecutionLineageRetryJobItem",
+    "EventExecutionLineageRetryJobItemStatus",
+    "EventExecutionLineageRetryJobs",
+    "EventExecutionLineageRetryJobStatus",
+    "EventExecutionLineageRetryJobSummary",
+    "EventExecutionLineageRetryJobSummaryStatus",
+    "EventExecutionLineageRetrySelection",
+    "EventExecutionReconciliation",
+    "EventExecutionReconciliationStatus",
     "EventFanoutAttemptHistoryResponse",
     "EventFanoutAttemptHistoryResponseCoverage",
     "EventFanoutAttemptResponse",
@@ -5873,6 +5986,14 @@ __all__ = (
     "EventSchemaRolloutValidation",
     "EventStorageUsageResponse",
     "EventStorageUsageResponseLimits",
+    "EventSubscriptionCapacityCommandBudget",
+    "EventSubscriptionCapacityCommandBudgetLimit",
+    "EventSubscriptionCapacityCommandReceipt",
+    "EventSubscriptionCapacityCommandReceiptOutcome",
+    "EventSubscriptionCapacityCommands",
+    "EventSubscriptionCapacityCommandsOutcome",
+    "EventSubscriptionCapacityGuard",
+    "EventSubscriptionCapacityRequest",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
@@ -6261,9 +6382,14 @@ __all__ = (
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
+    "ListEventExecutionLineageRetryJobControlsAction",
+    "ListEventExecutionLineageRetryJobControlsCredentialType",
+    "ListEventExecutionLineageRetryJobsAttention",
+    "ListEventExecutionLineageRetryJobsStatus",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",
+    "ListEventSubscriptionCapacityCommandsOutcome",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
@@ -7965,6 +8091,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "RequestEventExecutionLineageCaseBackfillRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
@@ -7975,6 +8102,7 @@ __all__ = (
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
+    "RetryEventExecutionLineageCaseRequest",
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
