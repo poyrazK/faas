@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,9 @@ func TestMetalFreezeDensity(t *testing.T) {
 	t.Logf("freeze: %d VMs, VM cgroups %d -> %d MB (%.1f -> %.1f per VM), %d MB to swap, host MemAvailable %d -> %d MB, freeze p50 %v max %v",
 		n, running, frozen, float64(running)/float64(n), float64(frozen)/float64(n), swapped, availRunning, availFrozen,
 		percentile(freezeTimes, 50), percentile(freezeTimes, 100))
+	// zswap (ADR-906 decision 6): the RAM the compressed pool takes and the
+	// memory it holds; both zero without zswap.
+	t.Logf("zswap pool: %d MB holding %d MB", meminfoMB(t, "Zswap:"), meminfoMB(t, "Zswapped:"))
 
 	var firstByte, heavy []time.Duration
 	for i, id := range ids {
@@ -136,9 +140,50 @@ func TestMetalFreezeDensity(t *testing.T) {
 	t.Logf("thaw: first byte p50 %v p99 %v max %v; CPU-bound request p50 %v max %v; VM cgroups %d MB",
 		percentile(firstByte, 50), percentile(firstByte, 99), percentile(firstByte, 100),
 		percentile(heavy, 50), percentile(heavy, 100), vmMB())
+	if snap != nil {
+		// What a request would pay without the frozen tier: a snapshot
+		// restore of the same app, to its first byte and a CPU-bound request.
+		var restoreFirst, restoreHeavy []time.Duration
+		for i := 0; i < 3; i++ {
+			id := fmt.Sprintf("frz-ref-%d", i)
+			start := time.Now()
+			inst, err := m.Wake(ctx, WakeRequest{Instance: id, AccountID: "acct", AppID: "app-frz", Plan: "scale",
+				BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 1024, Snapshot: snap})
+			if err != nil {
+				t.Fatalf("reference restore %d: %v", i, err)
+			}
+			host := "http://" + inst.Lease.HostIP.String() + ":8080"
+			if _, err := firstResponse(host+"/", 30*time.Second); err != nil {
+				t.Fatalf("reference restore %d does not serve: %v", i, err)
+			}
+			restoreFirst = append(restoreFirst, time.Since(start))
+			start = time.Now()
+			get(t, host+"/heavy")
+			restoreHeavy = append(restoreHeavy, time.Since(start))
+			_ = m.Destroy(context.Background(), id)
+		}
+		t.Logf("reference snapshot restore: first byte p50 %v max %v; CPU-bound request p50 %v max %v",
+			percentile(restoreFirst, 50), percentile(restoreFirst, 100), percentile(restoreHeavy, 50), percentile(restoreHeavy, 100))
+	}
 	if frozen > running {
 		t.Fatalf("freezing grew the VMs: %d -> %d MB", running, frozen)
 	}
+}
+
+// meminfoMB reads one /proc/meminfo field in MB, or 0 when it is absent.
+func meminfoMB(t *testing.T, key string) int64 {
+	t.Helper()
+	raw, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == key {
+			kb, _ := strconv.ParseInt(f[1], 10, 64)
+			return kb >> 10
+		}
+	}
+	return 0
 }
 
 func get(t *testing.T, url string) {
