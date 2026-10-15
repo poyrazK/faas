@@ -11,7 +11,7 @@ import (
 
 // ErrRealtimeConsumerGroupBoundToTrigger rejects claims and settlements on a
 // group that a realtime trigger consumes, and a trigger dispatch on a group
-// it is no longer bound to (ADR-1237).
+// it is no longer bound to (ADR-1322).
 var ErrRealtimeConsumerGroupBoundToTrigger = errors.New("state: realtime consumer group is bound to a trigger")
 
 // RealtimeTriggerLeaseError reports a group whose lease is too short for a

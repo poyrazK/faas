@@ -79,7 +79,7 @@ for the request contract and recovery procedure.
 ## Function triggers
 
 A realtime trigger runs one of your functions for each message on a channel, so
-you do not operate always-on workers (ADR-1237). It consumes an existing consumer
+you do not operate always-on workers (ADR-1322). It consumes an existing consumer
 group: create the group with `lease_seconds` of at least 120, then create a
 trigger with `kind: realtime` and `{"endpoint_id", "channel", "group"}` config.
 The group's ordering, filters, retry policy and dead-letter queue apply, and a

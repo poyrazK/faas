@@ -357,11 +357,11 @@ const (
 )
 
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
-// realtime trigger may bind (ADR-1237): one GatewaySynthDispatchTimeout
+// realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
 // invocation plus wake and queueing margin.
 const RealtimeTriggerMinLeaseSeconds = 120
 
-// Realtime usage recording (ADR-1238: recorded, never billed). Each
+// Realtime usage recording (ADR-1323: recorded, never billed). Each
 // realtimed process reports its cumulative per-endpoint usage for the current
 // UTC hour once per RealtimeUsageReportInterval, in reports of at most
 // RealtimeUsageReportMaxEndpoints endpoints. It keeps completed hours it could
@@ -1446,7 +1446,7 @@ var FullRootfsAllowAutoDefault = map[Plan]bool{
 // kept separate from Limits so the opt-in realtime surface does not change the
 // long-lived Limits struct consumed by every daemon.
 //
-// Realtime is free (ADR-1238): Gregale sells compute, and realtime features are
+// Realtime is free (ADR-1323): Gregale sells compute, and realtime features are
 // software. Limits exist only where realtime holds a real resource. An open
 // connection holds about 52 KB of realtimed memory (measured idle, 2026-10-14),
 // so ConnectionsPerAccount caps the concurrent connections an account holds
@@ -1467,7 +1467,7 @@ var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000},
 }
 
-// Platform side of realtime fair use (ADR-1238). realtimed runs with
+// Platform side of realtime fair use (ADR-1323). realtimed runs with
 // MemoryMax=512M; at ~52 KB per idle connection, RealtimeNodeConnectionsDefault
 // leaves room for queued frames and subscription pumps. One account may hold at
 // most RealtimeAccountNodeSharePercent of a node's connections, so a single

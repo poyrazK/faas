@@ -13,7 +13,7 @@ import (
 	usagesqlc "github.com/onebox-faas/faas/pkg/state/realtimebulk/sqlc"
 )
 
-// ADR-1238: realtime usage is recorded per endpoint, node and hour to review
+// ADR-1323: realtime usage is recorded per endpoint, node and hour to review
 // the fair-use limits. Realtime is free; nothing bills from it.
 
 // RealtimeUsageMinutes is the number of per-minute peaks in one hourly row.
@@ -186,7 +186,7 @@ type RealtimeAccountUsageHour struct {
 	ReceivedBytes     int64     `json:"received_bytes"`
 }
 
-// RealtimeAccountUsageReader serves the customer usage view (ADR-1238).
+// RealtimeAccountUsageReader serves the customer usage view (ADR-1323).
 type RealtimeAccountUsageReader interface {
 	ReadRealtimeUsage(ctx context.Context, accountID string, from, to time.Time) ([]RealtimeUsageHour, error)
 	ReadRealtimeAccountUsage(ctx context.Context, accountID string, from, to time.Time) ([]RealtimeAccountUsageHour, error)

@@ -83,7 +83,7 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 	if len(registrar.registered) != 1 || registrar.registered[0].ID != "healthy-endpoint" {
 		t.Fatalf("registered = %+v, want healthy endpoint despite failed sibling", registrar.registered)
 	}
-	// The plan's fair-use connection allowance travels with the endpoint (ADR-1238).
+	// The plan's fair-use connection allowance travels with the endpoint (ADR-1323).
 	if got := registrar.registered[0].AccountMaxConnections; got != 1_000 {
 		t.Fatalf("account connection limit = %d, want Pro's 1,000", got)
 	}

@@ -18,7 +18,7 @@ func realtimeTriggerProblem(status int, code, title, detail string) *api.Problem
 }
 
 // PrepareRealtimeTrigger validates a kind=realtime trigger before it is
-// created (ADR-1237): the retained preview, the delivery settings the group
+// created (ADR-1322): the retained preview, the delivery settings the group
 // owns, endpoint ownership, and the group's lease and binding. Binding runs
 // again atomically after creation.
 func (s *Service) PrepareRealtimeTrigger(ctx context.Context, acct state.Account, req *api.CreateTriggerRequest) (api.RealtimeTriggerConfig, *api.Problem) {

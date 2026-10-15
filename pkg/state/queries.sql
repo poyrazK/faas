@@ -2463,7 +2463,7 @@ DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id;
 
 -- name: SupersedeTriggerRecordItems :execrows
 -- Ends one realtime delivery's records whatever stage they reached; the
--- consumer group redelivers under a new item identifier (ADR-1237).
+-- consumer group redelivers under a new item identifier (ADR-1322).
 UPDATE trigger_records
    SET state = 'superseded', last_error = sqlc.arg(last_error),
        last_dispatched_at = now(), claim_expires_at = NULL

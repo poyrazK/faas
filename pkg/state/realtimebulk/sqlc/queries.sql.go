@@ -758,7 +758,7 @@ type ReadAccountOpenConnectionsParams struct {
 	StaleSeconds float64
 }
 
-// An account's open connections across nodes with a fresh sync (ADR-1238).
+// An account's open connections across nodes with a fresh sync (ADR-1323).
 func (q *Queries) ReadAccountOpenConnections(ctx context.Context, db DBTX, arg ReadAccountOpenConnectionsParams) (int64, error) {
 	row := db.QueryRow(ctx, readAccountOpenConnections, arg.AccountID, arg.StaleSeconds)
 	var connections int64

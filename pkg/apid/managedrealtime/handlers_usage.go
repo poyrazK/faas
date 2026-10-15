@@ -11,7 +11,7 @@ import (
 )
 
 // RealtimeUsage serves GET /v1/usage/realtime: the account's open connections
-// against its plan's fair-use limit, and recorded usage per hour (ADR-1238).
+// against its plan's fair-use limit, and recorded usage per hour (ADR-1323).
 func (s *Service) RealtimeUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	hours, ok := realtimeUsageHours(w, r)
 	if !ok {

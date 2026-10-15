@@ -1,4 +1,4 @@
-# ADR-1238: Realtime is free, with fair-use limits
+# ADR-1323: Realtime is free, with fair-use limits
 
 - **Status:** accepted (owner decision, 2026-10-14: "We are only selling compute times, we are giving all software mechanics for free to our customers… put a fair usage for both platform and customers").
 - **Date:** 2026-10-14
@@ -13,7 +13,7 @@
   - *Retained messages.* Already bounded per endpoint: 24 hours, 1,024 messages per channel, 32 channels, 4 KiB per message; endpoints are capped per plan.
   - *Fan-out bandwidth.* Not attributed to accounts. Application egress is recorded as non-billable today.
 - **Before this ADR,** plans capped endpoint counts only. Each endpoint could hold 10,000 connections on every plan, so one Hobby account (10 endpoints) could fill every node.
-- **Realtime triggers (ADR-1237)** deliver messages as invocations, which already bill as compute.
+- **Realtime triggers (ADR-1322)** deliver messages as invocations, which already bill as compute.
 
 ## Decision
 

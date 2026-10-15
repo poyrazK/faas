@@ -3,7 +3,7 @@ package api
 import "time"
 
 // RealtimeUsageResponse is an account's realtime usage against its fair-use
-// limits (ADR-1238). Realtime is free; these numbers are for visibility.
+// limits (ADR-1323). Realtime is free; these numbers are for visibility.
 type RealtimeUsageResponse struct {
 	Plan Plan `json:"plan"`
 	// ConnectionLimit is the plan's concurrent connections per account; zero

@@ -1,4 +1,4 @@
-# ADR-1237: Realtime channels as function triggers
+# ADR-1322: Realtime channels as function triggers
 
 - **Status:** proposed (owner decision, 2026-10-13: build it with the recommended defaults)
 - **Date:** 2026-10-13

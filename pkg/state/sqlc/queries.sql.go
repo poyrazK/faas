@@ -76712,7 +76712,7 @@ type SupersedeTriggerRecordItemsParams struct {
 }
 
 // Ends one realtime delivery's records whatever stage they reached; the
-// consumer group redelivers under a new item identifier (ADR-1237).
+// consumer group redelivers under a new item identifier (ADR-1322).
 func (q *Queries) SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error) {
 	result, err := db.Exec(ctx, supersedeTriggerRecordItems, arg.LastError, arg.TriggerID, arg.ItemIdentifiers)
 	if err != nil {

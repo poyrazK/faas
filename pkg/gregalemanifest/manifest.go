@@ -97,7 +97,7 @@ const (
 	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
 	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
 	// TriggerKindRealtime — deliver a bound realtime consumer group's
-	// messages as invocations (ADR-1237). Config schema:
+	// messages as invocations (ADR-1322). Config schema:
 	// api.RealtimeTriggerConfig{EndpointID, Channel, Group, MaxConcurrency}.
 	TriggerKindRealtime TriggerKind = "realtime"
 )

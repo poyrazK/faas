@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Realtime usage recording (ADR-1238). Admission, sends and receives
+// Realtime usage recording (ADR-1323). Admission, sends and receives
 // update per-endpoint atomics; one reporter goroutine samples them every
 // UsageSampleInterval into per-hour totals and sends each open or
 // undelivered hour to UsageReporter every UsageReportInterval. Nothing here

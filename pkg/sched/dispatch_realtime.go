@@ -14,7 +14,7 @@ import (
 )
 
 // scheduleRealtimeLanes submits this tick's lanes for one realtime trigger
-// (ADR-1237). Each lane carries one message; the bound group serializes
+// (ADR-1322). Each lane carries one message; the bound group serializes
 // messages that share an ordering key, so lanes only run different keys in
 // parallel. The lane allowance grows after each lane that reaches the
 // gateway and halves after a gateway failure, as for push queues.

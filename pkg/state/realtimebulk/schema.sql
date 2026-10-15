@@ -98,7 +98,7 @@ ALTER TABLE managed_realtime_replay_jobs ADD CONSTRAINT realtime_replay_job_mode
 
 -- IDs link bounded history without retaining reports or cascading deletion of live jobs.
 
--- Usage projection (ADR-1238); runtime migration 20261014101101862.
+-- Usage projection (ADR-1323); runtime migration 20261014101101862.
 CREATE TABLE realtime_usage_hours (
  endpoint_id uuid NOT NULL,
  hour timestamptz NOT NULL,
@@ -116,6 +116,6 @@ CREATE TABLE realtime_usage_hours (
  PRIMARY KEY (endpoint_id, hour, node_name, incarnation)
 );
 
--- Fair-use connection projection (ADR-1238); runtime migration 20261014194829908.
+-- Fair-use connection projection (ADR-1323); runtime migration 20261014194829908.
 CREATE TABLE realtime_node_connection_syncs (node_name text PRIMARY KEY, synced_at timestamptz NOT NULL);
 CREATE TABLE realtime_node_connections (node_name text NOT NULL, account_id uuid NOT NULL, connections integer NOT NULL, PRIMARY KEY (node_name, account_id));

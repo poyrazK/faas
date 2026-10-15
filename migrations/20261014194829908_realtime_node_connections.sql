@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-1238 fair use: realtimed reports each account's open connections on its
+-- ADR-1323 fair use: realtimed reports each account's open connections on its
 -- node every few seconds so admission can cap an account across the fleet. A
 -- sync replaces the node's whole set; accounts without connections have no
 -- row. Counts from a node whose last sync is stale are ignored, and nodes

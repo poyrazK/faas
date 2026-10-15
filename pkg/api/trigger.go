@@ -71,12 +71,12 @@ const (
 	TriggerKindSQSCompat    TriggerKind = "sqs_compat"
 	TriggerKindQueue        TriggerKind = "queue"
 	// TriggerKindRealtime delivers each message of a bound realtime
-	// consumer group as one invocation (ADR-1237).
+	// consumer group as one invocation (ADR-1322).
 	TriggerKindRealtime TriggerKind = "realtime"
 )
 
 // RealtimeTriggerConfig is the config of a kind=realtime trigger
-// (ADR-1237). The named consumer group must already exist; its ordering,
+// (ADR-1322). The named consumer group must already exist; its ordering,
 // filter, retry and retention settings govern delivery.
 type RealtimeTriggerConfig struct {
 	EndpointID string `json:"endpoint_id"`

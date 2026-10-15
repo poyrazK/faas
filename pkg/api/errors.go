@@ -3518,11 +3518,11 @@ const (
 	CodeRealtimeUnavailable = "realtime_unavailable"
 	// CodeRealtimeConnectionLimit is the 429 a realtime client sees when its
 	// account is at its plan's concurrent-connection allowance, or holds the
-	// most one account may on a single realtime node (ADR-1238 fair use).
+	// most one account may on a single realtime node (ADR-1323 fair use).
 	CodeRealtimeConnectionLimit = "realtime_connection_limit"
 )
 
-// Realtime connection limit scopes (ADR-1238).
+// Realtime connection limit scopes (ADR-1323).
 const (
 	RealtimeConnectionLimitAccount     = "account"
 	RealtimeConnectionLimitAccountNode = "account_node"

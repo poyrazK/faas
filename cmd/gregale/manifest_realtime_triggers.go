@@ -1,7 +1,7 @@
 package main
 
 // manifest_realtime_triggers.go — `kind: realtime` triggers in gregale.yaml
-// (ADR-1237). A deploy reconciles the deployed app's realtime triggers by
+// (ADR-1322). A deploy reconciles the deployed app's realtime triggers by
 // slug, inside the same rollback transaction as its cron triggers.
 
 import (

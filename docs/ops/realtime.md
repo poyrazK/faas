@@ -3563,7 +3563,7 @@ and runtime/UI verification remain pending. See ADR-1033.
 
 ## Realtime function triggers
 
-ADR-1237 delivers a consumer group's messages to a function instead of a
+ADR-1322 delivers a consumer group's messages to a function instead of a
 customer-run worker. It requires the retained-realtime preview
 (`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) on apid, migration
 `20261013210513485_realtime_function_triggers.sql`, and a schedd that
@@ -3624,7 +3624,7 @@ which refuses while any exist.
 
 ## Fair-use connection limits
 
-Realtime is free (ADR-1238); plans cap the resource it holds. apid sends each
+Realtime is free (ADR-1323); plans cap the resource it holds. apid sends each
 endpoint's account allowance (`ConnectionsPerAccount` in `pkg/api/limits.go`:
 Hobby 200, Pro 1,000, Scale 5,000) to realtimed with the endpoint, so plan
 changes apply at the next endpoint reconcile (30 s). realtimed refuses a
@@ -3659,7 +3659,7 @@ means accounts are capped per node. apid stores the counts in
 
 ## Realtime usage recording
 
-ADR-1238 records realtime usage per endpoint to review the fair-use limits and
+ADR-1323 records realtime usage per endpoint to review the fair-use limits and
 spot abuse. Realtime is free; nothing bills from these rows. Enable it on every realtimed node with
 `FAAS_REALTIME_USAGE_ENABLED=1`; realtimed then reaches apid's private
 listener exactly like the resume preview (`FAAS_REALTIME_HISTORY_TARGET` and,

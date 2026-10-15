@@ -228,7 +228,7 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if realtimeCfg != nil {
-		// One message per delivery; the bound group owns attempts (ADR-1237).
+		// One message per delivery; the bound group owns attempts (ADR-1322).
 		batchSizeMax, maxAttempts = 1, 1
 	}
 	sealedConfig, p := sealTriggerConfig(req.Kind, req.Config)
@@ -252,7 +252,7 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	writeJSON(w, http.StatusCreated, triggerResponse(t))
 }
 
-// prepareRealtimeTrigger runs ADR-1237's pre-create checks for a
+// prepareRealtimeTrigger runs ADR-1322's pre-create checks for a
 // kind=realtime trigger. It returns nil for every other kind.
 func (s *server) prepareRealtimeTrigger(ctx context.Context, acct state.Account, req *api.CreateTriggerRequest) (*api.RealtimeTriggerConfig, *api.Problem) {
 	if req.Kind != api.TriggerKindRealtime {

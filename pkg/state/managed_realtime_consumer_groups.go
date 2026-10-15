@@ -76,7 +76,7 @@ type RealtimeConsumerGroup struct {
 	ActiveWorkers              int                         `json:"active_workers"`
 	HistoryUnavailable         bool                        `json:"history_unavailable"`
 	CapacityBlocked            bool                        `json:"capacity_blocked"`
-	// TriggerID names the realtime trigger consuming this group (ADR-1237).
+	// TriggerID names the realtime trigger consuming this group (ADR-1322).
 	TriggerID    string    `json:"trigger_id,omitempty"`
 	LeaseSeconds int       `json:"lease_seconds"`
 	MaxAttempts  int       `json:"max_attempts"`

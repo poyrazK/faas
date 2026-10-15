@@ -13,7 +13,7 @@ import (
 	connsqlc "github.com/onebox-faas/faas/pkg/state/realtimebulk/sqlc"
 )
 
-// ADR-1238 fair use: realtimed nodes share per-account connection counts so
+// ADR-1323 fair use: realtimed nodes share per-account connection counts so
 // admission can cap an account across the fleet.
 
 // realtimeConnectionNodeForgetAfter removes a node that stopped syncing, with

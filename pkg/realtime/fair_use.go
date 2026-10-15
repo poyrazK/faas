@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Realtime fair use (ADR-1238). Realtime is free; an account's concurrent
+// Realtime fair use (ADR-1323). Realtime is free; an account's concurrent
 // connections are capped by its plan across the fleet, and one account may
 // hold at most api.RealtimeAccountNodeSharePercent of a node. Each node counts
 // its own connections per account and learns the other nodes' counts from

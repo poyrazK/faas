@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// ReportUsage records one realtimed node's usage for one hour (ADR-1238). The
+// ReportUsage records one realtimed node's usage for one hour (ADR-1323). The
 // node must be registered; account and app come from the endpoint row, never
 // from the report.
 func (r *realtimeFleetReceiver) ReportUsage(ctx context.Context, envelope *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {

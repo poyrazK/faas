@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-1238: realtime usage, recorded to review fair-use limits, never billed. Each realtimed
+-- ADR-1323: realtime usage, recorded to review fair-use limits, never billed. Each realtimed
 -- process reports its cumulative usage per endpoint for the current UTC hour
 -- every minute; a report replaces the row with the larger of the old and new
 -- values, so repeats and out-of-order delivery are harmless. A restart gets a

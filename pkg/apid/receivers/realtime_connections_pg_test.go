@@ -27,7 +27,7 @@ import (
 
 // TestAccountConnectionLimitHoldsAcrossNodes runs two realtime nodes against
 // one apid and Postgres: an account's allowance is shared between them
-// (ADR-1238 fair use).
+// (ADR-1323 fair use).
 func TestAccountConnectionLimitHoldsAcrossNodes(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()

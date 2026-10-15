@@ -232,7 +232,7 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 }
 
 // realtimeAccountConnectionLimit is the account's plan allowance of concurrent
-// realtime connections (ADR-1238). Plan changes reach realtimed with the next
+// realtime connections (ADR-1323). Plan changes reach realtimed with the next
 // endpoint reconcile.
 func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID string) (int, error) {
 	acct, err := s.Host.Store().AccountByID(ctx, accountID)

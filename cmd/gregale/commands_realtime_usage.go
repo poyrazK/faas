@@ -12,7 +12,7 @@ import (
 )
 
 // cmdRealtimeUsage shows the account's realtime connections against its
-// plan's fair-use limit and recorded usage per hour (ADR-1238).
+// plan's fair-use limit and recorded usage per hour (ADR-1323).
 func cmdRealtimeUsage(args []string) int {
 	fs := newFlagSet("realtime usage", flag.ContinueOnError)
 	hours := fs.Int("hours", api.RealtimeUsageQueryDefaultHours, "UTC hours of usage to show (1-744)")

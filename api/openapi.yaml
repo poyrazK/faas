@@ -42172,7 +42172,7 @@ paths:
       tags: [usage]
       operationId: getRealtimeUsage
       summary: Realtime connections against the plan's fair-use limit, and recorded usage per hour.
-      description: Realtime is free (ADR-1238). open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
+      description: Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
       parameters:
         - name: hours
           in: query
@@ -50957,7 +50957,7 @@ components:
         trigger_id:
           type: string
           format: uuid
-          description: "Realtime trigger consuming this group (ADR-1237). Absent when workers consume it directly."
+          description: "Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly."
         lease_seconds:
           type: integer
         max_attempts:
@@ -75962,7 +75962,7 @@ components:
 
     RealtimeTriggerConfig:
       description: |
-        Config of a `kind: realtime` trigger (ADR-1237). Each message of the bound consumer group is delivered as one
+        Config of a `kind: realtime` trigger (ADR-1322). Each message of the bound consumer group is delivered as one
         invocation. The group must already exist in the caller's account with `lease_seconds` of at least 120, and binds
         to at most one trigger; while bound, direct claims and settlements return 409 `realtime_group_bound_to_trigger`.
         The group's ordering, filters, retry policy and dead-letter queue govern delivery. The binding is immutable;
@@ -76118,7 +76118,7 @@ components:
           additionalProperties: true
           description: |
             Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence.
-            For `kind: realtime` (ADR-1237) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+            For `kind: realtime` (ADR-1322) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
             `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group owns them,
             and `batch_size_max` may only be 1.
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }

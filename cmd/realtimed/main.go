@@ -85,7 +85,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
 	ticketPreview := os.Getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1"
 	accessPreview := os.Getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1"
-	// ADR-1238: record per-endpoint usage with apid. Recorded only; nothing
+	// ADR-1323: record per-endpoint usage with apid. Recorded only; nothing
 	// bills or limits from it yet.
 	usageEnabled := os.Getenv("FAAS_REALTIME_USAGE_ENABLED") == "1"
 	var ticketReader realtime.SubscriptionTicketReader
@@ -150,7 +150,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		},
 		UsageReporter: usageReporter,
 		// Plan connection limits hold fleet-wide whenever apid is reachable;
-		// without it they hold per node (ADR-1238).
+		// without it they hold per node (ADR-1323).
 		ConnectionSync: connectionSync,
 		ConnectionSyncFailure: func(err error) {
 			log.Warn("realtimed: connection count sync failed; account limits use local counts until it recovers", "err", err)

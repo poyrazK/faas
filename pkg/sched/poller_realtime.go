@@ -24,7 +24,7 @@ type realtimeGroupStore interface {
 	state.TriggerRecordSuperseder
 }
 
-// realtimePoller delivers a bound consumer group's messages (ADR-1237). The
+// realtimePoller delivers a bound consumer group's messages (ADR-1322). The
 // group owns attempts, ordering, retries and dead letters; this poller maps
 // dispatch outcomes onto group settlements. Each claim is one delivery with
 // its own item identifier, so the trigger ledger never retries it.

@@ -22,7 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestRealtimeUsageRecordedEndToEnd runs the ADR-1238 path with real parts:
+// TestRealtimeUsageRecordedEndToEnd runs the ADR-1323 path with real parts:
 // a realtime Manager's connections, its usage recorder, the apidgrpc client,
 // apid's fleet receiver and PgStore.
 func TestRealtimeUsageRecordedEndToEnd(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// validateRealtime checks a kind=realtime trigger (ADR-1237). The bound
+// validateRealtime checks a kind=realtime trigger (ADR-1322). The bound
 // consumer group owns ordering, filters, retries and dead letters, so the
 // trigger-level delivery settings that would compete with it are rejected.
 func (t Trigger) validateRealtime(idx int) error {

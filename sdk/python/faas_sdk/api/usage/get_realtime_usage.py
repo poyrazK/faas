@@ -77,7 +77,7 @@ def sync_detailed(
 ) -> Response[Problem | RealtimeUsageResponse]:
     """Realtime connections against the plan's fair-use limit, and recorded usage per hour.
 
-     Realtime is free (ADR-1238). open_connections counts connections on realtime nodes that reported in
+     Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in
     the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is
     the most connections open at once in any minute of the hour.
 
@@ -110,7 +110,7 @@ def sync(
 ) -> Problem | RealtimeUsageResponse | None:
     """Realtime connections against the plan's fair-use limit, and recorded usage per hour.
 
-     Realtime is free (ADR-1238). open_connections counts connections on realtime nodes that reported in
+     Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in
     the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is
     the most connections open at once in any minute of the hour.
 
@@ -138,7 +138,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | RealtimeUsageResponse]:
     """Realtime connections against the plan's fair-use limit, and recorded usage per hour.
 
-     Realtime is free (ADR-1238). open_connections counts connections on realtime nodes that reported in
+     Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in
     the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is
     the most connections open at once in any minute of the hour.
 
@@ -169,7 +169,7 @@ async def asyncio(
 ) -> Problem | RealtimeUsageResponse | None:
     """Realtime connections against the plan's fair-use limit, and recorded usage per hour.
 
-     Realtime is free (ADR-1238). open_connections counts connections on realtime nodes that reported in
+     Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in
     the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is
     the most connections open at once in any minute of the hour.
 

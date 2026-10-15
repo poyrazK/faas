@@ -2194,7 +2194,7 @@ const (
 	TriggerKindSQSCompat    TriggerKind = "sqs_compat"
 	TriggerKindQueue        TriggerKind = "queue"
 	// TriggerKindRealtime delivers a bound realtime consumer group's messages
-	// as invocations (ADR-1237).
+	// as invocations (ADR-1322).
 	TriggerKindRealtime TriggerKind = "realtime"
 )
 

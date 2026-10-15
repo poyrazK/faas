@@ -197,7 +197,7 @@ type Endpoint struct {
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
 	// AccountMaxConnections is the account's plan allowance of concurrent
-	// connections across the fleet (ADR-1238). Zero enforces no account limit.
+	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
 }
 
@@ -264,7 +264,7 @@ type Config struct {
 	PresenceLeaseRenewInterval time.Duration
 	FleetReportFailure         func(error)
 	// UsageReporter records per-endpoint usage with the control plane
-	// (ADR-1238). Nil disables usage recording.
+	// (ADR-1323). Nil disables usage recording.
 	UsageReporter       UsageReporter
 	UsageSampleInterval time.Duration
 	UsageReportInterval time.Duration
@@ -272,7 +272,7 @@ type Config struct {
 	// usageClock replaces time.Now in usage tests.
 	usageClock func() time.Time
 	// ConnectionSync shares per-account connection counts with the other
-	// nodes so plan connection limits hold fleet-wide (ADR-1238). Nil
+	// nodes so plan connection limits hold fleet-wide (ADR-1323). Nil
 	// enforces them against this node's connections only.
 	ConnectionSync         ConnectionSyncer
 	ConnectionSyncInterval time.Duration
@@ -487,7 +487,7 @@ type endpointState struct {
 	// to release against the count used during admission.
 	reserved *atomic.Int64
 	revoked  atomic.Bool
-	// usage is shared across policy refreshes like reserved (ADR-1238).
+	// usage is shared across policy refreshes like reserved (ADR-1323).
 	usage *usageCounters
 	// account counts the endpoint's account's connections on this node.
 	account *accountConnections
@@ -529,7 +529,7 @@ type Manager struct {
 
 	upgrader websocket.Upgrader
 
-	// accounts maps account ID to *accountConnections (ADR-1238 fair use).
+	// accounts maps account ID to *accountConnections (ADR-1323 fair use).
 	accounts               sync.Map
 	connectionSyncedAt     atomic.Int64
 	connectionSyncFailures atomic.Uint64
@@ -988,7 +988,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // tryReserve admits one connection against the node, endpoint and account
-// limits. A refusal with a scope is an account fair-use limit (ADR-1238); the
+// limits. A refusal with a scope is an account fair-use limit (ADR-1323); the
 // caller answers it with the problem the refusal describes.
 func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 	if state.revoked.Load() {

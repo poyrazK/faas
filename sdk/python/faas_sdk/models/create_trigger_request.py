@@ -49,7 +49,7 @@ class CreateTriggerRequest:
     config: CreateTriggerRequestConfig | Unset = UNSET
     """Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before
     persistence.
-    For `kind: realtime` (ADR-1237) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+    For `kind: realtime` (ADR-1322) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
     `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group
     owns them,
     and `batch_size_max` may only be 1.

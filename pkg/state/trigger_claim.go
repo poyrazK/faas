@@ -210,7 +210,7 @@ func (s *PgStore) RetryClaimedTriggerRecord(ctx context.Context, id string, gene
 }
 
 // TriggerRecordSuperseder ends the records of a delivery whose source
-// redelivers under a new identifier and owns the retry decision (ADR-1237).
+// redelivers under a new identifier and owns the retry decision (ADR-1322).
 type TriggerRecordSuperseder interface {
 	SupersedeTriggerRecordItems(ctx context.Context, triggerID string, items []string, lastError string) error
 }

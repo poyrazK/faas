@@ -115,7 +115,7 @@ func RetentionOnce(ctx context.Context, db retentionExecer) (int64, error) {
 	return total, ErrRetentionBatchCap
 }
 
-// retentionRealtimeUsageBatchSQL ages out realtime usage rows (ADR-1238) on
+// retentionRealtimeUsageBatchSQL ages out realtime usage rows (ADR-1323) on
 // the same 13-month window as usage_minutes. realtime_usage_hours_hour keeps
 // the scan to expired rows.
 const retentionRealtimeUsageBatchSQL = `DELETE FROM public.realtime_usage_hours

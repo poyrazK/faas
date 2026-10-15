@@ -335,7 +335,7 @@ GROUP BY c.account_id ORDER BY sum(c.connections) DESC,c.account_id
 LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadAccountOpenConnections :one
--- An account's open connections across nodes with a fresh sync (ADR-1238).
+-- An account's open connections across nodes with a fresh sync (ADR-1323).
 SELECT coalesce(sum(c.connections),0)::bigint AS connections
 FROM realtime_node_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
 WHERE c.account_id=sqlc.arg(account_id)::uuid

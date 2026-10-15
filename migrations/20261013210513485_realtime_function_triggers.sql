@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-1237: a kind=realtime trigger delivers a bound consumer group's
+-- ADR-1322: a kind=realtime trigger delivers a bound consumer group's
 -- messages as invocations. A group binds to at most one trigger; deleting
 -- the trigger unbinds the group and keeps its messages.
 ALTER TABLE triggers DROP CONSTRAINT IF EXISTS triggers_kind_check;

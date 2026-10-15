@@ -21,7 +21,7 @@ type realtimeConnectionSyncMessage struct {
 }
 
 // SyncConnections stores a registered node's per-account connection counts
-// and answers with the other nodes' fresh counts (ADR-1238 fair use).
+// and answers with the other nodes' fresh counts (ADR-1323 fair use).
 func (r *realtimeFleetReceiver) SyncConnections(ctx context.Context, envelope *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 	if r.connections == nil {
 		return nil, status.Error(codes.Unavailable, "realtime connection counts unavailable")
