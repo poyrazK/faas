@@ -11143,3 +11143,7 @@ const EventAcknowledgmentResultMaxBytes = 1 << 20
 
 const EventProcessingNearExpiry = 30 * time.Second
 const EventProcessingAlertSustain = 30 * time.Second
+
+// Outcome history coalesces repeated operations per attempt and outcome kind.
+const EventAcknowledgmentHistoryLimit = 100
+const EventAcknowledgmentHistoryRetention = 7 * 24 * time.Hour

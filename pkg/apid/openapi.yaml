@@ -49718,6 +49718,47 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history:
+    get:
+      tags: [events]
+      operationId: listEventAcknowledgmentHistory
+      summary: Inspect retained deferred acknowledgment outcomes.
+      description: Requires apps:read or admin. Returns the 100 most recently updated outcome groups for this consumer, optionally restricted to one delivery. Repeated operations coalesce per attempt and kind; occurrences saturates at 2147483647. Retention ends seven days after the attempt deadline, or earlier when the invocation is deleted. Invalid and replaced tokens produce no history. This is diagnostic coverage since rollout, not a complete audit log or a rate denominator.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug owning acknowledgment history.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Consumer subscription whose retained outcomes are inspected.
+          schema: { type: string, format: uuid }
+        - name: invocation_id
+          in: query
+          description: Optional delivery UUID restricting consumer outcome history.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Bounded coalesced acknowledgment history, with explicit truncation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentHistory' }
+        '400':
+          description: Malformed acknowledgment history scope or delivery filter.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Acknowledgment history read exceeded its time budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy:
     get:
       tags: [events]
@@ -50475,6 +50516,34 @@ components:
         token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Secret attempt token from the authenticated internal delivery; never log or persist in diagnostic artifacts. }
         result:
           description: Optional JSON completion result up to one MiB; omitted means null and renewal forbids this field.
+    EventAcknowledgmentOutcome:
+      type: object
+      description: Payload-free coalesced outcome for one deferred delivery attempt.
+      required: [invocation_id, attempt, replay_generation, kind, first_at, last_at, occurrences, retain_until]
+      properties:
+        invocation_id: { type: string, format: uuid, description: Delivery whose attempt produced this outcome. }
+        attempt: { type: integer, minimum: 1, description: Fenced invocation attempt number. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: Replay generation fenced by this outcome. }
+        kind:
+          type: string
+          enum: [accepted, renewed, renewal_rejected, completed, expired]
+          description: Deferred acknowledgment operation or scheduler expiry outcome.
+        first_at: { type: string, format: date-time, description: Database time of the first retained occurrence. }
+        last_at: { type: string, format: date-time, description: Database time of the latest retained occurrence. }
+        occurrences: { type: integer, format: int64, minimum: 1, maximum: 2147483647, description: Coalesced count saturating at the documented maximum. }
+        retain_until: { type: string, format: date-time, description: Fixed history expiry anchored to the attempt deadline. }
+    EventAcknowledgmentHistory:
+      type: object
+      description: Most recently updated retained outcome groups for a scoped consumer.
+      required: [outcomes, truncated, coverage]
+      properties:
+        outcomes:
+          type: array
+          maxItems: 100
+          description: Outcome groups ordered by latest occurrence descending with stable tie breakers.
+          items: { $ref: '#/components/schemas/EventAcknowledgmentOutcome' }
+        truncated: { type: boolean, description: More retained outcome groups existed at the read snapshot. }
+        coverage: { type: string, enum: [retained_coalesced_deferred_outcomes], description: Diagnostic retained invocation coverage since the ledger rollout. }
     EventAcknowledgmentStatus:
       type: object
       description: Retained invocation and processing lease observation without secret token material.

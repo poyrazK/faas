@@ -11,6 +11,7 @@ import type { ControlEventExecutionLineageCaseBackfillRequest } from '../models/
 import type { ControlEventExecutionLineageRetryJobRequest } from '../models/ControlEventExecutionLineageRetryJobRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
+import type { EventAcknowledgmentHistory } from '../models/EventAcknowledgmentHistory.js';
 import type { EventAcknowledgmentPolicy } from '../models/EventAcknowledgmentPolicy.js';
 import type { EventAcknowledgmentPolicyRequest } from '../models/EventAcknowledgmentPolicyRequest.js';
 import type { EventAcknowledgmentRequest } from '../models/EventAcknowledgmentRequest.js';
@@ -5227,6 +5228,49 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Inspect retained deferred acknowledgment outcomes.
+   * Requires apps:read or admin. Returns the 100 most recently updated outcome groups for this consumer, optionally restricted to one delivery. Repeated operations coalesce per attempt and kind; occurrences saturates at 2147483647. Retention ends seven days after the attempt deadline, or earlier when the invocation is deleted. Invalid and replaced tokens produce no history. This is diagnostic coverage since rollout, not a complete audit log or a rate denominator.
+   * @returns EventAcknowledgmentHistory Bounded coalesced acknowledgment history, with explicit truncation.
+   * @throws ApiError
+   */
+  public static listEventAcknowledgmentHistory({
+    slug,
+    subscriptionId,
+    invocationId,
+  }: {
+    /**
+     * Application slug owning acknowledgment history.
+     */
+    slug: string,
+    /**
+     * Consumer subscription whose retained outcomes are inspected.
+     */
+    subscriptionId: string,
+    /**
+     * Optional delivery UUID restricting consumer outcome history.
+     */
+    invocationId?: string,
+  }): CancelablePromise<EventAcknowledgmentHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'invocation_id': invocationId,
+      },
+      errors: {
+        400: `Malformed acknowledgment history scope or delivery filter.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Acknowledgment history read exceeded its time budget.`,
       },
     });
   }

@@ -225,15 +225,15 @@ func (m *MemStore) EventAcknowledgment(ctx context.Context, account, app, id, to
 		if action == "accept" || (action == "complete" && bytes.Equal(acknowledgmentCompletionDigest(result), ack.completionDigest)) {
 			return acknowledgmentStatus(inv, ack, now), nil
 		}
-		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+		return m.rejectAcknowledgmentRenewalLocked(inv, ack, action, now)
 	}
 	if !validInvocationAttemptClaim(inv, ack.claim) || !ack.deadline.After(now) {
-		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+		return m.rejectAcknowledgmentRenewalLocked(inv, ack, action, now)
 	}
 	switch action {
 	case "accept", "renew":
 		if action == "renew" && ack.phase != "awaiting" {
-			return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+			return m.rejectAcknowledgmentRenewalLocked(inv, ack, action, now)
 		}
 		if action == "accept" && ack.phase == "awaiting" {
 			return acknowledgmentStatus(inv, ack, now), nil
@@ -257,6 +257,7 @@ func (m *MemStore) EventAcknowledgment(ctx context.Context, account, app, id, to
 	default:
 		return api.EventAcknowledgmentStatus{}, ErrInvalidArgument
 	}
+	m.recordAcknowledgmentOutcomeLocked(inv, ack, acknowledgmentOutcomeKind(action), now)
 	return acknowledgmentStatus(inv, ack, now), nil
 }
 func normalizedAcknowledgmentResult(result json.RawMessage) json.RawMessage {
@@ -276,11 +277,22 @@ func (m *MemStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (i
 	defer m.mu.Unlock()
 	now := time.Now()
 	count := 0
+	for key, row := range m.eventAcknowledgmentOutcomes {
+		if !row.RetainUntil.After(now) {
+			delete(m.eventAcknowledgmentOutcomes, key)
+			count++
+			if count >= limit {
+				break
+			}
+		}
+	}
+	count = 0
 	for id, ack := range m.eventAcknowledgments {
 		inv, ok := m.invocations[id]
 		if !ok || ack.phase != "awaiting" || inv.Attempts != ack.claim.Attempt || inv.ReplayGeneration != ack.claim.ReplayGeneration || inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(now) {
 			continue
 		}
+		m.recordAcknowledgmentOutcomeLocked(inv, ack, "expired", now)
 		reserved := inv.QuotaReserved
 		inv.QuotaReserved = false
 		inv.LeaseExpiresAt = nil

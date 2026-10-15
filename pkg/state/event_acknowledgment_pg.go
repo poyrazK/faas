@@ -144,18 +144,18 @@ func (s *PgStore) EventAcknowledgment(ctx context.Context, account, app, id, tok
 		if action == "accept" || (action == "complete" && bytes.Equal(acknowledgmentCompletionDigest(result), ack.completionDigest)) {
 			return acknowledgmentStatus(inv, ack, now), nil
 		}
-		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+		return rejectAcknowledgmentRenewal(ctx, tx, id, action)
 	}
-	if err := lockInvocationAttemptClaim(ctx, tx, id, ack.claim); err != nil {
-		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+	if inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || !inv.LeaseExpiresAt.After(now) {
+		return rejectAcknowledgmentRenewal(ctx, tx, id, action)
 	}
 	if !ack.deadline.After(now) {
-		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+		return rejectAcknowledgmentRenewal(ctx, tx, id, action)
 	}
 	switch action {
 	case "accept", "renew":
 		if action == "renew" && ack.phase != "awaiting" {
-			return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
+			return rejectAcknowledgmentRenewal(ctx, tx, id, action)
 		}
 		if action == "accept" && ack.phase == "awaiting" {
 			return acknowledgmentStatus(inv, ack, now), nil
@@ -179,6 +179,9 @@ func (s *PgStore) EventAcknowledgment(ctx context.Context, account, app, id, tok
 	if err := q.EventAckPhase(ctx, tx, sqlc.EventAckPhaseParams{InvocationID: mustPgUUID(id), Phase: ack.phase, CompletionDigest: ack.completionDigest}); err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
+	if err := recordAcknowledgmentOutcome(ctx, tx, id, acknowledgmentOutcomeKind(action)); err != nil {
+		return api.EventAcknowledgmentStatus{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
@@ -194,11 +197,17 @@ func (s *PgStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (in
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if err := q.EventAckOutcomePrune(ctx, tx, int32(limit)); err != nil {
+		return 0, err
+	}
 	rows, err := q.EventAckExpired(ctx, tx, int32(limit))
 	if err != nil {
 		return 0, err
 	}
 	for _, row := range rows {
+		if err := recordAcknowledgmentOutcome(ctx, tx, uuidString(row.ID), "expired"); err != nil {
+			return 0, err
+		}
 		if err := q.EventAckExpire(ctx, tx, sqlc.EventAckExpireParams{InvocationID: row.ID, MaxAttempts: row.MaxAttempts, RetryDelayMs: row.RetryDelayMs}); err != nil {
 			return 0, err
 		}

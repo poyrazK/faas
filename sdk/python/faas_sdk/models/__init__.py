@@ -1113,6 +1113,10 @@ from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_acknowledgment_history import EventAcknowledgmentHistory
+from .event_acknowledgment_history_coverage import EventAcknowledgmentHistoryCoverage
+from .event_acknowledgment_outcome import EventAcknowledgmentOutcome
+from .event_acknowledgment_outcome_kind import EventAcknowledgmentOutcomeKind
 from .event_acknowledgment_policy import EventAcknowledgmentPolicy
 from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyRequest
 from .event_acknowledgment_request import EventAcknowledgmentRequest
@@ -5768,6 +5772,10 @@ __all__ = (
     "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventAcknowledgmentHistory",
+    "EventAcknowledgmentHistoryCoverage",
+    "EventAcknowledgmentOutcome",
+    "EventAcknowledgmentOutcomeKind",
     "EventAcknowledgmentPolicy",
     "EventAcknowledgmentPolicyRequest",
     "EventAcknowledgmentRequest",

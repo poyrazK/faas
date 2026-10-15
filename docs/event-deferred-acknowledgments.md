@@ -154,3 +154,40 @@ repeated or out-of-order samples lose confirmation rather than falsely proving
 recovery. Checkpoints preserve incident history and require fresh confirmation on
 resume. Older clients reject checkpoints containing unfamiliar processing metrics.
 Alerts are local to a running watch; no background notification service is started.
+
+## Retained acknowledgment outcomes
+
+`GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history`
+requires application read authority. Add `?invocation_id=<uuid>` to inspect one
+delivery. The Go SDK exposes `ListEventAcknowledgmentHistory`; Node and Python
+expose the generated operation.
+
+The response contains the 100 most recently updated outcome groups, ordered by
+`last_at` descending with invocation/attempt/generation/kind tie breakers.
+`truncated` reports additional retained groups; narrow to a delivery to inspect
+its older groups. This initial API has no pagination or completeness guarantee.
+
+Each attempt has at most five groups: `accepted`, `renewed`, `renewal_rejected`,
+`completed`, and `expired`. Groups have first/last database timestamps and an
+occurrence count saturated at 2,147,483,647. Renewals update a fixed row.
+Idempotent handoff/completion repeats add no occurrences. Completion covers
+explicit callbacks, not ordinary HTTP-success completion. Expiry covers the
+scheduler's deferred-awaiting expiry transition, not generic dispatch reclaims.
+
+Only a well-formed token matching the current attempt and replay generation can
+produce renewal rejection history. Wrong, malformed and replaced tokens never
+write. A valid current token can be rejected before handoff, after lease or
+deadline expiry, or after completion. The ledger contains no token, digest,
+request body, completion result, customer error text or event payload.
+Successful state changes and outcomes commit atomically; valid-token rejection
+diagnostics commit before HTTP 409. Ledger errors fail the operation.
+
+Retention ends seven days after the attempt's fixed acknowledgment deadline.
+Repeated renewals and rejections cannot extend it. Reads immediately exclude
+expired groups; scheduler ticks delete bounded batches, so cleanup may lag.
+Invocation pruning also deletes its groups; deleting a consumer removes access.
+The ledger starts empty at rollout and reconstructs no prior operations.
+`coverage=retained_coalesced_deferred_outcomes` describes these limits.
+The health field `renewal_failure_coverage=not_recorded` remains unchanged because
+that aggregate does not yet read the ledger. Groups spanning a window boundary
+cannot serve as precise windowed failure-rate denominators.

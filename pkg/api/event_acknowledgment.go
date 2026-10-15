@@ -88,3 +88,31 @@ type EventConsumerProcessingHealth struct {
 	AcknowledgmentLatencyMaxSeconds float64    `json:"acknowledgment_latency_max_seconds"`
 	RenewalFailureCoverage          string     `json:"renewal_failure_coverage"`
 }
+
+// Repeated operations share a row; first/last timestamps bound the occurrences.
+type EventAcknowledgmentOutcome struct {
+	InvocationID     string    `json:"invocation_id"`
+	Attempt          int       `json:"attempt"`
+	ReplayGeneration int64     `json:"replay_generation"`
+	Kind             string    `json:"kind"`
+	FirstAt          time.Time `json:"first_at"`
+	LastAt           time.Time `json:"last_at"`
+	Occurrences      int64     `json:"occurrences"`
+	RetainUntil      time.Time `json:"retain_until"`
+}
+type EventAcknowledgmentHistory struct {
+	Outcomes  []EventAcknowledgmentOutcome `json:"outcomes"`
+	Truncated bool                         `json:"truncated"`
+	Coverage  string                       `json:"coverage"`
+}
+
+// An empty deliveryID selects the consumer's most recent outcome groups.
+func (c *Client) ListEventAcknowledgmentHistory(ctx context.Context, app, sub, deliveryID string) (EventAcknowledgmentHistory, error) {
+	var out EventAcknowledgmentHistory
+	path := "/v1/apps/" + url.PathEscape(app) + "/event-subscriptions/" + url.PathEscape(sub) + "/acknowledgment-history"
+	if deliveryID != "" {
+		path += "?invocation_id=" + url.QueryEscape(deliveryID)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}

@@ -14135,6 +14135,93 @@ func (q *Queries) EventAckOffer(ctx context.Context, db DBTX, arg EventAckOfferP
 	return err
 }
 
+const eventAckOutcomeHistory = `-- name: EventAckOutcomeHistory :many
+SELECT o.invocation_id, o.attempt, o.replay_generation, o.kind, o.first_at, o.last_at, o.occurrences, o.retain_until FROM event_acknowledgment_outcomes o JOIN invocations i ON i.id=o.invocation_id
+JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid AND a.status<>'deleted'
+AND i.headers->>'x-gregale-event-subscription-id'=$3::text
+AND ($4::text='' OR i.id::text=$4::text)
+AND o.retain_until>clock_timestamp()
+ORDER BY o.last_at DESC,o.invocation_id,o.attempt,o.replay_generation,o.kind LIMIT $5::integer
+`
+
+type EventAckOutcomeHistoryParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+	DeliveryID     string
+	RowLimit       int32
+}
+
+func (q *Queries) EventAckOutcomeHistory(ctx context.Context, db DBTX, arg EventAckOutcomeHistoryParams) ([]EventAcknowledgmentOutcome, error) {
+	rows, err := db.Query(ctx, eventAckOutcomeHistory,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.DeliveryID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventAcknowledgmentOutcome{}
+	for rows.Next() {
+		var i EventAcknowledgmentOutcome
+		if err := rows.Scan(
+			&i.InvocationID,
+			&i.Attempt,
+			&i.ReplayGeneration,
+			&i.Kind,
+			&i.FirstAt,
+			&i.LastAt,
+			&i.Occurrences,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventAckOutcomePrune = `-- name: EventAckOutcomePrune :exec
+DELETE FROM event_acknowledgment_outcomes WHERE (invocation_id,attempt,replay_generation,kind) IN (
+ SELECT invocation_id,attempt,replay_generation,kind FROM event_acknowledgment_outcomes
+ WHERE retain_until<=clock_timestamp() ORDER BY retain_until LIMIT $1::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+func (q *Queries) EventAckOutcomePrune(ctx context.Context, db DBTX, batchLimit int32) error {
+	_, err := db.Exec(ctx, eventAckOutcomePrune, batchLimit)
+	return err
+}
+
+const eventAckOutcomeRecord = `-- name: EventAckOutcomeRecord :exec
+INSERT INTO event_acknowledgment_outcomes (invocation_id,attempt,replay_generation,kind,first_at,last_at,occurrences,retain_until)
+SELECT i.id,a.attempt,a.replay_generation,$1::text,clock_timestamp(),clock_timestamp(),1,
+ a.deadline_at+$2::integer*interval '1 second'
+FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id
+WHERE i.id=$3::uuid AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+ AND a.deadline_at+$2::integer*interval '1 second'>clock_timestamp()
+ON CONFLICT (invocation_id,attempt,replay_generation,kind) DO UPDATE
+SET last_at=clock_timestamp(),occurrences=least(event_acknowledgment_outcomes.occurrences+1,2147483647)
+`
+
+type EventAckOutcomeRecordParams struct {
+	Kind             string
+	RetentionSeconds int32
+	InvocationID     pgtype.UUID
+}
+
+func (q *Queries) EventAckOutcomeRecord(ctx context.Context, db DBTX, arg EventAckOutcomeRecordParams) error {
+	_, err := db.Exec(ctx, eventAckOutcomeRecord, arg.Kind, arg.RetentionSeconds, arg.InvocationID)
+	return err
+}
+
 const eventAckPhase = `-- name: EventAckPhase :exec
 UPDATE event_delivery_acknowledgments SET phase=$1::text,completion_digest=$2::bytea WHERE invocation_id=$3::uuid
 `

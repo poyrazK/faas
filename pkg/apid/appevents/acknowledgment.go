@@ -101,3 +101,24 @@ func (s *Service) CompleteEventAcknowledgment(w http.ResponseWriter, r *http.Req
 	r.SetPathValue("ackAction", "complete")
 	s.EventAcknowledgment(w, r, acct)
 }
+
+func (s *Service) ListEventAcknowledgmentHistory(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventSubscriptionControlTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.Host.Store().(state.EventAcknowledgmentHistoryStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("acknowledgment history"))
+		return
+	}
+	out, err := store.ListEventAcknowledgmentHistory(ctx, acct.ID, app.ID, r.PathValue("subscriptionID"), r.URL.Query().Get("invocation_id"))
+	if writeAcknowledgmentError(w, err) {
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, out)
+}

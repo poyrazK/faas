@@ -2855,6 +2855,17 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
+type EventAcknowledgmentOutcome struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	Kind             string
+	FirstAt          pgtype.Timestamptz
+	LastAt           pgtype.Timestamptz
+	Occurrences      int64
+	RetainUntil      pgtype.Timestamptz
+}
+
 type EventDeliveryAcknowledgment struct {
 	InvocationID     pgtype.UUID
 	Attempt          int32
