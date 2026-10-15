@@ -587,3 +587,10 @@ type (
 
 // Complete retained pending-recipient observations.
 type EventSubscriptionPendingSummary = api.EventSubscriptionPendingSummary
+
+// Read-only effective-deadline triage.
+type (
+	EventSubscriptionDeadlineQuery     = api.EventSubscriptionDeadlineQuery
+	EventSubscriptionDeadlineRecipient = api.EventSubscriptionDeadlineRecipient
+	EventSubscriptionDeadlinePage      = api.EventSubscriptionDeadlinePage
+)

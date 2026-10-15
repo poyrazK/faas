@@ -348,6 +348,102 @@ func (q *Queries) EventSubscriptionControlUsePermit(ctx context.Context, db DBTX
 	return err
 }
 
+const eventSubscriptionDeadlinePage = `-- name: EventSubscriptionDeadlinePage :many
+WITH deadlines AS (
+ SELECT b.outbox_id,b.accepted_at,b.next_attempt_at,b.lease_until::timestamptz AS lease_until,b.routing_mode,b.capacity_scope,
+ o.source,o.event_id,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=$2::uuid AND b.app_id=$3::uuid AND b.subscription_id=$4::text AND b.consumer_kind='application' AND b.routing_state='pending' AND b.accepted_at<=$5::timestamptz
+), page AS MATERIALIZED (
+ SELECT outbox_id, accepted_at, next_attempt_at, lease_until, routing_mode, capacity_scope, source, event_id, deadline_at FROM deadlines WHERE deadline_at IS NOT NULL
+ AND ($6::timestamptz IS NULL OR deadline_at>=$6::timestamptz)
+ AND ($7::timestamptz IS NULL OR deadline_at<$7::timestamptz)
+ AND ($8::text<>'expired' OR deadline_at<=$5::timestamptz)
+ AND ($8::text<>'upcoming' OR deadline_at>$5::timestamptz)
+ AND (NOT $9::boolean OR (deadline_at,accepted_at,outbox_id)>($10::timestamptz,$11::timestamptz,$12::bigint))
+ ORDER BY deadline_at,accepted_at,outbox_id LIMIT $13::integer
+)
+SELECT page.outbox_id, page.accepted_at, page.next_attempt_at, page.lease_until, page.routing_mode, page.capacity_scope, page.source, page.event_id, page.deadline_at,(CASE WHEN NOT (page.routing_mode='event' AND coalesce(page.lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',page.capacity_scope,page.routing_mode,page.lease_until,page.next_attempt_at,'application',NULL,$1::timestamptz) END)::text AS waiting_reason
+FROM page CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz) AS reason) control
+ORDER BY page.deadline_at,page.accepted_at,page.outbox_id
+`
+
+type EventSubscriptionDeadlinePageParams struct {
+	ObservedAt      pgtype.Timestamptz
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  string
+	WindowAt        pgtype.Timestamptz
+	DeadlineFrom    pgtype.Timestamptz
+	DeadlineBefore  pgtype.Timestamptz
+	StatusFilter    string
+	HasAfter        bool
+	AfterDeadlineAt pgtype.Timestamptz
+	AfterAcceptedAt pgtype.Timestamptz
+	AfterOutboxID   int64
+	PageLimit       int32
+}
+
+type EventSubscriptionDeadlinePageRow struct {
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	RoutingMode   string
+	CapacityScope string
+	Source        string
+	EventID       string
+	DeadlineAt    pgtype.Timestamptz
+	WaitingReason string
+}
+
+func (q *Queries) EventSubscriptionDeadlinePage(ctx context.Context, db DBTX, arg EventSubscriptionDeadlinePageParams) ([]EventSubscriptionDeadlinePageRow, error) {
+	rows, err := db.Query(ctx, eventSubscriptionDeadlinePage,
+		arg.ObservedAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.WindowAt,
+		arg.DeadlineFrom,
+		arg.DeadlineBefore,
+		arg.StatusFilter,
+		arg.HasAfter,
+		arg.AfterDeadlineAt,
+		arg.AfterAcceptedAt,
+		arg.AfterOutboxID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionDeadlinePageRow{}
+	for rows.Next() {
+		var i EventSubscriptionDeadlinePageRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.NextAttemptAt,
+			&i.LeaseUntil,
+			&i.RoutingMode,
+			&i.CapacityScope,
+			&i.Source,
+			&i.EventID,
+			&i.DeadlineAt,
+			&i.WaitingReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventSubscriptionPendingSummary = `-- name: EventSubscriptionPendingSummary :one
 WITH pending AS (
  SELECT b.accepted_at,b.next_attempt_at,b.lease_until,

@@ -700,6 +700,8 @@ export type { EventSubscriptionCapacityCommandReceipt } from './models/EventSubs
 export type { EventSubscriptionCapacityCommands } from './models/EventSubscriptionCapacityCommands.js';
 export type { EventSubscriptionCapacityGuard } from './models/EventSubscriptionCapacityGuard.js';
 export type { EventSubscriptionCapacityRequest } from './models/EventSubscriptionCapacityRequest.js';
+export type { EventSubscriptionDeadlinePage } from './models/EventSubscriptionDeadlinePage.js';
+export type { EventSubscriptionDeadlineRecipient } from './models/EventSubscriptionDeadlineRecipient.js';
 export type { EventSubscriptionDeliveryControl } from './models/EventSubscriptionDeliveryControl.js';
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';
 export type { EventSubscriptionPendingSummary } from './models/EventSubscriptionPendingSummary.js';

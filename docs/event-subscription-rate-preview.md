@@ -106,3 +106,7 @@ warning/recovery confirmation and the existing durable alert outbox.
 For complete pending counts and approaching-deadline monitoring above this
 preview's sample bound, use the [full pending summary](event-subscription-pending-summary.md).
 It does not expand or replace the sampled rate-only model.
+
+To identify individual pending deliveries by effective deadline, use the
+[deadline triage listing](event-subscription-deadline-triage.md). It supports
+absolute bounds and live pagination independently of the preview sample cap.

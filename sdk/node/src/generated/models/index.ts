@@ -694,6 +694,8 @@ export type { EventSubscriptionCapacityCommandReceipt } from './EventSubscriptio
 export type { EventSubscriptionCapacityCommands } from './EventSubscriptionCapacityCommands.js';
 export type { EventSubscriptionCapacityGuard } from './EventSubscriptionCapacityGuard.js';
 export type { EventSubscriptionCapacityRequest } from './EventSubscriptionCapacityRequest.js';
+export type { EventSubscriptionDeadlinePage } from './EventSubscriptionDeadlinePage.js';
+export type { EventSubscriptionDeadlineRecipient } from './EventSubscriptionDeadlineRecipient.js';
 export type { EventSubscriptionDeliveryControl } from './EventSubscriptionDeliveryControl.js';
 export type { EventSubscriptionListResponse } from './EventSubscriptionListResponse.js';
 export type { EventSubscriptionPendingSummary } from './EventSubscriptionPendingSummary.js';

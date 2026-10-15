@@ -1323,3 +1323,8 @@ and effective deadlines under fixed read budgets. Growth and approaching-deadlin
 watch conditions use that complete evidence beyond the preview's 1000-row cap;
 modeled-risk conditions retain the cap. See [full summaries and checkpoint
 compatibility](../../docs/event-subscription-pending-summary.md).
+
+`ListEventSubscriptionDeadlines` lists retained pending delivery identities by
+effective deadline with absolute bounds, expired/upcoming classification and
+scoped cursors. Pages are live and read-only; no payloads or recovery actions are
+included. See [deadline triage](../../docs/event-subscription-deadline-triage.md).

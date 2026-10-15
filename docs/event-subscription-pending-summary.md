@@ -70,3 +70,7 @@ cause. Monitoring performs no recovery action and extends no delivery deadline.
 
 See [watch configuration](event-delivery-rate-risk-alerts.md) and
 [the sampled pacing preview](event-subscription-rate-preview.md).
+
+To identify individual pending deliveries by effective deadline, use the
+[deadline triage listing](event-subscription-deadline-triage.md). It supports
+absolute bounds and live pagination independently of the preview sample cap.

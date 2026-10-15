@@ -1417,6 +1417,10 @@ from .event_subscription_capacity_commands import EventSubscriptionCapacityComma
 from .event_subscription_capacity_commands_outcome import EventSubscriptionCapacityCommandsOutcome
 from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
+from .event_subscription_deadline_page import EventSubscriptionDeadlinePage
+from .event_subscription_deadline_page_coverage import EventSubscriptionDeadlinePageCoverage
+from .event_subscription_deadline_recipient import EventSubscriptionDeadlineRecipient
+from .event_subscription_deadline_recipient_waiting_reason import EventSubscriptionDeadlineRecipientWaitingReason
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_pending_summary import EventSubscriptionPendingSummary
@@ -1854,6 +1858,7 @@ from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
 from .list_event_subscription_capacity_commands_outcome import ListEventSubscriptionCapacityCommandsOutcome
+from .list_event_subscription_deadlines_status import ListEventSubscriptionDeadlinesStatus
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -6084,6 +6089,10 @@ __all__ = (
     "EventSubscriptionCapacityCommandsOutcome",
     "EventSubscriptionCapacityGuard",
     "EventSubscriptionCapacityRequest",
+    "EventSubscriptionDeadlinePage",
+    "EventSubscriptionDeadlinePageCoverage",
+    "EventSubscriptionDeadlineRecipient",
+    "EventSubscriptionDeadlineRecipientWaitingReason",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
     "EventSubscriptionPendingSummary",
@@ -6503,6 +6512,7 @@ __all__ = (
     "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",
     "ListEventSubscriptionCapacityCommandsOutcome",
+    "ListEventSubscriptionDeadlinesStatus",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",

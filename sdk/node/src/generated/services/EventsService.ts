@@ -72,6 +72,7 @@ import type { EventStorageUsageResponse } from '../models/EventStorageUsageRespo
 import type { EventSubscriptionCapacityCommandReceipt } from '../models/EventSubscriptionCapacityCommandReceipt.js';
 import type { EventSubscriptionCapacityCommands } from '../models/EventSubscriptionCapacityCommands.js';
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
+import type { EventSubscriptionDeadlinePage } from '../models/EventSubscriptionDeadlinePage.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { EventSubscriptionPendingSummary } from '../models/EventSubscriptionPendingSummary.js';
@@ -2896,6 +2897,73 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * List pending deliveries by effective deadline.
+   * Read-only deadline triage for retained captured pending application recipients of one owned subscription, without payloads. Orders by effective deadline, acceptance time and internal receipt ID ascending; this does not guarantee delivery order. Optional deadline_from is inclusive and deadline_before exclusive. Expired/upcoming filters compare to the first page window_at, which also bounds acceptance time. Each page has a fresh observation and live routing state, so expired flags and waiting reasons use observed_at. Cursor is scoped to account, application, subscription, normalized filters and page size, expires after 15 minutes, and is navigational metadata rather than authorization. Membership and deadlines can change between pages; newly captured or replayed work can appear, disappear, move or be skipped. This is not a frozen snapshot, reservation or deadline-safety certificate. No effective deadline means exclusion. Reads have fixed time budgets; timeout returns no partial page.
+   * @returns EventSubscriptionDeadlinePage A bounded live page of pending deliveries with effective deadlines.
+   * @throws ApiError
+   */
+  public static listEventSubscriptionDeadlines({
+    slug,
+    subscriptionId,
+    deadlineFrom,
+    deadlineBefore,
+    status = 'all',
+    cursor,
+    limit = 50,
+  }: {
+    /**
+     * Application slug for a deadline-ordered pending-delivery listing.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose pending deadlines are being investigated.
+     */
+    subscriptionId: string,
+    /**
+     * Inclusive effective-deadline bound, normalized to UTC microseconds.
+     */
+    deadlineFrom?: string,
+    /**
+     * Exclusive effective-deadline bound, later than deadline_from after normalization.
+     */
+    deadlineBefore?: string,
+    /**
+     * Expiry classification at the first page window_at; keep unchanged across pages.
+     */
+    status?: 'all' | 'expired' | 'upcoming',
+    /**
+     * Opaque continuation; preserve scope, filters and page size. Expires 15 minutes after the first page.
+     */
+    cursor?: string,
+    /**
+     * Maximum returned recipients; keep unchanged across pages.
+     */
+    limit?: number,
+  }): CancelablePromise<EventSubscriptionDeadlinePage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadlines',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'deadline_from': deadlineFrom,
+        'deadline_before': deadlineBefore,
+        'status': status,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `Subscription UUID, deadline filters, page size or cursor are invalid or expired.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Deadline listing exceeded its read budget; no partial page was returned.`,
       },
     });
   }

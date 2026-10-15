@@ -39892,6 +39892,64 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadlines:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptionDeadlines
+      summary: List pending deliveries by effective deadline.
+      description: "Read-only deadline triage for retained captured pending application recipients of one owned subscription, without payloads. Orders by effective deadline, acceptance time and internal receipt ID ascending; this does not guarantee delivery order. Optional deadline_from is inclusive and deadline_before exclusive. Expired/upcoming filters compare to the first page window_at, which also bounds acceptance time. Each page has a fresh observation and live routing state, so expired flags and waiting reasons use observed_at. Cursor is scoped to account, application, subscription, normalized filters and page size, expires after 15 minutes, and is navigational metadata rather than authorization. Membership and deadlines can change between pages; newly captured or replayed work can appear, disappear, move or be skipped. This is not a frozen snapshot, reservation or deadline-safety certificate. No effective deadline means exclusion. Reads have fixed time budgets; timeout returns no partial page."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for a deadline-ordered pending-delivery listing.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose pending deadlines are being investigated.
+          schema: { type: string, format: uuid }
+        - name: deadline_from
+          in: query
+          description: Inclusive effective-deadline bound, normalized to UTC microseconds.
+          schema: { type: string, format: date-time }
+        - name: deadline_before
+          in: query
+          description: Exclusive effective-deadline bound, later than deadline_from after normalization.
+          schema: { type: string, format: date-time }
+        - name: status
+          in: query
+          description: Expiry classification at the first page window_at; keep unchanged across pages.
+          schema: { type: string, enum: [all, expired, upcoming], default: all }
+        - name: cursor
+          in: query
+          description: Opaque continuation; preserve scope, filters and page size. Expires 15 minutes after the first page.
+          schema: { type: string, maxLength: 4096 }
+        - name: limit
+          in: query
+          description: Maximum returned recipients; keep unchanged across pages.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: A bounded live page of pending deliveries with effective deadlines.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeadlinePage' }
+        '400':
+          description: Subscription UUID, deadline filters, page size or cursor are invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Deadline listing exceeded its read budget; no partial page was returned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary:
     get:
       tags: [events]
@@ -73454,6 +73512,38 @@ components:
         enabled: { type: boolean }
         interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
         burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+    EventSubscriptionDeadlineRecipient:
+      type: object
+      description: Payload-free identity, effective deadline and observed waiting reason of a retained pending delivery. The expiry flag uses the current page observation, not the fixed status-filter window.
+      required: [event_source, event_id, accepted_at, deadline_at, expired, waiting_reason]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        expired: { type: boolean }
+        waiting_reason: { type: string, enum: [circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, ready] }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time }
+
+    EventSubscriptionDeadlinePage:
+      type: object
+      description: One read-only live page ordered by effective deadline, acceptance time and internal receipt identity. No aggregate health or frozen membership is implied. Empty recipients are not proof of successful delivery.
+      required: [coverage, app_id, subscription_id, observed_at, window_at, read_only, recipients, has_more]
+      properties:
+        coverage: { type: string, enum: [retained_captured_pending_application_deadlines] }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        window_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        recipients:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventSubscriptionDeadlineRecipient' }
+        has_more: { type: boolean, description: "A lookahead row existed in this page snapshot; later pages can still be empty as routing state changes." }
+        next_cursor: { type: string, maxLength: 4096, description: "Present only when has_more is true. Carries no authorization." }
+
     EventSubscriptionPendingSummary:
       type: object
       description: Full retained captured pending application-recipient counts from one read-only snapshot. No payloads, identities or modeled completion estimates. Incomplete evidence cannot establish health or recovery.

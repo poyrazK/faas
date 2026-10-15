@@ -11199,3 +11199,13 @@ const (
 	EventSubscriptionPendingSummaryStatementMillis       = 4000
 	EventSubscriptionPendingSummaryCountMax        int64 = 9007199254740991
 )
+
+// Deadline triage is a bounded live listing, with no cursor-backed reservation.
+const (
+	EventSubscriptionDeadlinePageDefault     = 50
+	EventSubscriptionDeadlinePageMax         = 100
+	EventSubscriptionDeadlineCursorMaxBytes  = 4096
+	EventSubscriptionDeadlineCursorLifetime  = 15 * time.Minute
+	EventSubscriptionDeadlineReadTimeout     = EventSubscriptionPendingSummaryTimeout
+	EventSubscriptionDeadlineStatementMillis = EventSubscriptionPendingSummaryStatementMillis
+)

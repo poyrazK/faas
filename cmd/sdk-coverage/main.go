@@ -1493,6 +1493,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter":                           "DeadLetterEventAcknowledgment",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview":             "PreviewEventSubscriptionRateLimit",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary":                 "GetEventSubscriptionPendingSummary",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadlines":                       "ListEventSubscriptionDeadlines",
 	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit":                      "SetEventSubscriptionRateLimit",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands":             "ListEventSubscriptionRateCommands",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands/{commandID}": "GetEventSubscriptionRateCommand",

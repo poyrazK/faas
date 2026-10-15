@@ -342,6 +342,8 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
+
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
 	// Capacity command history uses URL query parameters, not a JSON request body.
@@ -1134,6 +1136,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_subscription_rate.go"),
 		filepath.Join(root, "pkg", "api", "event_subscription_rate_preview.go"),
 		filepath.Join(root, "pkg", "api", "event_subscription_pending_summary.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_deadlines.go"),
 		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
