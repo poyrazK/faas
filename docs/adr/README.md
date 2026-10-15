@@ -56,6 +56,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
+| 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
 | 1112 | [Verified issue grouping explanations](1112-issue-grouping-explanations.md) | accepted | Retained occurrences expose selected sanitized evidence only when it reproduces the saved group fingerprint |
@@ -94,6 +96,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 991 | [AI gateway phase 3: hard caps, guardrails, providers, translation, key pools and visibility](991-ai-gateway-hard-caps-providers-visibility.md) | accepted | Admission-time reservations make token/cost limits hard caps; per-app RPM/TPM, model allow-lists and output ceilings; Gemini, Azure OpenAI, Bedrock (SigV4) and Vertex (service account); OpenAI-format routes translating to Anthropic/Gemini; extra key pools with per-key cooldown; 80/100% budget alert webhooks, opt-in request metadata log, Grafana dashboard; the whole AI gateway ships behind the off-by-default `ai_gateway_enabled` / `FAAS_AI_GATEWAY_ENABLED` release gate |
 | 994 | [AI gateway phase 4: price catalog, per-end-user limits and key affinity](994-ai-gateway-price-catalog-end-users-affinity.md) | accepted | Built-in EUR price catalog generated from LiteLLM (MIT) prices models an integration's list omits; `X-Gregale-AI-User` attributes calls and per-end-user UTC-day token/cost hard caps (10,000 tracked users per day, `~other` overflow, 31-day rollups); `X-Gregale-AI-Session` key-pool affinity by rendezvous hash; AI apid endpoints lifted into `pkg/apid/outboundai` |
 | 995 | [AI gateway phase 5: structured output, Bedrock/Vertex route targets, embeddings, end-user alerts and export](995-ai-gateway-structured-output-targets-user-alerts.md) | accepted | OpenAI `response_format` maps to Anthropic `output_config.format`, Gemini `responseJsonSchema` and Bedrock `outputConfig.textFormat` (json_object refused where a schema is required); openai routes reach Bedrock Converse (binary stream translated) and Vertex Claude/Gemini under one project/location; openai routes accept embeddings (Gemini, Vertex, OpenAI, Azure; base64 float32); 80/100% per-end-user alerts to the calling app; streamed CSV/NDJSON per-user export; Node/Python relay URL and header helpers; route attempts no longer double-escape ARN paths |
+| 996 | [AI gateway phase 6: Responses API routes, forced tool choice on current Claude models, hard-cap gaps and opt-in content capture](996-ai-gateway-responses-api-hard-cap-gaps-content-capture.md) | accepted | openai routes accept the stateless Responses API (passthrough to OpenAI/Azure, translated replies and stream events for other targets); forced `tool_choice` becomes `auto` plus an instruction on Claude models that reject it; billable calls with unreadable usage settle at their reservation; new end users past the day's 10,000 are refused while per-user limits are set; opt-in capture of the first 32 KiB of logged calls' bodies (1,000 per day, 3 days) |
+| 997 | [AI gateway phase 7: media metering, content guardrails and replay](997-ai-gateway-media-metering-content-guardrails-replay.md) | accepted | Image, Imagen, transcription and speech calls are billable and reserved per image, audio second or character (5 new media prices, 106 catalog models); usage read from the tail of large JSON responses; per-integration content policy (email, payment card, IBAN, secret: off/redact/block, blocked terms) enforced before forwarding; captures always redacted; replay of a captured call on up to 5 targets through outboundd's worker with usage, cost, latency and output text |
+| 998 | [AI gateway preview: plan entitlement, staged account rollout and qualification](998-ai-gateway-preview-rollout.md) | accepted | AI gateway moves to preview on Hobby, Pro and Scale; plan entitlement enforced in apid (402) and outboundd (403); `ai_gateway_accounts` / `FAAS_AI_GATEWAY_ACCOUNTS` limits the gate to listed accounts during the preview; settlement timeout 2 s -> 15 s after the soak dropped usage; acceptance test, failure drills, opt-in soak, alerts, dashboard panels, runbook and customer page |
+| 1120 | [AI gateway throughput: pipelined admission and settlement, keyed settlement retries](1120-ai-gateway-throughput-pipelined-admission-keyed-settlement.md) | accepted | Admission and settlement pipeline their statements, admission reports the breaker and cooldown, unchanged breaker outcomes take no lock, and settlements keyed by the lease are retried; a call drops from 30 to 11 Postgres round trips |
 | 989 | [App access to managed outbound integrations through a guest relay](989-app-outbound-relay.md) | accepted | guest-init loopback `GREGALE_OUTBOUND_URL` relays bytes over vsock to vmmd, which adds a relay assertion and splices to an mTLS `outboundd` listener; only outboundd parses HTTP; Anthropic credentials use `x-api-key` |
 | 988 | [AI gateway on managed outbound integrations](988-ai-gateway-outbound-integrations.md) | accepted (phase 1) | `ai_provider` integrations stream event-stream responses, extract OpenAI-compatible and Anthropic token usage, keep UTC-day usage per caller and model, and enforce a daily token limit at admission |
 | 1300 | [Export usage statements to the customer's own Stripe](1300-stripe-statement-invoice-exports.md) | accepted | Sealed per-account Stripe key; finalized statements become resumable draft invoices with one item per price and a rounding item; export records the handoff |
@@ -118,6 +124,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
+| 1037 | [Interactive app-task attach](1037-interactive-app-task-attach.md) | accepted; operator-gated preview | `gregale app exec -it` attaches one client to a fresh task VM's PTY through the gateway and vmmd with a single-use token; schedd lifecycle unchanged |
 | 971 | [Retire dead same-boot instance records after verified absence](971-same-boot-dead-instance-record-retirement.md) | accepted | vmmd startup retires instance records whose process is gone and whose kernel resources are verifiably absent, freeing quarantined slots and identity-verified temporary files (amends ADR-472, extends ADR-478) |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
@@ -130,7 +137,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
 | 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
 | 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
-| 981 | [Node RNG caches are drained on first use after a restore](981-node-rng-caches-drained-on-first-use.md) | accepted | The reseed reply marks randomUUID/randomInt caches stale and the preload's wrappers drain on first read, so apps that never call them skip the drain; capture-time emptying was rejected after metal showed it replays (amends ADR-680) |
+| 981 | [Node RNG caches are drained on first use after a restore](1110-node-rng-caches-drained-on-first-use.md) | accepted | The reseed reply marks randomUUID/randomInt caches stale and the preload's wrappers drain on first read, so apps that never call them skip the drain; capture-time emptying was rejected after metal showed it replays (amends ADR-680) |
 | 790 | [meterd catches up closed minutes it did not roll](790-meterd-closed-minute-catch-up.md) | proposed | A sample tick re-rolls, from the billing ledger, closed minutes of the last 24 h never recorded compute-complete (≤15 per tick); idempotent through first-write-wins; H5-55 |
 | 791 | [The build wall-clock limit is 15 minutes](791-build-wall-clock-limit.md) | accepted | Records `BuildTimeoutSeconds = 900` (raised from the spec's 10 min in August without an ADR); end-to-end deploy time is not separately enforced; H5-71 |
 | 815 | [Guarded native runtime qualification collector](815-guarded-native-runtime-qualification-collector.md) | accepted | Collects and signs exact-runtime native evidence only after teardown, host rechecks, service restoration and retained import |
@@ -180,6 +187,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 585 | [Managed operation results with durable webhook effects](585-managed-operation-webhook-effects.md) | accepted for implementation; promotion requires runtime qualification | Atomically fence managed HTTP completion with receiver-scoped durable webhook delivery |
 | 584 | [Durable object version protection](584-durable-object-version-protection.md) | accepted | Exact-version retention and legal holds with durable mutation/readback recovery |
 | 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, scoped ownership and binding retirement, bounded reports, durable effects, and scoped runtime convergence |
+| 1000 | [GitLab.com as a reviewed environment Git source](1000-gitlab-gitops-source.md) | implementation in progress | Account OAuth, verified project identity, commit-pinned reads, manual report scope |
 | 576 | [Private TCP addressing between services](576-private-tcp-service-addressing.md) | proposed | Account-scoped service addresses in 198.19.0.0/16 give non-HTTP protocols natural-port private reachability through a node-local TCP proxy |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |
@@ -226,6 +234,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
+| 595 | [Versioned inherited application standards](595-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
+
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
 | 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
@@ -239,7 +249,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 388 | [Provider invoice facts for FOCUS](388-provider-invoice-facts.md) | accepted | Durable provider facts, reconciled line classifications, and source coverage |
 | 387 | [FOCUS invoice projection](387-focus-invoice-projection.md) | accepted | Account-scoped invoice CSV and metadata, exact reconciliation, and declared source gaps |
 | 461 | [Managed PostgreSQL credential privileges](482-managed-postgres-credential-privileges.md) | accepted for gated preview | SQL runtime and migration logins, stable schema ownership, and verified role isolation |
-| 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
+| 386 | [HTTP/1 upgrade socket ownership](386-http001-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
 | 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
 | 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
 | 383 | [Curated dependency profiles for stateless executions](383-curated-stateless-execution-profiles.md) | accepted | Preinstalled immutable package sets, separate snapshots, and lease-pinned image provenance |
@@ -502,7 +512,55 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
+| 1140 | [Pull leases for worker queue consumers](1140-worker-queue-pull-leases.md) | accepted | `POST /v1/apps/{slug}/queues/{queue}/leases[:ack\|:nack\|:extend]` with fenced receipts and the `queues:consume` scope or a `gregale:queues` workload token, long-poll `wait_seconds` and up to 100 messages per lease, for workers without an HTTP listener; a worker holding leases ranks busy at scale-in |
+| 1141 | [Workload-identity trust provisioning](1141-workload-identity-trust-provisioning.md) | accepted | `gregalectl workload-identity init\|rotate\|status` writes the cluster RSA key, key id and JWKS; `faas_workload_identity_source_dir` installs the key on compute nodes (vmmd drop-in) and the JWKS for apid (`workload_jwks_path`, the fallback for Flags and Operations); `vmmd_workload_identity_tokens_total` and `FaasWorkloadIdentityNotConfigured` |
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
+| 1151 | [Existing consumer execution coverage reconciliation](1151-existing-consumer-execution-reconciliation.md) | accepted | Durable forward-only collection requests; conservative lineage blockers and future-window SLO eligibility |
+| 1152 | [Authoritative legacy event execution lineage repair](1152-authoritative-event-execution-lineage-repair.md) | accepted | Bounded restart-safe receipt scans associate provable roots without reconstructing historical outcomes |
+| 1153 | [Inspectable lineage cases and guarded retries](1153-inspectable-lineage-cases-and-guarded-retries.md) | accepted | Retained reason-coded cases, scoped pagination and revision-fenced idempotent reevaluation |
+| 1154 | [Bounded bulk lineage retries](1154-bounded-bulk-lineage-retries.md) | accepted | Reviewed fixed selections, durable per-case checkpoints and guarded retry results |
+| 1155 | [Cancellable bulk lineage retries](1155-cancellable-bulk-lineage-retries.md) | accepted | Job-lock cancellation, original-creation guards and preserved per-case results |
+| 1156 | [Retained lineage diagnostic backfill](1156-retained-lineage-diagnostic-backfill.md) | accepted | Bounded insert-only diagnostic scans, independent durable cursors and guarded rescan requests |
+| 1157 | [Lineage diagnostic scan controls](1157-lineage-diagnostic-scan-controls.md) | accepted | Coverage-lock pause, resume and cancellation with original-incarnation guards and preserved progress |
+| 1158 | [Retained lineage retry job discovery](1158-retained-lineage-retry-job-discovery.md) | accepted | Scoped live pagination, status-filtered summaries and retained job identity discovery |
+| 1159 | [Scope-bound lineage retry files](1159-scope-bound-lineage-retry-files.md) | accepted | Versioned target UUIDs, source provenance and guarded CLI submission with raw-file compatibility |
+| 1160 | [Pausable bulk lineage retries](1160-pausable-bulk-lineage-retries.md) | accepted | Original-incarnation pause/resume, preserved progress and unfinished-work diagnostic gates |
+| 1161 | [Idempotent bulk lineage control receipts](1161-idempotent-bulk-lineage-control-receipts.md) | accepted | Atomic UUID-keyed acknowledgments, bounded metadata history and no repeated state transition |
+| 1162 | [Idempotent bulk lineage cancellation receipts](1162-idempotent-bulk-lineage-cancellation-receipts.md) | accepted | Cancellation shares atomic command receipts, terminal acknowledgments and bounded history |
+| 1163 | [Trusted lineage control actor attribution](1163-trusted-lineage-control-actor-attribution.md) | accepted | Immutable server-derived account or credential identity in retained command receipts |
+| 1164 | [Filtered lineage control history](1164-filtered-lineage-control-history.md) | accepted | Exact action and original actor filters before sequence pagination |
+| 1165 | [Guarded lineage control-history export](1165-guarded-lineage-control-history-export.md) | accepted | Bounded observed receipt snapshots in private artifacts with atomic no-overwrite publication |
+| 1166 | [Offline lineage control-history inspection](1166-offline-lineage-control-history-inspection.md) | accepted | Strict local artifact validation, actor summaries and guarded receipt comparisons |
+| 1167 | [Retained lineage retry-job health](1167-retained-lineage-retry-job-health.md) | accepted | Scoped active-job inactivity and retention diagnostics with explicit progress evidence |
+| 1168 | [Lineage retry-job watch alerts](1168-lineage-retry-job-watch-alerts.md) | accepted | Opt-in durable stalled, retention-risk and paused-backlog lifecycle conditions |
+| 1169 | [Paginated lineage retry-job attention](1169-paginated-lineage-retry-job-attention.md) | accepted | Live warning-filtered pages beyond health samples with creation guards and progress metadata |
+| 1170 | [Reviewed lineage batch-control plans](1170-reviewed-lineage-batch-control-plans.md) | accepted | Fixed scoped commands with independent receipt-verified results and safe repeats |
+| 1171 | [Lineage batch-control plan preflight](1171-lineage-batch-control-plan-preflight.md) | accepted | Read-only guarded readiness and existing command acknowledgments before fixed-plan apply |
+| 1172 | [Durable lineage control execution reports](1172-durable-lineage-control-execution-reports.md) | accepted | Synced command intents and receipt-checked resume into a fresh private report |
+| 1173 | [Read-only lineage control report reconciliation](1173-read-only-lineage-control-report-reconciliation.md) | accepted | Resolve fixed commands from retained server receipts without submitting controls |
+| 1174 | [Configurable subscription delivery capacity](1174-configurable-subscription-delivery-capacity.md) | accepted | Lower per-consumer live-delivery ceilings shared by routing and replay without exceeding plan caps |
+| 1175 | [Subscription capacity-pressure diagnostics](1175-subscription-capacity-pressure-diagnostics.md) | accepted | Read-only scope usage, effective ceilings and waiting acceptance ages from a complete pressure snapshot |
+| 1176 | [Guarded subscription capacity preview](1176-guarded-subscription-capacity-preview.md) | accepted | Read-only proposal validation and projected consumer/shared capacity from fresh scoped evidence |
+| 1177 | [Guarded subscription capacity apply](1177-guarded-subscription-capacity-apply.md) | accepted | Atomically compare reviewed saved capacity and locked plan allowance before applying changes |
+| 1178 | [Idempotent subscription capacity commands](1178-idempotent-subscription-capacity-commands.md) | accepted | Retained successful capacity acknowledgments and safe repeats with fixed command UUIDs |
+| 1179 | [Read-only capacity-command evidence](1179-read-only-capacity-command-evidence.md) | accepted | Inspect original capacity acknowledgments using read authorization |
+| 1180 | [Paginated capacity-command history](1180-paginated-capacity-command-history.md) | accepted | Discover retained original command evidence with scoped read-only pagination |
+| 1181 | [Capacity-command receipt budget diagnostics](1181-capacity-command-receipt-budget-diagnostics.md) | accepted | Advisory retained receipt usage and earliest expiry in status and capacity preview |
+| 1182 | [Capacity-command receipt-budget watch alerts](1182-capacity-command-receipt-budget-watch-alerts.md) | accepted | Opt-in sustained full-budget alerts using existing lifecycle and checkpoint machinery |
+| 1183 | [Capacity-command receipt-budget early warnings](1183-capacity-command-receipt-budget-early-warnings.md) | accepted | Opt-in sustained low remaining-slot warnings before receipt quota exhaustion |
+| 1184 | [Receipt-budget warning recovery hysteresis](1184-receipt-budget-warning-recovery-hysteresis.md) | accepted | Separate recovery boundaries and sustained fresh recovery with versioned checkpoints |
+| 1185 | [Receipt-budget watcher confirmation progress](1185-receipt-budget-watcher-confirmation-progress.md) | accepted | Local fresh-sample and duration diagnostics separate from checkpoint evidence |
+| 1186 | [Application event delivery-attempt context](1186-application-event-delivery-attempt-context.md) | accepted | Authoritative transient attempt counters and replay lineage with validated SDK context |
+| 1161 | [Image runs (`gregale run --image`)](1161-image-runs.md) | accepted for an operator-gated preview | One-task Job runs against a cached per-image `image_run` runner job; Docker ENTRYPOINT/CMD rules; `api.ImageRunCachedImages`; gate `FAAS_IMAGE_RUNS` |
+| 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
+| 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
+| 1330 | [Interactive image runs (`gregale run -it --image`)](1330-interactive-image-runs.md) | accepted for an operator-gated preview | The job guest holds its command until one client attaches over ADR-1037's token, WebSocket and `AttachAppTask` transport; the job supervisor keeps timeout, cancellation and exit receipt; gate `FAAS_INTERACTIVE_IMAGE_RUNS` |
+| 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
+| 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
+| 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
+| 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
+| 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
+| 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -523,7 +581,7 @@ Files carrying the banner:
 - docs/adr/015-unix-socket-auth-v1.md
 - docs/adr/016-vmmd-stats-and-metrics.md
 - docs/adr/018-schedd-grpc-surface.md
-- docs/adr/023-ipv6-egress-policy.md (banner appended after the existing PR-D block)
+- docs/adr/023-ipv006-egress-policy.md (banner appended after the existing PR-D block)
 - docs/adr/024-certmagic-cutover.md
 - docs/adr/025-decoupled-control-plane-and-compute.md
 - docs/adr/028-gatewayd-remote-routing.md
@@ -541,14 +599,14 @@ Files carrying the banner:
 - docs/adr/055-per-host-egress-policy-templating.md
 - docs/adr/056-wire-node-verifier.md
 - docs/adr/062-tier-a-per-node-schedd-and-placement.md
-- docs/adr/064-tier-a4-cross-node-rebalance.md
+- docs/adr/064-tier-a004-cross-node-rebalance.md
 - docs/adr/064-wake-timeline-canonical-vocabulary.md
-- docs/adr/066-tier-a5-cross-node-live-migration.md
+- docs/adr/066-tier-a005-cross-node-live-migration.md
 - docs/adr/068-issue-517-closure-evidence.md
 - docs/adr/074-warm-snapshot-audit-gc.md
-- docs/adr/075-deploy-1-capdecl-mount-rpc-boundary.md
+- docs/adr/075-deploy-001-capdecl-mount-rpc-boundary.md
 - docs/adr/076-session-binding-hash.md
-- docs/adr/078-deploy-2-daemonunit-generator.md
+- docs/adr/078-deploy-002-daemonunit-generator.md
 - docs/adr/079-customer-handler-on-unix-socket-and-h2c.md
 - docs/adr/079-per-app-public-auth.md
 - docs/adr/080-per-app-async-task-queue.md
@@ -593,33 +651,33 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## S3 service decisions
 
-- [ADR-530: S3 compatibility and multipart capacity admission](530-s3-compatibility-and-multipart-capacity.md)
-- [ADR-531: S3 multipart transfer fencing and cleanup](531-s3-multipart-transfer-fencing-and-cleanup.md)
-- [ADR-532: Conditional S3 multipart completion](532-conditional-s3-multipart-completion.md)
+- [ADR-530: S3 compatibility and multipart capacity admission](530-s003-compatibility-and-multipart-capacity.md)
+- [ADR-531: S3 multipart transfer fencing and cleanup](531-s003-multipart-transfer-fencing-and-cleanup.md)
+- [ADR-532: Conditional S3 multipart completion](532-conditional-s003-multipart-completion.md)
 - [ADR-533: Safe object capacity reconciliation](533-safe-object-capacity-reconciliation.md)
 - [ADR-534: Recoverable application object uploads](534-recoverable-application-object-uploads.md)
-- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s3-gateway-puts.md)
-- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s3-gateway-copies.md)
+- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s003-gateway-puts.md)
+- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s003-gateway-copies.md)
 - [ADR-537: Customer object write receipts](537-customer-object-write-receipts.md)
-- [ADR-538: S3 multipart copy and source ETag conditions](538-s3-multipart-copy-and-source-etag-conditions.md)
-- [ADR-539: Historical S3 write receipt recovery](539-historical-s3-write-receipt-recovery.md)
-- [ADR-540: Native S3 version capacity inventory](540-native-s3-version-capacity-inventory.md)
-- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s3-copy-sources-and-date-conditions.md)
-- [ADR-542: Customer S3 version identities and reads](542-customer-s3-version-identities-and-reads.md)
-- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s3-copy-sources.md)
-- [ADR-544: Durable S3 multipart completion identities](544-durable-s3-multipart-completion-identities.md)
+- [ADR-538: S3 multipart copy and source ETag conditions](538-s003-multipart-copy-and-source-etag-conditions.md)
+- [ADR-539: Historical S3 write receipt recovery](539-historical-s003-write-receipt-recovery.md)
+- [ADR-540: Native S3 version capacity inventory](540-native-s003-version-capacity-inventory.md)
+- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s003-copy-sources-and-date-conditions.md)
+- [ADR-542: Customer S3 version identities and reads](542-customer-s003-version-identities-and-reads.md)
+- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s003-copy-sources.md)
+- [ADR-544: Durable S3 multipart completion identities](544-durable-s003-multipart-completion-identities.md)
 - [ADR-545: Durable bucket versioning configuration](545-durable-bucket-versioning-configuration.md)
-- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s3-version-deletion.md)
-- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s3-mutable-deletion.md)
+- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s003-version-deletion.md)
+- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s003-mutable-deletion.md)
 - [ADR-548: Coordinate immutable deletion with version inventory](548-immutable-deletion-inventory-coordination.md)
 - [ADR-549: Tag current and retained object versions](549-version-specific-object-tagging.md)
 - [ADR-550: Durable object lifecycle discovery and expiration](550-durable-object-lifecycle.md)
 - [ADR-551: Atomic object mutation events](551-atomic-object-mutation-events.md)
-- [ADR-552: Owned S3 notification destinations](552-owned-s3-notification-destinations.md)
+- [ADR-552: Owned S3 notification destinations](552-owned-s003-notification-destinations.md)
 - [ADR-553: Bounded production object transfers](553-bounded-production-object-transfers.md)
-- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s3-encryption.md)
+- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s003-encryption.md)
 - [ADR-555: Durable object encryption journals](555-durable-object-encryption-journals.md)
-- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s3-encryption.md)
+- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s003-encryption.md)
 - [ADR-557: Branded object URL capabilities with one write receipt](557-branded-object-url-capabilities.md)
 - [ADR-558: Branded control multipart uploads](558-branded-control-multipart-uploads.md)
 - [ADR-559: Owned encryption on upload routes](559-owned-encryption-on-upload-routes.md)
@@ -695,6 +753,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
 - [ADR-977: Opt-in service wake-ahead along measured edges](977-service-wake-ahead.md) — wake the services a waking app is measured to call, below a 60% residency guard, through the ordinary wake path (amends ADR-196)
 - [ADR-978: Route priority for the warm-capacity queue](978-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
+- [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
+- [ADR-1187: Route awake report](1187-route-awake-report.md) — which routes keep a scale-to-zero app awake, what removing each would save, and edge-cache or polling suggestions
+- [ADR-1188: Learned cacheability](1188-learned-cacheability.md) — compare anonymous GET bodies with the previous response per URL to measure whether a route is safe to cache, and for how long
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -714,7 +775,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-517: version customer workflow contracts and require transition evidence](517-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
 - [ADR-518: business workflow observations and transactional evidence](518-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
-- [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
+- [ADR-571: S3 write proof custody and owned cleanup](571-s003-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 - [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
 ## Automation recovery lifecycle
@@ -756,6 +817,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1025: Policy-independent workflow failure evidence](1025-policy-independent-workflow-failure-evidence.md)
 
 - [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
+- [ADR-1259: Reviewed first recovery from captured workflow failures](1259-reviewed-initial-workflow-recovery.md)
 
 ## Events and delivery
 
@@ -830,6 +892,97 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
 
+## Managed realtime release decisions
+
+- [ADR-1112 — Transactional realtime publishing](1112-transactional-realtime-publishing.md)
+- [ADR-1113 — Managed realtime access revocation](1113-managed-realtime-access-revocation.md)
+- [ADR-1114: PostgreSQL realtime table-change feeds](1114-postgresql-realtime-changefeeds.md)
+- [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
+- [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
+- [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
+- [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
+- [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
+- [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)
+- [ADR 1030: Lease-fenced realtime consumer groups](1030-realtime-consumer-groups.md)
+- [ADR 1031: Group-bound realtime worker credentials](1031-scoped-realtime-worker-credentials.md)
+- [ADR 1032: Channel-scoped realtime publisher credentials](1032-scoped-realtime-publisher-credentials.md)
+- [ADR 1033: Consumer-group dead-letter webhooks](1033-realtime-consumer-group-dead-letter-webhooks.md)
+- [ADR 1034: Batch claims and concurrent consumer-group workers](1034-realtime-batch-claims-and-worker-concurrency.md)
+- [ADR 1035: Consumer-group pause and resume](1035-realtime-consumer-group-pause-and-resume.md)
+- [ADR 1036: Consumer-group drain mode](1036-realtime-consumer-group-drain.md)
+- [ADR 1037: Bounded consumer-group long polling](1037-realtime-consumer-group-long-polling.md)
+- [ADR 1038: Consumer-group lag alerts](1038-realtime-consumer-group-lag-alerts.md)
+- [ADR 1039: Per-entity consumer-group ordering](1039-realtime-consumer-group-entity-ordering.md)
+- [ADR 1040: Persistent consumer-group lease fencing tokens](1040-realtime-consumer-group-lease-fencing.md)
+- [ADR 1041: Consumer-group dead-letter retention](1041-realtime-consumer-group-dead-letter-retention.md)
+- [ADR 1042: Automatic consumer-group retry policies](1042-realtime-consumer-group-retry-policies.md)
+- [ADR 1043: Bounded bulk dead-letter recovery](1043-realtime-consumer-group-bulk-dead-letter-recovery.md)
+- [ADR 1044: Consumer-group delivery deadlines](1044-realtime-consumer-group-delivery-deadlines.md)
+- [ADR 1045: Shared consumer-group claim rate limits](1045-realtime-consumer-group-claim-rate-limits.md)
+- [ADR 1046: Immutable consumer-group message filters](1046-realtime-consumer-group-message-filters.md)
+- [ADR 1047: Consumer-group worker health heartbeats](1047-realtime-consumer-group-worker-heartbeats.md)
+- [ADR 1048: Consumer-group processing latency metrics](1048-realtime-consumer-group-processing-metrics.md)
+- [ADR 1049: Delayed publishing visibility in the realtime inspector](1049-realtime-delayed-publish-inspector.md)
+- [ADR 1050: Priority-aware consumer group claims](1050-realtime-consumer-group-priority-claims.md)
+- [ADR 1051: Consumer-group batch settlement](1051-realtime-consumer-group-batch-settlement.md)
+- [ADR 1052: Automatic consumer-group circuit breakers](1052-realtime-consumer-group-circuit-breakers.md)
+- [ADR 1053: Consumer-group delivery-attempt history](1053-realtime-consumer-group-delivery-attempt-history.md)
+- [ADR 1054: Cooperative consumer-group lease release](1054-realtime-cooperative-lease-release.md)
+- [ADR 1055: Consumer-group settlement receipts](1055-realtime-consumer-group-settlement-receipts.md)
+- [ADR 1056: Consumer-group event deduplication](1056-realtime-consumer-group-event-deduplication.md)
+- [ADR 1057: Read-only dead-letter JSONL export](1057-realtime-dead-letter-jsonl-export.md)
+- [ADR 1058: Background dead-letter replay jobs](1058-realtime-background-dead-letter-replay-jobs.md)
+- [ADR 1059: Replay-job lifecycle notifications](1059-realtime-replay-job-notifications.md)
+- [ADR 1060: Dry-run replay jobs and reviewed recovery](1060-realtime-dry-run-replay-jobs.md)
+- [ADR 1061: Python async realtime worker helper](1061-python-async-realtime-workers.md)
+- [ADR 1062: Python receipt-backed settlement retries](1062-python-receipt-backed-settlement-retries.md)
+- [ADR 1063: Python worker settlement batching](1063-python-worker-settlement-batching.md)
+- [ADR 1064: Python worker lifecycle hooks](1064-python-worker-lifecycle-hooks.md)
+- [ADR 1065: Python worker processing timeouts](1065-python-worker-processing-timeouts.md)
+- [ADR 1066: Python worker graceful draining](1066-python-worker-graceful-draining.md)
+- [ADR 1067: Python expiring realtime activity](1067-python-expiring-realtime-activity.md)
+- [ADR 1068: Python combined presence directory](1068-python-presence-directory.md)
+- [ADR 1069: Python temporary activity publisher](1069-python-temporary-activity-publisher.md)
+- [ADR 1070: Python activity inactivity expiry](1070-python-activity-inactivity-expiry.md)
+- [ADR 1071: Python realtime activity summaries](1071-python-realtime-activity-summaries.md)
+- [ADR 1072: Python realtime activity scopes](1072-python-realtime-activity-scopes.md)
+- [ADR 1073: Python confirmed read-progress tracker](1073-python-confirmed-read-progress-tracker.md)
+- [ADR 1074: Python coalesced read assertions](1074-python-coalesced-read-assertions.md)
+- [ADR 1075: Python aggregate unread summaries](1075-python-aggregate-unread-summaries.md)
+- [ADR 1076: Python read-progress freshness](1076-python-read-progress-freshness.md)
+- [ADR 1077: Python read-refresh coordinator](1077-python-read-refresh-coordinator.md)
+- [ADR 1078: Python unread badge presentation](1078-python-unread-badge-presentation.md)
+- [ADR 1079: Python realtime connection-status observation](1079-python-realtime-connection-status.md)
+- [ADR 1080: Python realtime connection quality](1080-python-realtime-connection-quality.md)
+- [ADR 1081: Python realtime health summary](1081-python-realtime-health-summary.md)
+- [ADR 1082: Python reconnect catch-up observation](1082-python-reconnect-catch-up.md)
+- [ADR 1083: Python catch-up stall detection](1083-python-catch-up-stall-detection.md)
+- [ADR 1084: Python subscription readiness](1084-python-subscription-readiness.md)
+- [ADR 1085: Python subscription readiness waits](1085-python-subscription-readiness-waits.md)
+- [ADR 1086: Python catch-up completion waits](1086-python-catch-up-completion-waits.md)
+- [ADR 1087: Python combined realtime readiness gate](1087-python-combined-realtime-readiness.md)
+- [ADR 1088: Python realtime diagnostics export](1088-python-realtime-diagnostics-export.md)
+- [ADR 1089: Python realtime incident timeline](1089-python-realtime-incident-timeline.md)
+- [ADR 1090: Python realtime reconnect and replay coordinator](1090-python-realtime-recovery-coordinator.md)
+- [ADR 1091: Python native managed realtime WebSocket transport](1091-python-native-managed-websocket-client.md)
+- [ADR 1092: Python multi-channel subscriptions on one WebSocket](1092-python-multi-channel-websocket-client.md)
+- [ADR 1093: Native Python WebSocket presence and activity](1093-python-native-presence-and-activity.md)
+- [ADR 1094: Python durable channel subscriptions](1094-python-durable-channel-subscriptions.md)
+- [ADR 1095: Python server-side channel event filters](1095-python-server-side-channel-event-filters.md)
+- [ADR 1096: Python native read receipts and unread counts](1096-python-native-read-receipts-and-unread-counts.md)
+- [ADR 1097: Python native live-only direct messages](1097-python-live-only-direct-messages.md)
+- [1098: Python retained-channel SSE fallback](1098-python-realtime-sse-fallback.md)
+- [1099: Python realtime subscription pause and resume](1099-python-realtime-subscription-pause-resume.md)
+- [1100: Python realtime backpressure observations](1100-python-realtime-backpressure-observations.md)
+- [1101: Python retained-channel graceful draining](1101-python-realtime-graceful-drain.md)
+- [1102: Delivery expiration for retained realtime channel events](1102-retained-realtime-message-expiration.md)
+- [1103: Default and per-message TTL for retained channel batches](1103-retained-realtime-batch-message-ttl.md)
+- [1104: Message TTL for scheduled realtime publication](1104-scheduled-realtime-message-ttl.md)
+- [1105: TTL for transactional realtime messages](1105-transactional-realtime-message-ttl.md)
+- [1106: Message TTL for scoped realtime publishers](1106-scoped-realtime-publisher-message-ttl.md)
+- [1107: Realtime message expiry diagnostics](1107-realtime-message-expiry-diagnostics.md)
+- [1108: Delivery TTL for direct realtime inbox messages](1108-direct-inbox-delivery-ttl.md)
+
 - [ADR-933: Durable entity outbox relay and transport acceptance](933-durable-entity-outbox-relay.md)
 
 - [ADR-934: Gated durable entity guest outbox protocol](934-durable-entity-guest-outbox-protocol.md)
@@ -880,6 +1033,49 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
 
+- [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
+- [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)
+
+- [ADR-1239: Native browser authorization and durable management MCP connections](1239-management-mcp-browser-login-and-durability.md)
+- [ADR-1240: Management MCP environment consent and real-client CI](1240-management-mcp-environments-and-client-ci.md)
+- [ADR-1241: Reviewed named-environment staging and scoped health](1241-management-mcp-named-staging-and-scoped-health.md)
+- [ADR-1242: Human browser approval for management MCP promotions](1242-management-mcp-browser-promotion-approval.md)
+- [ADR-1243: Reviewed Git source staging through management MCP](1243-management-mcp-reviewed-git-source.md)
+
+- [ADR-1244: Native service and worker rollouts through management MCP](1244-management-mcp-native-workload-rollouts.md)
+
+- [ADR-1245: Environment-attributed management MCP observations](1245-management-mcp-scoped-telemetry.md)
+
+- [ADR-1246: Reviewed native source rollouts through management MCP](1246-management-mcp-native-source-rollouts.md)
+
+- [ADR-1247: Retained GitHub source rollback through management MCP](1247-management-mcp-retained-source-rollback.md)
+
+- [ADR-1248: Current environment route-budget observations](1248-management-mcp-scoped-route-budgets.md)
+
+- [ADR-1249: Bounded passive management MCP rollout watch](1249-management-mcp-rollout-watch.md)
+
+- [ADR-1250: Consent-scoped management MCP resources and prompts](1250-management-mcp-context-resources-prompts.md)
+
+- [ADR-1251: Read-only management MCP preflight](1251-management-mcp-preflight.md)
+
+- [ADR-1252: Independent advisory environment route budgets](1252-environment-route-budgets.md)
+
+- [ADR-1253: Bounded management MCP rollout progress](1253-management-mcp-rollout-progress.md)
+
+- [ADR-1254: Consent-scoped management MCP resource subscriptions](1254-management-mcp-resource-subscriptions.md)
+
+- [ADR-1255: Consent-scoped management MCP argument completion](1255-management-mcp-argument-completion.md)
+
+- [ADR-1256: Bounded management MCP request admission](1256-management-mcp-request-admission.md)
+
+- [ADR-1257: Private aggregate management MCP telemetry](1257-management-mcp-operational-telemetry.md)
+
+- [ADR-1258: Graceful management MCP drain and journal cleanup](1258-management-mcp-graceful-drain.md)
+
+- [ADR-1259: Owner-protected management MCP connection controls](1259-management-mcp-local-connection-controls.md)
+
+- [ADR-1260: Authorization-bounded management MCP request leases](1260-management-mcp-authorization-request-leases.md)
+
 - [ADR-1115: Issue occurrence split preview](1115-issue-occurrence-split-preview.md)
 
 - [ADR-1116: Durable issue occurrence split rules](1116-durable-issue-occurrence-split-rules.md)
@@ -890,6 +1086,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
+
+- [ADR-1111: Typed Go SDK methods for the managed realtime release](1111-go-sdk-managed-realtime-release.md)
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
@@ -910,8 +1108,13 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1035: Managed object storage for developer sessions](1035-developer-managed-object-storage.md)
 
 - [ADR-1036: Declarative bucket triggers for the owning compute app](1036-managed-object-storage-compute-triggers.md)
+- [ADR-1038: Durable S3 multipart checksums](1038-durable-s3-multipart-checksums.md)
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
 
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
+- [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
+- [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)

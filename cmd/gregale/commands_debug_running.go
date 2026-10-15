@@ -72,8 +72,8 @@ func renderDebugRunning(w io.Writer, slug string, resp api.DebugRunningResponse)
 				}
 				if cause.Request != nil {
 					request := cause.Request
-					_, _ = fmt.Fprintf(w, "    representative telemetry: %s %s %s (matched within %dms; count=%d)\n",
-						request.Method, request.Route, request.TelemetryID, request.MatchDeltaMS, request.Count)
+					_, _ = fmt.Fprintf(w, "    representative telemetry: %s %s (matched within %dms; count=%d)\n",
+						requestLine(request.Method, request.Route), request.TelemetryID, request.MatchDeltaMS, request.Count)
 					if request.TraceID != nil && *request.TraceID != "" {
 						_, _ = fmt.Fprintf(w, "    trace: %s\n", *request.TraceID)
 					}

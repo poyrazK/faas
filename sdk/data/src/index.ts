@@ -91,3 +91,6 @@ export { optimisticMutation } from './optimistic.js'
 export type { OptimisticResult } from './optimistic.js'
 export { bulkMutations } from './bulk.js'
 export type { BulkOutcome, BulkProgress, BulkOptions } from './bulk.js'
+
+export { createCursorPager, CursorPaginationError } from './cursor-token.js'
+export type { CursorScope, CursorPagerOptions, CursorPageResult } from './cursor-token.js'

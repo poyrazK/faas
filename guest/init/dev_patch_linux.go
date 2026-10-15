@@ -20,7 +20,7 @@ func startDevPatchLoop(ctx context.Context, sup *Supervisor, log *slog.Logger) {
 		apply: func(dir string, archive []byte, deleted []string) (devpatch.ApplyResult, error) {
 			return devpatch.Apply(dir, archive, deleted, api.DevPatchMaxBytes)
 		},
-		restart: sup.RequestRestart,
+		restart: devPatchRestart(sup.RequestRestart),
 		sleep:   sleepContext,
 		ack: func(generation, applyMS int64, errorCode string) {
 			if err := sendDevPatchAck(generation, applyMS, errorCode); err != nil {

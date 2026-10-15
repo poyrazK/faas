@@ -1,47 +1,30 @@
-// verify.go — cosign image-signature verification at deploy time
-// (issue #472 / ADR-054). Mirrors AWS Lambda's Code Signing for
-// Lambda (TrustedSigners + SigningProfileVersionArns). Verifies the
-// manifest digest of an OCI image against the cosign signature attached
-// to the registry's sha256-<digest>.sig location, for a caller-supplied
-// per-app trusted-publisher list.
-//
-// Trust model
-//
-//   - The trusted-publisher list is operator-controlled via apid
-//     (PUT /v1/apps/{slug}/trusted_signers/{name}), which writes
-//     app_trusted_signers. imaged reads that table for every verify
-//     (ADR-058 amendment, 2026-10-11): apid and imaged run on
-//     different hosts, so an on-disk mirror written by apid never
-//     reached imaged.
-//   - The verify path is fail-closed: a registry without cosign's
-//     sha256-<digest>.sig artifact → ErrSignatureMissing. A signed
-//     artifact that doesn't match ANY trusted key → ErrSignatureInvalid.
-//     Both bubbles up to the apid-imaged pipeline as 403
-//     deploy_signature_invalid.
-//   - The signature payload is the canonical cosign v2 shape: 64
-//     bytes (r||s) ECDSA P-256 over the 32-byte SHA-256 digest of
-//     the manifest. Same wire as the build-side LocalVerifier (see
-//     pkg/cosign/verifier.go::verifyDigest).
-//
-// Why a separate file (not bolted onto verifier.go)
-//
-//   - The build-side LocalVerifier operates on local layer files
-//     (drive1 ext4 images staged under /var/lib/faas/snapshots/...).
-//     The deploy-time path operates on a registry pull — the
-//     signature has to be fetched BEFORE the layer is downloaded.
-//     This file wires the registry-pulling helper (ResolveDigest +
-//     FetchSignature) and keeps verifier.go's hot path (cold-boot
-//     layer verify) free of OCI concerns.
+// verify.go loads operator-controlled mirrored publisher keys and retains the
+// legacy raw P256 digest primitive from ADR-058. The registry deploy path uses
+// VerifyImageSignatureAttachments (ADR-435); raw r||s is not the Cosign
+// simple-signing wire format. ADR-038's local ext4 signer remains unchanged.
 
 package cosign
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
+
+// DefaultTrustedPublishersDir is the canonical location for the
+// per-app cosign trusted-publisher keys. One .pem per publisher,
+// filename = signer_name (the apid-side label). Mode 0444 per file
+// (the same posture as DefaultSignPubPath).
+const DefaultTrustedPublishersDir = "/etc/faas/secrets/trusted-publishers"
 
 // ErrSignatureMissing is returned by VerifyImageSignature when the
 // registry has no cosign signature artifact at the well-known
@@ -49,7 +32,7 @@ import (
 // because the operator action is different (either onboard a
 // publisher if they're expecting a signed deploy, or relax the
 // apps.require_signed flag if they aren't).
-var ErrSignatureMissing = errors.New("cosign: image signature missing")
+var ErrSignatureMissing = imagepublisher.ErrSignatureMissing
 
 // ErrSignatureInvalid is returned by VerifyImageSignature when a
 // signature exists but doesn't verify against any trusted publisher
@@ -57,45 +40,82 @@ var ErrSignatureMissing = errors.New("cosign: image signature missing")
 // the operator action is different (the signature is there, but the
 // publisher isn't trusted — either the wrong key was used, or the
 // trust list needs to be updated).
-var ErrSignatureInvalid = errors.New("cosign: image signature invalid")
+var ErrSignatureInvalid = imagepublisher.ErrSignatureInvalid
 
 // TrustedPublisher is one entry in the per-app trust list. Name is
 // the apid-side label (matches app_trusted_signers.signer_name);
 // PublicKey is the parsed ECDSA P-256 SPKI.
-type TrustedPublisher struct {
-	Name      string
-	PublicKey *ecdsa.PublicKey
+type TrustedPublisher = imagepublisher.TrustedPublisher
+
+// TrustedPublishersFromDir reads every *.pem in dir and parses each
+// as an ECDSA P-256 public key. Missing dir → (nil, nil) so callers
+// can treat "no publishers" as "fail-closed at the apid gate" rather
+// than a hard error (the typical case for apps with require_signed
+// disabled). Permission-violating files → error.
+//
+// The dir is the operator's deploy-time trust root; apid emits the
+// per-app truth via pg_notify('trusted_signer_changed'), but imaged
+// reads from disk to avoid a Postgres round-trip on every deploy.
+// imaged's startup loads once and refreshes on the notify signal.
+//
+// Empty directory is NOT an error — it just returns an empty slice
+// (the apid handler is responsible for the fail-closed gate).
+func TrustedPublishersFromDir(dir string) ([]TrustedPublisher, error) {
+	if dir == "" {
+		return nil, errors.New("cosign: empty trusted-publishers dir")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Treat missing dir as "no trust list" — a fresh
+			// install has the dir absent until apid has onboarded
+			// its first publisher. imaged never crashes on this
+			// path; the apid pre-flight gate (handlers.go::
+			// createDeployment) rejects the deploy with 403
+			// deploy_signature_invalid before imaged sees it.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cosign: read trusted-publishers dir %q: %w", dir, err)
+	}
+	var out []TrustedPublisher
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".pem") {
+			continue
+		}
+		signer := strings.TrimSuffix(name, ".pem")
+		full := filepath.Join(dir, name)
+		pub, err := LoadPublicKeyFile(full)
+		if err != nil {
+			return nil, fmt.Errorf("cosign: load trusted publisher %q: %w", full, err)
+		}
+		out = append(out, TrustedPublisher{Name: signer, PublicKey: pub})
+	}
+	return out, nil
 }
 
-// ImageSignaturePuller is the minimal OCI surface VerifyImageSignature
-// needs. Defined here as an interface so the imaged-side wrapper
-// (pkg/imaged/handler.go) can supply either the production
-// pkg/oci/puller.Puller or a test fake without coupling pkg/cosign
-// to pkg/oci.
-//
-// ResolveDigest returns the canonical manifest digest (the
-// "sha256:..." form) for the image reference.
-//
-// FetchSignature fetches the cosign v2 signature blob for digest
-// from the registry's well-known sha256-<digest>.sig location.
-// Returns ErrSignatureMissing when the registry has no signature
-// for the digest (a "fail-closed missing" rather than a generic
-// network error — the caller branches on this to surface
-// ErrSignatureMissing up to the customer-facing error code).
+// ImageSignaturePuller supplies the legacy raw digest-signature primitive.
+// Registry deployments use ImageSignatureAttachmentPuller instead. This
+// interface prescribes no OCI blob location: a detached signature cannot be
+// stored under the image manifest's content digest.
 type ImageSignaturePuller interface {
 	ResolveDigest(ctx context.Context, ref string) (string, error)
 	FetchSignature(ctx context.Context, ref, digest string) ([]byte, error)
 }
 
-// VerifyImageSignature resolves the manifest digest for ref, fetches
-// the cosign signature, and verifies it against every trusted
+// VerifyImageSignature resolves a digest and verifies a legacy raw r||s
+// digest signature against every trusted
 // publisher. Returns the name of the first matching publisher and
 // the canonical digest on success. Returns ErrSignatureMissing
 // when the registry has no signature, ErrSignatureInvalid when the
 // signature exists but no publisher matches.
 //
 // Pure function — no DB, no globals. The trusted-publisher list is
-// supplied by the caller (imaged reads it from app_trusted_signers).
+// supplied by the caller (imaged's in-memory cache, refreshed via
+// TrustedPublishersFromDir on pg_notify('trusted_signer_changed')).
 func VerifyImageSignature(ctx context.Context, puller ImageSignaturePuller, ref string, publishers []TrustedPublisher) (matchedSigner string, digest string, err error) {
 	if puller == nil {
 		return "", "", errors.New("cosign: nil ImageSignaturePuller")
@@ -180,3 +200,77 @@ func hexByte(c byte) (byte, bool) {
 		return 0, false
 	}
 }
+
+// TrustListFromDir reads every `<app_id>--<name>.pem` file in dir
+// and returns the per-app trust list. Filename format is the
+// apid-side writer's contract (cmd/apid/trusted_publisher_writer.go):
+// the leading 36-char UUID segment is the app_id, the trailing
+// segment is the operator-chosen signer_name (DNS-1123-label style,
+// matching the DB CHECK app_trusted_signers_name_shape).
+//
+// Sort order within each app is alphabetical by signer_name so the
+// cache is deterministic across refreshes (handy for tests; the
+// verify path is independent of order — ECDSA verify is commutative).
+//
+// Empty dir / missing dir → (nil, nil). Malformed filename
+// (missing the `--` separator, app_id not a valid UUID, name
+// violating the DNS-1123-label pattern) is skipped with a warning
+// shape but currently does not surface to the caller — the apid
+// writer is the only producer, so a malformed filename is a bug
+// in the writer, not a production data input.
+func TrustListFromDir(dir string) (map[string][]TrustedPublisher, error) {
+	if dir == "" {
+		return nil, errors.New("cosign: empty trusted-publishers dir")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cosign: read trusted-publishers dir %q: %w", dir, err)
+	}
+	byApp := map[string][]TrustedPublisher{}
+	const sep = "--"
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".pem") {
+			continue
+		}
+		stem := strings.TrimSuffix(name, ".pem")
+		idx := strings.Index(stem, sep)
+		if idx <= 0 || idx == len(stem)-len(sep) {
+			// Malformed — skip silently. The apid writer is the
+			// only producer and would never emit this shape; the
+			// skip is a defence against hand-edited files.
+			continue
+		}
+		appID := stem[:idx]
+		signer := stem[idx+len(sep):]
+		if _, err := uuid.Parse(appID); err != nil {
+			continue
+		}
+		if !dns1123LabelPattern.MatchString(signer) {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		pub, err := LoadPublicKeyFile(full)
+		if err != nil {
+			return nil, fmt.Errorf("cosign: load trusted publisher %q: %w", full, err)
+		}
+		byApp[appID] = append(byApp[appID], TrustedPublisher{Name: signer, PublicKey: pub})
+	}
+	for appID := range byApp {
+		sort.Slice(byApp[appID], func(i, j int) bool {
+			return byApp[appID][i].Name < byApp[appID][j].Name
+		})
+	}
+	return byApp, nil
+}
+
+// dns1123LabelPattern mirrors the DB CHECK
+// app_trusted_signers_name_shape (migration 00083). Kept local so
+// pkg/cosign doesn't import pkg/state for the regex.
+var dns1123LabelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)

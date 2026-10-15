@@ -18,7 +18,7 @@ T = TypeVar("T", bound="OutboundAIRequestLogEntry")
 
 @_attrs_define
 class OutboundAIRequestLogEntry:
-    """One settled AI call's metadata (ADR-991). No request or response content is kept."""
+    """One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996)."""
 
     id: UUID
     created_at: datetime.datetime
@@ -38,6 +38,8 @@ class OutboundAIRequestLogEntry:
     attempts: int
     end_user: None | str
     """The call's X-Gregale-AI-User value (ADR-994)."""
+    content_captured: bool
+    """Whether the call's bodies can be read from its content endpoint (ADR-996)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +81,8 @@ class OutboundAIRequestLogEntry:
         end_user: None | str
         end_user = self.end_user
 
+        content_captured = self.content_captured
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -99,6 +103,7 @@ class OutboundAIRequestLogEntry:
                 "ttfb_ms": ttfb_ms,
                 "attempts": attempts,
                 "end_user": end_user,
+                "content_captured": content_captured,
             }
         )
 
@@ -162,6 +167,8 @@ class OutboundAIRequestLogEntry:
 
         end_user = _parse_end_user(d.pop("end_user"))
 
+        content_captured = d.pop("content_captured")
+
         outbound_ai_request_log_entry = cls(
             id=id,
             created_at=created_at,
@@ -179,6 +186,7 @@ class OutboundAIRequestLogEntry:
             ttfb_ms=ttfb_ms,
             attempts=attempts,
             end_user=end_user,
+            content_captured=content_captured,
         )
 
         outbound_ai_request_log_entry.additional_properties = d

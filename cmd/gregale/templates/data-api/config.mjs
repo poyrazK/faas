@@ -50,10 +50,12 @@ export function runtimeConfig(env) {
   const schemas = schemaNames(env.DATA_API_SCHEMAS)
   const auth = authConfig(env)
   if (env.DATA_API_COORDINATED_REFRESH !== undefined && env.DATA_API_COORDINATED_REFRESH !== '1') throw new Error('Invalid coordinated refresh setting')
+  if (env.DATA_API_QUERY_SHAPES !== undefined && env.DATA_API_QUERY_SHAPES !== '1') throw new Error('Invalid query-shape logging setting')
+  const queryShapes = env.DATA_API_QUERY_SHAPES === '1'
   const coordinatedRefresh = env.DATA_API_COORDINATED_REFRESH === '1'
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
-  return { connection, role, schemas, auth, secret, coordinatedRefresh, acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+  return { connection, role, schemas, auth, secret, coordinatedRefresh, queryShapes, acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001',
       PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false' } }

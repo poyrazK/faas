@@ -17,37 +17,39 @@ func jobReadinessRecoveryCommands(name, state, image string, run *jobOverviewRun
 			commands = append(commands, jobOverviewAction{purpose, command})
 		}
 	}
-	base := recoveryCLI() + " jobs "
-	job := recoveryArgument(name)
+	command := func(args ...string) string {
+		return savedNameSuggestionCommand(append([]string{"jobs"}, args...))
+	}
 	if state != "active" {
-		add("Inspect Job state", base+"info "+job)
+		add("Inspect Job state", command("info", name))
 	}
 	switch image {
 	case "ready":
 	case "pending", "verifying_legacy":
-		add("Wait for image preparation", base+"info "+job+" --wait-ready")
+		add("Wait for image preparation", command("info", name, "--wait-ready"))
 	default:
-		add("Inspect image preparation", base+"info "+job)
+		add("Inspect image preparation", command("info", name))
 	}
 	if checkRun {
 		if run == nil {
-			add("Preview a first run", base+"run "+job+" --dry-run")
+			add("Preview a first run", command("run", name, "--dry-run"))
 		} else {
-			target := job + " " + recoveryArgument(run.ID)
 			switch run.Status {
 			case "succeeded":
 			case "queued", "running":
-				add("Wait for this run", base+"wait "+target)
-			case "failed", "dead_letter":
-				add("Inspect failed tasks", base+"tasks "+target+" --failed-only")
-				add("Read all failed-task logs", base+"logs "+target+" --failed-only")
+				add("Wait for this run", command("wait", name, run.ID))
+				add("Preview cancellation", command("cancel", name, run.ID, "--dry-run"))
+			case "failed", "dead_letter", "cancelled":
+				add("Inspect unsuccessful tasks", command("tasks", name, run.ID, "--unsuccessful-only"))
+				add("Read unsuccessful-task logs", command("logs", name, run.ID, "--unsuccessful-only"))
+				add("Preview replay of unsuccessful tasks", command("replay-failed", name, run.ID, "--dry-run"))
 				for _, action := range actions {
 					if strings.HasPrefix(action.Purpose, "Read task ") {
 						add(action.Purpose, action.Command)
 					}
 				}
 			default:
-				add("Inspect task outcomes", base+"tasks "+target+" --all")
+				add("Inspect task outcomes", command("tasks", name, run.ID, "--all"))
 			}
 		}
 	}

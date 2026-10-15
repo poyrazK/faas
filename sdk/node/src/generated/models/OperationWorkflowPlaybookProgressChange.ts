@@ -8,6 +8,10 @@ import type { OperationWorkflowPlaybookProgressItem } from './OperationWorkflowP
  */
 export type OperationWorkflowPlaybookProgressChange = {
   /**
+   * OperationWorkflowPlaybookProgressChange.outcome_code. Present for outcome follow-up step reviews; item_index is local to that list.
+   */
+  outcome_code?: string;
+  /**
    * OperationWorkflowPlaybookProgressChange.revision. Committed revision after this edit.
    */
   revision: number;

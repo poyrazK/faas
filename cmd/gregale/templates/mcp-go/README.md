@@ -26,7 +26,8 @@ The starter supports application-side external OAuth resource-server checks,
 including RS256/ES256 JWT verification against a remote JWKS, protected-resource
 metadata, bearer challenges, and per-entry scope checks for tools, resources,
 resource templates and prompts. The OAuth provider owns login and token
-issuance. This starter does not include legacy transport. It advertises safe,
+issuance. It supports both current and legacy protocol versions over Streamable
+HTTP, without the deprecated HTTP+SSE transport. It advertises safe,
 prefix-matched completions for `summarize.style` and the
 `customer://records/{recordId}` resource template; completion access follows
 the same prompt and resource scope policies as prompt reads and resource reads,
@@ -265,9 +266,13 @@ restart recovers queued tasks and reclaims expired running leases. Keep the owne
 key stable while task rows remain in PostgreSQL.
 
 For a shared task database with the Node starter, use the same namespace, owner
-key and OAuth resource. Go and Python currently read and write the legacy v1
-payload envelope; keep Node's active payload key set to `legacy` while sharing
-tasks. Non-legacy Node payload-key rotation is not supported by these starters.
+key and OAuth resource. For independent payload-key rotation, set
+`tasks.encryption_keys_env` to a distinct sealed-secret environment variable
+containing the same `activeKeyId`/`keys` JSON key ring on web and worker replicas.
+Go and Python support Node-compatible v2 payload envelopes as well as legacy
+reads. Distribute old and new keys before activating the new key, and retain
+keys while Tasks encrypted with them remain. The observer does not need payload
+or owner keys.
 
 Use a Task-capable client to call the sample tool, then read or cancel its task:
 

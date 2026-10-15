@@ -1109,6 +1109,15 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 				"OR a single handler.{js,ts,py,go} for a *function* — "+
 				"or pass --image, --tarball, --template, --repo, --function, or --app",
 			filepath.Base(srcDir))
+		// A Compose file at the root is a project, which deploys with
+		// --project; the bare error never said so (H10-55).
+		if compose := composeFileIn(srcDir); compose != "" {
+			return shapeUnknown, "", "", &NestedMarkerHintError{
+				Dir:  filepath.Base(srcDir),
+				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy it with `gregale deploy --project`.", compose),
+				Err:  baseErr,
+			}
+		}
 		// Issue #744 / ADR-086: if the cwd has app markers at depth 1 (a
 		// common monorepo layout — apps/web/package.json, services/api/go.mod),
 		// surface a customer-visible hint pointing at `gregale scan --path .`.

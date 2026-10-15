@@ -8,7 +8,7 @@ import { collectionScenarios, replayRequest } from './request-replay.mjs'
 const object = value => value && typeof value === 'object' && !Array.isArray(value)
 const fields = (value, allowed) => object(value) && Object.keys(value).every(key => allowed.includes(key))
 const identifier = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
-const reserved = new Set(['sub', 'iss', 'aud', 'exp', 'iat', 'nbf', 'jti', 'role', '__proto__', 'constructor', 'prototype'])
+const reserved = new Set(['sub', 'iss', 'aud', 'exp', 'iat', 'nbf', 'jti', 'role', 'gregale_read_only', '__proto__', 'constructor', 'prototype'])
 
 export async function readLocalFile(path, limit = 65536) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -49,8 +49,8 @@ export async function loadDevProject(options) {
   if (!fields(config, ['version', 'migrations', 'output', 'identities', 'verify', 'seed', 'check']) || config.version !== 1) throw new Error('Use a version 1 development config with known fields.')
   if (!object(config.identities) || Object.keys(config.identities).length < 2 || Object.keys(config.identities).length > 100) throw new Error('Configure two to 100 local test identities.')
   const identities = Object.fromEntries(Object.entries(config.identities).map(([name, value]) => {
-    if (!identifier.test(name) || reserved.has(name) || !fields(value, ['subject', 'claims']) || typeof value.subject !== 'string' || !value.subject || value.subject.length > 256 || (value.claims !== undefined && (!object(value.claims) || Object.keys(value.claims).some(key => reserved.has(key))))) throw new Error('Use named identities with subjects and non-reserved custom claims.')
-    return [name, { subject: value.subject, claims: value.claims ?? {} }]
+    if (!identifier.test(name) || reserved.has(name) || !fields(value, ['subject', 'claims', 'read_only']) || (value.read_only !== undefined && typeof value.read_only !== 'boolean') || typeof value.subject !== 'string' || !value.subject || value.subject.length > 256 || (value.claims !== undefined && (!object(value.claims) || Object.keys(value.claims).some(key => reserved.has(key))))) throw new Error('Use named identities with subjects and non-reserved custom claims.')
+    return [name, { subject: value.subject, claims: value.claims ?? {}, ...(value.read_only?{read_only:true}:{}) }]
   }))
   if (new Set(Object.values(identities).map(value => value.subject)).size < 2) throw new Error('Verification needs at least two distinct subjects.')
   const migrations = await projectPath(base, config.migrations ?? 'migrations/sql', true)
@@ -67,7 +67,7 @@ export async function loadDevProject(options) {
   const check = config.check ?? { directory: 'client', commands: [['npm', 'run', 'typecheck'], ['npm', 'test']] }
   if (!fields(check, ['directory', 'commands']) || typeof check.directory !== 'string' || !check.directory || !Array.isArray(check.commands) || !check.commands.length || check.commands.length > 10 || check.commands.some(command => !Array.isArray(command) || !command.length || command.length > 100 || command.some(arg => typeof arg !== 'string' || !arg || arg.includes('\0')))) throw new Error('Use explicit argument arrays for client checks.')
   const checkDirectory = options.check ? await projectPath(base, check.directory, true) : resolve(base, check.directory)
-  const protectedPaths = [configPath, verification.collection, seed, options.baseline || resolve(base, '.gregale/data-api-contract.json'), options.replay].filter(Boolean)
+  const protectedPaths = [configPath, verification.collection, seed, options.baseline || resolve(base, '.gregale/data-api-contract.json'), options.replay, options.fixture, options.data_check].filter(Boolean)
   let outputInfo
   try { outputInfo = await stat(output) } catch (error) { if (error.code !== 'ENOENT') throw error }
   for (const path of protectedPaths) {

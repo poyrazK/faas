@@ -286,6 +286,55 @@ func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
 	}
 }
 
+// ADR-1151: the frozen tier is off by default; frozen_tier or
+// FAAS_FROZEN_TIER turns it on, and the env wins.
+func TestLoadConfig_FrozenTier(t *testing.T) {
+	t.Setenv("FAAS_FROZEN_TIER", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.FrozenTier {
+		t.Fatalf("default FrozenTier = %v, %v; want off", cfg != nil && cfg.FrozenTier, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("frozen_tier = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenTier {
+		t.Fatalf("frozen_tier = true: FrozenTier = %v, %v", cfg != nil && cfg.FrozenTier, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.FrozenTier {
+		t.Fatalf("FAAS_FROZEN_TIER=false over TOML: FrozenTier = %v, %v", cfg != nil && cfg.FrozenTier, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_FROZEN_TIER=maybe accepted")
+	}
+}
+
+// ADR-1151 step 3: frozen_tier_apps extends the tier to apps, off by default.
+func TestLoadConfig_FrozenTierApps(t *testing.T) {
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.FrozenTierApps {
+		t.Fatalf("default FrozenTierApps = %v, %v; want off", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("frozen_tier_apps = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenTierApps {
+		t.Fatalf("frozen_tier_apps = true: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.FrozenTierApps {
+		t.Fatalf("FAAS_FROZEN_TIER_APPS=false over TOML: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_FROZEN_TIER_APPS=maybe accepted")
+	}
+}
+
 func TestResolveLocalNodeID_ComputeOnlyAllowsDrainedRollout(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

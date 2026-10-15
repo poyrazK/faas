@@ -50,7 +50,7 @@ SELECT j.* FROM event_recovery_jobs j WHERE j.id=sqlc.arg(job_id)::uuid AND j.ac
 SELECT * FROM event_recovery_jobs WHERE state IN ('running','paused')
  AND (expires_at<=sqlc.arg(now_at)::timestamptz OR (state='running' AND next_attempt_at<=sqlc.arg(now_at)::timestamptz
  AND (window_started_at+interval '1 second'<=sqlc.arg(now_at)::timestamptz OR window_count<rate_per_second)))
-ORDER BY CASE WHEN expires_at<=sqlc.arg(now_at)::timestamptz THEN expires_at ELSE next_attempt_at END,id LIMIT 1 FOR UPDATE SKIP LOCKED;
+ORDER BY CASE WHEN expires_at<=sqlc.arg(now_at)::timestamptz THEN expires_at ELSE next_attempt_at END,id LIMIT 1 FOR NO KEY UPDATE SKIP LOCKED;
 
 -- name: EventRecoveryNextItem :one
 SELECT * FROM event_recovery_items WHERE job_id=sqlc.arg(job_id)::uuid AND state='pending' ORDER BY position LIMIT 1;
@@ -284,7 +284,8 @@ SELECT item.position,acct.plan,
   WHEN event_recipient_delivery_deadline(recipient.value,o.created_at,'{}'::jsonb)<=sqlc.arg(now_at)::timestamptz THEN 'expired'
   ELSE 'eligible' END END::text AS reason,
  (slot.invocation_id IS NOT NULL AND j.selection->>'mode'='execution')::boolean AS capacity_tracked,
- totals.account_count,totals.app_count,coalesce(c.consumer_count,0)::bigint AS consumer_count
+ totals.account_count,totals.app_count,coalesce(c.consumer_count,0)::bigint AS consumer_count,
+ coalesce(capacity_control.max_pending_deliveries,0)::integer AS max_pending_deliveries
 FROM event_recovery_items item JOIN event_recovery_jobs j ON j.id=item.job_id
 JOIN apps app ON app.id=j.app_id AND app.account_id=j.account_id JOIN accounts acct ON acct.id=j.account_id
 LEFT JOIN event_fanout_outbox o ON o.id=item.outbox_id AND o.account_id=j.account_id
@@ -294,6 +295,7 @@ LEFT JOIN invocations inv ON inv.id=(item.expected_progress->>'invocation_id')::
 LEFT JOIN platform_tenants tenant ON tenant.id=inv.platform_tenant_id AND tenant.account_id=j.account_id
 LEFT JOIN event_delivery_slots slot ON slot.invocation_id=inv.id
 LEFT JOIN consumers c ON c.app_id=slot.app_id AND c.subscription_id=slot.subscription_id
+LEFT JOIN event_subscription_delivery_controls capacity_control ON capacity_control.account_id=j.account_id AND capacity_control.app_id=slot.app_id AND capacity_control.subscription_id::text=slot.subscription_id
 CROSS JOIN totals
 WHERE j.id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid AND item.state='pending'
 ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;
@@ -492,11 +494,16 @@ ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::integer;
 -- name: WorkflowRunRecoveryCandidate :one
 SELECT 0::bigint AS outbox_id,''::text AS event_source,''::text AS event_id,''::text AS event_type,
  ''::text AS subscription_id,r.updated_at::timestamptz AS failed_at,r.status::text AS failure_code,false::boolean AS retryable,
- jsonb_build_object('run_id',r.id::text,'expected_resume_count',sqlc.arg(expected_resume_count)::integer)::jsonb AS expected_progress
+ (jsonb_build_object('run_id',r.id::text,'expected_resume_count',sqlc.arg(expected_resume_count)::integer) || CASE WHEN sqlc.arg(failure_evidence_id)::text='' THEN '{}'::jsonb ELSE jsonb_build_object('failure_evidence_id',sqlc.arg(failure_evidence_id)::text) END)::jsonb AS expected_progress
 FROM workflow_runs r JOIN apps a ON a.id=r.app_id
 WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
  AND r.id=sqlc.arg(run_id)::uuid AND r.workflow_name=sqlc.arg(workflow_name)::text
- AND r.status IN ('failed','dead') AND r.resume_count=sqlc.arg(expected_resume_count)::integer;
+ AND r.status IN ('failed','dead') AND r.resume_count=sqlc.arg(expected_resume_count)::integer
+ AND (sqlc.arg(failure_evidence_id)::text='' OR r.resume_count=0 AND EXISTS (
+ SELECT 1 FROM workflow_recovery_failure_evidence e WHERE e.id::text=sqlc.arg(failure_evidence_id)::text
+ AND e.app_id=r.app_id AND e.run_id=r.id AND e.workflow=r.workflow_name AND e.resume_count=0
+ AND e.failure_status=r.status AND e.observed_at>sqlc.arg(retained_after)::timestamptz
+ AND e.observed_at<=sqlc.arg(observed_at)::timestamptz));
 
 -- name: WorkflowRecoveryExecutionObservations :many
 -- Native recovery observes only the generation admitted by the owning job.
@@ -598,12 +605,12 @@ SELECT p.* FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE 
 INSERT INTO workflow_recovery_policies(app_id,version,enabled,policy,updated_at,actor_kind,actor_id,next_evaluate_at,status)
 SELECT a.id,1,sqlc.arg(enabled)::boolean,sqlc.arg(policy)::jsonb,sqlc.arg(now_at)::timestamptz,sqlc.arg(actor_kind)::text,sqlc.arg(actor_id)::text,sqlc.arg(now_at)::timestamptz,sqlc.arg(status)::text
 FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' AND sqlc.arg(expected_version)::bigint=0
-ON CONFLICT(app_id) DO UPDATE SET version=workflow_recovery_policies.version+1,enabled=excluded.enabled,policy=excluded.policy,updated_at=excluded.updated_at,actor_kind=excluded.actor_kind,actor_id=excluded.actor_id,next_evaluate_at=excluded.next_evaluate_at,status=excluded.status,job_cursor=NULL,next_execute_at=excluded.next_evaluate_at,next_health_at=excluded.next_evaluate_at,automatic_failures=0,automatic_paused_at=NULL,automatic_pause_reason=''
+ON CONFLICT(app_id) DO UPDATE SET version=workflow_recovery_policies.version+1,enabled=excluded.enabled,policy=excluded.policy,updated_at=excluded.updated_at,actor_kind=excluded.actor_kind,actor_id=excluded.actor_id,next_evaluate_at=excluded.next_evaluate_at,status=excluded.status,job_cursor=NULL,next_execute_at=excluded.next_evaluate_at,next_health_at=excluded.next_evaluate_at,automatic_failures=0,automatic_paused_at=NULL,automatic_pause_reason='',automatic_poll_failure=NULL
 WHERE workflow_recovery_policies.version=sqlc.arg(expected_version)::bigint
 RETURNING *;
 
 -- name: WorkflowRecoveryPolicyUpdate :one
-UPDATE workflow_recovery_policies p SET version=p.version+1,enabled=sqlc.arg(enabled)::boolean,policy=sqlc.arg(policy)::jsonb,updated_at=sqlc.arg(now_at)::timestamptz,actor_kind=sqlc.arg(actor_kind)::text,actor_id=sqlc.arg(actor_id)::text,next_evaluate_at=sqlc.arg(now_at)::timestamptz,status=sqlc.arg(status)::text,job_cursor=NULL,next_execute_at=sqlc.arg(now_at)::timestamptz,next_health_at=sqlc.arg(now_at)::timestamptz,automatic_failures=0,automatic_paused_at=NULL,automatic_pause_reason=''
+UPDATE workflow_recovery_policies p SET version=p.version+1,enabled=sqlc.arg(enabled)::boolean,policy=sqlc.arg(policy)::jsonb,updated_at=sqlc.arg(now_at)::timestamptz,actor_kind=sqlc.arg(actor_kind)::text,actor_id=sqlc.arg(actor_id)::text,next_evaluate_at=sqlc.arg(now_at)::timestamptz,status=sqlc.arg(status)::text,job_cursor=NULL,initial_failure_cursor=NULL,next_execute_at=sqlc.arg(now_at)::timestamptz,next_health_at=sqlc.arg(now_at)::timestamptz,automatic_failures=0,automatic_paused_at=NULL,automatic_pause_reason='',automatic_poll_failure=NULL
 FROM apps a WHERE p.app_id=a.id AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' AND p.version=sqlc.arg(expected_version)::bigint RETURNING p.*;
 
 -- name: WorkflowRecoveryPolicyClaim :one
@@ -612,7 +619,7 @@ WHERE p.enabled AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.
 ORDER BY p.next_evaluate_at,p.app_id LIMIT 1 FOR UPDATE OF p SKIP LOCKED;
 
 -- name: WorkflowRecoveryPolicyAdvance :exec
-UPDATE workflow_recovery_policies SET next_evaluate_at=sqlc.arg(next_at)::timestamptz,last_evaluated_at=sqlc.arg(now_at)::timestamptz,job_cursor=sqlc.narg(job_cursor)::uuid,status=sqlc.arg(status)::text WHERE app_id=sqlc.arg(app_id)::uuid;
+UPDATE workflow_recovery_policies SET next_evaluate_at=sqlc.arg(next_at)::timestamptz,last_evaluated_at=sqlc.arg(now_at)::timestamptz,job_cursor=sqlc.narg(job_cursor)::uuid,initial_failure_cursor=sqlc.narg(initial_failure_cursor)::uuid,status=sqlc.arg(status)::text WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: WorkflowRecoveryPolicyJobs :many
 SELECT id FROM event_recovery_jobs WHERE app_id=sqlc.arg(app_id)::uuid AND selection->'workflow_runs' IS NOT NULL AND selection->'workflow_runs'<>'null'::jsonb AND (sqlc.narg(after_id)::uuid IS NULL OR id>sqlc.narg(after_id)::uuid)
@@ -622,7 +629,7 @@ ORDER BY id LIMIT sqlc.arg(page_limit)::integer;
 SELECT count(*) FROM workflow_recovery_policy_reviews WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: WorkflowRecoveryPolicyBudget :one
-SELECT count(*) FILTER(WHERE prepared_at>sqlc.arg(since_at)::timestamptz)::bigint AS hourly_actions,max(prepared_at)::timestamptz AS last_prepared_at FROM workflow_recovery_policy_targets WHERE app_id=sqlc.arg(app_id)::uuid;
+SELECT count(*) FILTER(WHERE prepared_at>sqlc.arg(since_at)::timestamptz)::bigint AS hourly_actions,max(prepared_at)::timestamptz AS last_prepared_at FROM (SELECT app_id,prepared_at FROM workflow_recovery_policy_targets UNION ALL SELECT app_id,prepared_at FROM workflow_initial_recovery_reviews) charges WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: WorkflowRecoveryPolicyTargets :many
 SELECT run_id,resume_count,action FROM workflow_recovery_policy_targets WHERE app_id=sqlc.arg(app_id)::uuid AND run_id=ANY(sqlc.arg(run_ids)::uuid[]);
@@ -679,13 +686,13 @@ UPDATE workflow_recovery_review_notifications SET completion=sqlc.arg(completion
 INSERT INTO workflow_recovery_policy_executions(action_id,app_id,review_id,policy_version,position,reason) VALUES(sqlc.arg(action_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(review_id)::uuid,sqlc.arg(policy_version)::bigint,sqlc.arg(position)::bigint,'awaiting_execution') ON CONFLICT DO NOTHING;
 
 -- name: WorkflowRecoveryAutomaticPolicyNext :one
-SELECT p.app_id,a.account_id FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.enabled AND p.policy->>'mode'='automatic_retry' AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_execute_at<=sqlc.arg(now_at)::timestamptz ORDER BY p.next_execute_at,p.app_id LIMIT 1;
+SELECT p.app_id,a.account_id FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.enabled AND p.policy->>'mode' IN ('automatic_retry','automatic_initial') AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_execute_at<=sqlc.arg(now_at)::timestamptz ORDER BY p.next_execute_at,p.app_id LIMIT 1;
 
 -- name: WorkflowRecoveryAutomaticPolicyClaim :one
-SELECT p.*,a.account_id,a.slug FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.app_id=sqlc.arg(app_id)::uuid AND p.enabled AND p.policy->>'mode'='automatic_retry' AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_execute_at<=sqlc.arg(now_at)::timestamptz FOR UPDATE OF p SKIP LOCKED;
+SELECT p.*,a.account_id,a.slug FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id WHERE p.app_id=sqlc.arg(app_id)::uuid AND p.enabled AND p.policy->>'mode' IN ('automatic_retry','automatic_initial') AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND p.next_execute_at<=sqlc.arg(now_at)::timestamptz FOR UPDATE OF p SKIP LOCKED;
 
 -- name: WorkflowRecoveryAutomaticPolicyAdvance :exec
-UPDATE workflow_recovery_policies SET next_execute_at=sqlc.arg(next_at)::timestamptz,automatic_failures=sqlc.arg(failures)::integer,automatic_paused_at=sqlc.narg(paused_at)::timestamptz,automatic_pause_reason=sqlc.arg(pause_reason)::text,status=CASE WHEN sqlc.narg(paused_at)::timestamptz IS NOT NULL THEN 'paused' ELSE status END WHERE app_id=sqlc.arg(app_id)::uuid;
+UPDATE workflow_recovery_policies SET automatic_poll_failure=NULL,next_execute_at=sqlc.arg(next_at)::timestamptz,automatic_failures=sqlc.arg(failures)::integer,automatic_paused_at=sqlc.narg(paused_at)::timestamptz,automatic_pause_reason=sqlc.arg(pause_reason)::text,status=CASE WHEN sqlc.narg(paused_at)::timestamptz IS NOT NULL THEN 'paused' ELSE status END WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: WorkflowRecoveryAutomaticObsolete :exec
 UPDATE workflow_recovery_policy_executions SET status='suppressed',reason='policy_changed' WHERE app_id=sqlc.arg(app_id)::uuid AND status='pending' AND policy_version<>sqlc.arg(policy_version)::bigint;
@@ -697,7 +704,7 @@ SELECT e.*,r.review FROM workflow_recovery_policy_executions e JOIN workflow_rec
 SELECT e.*, (r.review || CASE WHEN r.review_decision IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('review_decision',r.review_decision) END)::jsonb AS review FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policy_reviews r ON r.id=e.review_id WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.policy_version=sqlc.arg(policy_version)::bigint AND e.status='pending' ORDER BY r.observed_at,e.review_id,e.position LIMIT 1 FOR UPDATE OF r,e;
 
 -- name: WorkflowRecoveryAutomaticBudget :one
-SELECT count(*) FILTER(WHERE applied_at>sqlc.arg(since_at)::timestamptz)::bigint AS hourly_executions,max(applied_at)::timestamptz AS last_execution_at FROM workflow_recovery_policy_execution_charges WHERE app_id=sqlc.arg(app_id)::uuid;
+SELECT count(*) FILTER(WHERE applied_at>sqlc.arg(since_at)::timestamptz)::bigint AS hourly_executions,max(applied_at)::timestamptz AS last_execution_at FROM (SELECT app_id,applied_at FROM workflow_recovery_policy_execution_charges UNION ALL SELECT app_id,submitted_at AS applied_at FROM workflow_initial_recovery_reviews WHERE review->'policy'->>'mode'='automatic_initial' AND submitted_at IS NOT NULL) charges WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: WorkflowRecoveryAutomaticApply :exec
 WITH applied AS (UPDATE workflow_recovery_policy_executions SET status='applied',reason='child_created',child_job_id=sqlc.arg(child_job_id)::uuid,applied_at=sqlc.arg(now_at)::timestamptz WHERE action_id=sqlc.arg(action_id)::uuid AND status='pending' RETURNING action_id,app_id,applied_at)
@@ -720,6 +727,7 @@ WITH controlled AS (UPDATE workflow_recovery_policies p SET
  automatic_paused_at=CASE WHEN sqlc.arg(operation)::text='pause' THEN sqlc.arg(now_at)::timestamptz ELSE NULL END,
  automatic_pause_reason=CASE WHEN sqlc.arg(operation)::text='pause' THEN 'operator: '||sqlc.arg(reason)::text ELSE '' END,
  automatic_failures=CASE WHEN sqlc.arg(operation)::text='resume' THEN 0 ELSE automatic_failures END,
+ automatic_poll_failure=CASE WHEN sqlc.arg(operation)::text='resume' THEN NULL ELSE automatic_poll_failure END,
  status=CASE WHEN sqlc.arg(operation)::text='pause' THEN 'paused' ELSE 'monitoring' END,
  updated_at=sqlc.arg(now_at)::timestamptz, actor_kind=sqlc.arg(actor_kind)::text,actor_id=sqlc.arg(actor_id)::text,
  next_execute_at=sqlc.arg(now_at)::timestamptz,next_evaluate_at=sqlc.arg(now_at)::timestamptz
@@ -727,7 +735,7 @@ FROM apps a WHERE a.id=p.app_id AND a.account_id=sqlc.arg(account_id)::uuid AND 
  AND p.app_id=sqlc.arg(app_id)::uuid AND p.version=sqlc.arg(expected_version)::bigint
  AND p.updated_at=sqlc.arg(expected_updated_at)::timestamptz
  AND p.automatic_paused_at IS NOT DISTINCT FROM sqlc.narg(expected_paused_at)::timestamptz
- AND p.enabled AND p.policy->>'mode'='automatic_retry'
+ AND p.enabled AND p.policy->>'mode' IN ('automatic_retry','automatic_initial')
 RETURNING p.*), audited AS (
  INSERT INTO workflow_recovery_policy_controls(id,app_id,policy_version,operation,reason,actor_kind,actor_id,controlled_at)
  SELECT sqlc.arg(control_id)::uuid,app_id,version,sqlc.arg(operation)::text,sqlc.arg(reason)::text,sqlc.arg(actor_kind)::text,sqlc.arg(actor_id)::text,sqlc.arg(now_at)::timestamptz FROM controlled RETURNING id
@@ -735,16 +743,26 @@ RETURNING p.*), audited AS (
 SELECT controlled.* FROM controlled,audited;
 
 -- name: WorkflowRecoveryAutomaticQueue :one
-SELECT jsonb_build_object(
- 'pending',(SELECT count(*) FROM workflow_recovery_policy_executions e WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.status='pending' AND (sqlc.arg(all_pending)::boolean OR e.policy_version=sqlc.arg(policy_version)::bigint)),
- 'outstanding',(SELECT count(*) FROM workflow_recovery_policy_executions e WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.status='applied' AND e.result IS NULL),
- 'hourly_executions',(SELECT count(*) FROM workflow_recovery_policy_execution_charges c WHERE c.app_id=sqlc.arg(app_id)::uuid AND c.applied_at>sqlc.arg(since_at)::timestamptz),
- 'last_execution_at',(SELECT max(applied_at) FROM workflow_recovery_policy_execution_charges c WHERE c.app_id=sqlc.arg(app_id)::uuid),
- 'entries',COALESCE((SELECT jsonb_agg(entry ORDER BY observed_at,review_id,position) FROM
- (SELECT r.observed_at,e.review_id,e.position,jsonb_build_object('queued_at',r.observed_at,'review_id',e.review_id,'policy_version',e.policy_version,'action',jsonb_strip_nulls(jsonb_build_object('action_id',e.action_id,'position',e.position,'status',e.status,'reason',e.reason,'child_job_id',e.child_job_id,'applied_at',e.applied_at,'suppression',e.suppression,'blocked_notification',e.blocked_notification,'last_evaluation',e.last_evaluation))) AS entry
+WITH charges AS (
+ SELECT app_id,applied_at FROM workflow_recovery_policy_execution_charges
+ UNION ALL SELECT app_id,submitted_at FROM workflow_initial_recovery_reviews WHERE review->'policy'->>'mode'='automatic_initial' AND submitted_at IS NOT NULL
+), queue AS (
+ SELECT r.observed_at,e.review_id,e.position,e.status,jsonb_build_object('queued_at',r.observed_at,'review_id',e.review_id,'policy_version',e.policy_version,'action',jsonb_strip_nulls(jsonb_build_object('action_id',e.action_id,'position',e.position,'status',e.status,'reason',e.reason,'child_job_id',e.child_job_id,'applied_at',e.applied_at,'suppression',e.suppression,'blocked_notification',e.blocked_notification,'last_evaluation',e.last_evaluation))) AS entry
  FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policy_reviews r ON r.id=e.review_id
  WHERE e.app_id=sqlc.arg(app_id)::uuid AND ((e.status='pending' AND (sqlc.arg(all_pending)::boolean OR e.policy_version=sqlc.arg(policy_version)::bigint)) OR (e.status='applied' AND e.result IS NULL))
- ORDER BY r.observed_at,e.review_id,e.position LIMIT sqlc.arg(max_entries)::integer) queue),'[]'::jsonb))::jsonb AS snapshot;
+ UNION ALL
+ SELECT r.prepared_at,r.id,1::bigint,CASE WHEN r.submitted_at IS NULL THEN 'pending' ELSE 'applied' END,
+ jsonb_build_object('queued_at',r.prepared_at,'review_id',r.id,'policy_version',r.policy_version,'action',jsonb_strip_nulls(jsonb_build_object('action_id',r.id,'position',1,'status',CASE WHEN r.submitted_at IS NULL THEN 'pending' ELSE 'applied' END,'reason',COALESCE(r.review->'automatic_evaluation'->>'reason','awaiting_execution'),'child_job_id',r.job_id,'applied_at',r.submitted_at,'last_evaluation',r.review->'automatic_evaluation')))
+ FROM workflow_initial_recovery_reviews r WHERE r.app_id=sqlc.arg(app_id)::uuid AND r.review->'policy'->>'mode'='automatic_initial'
+ AND ((r.review->>'status'='prepared' AND (sqlc.arg(all_pending)::boolean OR r.policy_version=sqlc.arg(policy_version)::bigint)) OR (r.submitted_at IS NOT NULL AND NOT r.review ? 'automatic_result'))
+)
+SELECT jsonb_build_object(
+ 'pending',(SELECT count(*) FROM queue WHERE status='pending'),
+ 'outstanding',(SELECT count(*) FROM queue WHERE status='applied'),
+ 'hourly_executions',(SELECT count(*) FROM charges WHERE app_id=sqlc.arg(app_id)::uuid AND applied_at>sqlc.arg(since_at)::timestamptz),
+ 'last_execution_at',(SELECT max(applied_at) FROM charges WHERE app_id=sqlc.arg(app_id)::uuid),
+ 'entries',COALESCE((SELECT jsonb_agg(entry ORDER BY observed_at,review_id,position) FROM
+ (SELECT * FROM queue ORDER BY observed_at,review_id,position LIMIT sqlc.arg(max_entries)::integer) page),'[]'::jsonb))::jsonb AS snapshot;
 
 -- name: WorkflowRecoveryPolicyControlAudit :many
 SELECT operation,reason,actor_kind,actor_id,controlled_at FROM workflow_recovery_policy_controls WHERE app_id=sqlc.arg(app_id)::uuid ORDER BY controlled_at DESC,id;
@@ -763,14 +781,17 @@ UPDATE workflow_recovery_policy_executions SET status='suppressed',reason='opera
 
 -- name: WorkflowRecoveryAutomaticBlockedNext :one
 SELECT e.action_id,e.app_id,a.account_id,e.review_id FROM workflow_recovery_policy_executions e JOIN workflow_recovery_policies p ON p.app_id=e.app_id JOIN apps a ON a.id=e.app_id
-WHERE p.enabled AND p.policy->>'mode'='automatic_retry' AND p.automatic_paused_at IS NULL AND a.status<>'deleted' AND e.blocked_notification IS NULL AND e.next_blocked_at<=sqlc.arg(now_at)::timestamptz
-AND ((e.status='pending' AND e.reason='evidence_unknown' AND e.policy_version=p.version) OR (e.status='applied' AND e.result IS NULL)) ORDER BY e.next_blocked_at,e.app_id,e.action_id LIMIT 1;
+WHERE a.status<>'deleted' AND e.next_blocked_at<=sqlc.arg(now_at)::timestamptz AND e.status IN ('pending','applied')
+AND ((e.blocked_notification IS NOT NULL AND COALESCE(e.blocked_notification->>'state','blocked')<>'recovered')
+OR (p.enabled AND p.policy->>'mode' IN ('automatic_retry','automatic_initial') AND p.automatic_paused_at IS NULL
+AND ((e.status='pending' AND e.reason='evidence_unknown' AND e.policy_version=p.version) OR (e.status='applied' AND e.result IS NULL))))
+ORDER BY e.next_blocked_at,e.app_id,e.action_id LIMIT 1;
 
 -- name: WorkflowRecoveryAutomaticBlockedDefer :exec
-UPDATE workflow_recovery_policy_executions SET next_blocked_at=sqlc.arg(next_at)::timestamptz WHERE action_id=sqlc.arg(action_id)::uuid AND blocked_notification IS NULL;
+UPDATE workflow_recovery_policy_executions SET next_blocked_at=sqlc.arg(next_at)::timestamptz WHERE action_id=sqlc.arg(action_id)::uuid;
 
 -- name: WorkflowRecoveryAutomaticBlockedCapture :exec
-UPDATE workflow_recovery_policy_executions SET blocked_notification=sqlc.arg(receipt)::jsonb WHERE action_id=sqlc.arg(action_id)::uuid AND blocked_notification IS NULL;
+UPDATE workflow_recovery_policy_executions SET blocked_notification=sqlc.arg(receipt)::jsonb WHERE action_id=sqlc.arg(action_id)::uuid;
 
 -- name: WorkflowRecoveryAutomaticEvaluate :exec
 UPDATE workflow_recovery_policy_executions SET last_evaluation=sqlc.arg(evaluation)::jsonb WHERE action_id=sqlc.arg(action_id)::uuid;
@@ -827,6 +848,41 @@ SELECT h.entry,h.entry->>'id',h.occurred_at,COALESCE(h.entry->>'workflow',''),CO
 FROM workflow_recovery_history_events h WHERE h.app_id=sqlc.arg(app_id)::uuid
 AND h.sequence<=sqlc.arg(max_sequence)::bigint
 AND h.recorded_at<=sqlc.arg(observed_at)::timestamptz AND h.recorded_at>sqlc.arg(retained_after)::timestamptz
+UNION ALL
+SELECT jsonb_build_object('id','retry_'||repairs.kind||'_evidence_repaired:'||e.action_id::text||':'||(receipt.value->>'request_id'),
+'occurred_at',receipt.value->>'repaired_at','kind','retry_'||repairs.kind||'_evidence_repaired','outcome',receipt.value->>'outcome','reason',receipt.value->>'reason',
+'policy_version',(r.review->>'policy_version')::bigint,'workflow',a->'retry'->'workflow_runs'->>'name','run_id',a->'retry'->'workflow_runs'->'runs'->0->>'run_id',
+'review_id',r.id::text,'action_id',e.action_id::text,'job_id',r.job_id::text,'child_job_id',CASE WHEN repairs.kind='child' THEN COALESCE(e.child_job_id::text,'') ELSE '' END,
+'actor_kind',receipt.value->>'actor_kind','actor_id',receipt.value->>'actor_id','evidence_kind',repairs.kind,'request_id',receipt.value->>'request_id',
+'resume_count',(a->'retry'->'workflow_runs'->'runs'->0->>'expected_resume_count')::integer+CASE WHEN repairs.kind='child' THEN 1 ELSE 0 END,
+'review_url','/v1/apps/'||(r.review->'plan'->>'app')||'/recovery-policy/reviews/'||r.id::text,
+'evidence_url','/v1/apps/'||(r.review->'plan'->>'app')||'/recovery-policy/reviews/'||r.id::text||'/actions/'||e.action_id::text||'/evidence'||CASE WHEN repairs.kind='parent' THEN '/parent' ELSE '' END,
+'job_url','/v1/event-recoveries/'||CASE WHEN repairs.kind='parent' THEN r.job_id::text ELSE e.child_job_id::text END),
+'retry_'||repairs.kind||'_evidence_repaired:'||e.action_id::text||':'||(receipt.value->>'request_id'),(receipt.value->>'repaired_at')::timestamptz,
+COALESCE(a->'retry'->'workflow_runs'->>'name',''),COALESCE(a->'retry'->'workflow_runs'->'runs'->0->>'run_id',''),(r.review->>'policy_version')::bigint
+FROM workflow_recovery_policy_reviews r
+CROSS JOIN LATERAL (VALUES ('parent',r.review->'parent_evidence_repairs'),('child',r.review->'evidence_repairs')) repairs(kind,receipts)
+CROSS JOIN LATERAL jsonb_each(COALESCE(repairs.receipts,'{}'::jsonb)) receipt
+JOIN workflow_recovery_policy_executions e ON e.review_id=r.id AND e.app_id=r.app_id AND e.action_id::text=receipt.key
+CROSS JOIN LATERAL jsonb_array_elements(r.review->'plan'->'actions') a
+WHERE r.app_id=sqlc.arg(app_id)::uuid AND (a->>'position')::bigint=e.position AND a->'retry'->'workflow_runs'->'runs'->0 IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM workflow_recovery_history_events h WHERE h.app_id=r.app_id
+AND h.entry->>'action_id'=e.action_id::text AND h.entry->>'kind'='retry_'||repairs.kind||'_evidence_repaired'
+AND h.entry->>'request_id'=receipt.value->>'request_id')
+
+UNION ALL
+SELECT jsonb_build_object('id','initial_evidence_repaired:'||r.id::text||':'||(r.review->'evidence_repair'->>'request_id'),
+'occurred_at',r.review->'evidence_repair'->>'repaired_at','kind','initial_evidence_repaired','outcome',r.review->'evidence_repair'->>'outcome','reason',r.review->'evidence_repair'->>'reason',
+'policy_version',r.policy_version,'workflow',r.review->'failure'->>'workflow','run_id',r.review->'target'->>'run_id','review_id',r.id::text,'action_id',r.id::text,'job_id',r.review->>'job_id',
+'actor_kind',r.review->'evidence_repair'->>'actor_kind','actor_id',r.review->'evidence_repair'->>'actor_id','evidence_kind','initial','request_id',r.review->'evidence_repair'->>'request_id',
+'initial_failure_id',r.review->'failure'->>'id','resume_count',(r.review->'target'->>'expected_resume_count')::integer+1,
+'review_url','/v1/apps/'||(r.review->>'app')||'/initial-recovery-reviews/'||r.id::text,
+'evidence_url','/v1/apps/'||(r.review->>'app')||'/initial-recovery-reviews/'||r.id::text||'/evidence','job_url','/v1/event-recoveries/'||(r.review->>'job_id')),
+'initial_evidence_repaired:'||r.id::text||':'||(r.review->'evidence_repair'->>'request_id'),(r.review->'evidence_repair'->>'repaired_at')::timestamptz,
+COALESCE(r.review->'failure'->>'workflow',''),COALESCE(r.review->'target'->>'run_id',''),r.policy_version
+FROM workflow_initial_recovery_reviews r WHERE r.app_id=sqlc.arg(app_id)::uuid AND r.review ? 'evidence_repair'
+AND NOT EXISTS (SELECT 1 FROM workflow_recovery_history_events h WHERE h.app_id=r.app_id AND h.entry->>'kind'='initial_evidence_repaired' AND h.entry->>'review_id'=r.id::text AND h.entry->>'request_id'=r.review->'evidence_repair'->>'request_id')
+
 )
 SELECT entry FROM all_entries WHERE occurred_at>=sqlc.arg(start_at)::timestamptz AND occurred_at<=sqlc.arg(end_at)::timestamptz
 AND (sqlc.arg(workflow)::text='' OR workflow=sqlc.arg(workflow)::text)
@@ -930,3 +986,276 @@ ORDER BY j.created_at DESC,j.id DESC,i.position LIMIT 1;
 -- name: WorkflowFailureEligibilitySave :exec
 UPDATE workflow_recovery_failure_evidence SET eligibility=sqlc.arg(eligibility)::jsonb,
  eligibility_observed_at=sqlc.arg(observed_at)::timestamptz WHERE id=sqlc.arg(id)::uuid;
+
+-- name: WorkflowInitialFailures :many
+SELECT id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at,eligibility
+FROM workflow_recovery_failure_evidence
+WHERE app_id=sqlc.arg(app_id)::uuid AND resume_count=0
+ AND observed_at>sqlc.arg(retained_after)::timestamptz AND observed_at<=sqlc.arg(observed_at)::timestamptz
+ AND (sqlc.arg(workflow)::text='' OR workflow=sqlc.arg(workflow)::text)
+ AND (sqlc.arg(after_id)::text='' OR (observed_at,id::text)<(sqlc.arg(after_at)::timestamptz,sqlc.arg(after_id)::text))
+ORDER BY observed_at DESC,id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: WorkflowInitialFailure :one
+SELECT id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at,eligibility
+FROM workflow_recovery_failure_evidence
+WHERE app_id=sqlc.arg(app_id)::uuid AND id=sqlc.arg(id)::uuid AND resume_count=0
+ AND observed_at>sqlc.arg(retained_after)::timestamptz AND observed_at<=sqlc.arg(observed_at)::timestamptz;
+
+-- name: WorkflowInitialReviewPolicy :one
+SELECT p.*,a.slug FROM workflow_recovery_policies p JOIN apps a ON a.id=p.app_id
+WHERE p.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' FOR SHARE OF p;
+
+-- name: WorkflowInitialReviewGet :one
+SELECT r.review FROM workflow_initial_recovery_reviews r JOIN apps a ON a.id=r.app_id
+WHERE r.id=sqlc.arg(id)::uuid AND r.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
+
+-- name: WorkflowInitialReviewInsert :exec
+INSERT INTO workflow_initial_recovery_reviews(id,app_id,failure_id,policy_version,prepared_at,expires_at,review)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(failure_id)::uuid,sqlc.arg(policy_version)::bigint,sqlc.arg(prepared_at)::timestamptz,sqlc.arg(expires_at)::timestamptz,sqlc.arg(review)::jsonb);
+
+-- name: WorkflowInitialReviewUpdate :exec
+UPDATE workflow_initial_recovery_reviews SET review=sqlc.arg(review)::jsonb,job_id=sqlc.narg(job_id)::uuid,submitted_at=sqlc.narg(submitted_at)::timestamptz WHERE id=sqlc.arg(id)::uuid;
+
+-- name: WorkflowInitialReviewBudget :one
+SELECT count(*)::bigint AS retained,count(*) FILTER(WHERE prepared_at>sqlc.arg(since_at)::timestamptz)::bigint AS prepared,
+ count(*) FILTER(WHERE submitted_at>sqlc.arg(since_at)::timestamptz)::bigint AS submitted,
+ max(prepared_at)::timestamptz AS last_prepared,max(submitted_at)::timestamptz AS last_submitted
+FROM workflow_initial_recovery_reviews WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: WorkflowInitialReviewPrune :exec
+DELETE FROM workflow_initial_recovery_reviews WHERE app_id=sqlc.arg(app_id)::uuid AND prepared_at<=sqlc.arg(before_at)::timestamptz AND NOT (submitted_at IS NOT NULL AND NOT review ? 'automatic_result' AND NOT review ? 'result');
+
+-- name: WorkflowInitialRecoveryPending :one
+SELECT EXISTS(SELECT 1 FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id
+WHERE j.app_id=sqlc.arg(app_id)::uuid AND j.state IN ('running','paused') AND i.state='pending'
+AND i.expected_progress->>'run_id'=sqlc.arg(run_id)::text AND (i.expected_progress->>'expected_resume_count')::integer=0)::boolean;
+
+-- name: WorkflowInitialReviewAdmission :one
+SELECT r.review,p.version,p.enabled,p.policy,p.automatic_paused_at FROM workflow_initial_recovery_reviews r JOIN workflow_recovery_policies p ON p.app_id=r.app_id
+WHERE r.job_id=sqlc.arg(job_id)::uuid FOR SHARE OF p;
+
+-- name: WorkflowInitialReviewList :many
+SELECT r.review FROM workflow_initial_recovery_reviews r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+AND (r.prepared_at>sqlc.arg(retained_after)::timestamptz OR (r.submitted_at IS NOT NULL AND NOT r.review ? 'automatic_result' AND NOT r.review ? 'result')) AND (sqlc.narg(after_id)::uuid IS NULL OR r.id>sqlc.narg(after_id)::uuid)
+ORDER BY r.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: WorkflowInitialReviewAuthority :one
+SELECT r.review,p.version,p.enabled,p.policy,p.automatic_paused_at FROM workflow_initial_recovery_reviews r JOIN workflow_recovery_policies p ON p.app_id=r.app_id
+WHERE r.job_id=sqlc.arg(job_id)::uuid;
+
+-- name: WorkflowInitialRecoveryPolicyFailures :many
+SELECT e.id FROM workflow_recovery_failure_evidence e
+WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.resume_count=0
+ AND e.observed_at>sqlc.arg(retained_after)::timestamptz AND e.observed_at<=sqlc.arg(now_at)::timestamptz
+ AND e.workflow=ANY(sqlc.arg(workflows)::text[]) AND e.failure_status=ANY(sqlc.arg(statuses)::text[])
+ AND (sqlc.narg(after_id)::uuid IS NULL OR e.id>sqlc.narg(after_id)::uuid)
+ AND NOT EXISTS (SELECT 1 FROM workflow_initial_recovery_reviews r WHERE r.app_id=e.app_id AND r.failure_id=e.id AND r.policy_version=sqlc.arg(policy_version)::bigint)
+ORDER BY e.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: WorkflowInitialAutomaticOutstanding :one
+SELECT review FROM workflow_initial_recovery_reviews
+WHERE app_id=sqlc.arg(app_id)::uuid AND submitted_at IS NOT NULL AND review->'policy'->>'mode'='automatic_initial' AND NOT review ? 'automatic_result'
+ORDER BY submitted_at,id LIMIT 1;
+
+-- name: WorkflowInitialAutomaticPending :one
+SELECT review FROM workflow_initial_recovery_reviews WHERE app_id=sqlc.arg(app_id)::uuid AND policy_version=sqlc.arg(policy_version)::bigint AND review->'policy'->>'mode'='automatic_initial' AND review->>'status'='prepared'
+ORDER BY prepared_at,id LIMIT 1;
+
+-- name: WorkflowInitialAutomaticUnresolved :one
+SELECT EXISTS(SELECT 1 FROM workflow_initial_recovery_reviews WHERE app_id=sqlc.arg(app_id)::uuid AND submitted_at IS NOT NULL AND review->'policy'->>'mode'='automatic_initial' AND NOT review ? 'automatic_result')
+ OR EXISTS(SELECT 1 FROM workflow_recovery_policy_executions WHERE app_id=sqlc.arg(app_id)::uuid AND status='applied' AND result IS NULL)
+ OR EXISTS(SELECT 1 FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id WHERE j.app_id=sqlc.arg(app_id)::uuid AND j.selection->'workflow_runs' IS NOT NULL AND j.selection->'workflow_runs'<>'null'::jsonb AND j.state IN ('running','paused') AND i.state='pending')
+ OR EXISTS(SELECT 1 FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id WHERE j.app_id=sqlc.arg(app_id)::uuid AND j.selection->>'mode'='workflow' AND i.state='queued'
+ AND NOT EXISTS(SELECT 1 FROM event_recovery_workflow_results result WHERE result.job_id=j.id AND result.position=i.position AND result.run_id=(i.expected_progress->>'run_id')::uuid AND result.resume_number=(i.expected_progress->>'expected_resume_count')::integer+1)
+ AND NOT EXISTS(SELECT 1 FROM workflow_runs run WHERE run.id=(i.expected_progress->>'run_id')::uuid AND run.app_id=j.app_id AND run.resume_count=(i.expected_progress->>'expected_resume_count')::integer+1 AND run.status IN ('succeeded','failed','dead')))
+ OR EXISTS(SELECT 1 FROM workflow_runs WHERE app_id=sqlc.arg(app_id)::uuid AND resume_count>0 AND status IN ('pending','running','awaiting_event')) AS unresolved;
+
+-- name: WorkflowInitialPolicyChangeFailures :many
+SELECT id,app_id,run_id,workflow,failure_status,observed_at,completed_at
+FROM workflow_recovery_failure_evidence
+WHERE app_id=sqlc.arg(app_id)::uuid AND resume_count=0 AND observed_at>sqlc.arg(retained_after)::timestamptz AND observed_at<=sqlc.arg(now_at)::timestamptz
+ORDER BY (workflow=ANY(sqlc.arg(workflows)::text[]) AND failure_status=ANY(sqlc.arg(statuses)::text[])) DESC,id ASC
+LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: WorkflowInitialReviewRetainedCount :one
+SELECT count(*) FROM workflow_initial_recovery_reviews WHERE app_id=sqlc.arg(app_id)::uuid
+AND (prepared_at>sqlc.arg(retained_after)::timestamptz OR (submitted_at IS NOT NULL AND NOT review ? 'automatic_result' AND NOT review ? 'result'));
+
+-- name: WorkflowInitialEvidenceRepair :execrows
+INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,completed_at,recorded_at)
+SELECT j.id,i.position,r.id,r.resume_count,a.created_at,
+ CASE WHEN r.status='succeeded' THEN 'succeeded' WHEN r.cancelled_at IS NOT NULL OR r.last_error='cancelled by operator' THEN 'cancelled' ELSE 'failed' END,
+ r.finished_at,sqlc.arg(now_at)::timestamptz
+FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id AND i.position=1
+JOIN apps app ON app.id=j.app_id AND app.account_id=j.account_id AND app.status<>'deleted'
+JOIN workflow_runs r ON r.id=sqlc.arg(run_id)::uuid AND r.app_id=j.app_id AND r.workflow_name=j.selection->'workflow_runs'->>'name'
+JOIN workflow_run_resumes a ON a.run_id=r.id AND a.account_id=j.account_id AND a.resume_number=1 AND a.created_at>=j.created_at
+WHERE j.id=sqlc.arg(job_id)::uuid AND j.app_id=sqlc.arg(app_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
+ AND j.selection->>'mode'='workflow' AND i.state='queued'
+ AND i.expected_progress->>'run_id'=r.id::text AND (i.expected_progress->>'expected_resume_count')::integer=0
+ AND r.resume_count=1 AND r.status IN ('succeeded','failed','dead')
+ AND r.updated_at BETWEEN a.created_at AND sqlc.arg(now_at)::timestamptz
+ AND r.finished_at BETWEEN a.created_at AND sqlc.arg(now_at)::timestamptz
+FOR SHARE OF r
+ON CONFLICT(job_id,position) DO NOTHING;
+
+-- name: WorkflowInitialEvidenceRepairWake :exec
+UPDATE workflow_recovery_policies SET next_execute_at=LEAST(next_execute_at,sqlc.arg(now_at)::timestamptz) WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: WorkflowInitialEvidenceResultExists :one
+SELECT EXISTS(SELECT 1 FROM event_recovery_workflow_results WHERE job_id=sqlc.arg(job_id)::uuid AND position=1);
+
+-- name: WorkflowRetryEvidenceRepair :execrows
+INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,completed_at,recorded_at)
+SELECT j.id,i.position,r.id,r.resume_count,a.created_at,
+ CASE WHEN r.status='succeeded' THEN 'succeeded' WHEN r.cancelled_at IS NOT NULL OR r.last_error='cancelled by operator' THEN 'cancelled' ELSE 'failed' END,
+ r.finished_at,sqlc.arg(now_at)::timestamptz
+FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id AND i.position=1
+JOIN apps app ON app.id=j.app_id AND app.account_id=j.account_id AND app.status<>'deleted'
+JOIN workflow_runs r ON r.id=sqlc.arg(run_id)::uuid AND r.app_id=j.app_id AND r.workflow_name=j.selection->'workflow_runs'->>'name'
+JOIN workflow_run_resumes a ON a.run_id=r.id AND a.account_id=j.account_id AND a.resume_number=sqlc.arg(expected_count)::integer+1 AND a.created_at>=j.created_at
+WHERE j.id=sqlc.arg(job_id)::uuid AND j.app_id=sqlc.arg(app_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
+ AND j.selection->>'mode'='workflow' AND i.state='queued'
+ AND i.expected_progress->>'run_id'=r.id::text AND (i.expected_progress->>'expected_resume_count')::integer=sqlc.arg(expected_count)::integer
+ AND r.resume_count=sqlc.arg(expected_count)::integer+1 AND r.status IN ('succeeded','failed','dead')
+ AND r.updated_at BETWEEN a.created_at AND sqlc.arg(now_at)::timestamptz
+ AND r.finished_at BETWEEN a.created_at AND sqlc.arg(now_at)::timestamptz
+ AND j.selection->>'parent_job_id'=sqlc.arg(parent_job_id)::uuid::text
+ AND j.selection->>'request_id'=sqlc.arg(action_id)::uuid::text
+ AND i.expected_progress->>'parent_job_id'=sqlc.arg(parent_job_id)::uuid::text
+ AND (i.expected_progress->>'parent_position')::bigint=sqlc.arg(parent_position)::bigint
+ AND NOT EXISTS(SELECT 1 FROM event_recovery_items other WHERE other.job_id=j.id AND other.position<>1)
+ AND j.selection->'workflow_runs'->>'name'=sqlc.arg(workflow_name)::text
+FOR SHARE OF r
+ON CONFLICT(job_id,position) DO NOTHING;
+
+
+-- name: WorkflowRetryEvidenceAction :one
+SELECT * FROM workflow_recovery_policy_executions WHERE app_id=sqlc.arg(app_id)::uuid AND review_id=sqlc.arg(review_id)::uuid AND action_id=sqlc.arg(action_id)::uuid;
+
+-- name: WorkflowRetryEvidenceReceipt :execrows
+UPDATE workflow_recovery_policy_reviews SET review=jsonb_set(review,'{evidence_repairs}',COALESCE(review->'evidence_repairs','{}'::jsonb)||jsonb_build_object(sqlc.arg(action_id)::uuid::text,sqlc.arg(receipt)::jsonb),true)
+WHERE id=sqlc.arg(review_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND NOT COALESCE(review->'evidence_repairs','{}'::jsonb) ? sqlc.arg(action_id)::uuid::text;
+
+-- name: WorkflowRetryParentEvidenceRepair :execrows
+INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,completed_at,recorded_at)
+SELECT j.id,i.position,r.id,r.resume_count,a.created_at,
+ CASE WHEN r.status='succeeded' THEN 'succeeded' WHEN r.cancelled_at IS NOT NULL OR r.last_error='cancelled by operator' THEN 'cancelled' ELSE 'failed' END,
+ r.finished_at,sqlc.arg(now_at)::timestamptz
+FROM event_recovery_jobs j JOIN event_recovery_items i ON i.job_id=j.id AND i.position=sqlc.arg(parent_position)::bigint
+JOIN apps app ON app.id=j.app_id AND app.account_id=j.account_id AND app.status<>'deleted'
+JOIN workflow_runs r ON r.id=sqlc.arg(run_id)::uuid AND r.app_id=j.app_id AND r.workflow_name=j.selection->'workflow_runs'->>'name'
+JOIN workflow_run_resumes a ON a.run_id=r.id AND a.account_id=j.account_id AND a.resume_number=sqlc.arg(expected_count)::integer+1 AND a.created_at>=j.created_at
+WHERE j.id=sqlc.arg(job_id)::uuid AND j.app_id=sqlc.arg(app_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
+ AND j.selection->>'mode'='workflow' AND i.state='queued'
+ AND i.expected_progress->>'run_id'=r.id::text AND (i.expected_progress->>'expected_resume_count')::integer=sqlc.arg(expected_count)::integer
+ AND r.resume_count=sqlc.arg(expected_count)::integer+1 AND r.status IN ('succeeded','failed','dead')
+ AND r.updated_at BETWEEN a.created_at AND sqlc.arg(now_at)::timestamptz
+ AND r.finished_at BETWEEN a.created_at AND sqlc.arg(now_at)::timestamptz
+ AND j.selection->'workflow_runs'->>'name'=sqlc.arg(workflow_name)::text
+FOR SHARE OF r
+ON CONFLICT(job_id,position) DO NOTHING;
+
+
+
+-- name: WorkflowRetryParentEvidenceReceipt :execrows
+UPDATE workflow_recovery_policy_reviews SET review=jsonb_set(review,'{parent_evidence_repairs}',COALESCE(review->'parent_evidence_repairs','{}'::jsonb)||jsonb_build_object(sqlc.arg(action_id)::uuid::text,sqlc.arg(receipt)::jsonb),true)
+WHERE id=sqlc.arg(review_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND NOT COALESCE(review->'parent_evidence_repairs','{}'::jsonb) ? sqlc.arg(action_id)::uuid::text;
+
+-- name: WorkflowRetryParentEvidenceResultExists :one
+SELECT EXISTS(SELECT 1 FROM event_recovery_workflow_results WHERE job_id=sqlc.arg(job_id)::uuid AND position=sqlc.arg(position)::bigint);
+
+-- name: WorkflowInitialManualCompletionNext :one
+SELECT r.id,r.app_id,a.account_id,a.slug,r.policy_version FROM workflow_initial_recovery_reviews r JOIN apps a ON a.id=r.app_id
+WHERE a.status<>'deleted' AND r.submitted_at IS NOT NULL AND r.review->'policy'->>'mode'='preview'
+AND NOT r.review ? 'result' AND r.completion_next_observe_at<=sqlc.arg(now_at)::timestamptz
+ORDER BY r.completion_next_observe_at,r.id LIMIT 1;
+
+-- name: WorkflowInitialManualCompletionClaim :one
+SELECT r.review FROM workflow_initial_recovery_reviews r JOIN apps a ON a.id=r.app_id
+WHERE r.id=sqlc.arg(id)::uuid AND a.status<>'deleted' AND r.submitted_at IS NOT NULL AND r.review->'policy'->>'mode'='preview'
+AND NOT r.review ? 'result' AND r.completion_next_observe_at<=sqlc.arg(now_at)::timestamptz FOR UPDATE OF r SKIP LOCKED;
+
+-- name: WorkflowInitialManualCompletionAdvance :exec
+UPDATE workflow_initial_recovery_reviews SET completion_next_observe_at=sqlc.arg(next_at)::timestamptz WHERE id=sqlc.arg(id)::uuid;
+
+-- name: WorkflowInitialManualCompletionFailure :exec
+UPDATE workflow_initial_recovery_reviews
+SET review=jsonb_set(review,'{observation_failure}',sqlc.arg(failure)::jsonb,true),
+completion_next_observe_at=sqlc.arg(next_at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid;
+
+-- name: WorkflowRecoveryAutomaticPolicyFailure :exec
+UPDATE workflow_recovery_policies SET automatic_poll_failure=sqlc.arg(failure)::jsonb,next_execute_at=sqlc.arg(next_at)::timestamptz WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: WorkflowRecoveryAutomaticPollingNotificationSave :exec
+UPDATE workflow_recovery_policies SET automatic_poll_notification=sqlc.arg(notification)::jsonb WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: WorkflowInitialPollingNotificationSave :exec
+UPDATE workflow_initial_recovery_reviews SET review=jsonb_set(review,'{polling_notification}',sqlc.arg(notification)::jsonb,true) WHERE id=sqlc.arg(id)::uuid;
+
+-- name: WorkflowRecoveryOverviewManual :one
+WITH candidates AS (
+ SELECT r.review,r.submitted_at FROM workflow_initial_recovery_reviews r
+ JOIN apps a ON a.id=r.app_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ AND r.review->'policy'->>'mode'='preview'
+ AND ((r.submitted_at IS NOT NULL AND NOT r.review ? 'result' AND NOT r.review ? 'automatic_result')
+ OR (r.review->>'status'='prepared' AND r.submitted_at IS NULL AND r.expires_at>sqlc.arg(now_at)::timestamptz
+ AND sqlc.arg(policy_enabled)::boolean AND r.policy_version=sqlc.arg(policy_version)::bigint))
+), sample AS (SELECT review FROM candidates ORDER BY (review ? 'observation_failure') DESC,(review ? 'attention') DESC,review->>'id' LIMIT sqlc.arg(sample_limit)::integer)
+SELECT jsonb_build_object(
+ 'awaiting',count(*) FILTER(WHERE submitted_at IS NULL),
+ 'unresolved',count(*) FILTER(WHERE submitted_at IS NOT NULL),
+ 'polling_failures',count(*) FILTER(WHERE review ? 'observation_failure'),
+ 'attention',count(*) FILTER(WHERE coalesce(review->'attention'->>'block_reason','')<>''),
+ 'reviews',coalesce((SELECT jsonb_agg(review) FROM sample),'[]'::jsonb))::jsonb FROM candidates;
+
+-- name: WorkflowRecoveryOverviewLastAlert :one
+SELECT (entry->'polling_notification')::jsonb AS notification
+FROM workflow_recovery_history_events h JOIN apps a ON a.id=h.app_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+AND h.recorded_at>sqlc.arg(retained_after)::timestamptz AND h.recorded_at<=sqlc.arg(now_at)::timestamptz
+AND h.occurred_at<=sqlc.arg(now_at)::timestamptz AND entry->>'kind' IN ('polling_failed','polling_recovered')
+ORDER BY h.occurred_at DESC,h.sequence DESC LIMIT 1;
+
+-- name: WorkflowRecoveryOverviewDelivery :one
+SELECT jsonb_build_object(
+ 'pending',count(*) FILTER(WHERE d.status='pending'),
+ 'in_flight',count(*) FILTER(WHERE d.status='in_flight'),
+ 'succeeded',count(*) FILTER(WHERE d.status='succeeded'),
+ 'failed',count(*) FILTER(WHERE d.status='failed'),
+ 'dead',count(*) FILTER(WHERE d.status='dead'),
+ 'missing',count(*) FILTER(WHERE d.id IS NULL),
+ 'relay_pending',EXISTS(SELECT 1 FROM app_webhook_event_outbox o WHERE o.id=sqlc.arg(event_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid AND o.event=sqlc.arg(event)::text)
+)::jsonb
+FROM unnest(sqlc.arg(receiver_ids)::uuid[]) frozen(id)
+LEFT JOIN app_webhook_deliveries d ON d.webhook_id=frozen.id AND d.source_event_id=sqlc.arg(event_id)::uuid
+AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND d.event=sqlc.arg(event)::text;
+
+-- name: WorkflowRecoveryOverviewApp :one
+SELECT slug FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status<>'deleted';
+
+-- name: WorkflowRecoveryOverviewRetry :one
+WITH candidates AS (
+ SELECT r.id,r.job_id,r.review,
+ CASE WHEN r.review_decision->>'decision'='approved' THEN 'awaiting_completion_observation' ELSE 'review_inspection_required' END AS reason
+ FROM workflow_recovery_policy_reviews r
+ JOIN apps a ON a.id=r.app_id
+ JOIN event_recovery_jobs j ON j.id=r.job_id AND j.app_id=a.id AND j.account_id=a.account_id
+ LEFT JOIN workflow_recovery_review_notifications n ON n.review_id=r.id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ AND r.review->'policy'->>'mode'='preview' AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.review->'plan'->'actions') action WHERE action->>'kind'='retry')
+ AND r.observed_at<=sqlc.arg(now_at)::timestamptz AND n.completion IS NULL
+ AND (r.review->'completion_notification' IS NULL OR r.review->'completion_notification'='null'::jsonb)
+ AND (r.review_decision->>'decision'='approved'
+ OR (r.review_decision IS NULL AND sqlc.arg(policy_enabled)::boolean AND (r.review->>'policy_version')::bigint=sqlc.arg(policy_version)::bigint AND coalesce(n.receipt->>'status','')<>'suppressed'))
+), sample AS (SELECT * FROM candidates ORDER BY id LIMIT sqlc.arg(sample_limit)::integer)
+SELECT jsonb_build_object(
+ 'retry_awaiting',count(*) FILTER(WHERE reason='review_inspection_required'),
+ 'retry_unresolved',count(*) FILTER(WHERE reason='awaiting_completion_observation'),
+ 'retry_issues',coalesce((SELECT jsonb_agg(jsonb_build_object('scope','manual_retry','reason',reason,'policy_version',(review->>'policy_version')::bigint,'review_id',id,'job_id',job_id,'inspection_url','/v1/apps/'||sqlc.arg(escaped_slug)::text||'/recovery-policy/reviews/'||id::text||'/status') ORDER BY id) FROM sample),'[]'::jsonb))::jsonb FROM candidates;

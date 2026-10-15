@@ -24,3 +24,18 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # with 4 prepared networks; production-us without them paid setup_network
 # 64-77 ms on every wake (hunt #9). 0 disables; the API bound is 0-16.
 vmmd_prepared_networks: 4
+
+# ADR-740 developer live source patches. Must match control_plane_service's
+# value: apid publishes patches and vmmd serves them to developer environments.
+faas_dev_patch_delivery_enabled: false
+
+# ADR-1141 cluster workload-identity signing key (tasks/workload_identity.yml).
+# Point faas_workload_identity_source_dir at the controller-side directory
+# `gregalectl workload-identity init|rotate --out DIR` wrote to install the key;
+# leave it empty to keep an operator-placed key. Must match
+# control_plane_service's source dir and issuer, which install the JWKS apid
+# trusts. An empty issuer keeps vmmd's default (https://identity.gregale.dev).
+faas_workload_identity_source_dir: ""
+faas_workload_identity_key_path: /etc/faas/secrets/workload-identity.key
+faas_workload_identity_kid_path: /etc/faas/secrets/workload-identity.kid
+faas_workload_identity_issuer: ""

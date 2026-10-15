@@ -34,7 +34,12 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 	if operator && opts.TenantID == "" {
 		return out, ErrInvalidArgument
 	}
-	timeline, err := workflowCoordinationTimeline(ctx, store, account, tenant, opts, operator)
+	historyTenant := tenant
+	if operator {
+		historyTenant = opts.TenantID
+	}
+	history := newWorkflowCaseObligationHistory(historyTenant, opts, operator)
+	timeline, err := workflowCoordinationTimeline(ctx, store, account, tenant, opts, operator, history.collect)
 	if err != nil {
 		return out, err
 	}
@@ -66,6 +71,8 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 		return out, err
 	}
 	out.CoordinationCheckedAt = time.Now().UTC().Truncate(time.Microsecond)
+	projectWorkflowCaseNextActions(&out, rows, tenant, opts, operator)
+	history.finish(&out)
 	for _, row := range rows {
 		if err = ctx.Err(); err != nil {
 			return out, err
@@ -119,8 +126,11 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 		return out, err
 	}
 	projectWorkflowPlaybookApplicability(&out, playbooks)
+	projectWorkflowPlaybookEvidence(&out, playbooks)
+	projectWorkflowPlaybookBusinessOutcomes(&out)
 	projectPlaybookReplacementLinks(out.PlaybookProgress)
 	out.Limitations = append(out.Limitations, "Playbook progress records human review of pinned guidance. Evidence references are checked on edit; checklist completion does not establish readiness or business success.")
+	projectWorkflowCaseObligationAssessments(&out, rows, tenant, operator)
 	out.EvaluatedAt = time.Now().UTC().Truncate(time.Microsecond)
 	return out, nil
 }

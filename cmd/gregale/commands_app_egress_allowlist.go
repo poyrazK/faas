@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -28,6 +29,7 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		return printErr("Could not load app", err)
 	}
 	current := append([]string(nil), app.EgressAllowlist...)
+	before := append([]string(nil), current...)
 	switch action {
 	case "show":
 		if jsonOutput {
@@ -46,7 +48,10 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		}
 		return 0
 	case "clear":
-		current = nil
+		// An empty list, not nil: a nil slice encodes as null, which the API
+		// reads as "leave unchanged", so clear reported success and kept the
+		// list (production-us hunt #10, H10-37).
+		current = []string{}
 	case "add", "remove":
 		if len(args) != 2 || args[1] == "" {
 			PrintUsage(os.Stderr, "usage: gregale app <slug> egress-allowlist "+action+" <cidr>", "apps")
@@ -85,5 +90,34 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 	} else {
 		PrintOK(osStdout, "App %s egress allowlist updated.", slug)
 	}
+	if egressAllowlistChangeNeedsRestart(before, current) {
+		_, _ = fmt.Fprintf(osStdout, "Running instances keep their current egress rules until they next start; apply it now with `gregale app %s restart`.\n", slug)
+	}
 	return 0
+}
+
+// egressAllowlistChangeNeedsRestart mirrors vmmd's live-patch rule
+// (pkg/fcvm egressAllowlistNeedsRestart): adding the first entry, clearing
+// the list, or an address family gaining its first entry changes the
+// instance's firewall chain shape, so running instances apply it when they
+// next start (H10-36). Other edits apply to running instances in place.
+func egressAllowlistChangeNeedsRestart(before, after []string) bool {
+	if (len(before) == 0) != (len(after) == 0) {
+		return true
+	}
+	families := func(list []string) (v4, v6 bool) {
+		for _, raw := range list {
+			if p, err := netip.ParsePrefix(raw); err == nil {
+				if p.Addr().Is4() {
+					v4 = true
+				} else {
+					v6 = true
+				}
+			}
+		}
+		return v4, v6
+	}
+	b4, b6 := families(before)
+	a4, a6 := families(after)
+	return a4 && !b4 || a6 && !b6
 }

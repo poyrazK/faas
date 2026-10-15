@@ -265,6 +265,12 @@ func TestTierB_SecretsAuditPaginatesAndRedactsCiphertext(t *testing.T) {
 	if report.AuditedAt == "" || report.Scanned != 4 || report.UnknownUpdatedAtCount != 1 || report.StaleCount != 2 || len(report.StaleSecrets) != 2 || report.OlderThan != "90d" {
 		t.Fatalf("audit report = %+v", report)
 	}
+	// H10-57: ages are whole seconds, not "317h24m30.699641s".
+	for _, finding := range report.StaleSecrets {
+		if age, err := time.ParseDuration(finding.Age); err != nil || age%time.Second != 0 {
+			t.Errorf("age %q is not a whole-second duration (err=%v)", finding.Age, err)
+		}
+	}
 	for _, secret := range []string{"DO_NOT_OUTPUT_CIPHERTEXT", "ciphertext", "UNKNOWN", "RECENT"} {
 		if strings.Contains(stdout.String(), secret) {
 			t.Errorf("audit output unexpectedly contains %q: %s", secret, stdout.String())

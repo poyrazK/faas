@@ -34,6 +34,7 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 		}
 		provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
 		pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(2 * time.Hour) }, nil)
+		completeUsageThrough(t, ctx, store, start.Add(2*time.Hour))
 		if pending {
 			if _, err := pusher.PushPending(ctx, 24*time.Hour); err != nil {
 				t.Fatal(err)
@@ -50,6 +51,11 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 	}
 }
 
+// Each meter is billed up to the cap less the other meter's month-to-date
+// billable cost (ADR-1162). Compute reserves the 1,000-millicent egress
+// overage and bills nothing; egress reserves the 500-millicent fractional
+// compute and bills exactly the remaining 500. The cap may be under-used when
+// both meters are clamped, never exceeded.
 func TestEgressCapDoesNotRoundFractionalComputeDown(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -62,11 +68,15 @@ func TestEgressCapDoesNotRoundFractionalComputeDown(t *testing.T) {
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
+	completeUsageThrough(t, ctx, store, start.Add(time.Hour))
 	if _, err := pusher.PushPending(ctx, 24*time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if calls := provider.MeterCalls(); len(calls) != 0 {
-		t.Fatalf("egress calls = %+v, would push combined cost above the cap", calls)
+	if calls := provider.Calls(); len(calls) != 0 {
+		t.Fatalf("compute calls = %+v, want none: the egress overage reserves the whole cap", calls)
+	}
+	if calls := provider.MeterCalls(); len(calls) != 1 || calls[0].Quantity != 1<<28 {
+		t.Fatalf("egress calls = %+v, want one quarter-GiB delivery that fills the cap exactly", calls)
 	}
 }
 
@@ -82,6 +92,7 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
+	completeUsageThrough(t, ctx, store, start.Add(time.Hour))
 	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 2 {
 		t.Fatalf("PushPending = (%d, %v), want both half-cent windows even at month end", pushed, err)
 	}
@@ -118,6 +129,7 @@ func TestCombinedCapReadFailureLeavesUsagePending(t *testing.T) {
 	store := &failedCapReadStore{Store: mem, err: readErr}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
+	completeUsageThrough(t, ctx, mem, start.Add(time.Hour))
 	if pushed, err := pusher.PushPending(ctx, time.Hour); pushed != 0 || !errors.Is(err, readErr) {
 		t.Fatalf("failed read = (%d, %v), want no push and the read error", pushed, err)
 	}

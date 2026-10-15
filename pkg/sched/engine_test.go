@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -579,7 +580,7 @@ func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, f
 }
 
 type rotationFinalizeTrackingStore struct {
-	*state.MemStore
+	MemStore                  *state.MemStore
 	onFinalize                func(string, string) error
 	onManagedPostgresFinalize func(string, string) error
 }
@@ -604,8 +605,8 @@ func (s *rotationFinalizeTrackingStore) FinalizeManagedPostgresBindingRotationsF
 
 func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	store := &rotationFinalizeTrackingStore{MemStore: state.NewMemStore()}
-	_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
-	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+	_, app, deployment := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
+	if _, err := store.MemStore.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: deployment.ID,
 		Tier:         state.SnapshotTierInit,
 		FCVersion:    "1.10.0",
@@ -615,7 +616,7 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 
 	first, err := engine.EnsureWake(context.Background(), app.ID, TriggerAppWake)
 	if err != nil {
@@ -632,7 +633,7 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 		if appID != app.ID || wakeID == "" {
 			t.Errorf("rotation finalized for app %q wake %q", appID, wakeID)
 		}
-		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		old, readErr := store.MemStore.InstanceByID(context.Background(), oldInstanceID)
 		if readErr != nil || old.State != string(state.StateStopped) {
 			t.Errorf("rotation finalized before old instance drained: %+v, %v", old, readErr)
 		}
@@ -643,14 +644,14 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 		if appID != app.ID || wakeID == "" {
 			t.Errorf("managed postgres rotation finalized for app %q wake %q", appID, wakeID)
 		}
-		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		old, readErr := store.MemStore.InstanceByID(context.Background(), oldInstanceID)
 		if readErr != nil || old.State != string(state.StateStopped) {
 			t.Errorf("managed postgres rotation finalized before old instance drained: %+v, %v", old, readErr)
 		}
 		return nil
 	}
 	vmm.coldBootHook = func() {
-		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		old, readErr := store.MemStore.InstanceByID(context.Background(), oldInstanceID)
 		if readErr != nil {
 			t.Errorf("old instance during replacement boot: %v", readErr)
 		} else if old.State != string(state.StateRunning) {
@@ -680,10 +681,10 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	if vmm.coldBoots != 1 || vmm.restores != 1 {
 		t.Errorf("wake methods = cold:%d restore:%d, want cold:1 restore:1", vmm.coldBoots, vmm.restores)
 	}
-	if _, err := store.LatestSnapshotForTier(context.Background(), deployment.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.MemStore.LatestSnapshotForTier(context.Background(), deployment.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("old snapshot remained restorable: %v", err)
 	}
-	old, err := store.InstanceByID(context.Background(), first.Instance.InstanceID)
+	old, err := store.MemStore.InstanceByID(context.Background(), first.Instance.InstanceID)
 	if err != nil {
 		t.Fatalf("old InstanceByID: %v", err)
 	}
@@ -5191,7 +5192,7 @@ func TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel(t *testing.T) 
 	loseStore := &loseAlwaysCreateInstance{MemStore: store}
 
 	vmm := &fakeVMM{}
-	e := newEngine(t, loseStore, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(loseStore), vmm, &fakeNotifier{}, "1.10.0")
 
 	// Call the helper directly with a wake_id that has no row
 	// in the table. The wrapper returns ErrConcurrentWake. The
@@ -5227,8 +5228,8 @@ func TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel(t *testing.T) 
 // dep rows remain reachable. Lives in _test.go to keep the production
 // binary clean of test seams.
 type loseAlwaysCreateInstance struct {
-	*state.MemStore
-	calls int
+	MemStore *state.MemStore
+	calls    int
 }
 
 func (l *loseAlwaysCreateInstance) CreateInstance(ctx context.Context, appID, depID, initState string, ramMB int, nodeID, wakeID string) (state.Instance, error) {

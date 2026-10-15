@@ -713,8 +713,11 @@ type IncrementRequestTelemetryRequest struct {
 	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,35,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"`
 	// Bounded canonical application-reported flag decisions; no customer attributes.
 	FlagEvidenceJson string `protobuf:"bytes,36,opt,name=flag_evidence_json,json=flagEvidenceJson,proto3" json:"flag_evidence_json,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// ADR-1188: how an anonymous GET body compared with the previous response
+	// for its URL on the same gateway; empty when not observed. Never a hash.
+	ContentOutcome string `protobuf:"bytes,37,opt,name=content_outcome,json=contentOutcome,proto3" json:"content_outcome,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -995,6 +998,13 @@ func (x *IncrementRequestTelemetryRequest) GetPlatformTenantJwtAuthorizationRule
 func (x *IncrementRequestTelemetryRequest) GetFlagEvidenceJson() string {
 	if x != nil {
 		return x.FlagEvidenceJson
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetContentOutcome() string {
+	if x != nil {
+		return x.ContentOutcome
 	}
 	return ""
 }
@@ -1360,8 +1370,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\xef\n" +
-	"\n" +
+	" \x01(\tR\bsourceIp\"\x98\v\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1405,7 +1414,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x1eguest_resource_usage_available\x18! \x01(\bR\x1bguestResourceUsageAvailable\x12;\n" +
 	"\x1aplatform_tenant_surface_id\x18\" \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
 	")platform_tenant_jwt_authorization_rule_id\x18# \x01(\tR$platformTenantJwtAuthorizationRuleId\x12,\n" +
-	"\x12flag_evidence_json\x18$ \x01(\tR\x10flagEvidenceJson\"c\n" +
+	"\x12flag_evidence_json\x18$ \x01(\tR\x10flagEvidenceJson\x12'\n" +
+	"\x0fcontent_outcome\x18% \x01(\tR\x0econtentOutcome\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xc6\x03\n" +

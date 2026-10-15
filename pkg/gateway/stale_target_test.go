@@ -10,6 +10,9 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestMarkStaleTargetClaimsRecoveryOnce(t *testing.T) {
@@ -25,6 +28,33 @@ func TestMarkStaleTargetClaimsRecoveryOnce(t *testing.T) {
 	}
 	if !staleTargetDetected(ctx) {
 		t.Fatal("stale target was not marked")
+	}
+}
+
+// adr: 1151 — vmmd's instance_frozen refusal marks the target frozen, so the
+// handler withdraws it instead of quarantining it; other Unavailable errors
+// do not.
+func TestMarkStaleTargetErrFlagsFrozenRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		frozen bool
+	}{
+		{name: "frozen guest", err: grpcerr.ToStatus(api.NewProblem(int(codes.Unavailable), api.CodeInstanceFrozen, "Instance frozen", "the guest is frozen")), frozen: true},
+		{name: "dead target", err: status.Error(codes.Unavailable, "connection refused"), frozen: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			signal := &staleTargetSignal{onStale: func() { calls.Add(1) }}
+			ctx := withStaleTargetSignal(context.Background(), signal)
+			markStaleTargetErr(ctx, tc.err)
+			if calls.Load() != 1 || !staleTargetDetected(ctx) {
+				t.Fatalf("stale handler calls = %d, detected %v; want one call", calls.Load(), staleTargetDetected(ctx))
+			}
+			if got := signal.frozen.Load(); got != tc.frozen {
+				t.Fatalf("frozen = %v, want %v", got, tc.frozen)
+			}
+		})
 	}
 }
 

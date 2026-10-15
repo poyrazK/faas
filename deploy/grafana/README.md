@@ -31,6 +31,41 @@ Companion alerts at `deploy/ansible/roles/prometheus/files/bridge.rules.yml`
 under `family: bridge` (FaasBridgeFramingMismatch + FaasBridgeRollbackStuck).
 Runbook: `docs/ops/h2c-rollback.md`.
 
+## `dev-loop.json` (ADR-740)
+
+The `gregale dev` inner loop. Headline stats: syncs, the share within the
+CLI's edit-to-live target, the share of syncs eligible for a live patch, and
+failed patches. Latency panels compare CLI-reported edit-to-live on the
+rebuild path (`apid_dev_sync_edit_to_live_seconds`) with patch publication to
+first instance acknowledgement on the live-patch path
+(`vmmd_dev_patch_delivery_seconds`). Decision panels show live-patch outcomes
+and the top ineligibility reasons (`apid_dev_patch_plans_total{outcome,reason}`),
+the input for widening live-patch coverage; `delivery_disabled` counts
+eligible syncs while `FAAS_DEV_PATCH_DELIVERY` is off. Per-phase p95
+(`apid_dev_sync_phase_seconds`) and acknowledgement results
+(`vmmd_dev_patch_acks_total{result}`) complete it. Every apid series carries
+`watch="true|false"`, and the edit-to-live, decision and phase panels split on
+it, so watch-mode environments (ADR-1170) can be compared with the rebuild
+path. UID `faas-dev-loop-adr-740`.
+Enable delivery with `faas_dev_patch_delivery_enabled: true` on both the
+control plane and vmmd hosts.
+
+## `frozen-tier.json` (ADR-1151)
+
+The pause tiers. The **Frozen tier** row shows the fleet's frozen
+instances and their memory, thaw success and p95, frozen instances and
+memory by node, freeze attempts by outcome (`schedd_frozen_total`), thaws by
+outcome (`schedd_frozen_thaw_total`), frozen parks by reason
+(`schedd_frozen_parks_total`) and freeze and thaw latency
+(`vmmd_freeze_seconds`, `vmmd_thaw_seconds`). The **Quiet pause** row shows
+quiet-paused instances by node, pauses by outcome, resume latency and resume
+errors (`vmmd_quiet_*`), and CPU pressure (PSI) from node_exporter, the
+signal behind quiet pause's soft CPU guarantee. UID
+`faas-frozen-tier-adr-1151`. Companion alerts are `family: frozen_tier` in
+`deploy/ansible/roles/prometheus/files/faas.rules.yml`, with promtool
+fixtures in `pkg/promqlrules/testdata/frozen_tier.test.yml`. Runbook:
+`docs/runbooks/FaasFrozenTier.md`.
+
 ## `warm-snapshot.json` (issue #470 / PR C / ADR-074)
 
 Four-panel dashboard for the warm-snapshot tier ops surface: warm-capture

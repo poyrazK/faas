@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -255,6 +256,7 @@ type ServiceProxyChaosResolver func(ctx context.Context, runID, callerAppID, tar
 // implementation must be fast and non-blocking because the proxy invokes it
 // on the fault path.
 type ServiceProxyChaosObserver func(runID, callerAppID, generation string, rule chaos.Rule)
+type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation string, rule chaos.Rule, requestID string)
 
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
 // normally gateway.ForwardingReverseProxyWithEvents(...); tests inject a
@@ -288,10 +290,11 @@ type ServiceProxyConfig struct {
 	WakeDeployment ServiceProxyDeploymentWaker
 	// ValidateDeployment is required only for exact deployment overrides. Nil
 	// fails closed when the override header is present.
-	ValidateDeployment ServiceProxyDeploymentValidator
-	ResolveChaos       ServiceProxyChaosResolver
-	ObserveChaosMatch  ServiceProxyChaosObserver
-	ObserveTCPAttempt  ServiceProxyChaosObserver
+	ValidateDeployment    ServiceProxyDeploymentValidator
+	ResolveChaos          ServiceProxyChaosResolver
+	ObserveChaosMatch     ServiceProxyChaosObserver
+	ObserveRequestAttempt ServiceProxyRequestAttemptObserver
+	ObserveTCPAttempt     ServiceProxyChaosObserver
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
@@ -346,6 +349,7 @@ type ServiceProxy struct {
 	validateDeployment        ServiceProxyDeploymentValidator
 	resolveChaos              ServiceProxyChaosResolver
 	observeChaosMatch         ServiceProxyChaosObserver
+	observeRequestAttempt     ServiceProxyRequestAttemptObserver
 	observeTCPAttempt         ServiceProxyChaosObserver
 	observeRequest            func(*http.Request, ServiceRequestObservation)
 	metrics                   *Metrics
@@ -450,6 +454,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		validateDeployment:        cfg.ValidateDeployment,
 		resolveChaos:              cfg.ResolveChaos,
 		observeChaosMatch:         cfg.ObserveChaosMatch,
+		observeRequestAttempt:     cfg.ObserveRequestAttempt,
 		observeTCPAttempt:         cfg.ObserveTCPAttempt,
 		observeRequest:            cfg.ObserveRequest,
 		metrics:                   cfg.Metrics,
@@ -858,8 +863,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
 		}
 	}
+	var responseFault *scenarioHTTPResponseFault
 	if !probe && !upgrade && target.ScenarioTestRunID != "" && p.resolveChaos != nil {
-		if p.applyScenarioChaos(dispatchWriter, r, dependencySpan, target.ScenarioTestRunID, callerInfo.AppID, service) {
+		var handled bool
+		handled, responseFault = p.applyScenarioChaos(dispatchWriter, r, dependencySpan, target.ScenarioTestRunID, callerInfo.AppID, service)
+		if handled {
 			dependencyCallEligible = true
 			return
 		}
@@ -873,43 +881,52 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !served {
 		return
 	}
-	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	if responseFault != nil {
+		capture := newScenarioHTTPResponseWriter(dispatchWriter)
+		p.dispatch(capture, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
+		capture.finish(r.Context(), func() {
+			p.observeScenarioHTTPFault(dependencySpan, responseFault.runID, responseFault.callerAppID, responseFault.generation, responseFault.rule)
+			dispatchWriter.Header().Set("X-Gregale-Chaos-Injected", responseFault.rule.Kind)
+		})
+		return
+	}
+	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
 }
 
 // applyScenarioChaos runs only after the normal identity, namespace, tenant,
 // binding, and target-policy checks. Returning true means it wrote a synthetic
-// response or the caller canceled during an injected delay.
-func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request, span oteltrace.Span, runID, callerAppID, targetWorkload string) bool {
+// response or the caller canceled during an injected delay. A selected deferred
+// fault is returned separately for application after normal forwarding.
+func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request, span oteltrace.Span, runID, callerAppID, targetWorkload string) (bool, *scenarioHTTPResponseFault) {
 	lease, err := p.resolveChaos(r.Context(), runID, callerAppID, targetWorkload)
 	if err != nil {
 		p.log.Warn("gateway: scenario chaos policy unavailable", "run_id", runID, "err", err)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is unavailable")
-		return true
+		return true, nil
 	}
 	if len(lease.Rules) == 0 || !lease.ExpiresAt.After(p.now()) {
-		return false
+		return false, nil
 	}
 	traceID := traceIDFromContext(r.Context())
 	for _, rule := range lease.Rules {
 		if err := chaos.ValidateRule(rule); err != nil {
 			p.log.Error("gateway: invalid stored scenario chaos rule", "run_id", runID, "err", err)
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "scenario chaos policy is invalid")
-			return true
+			return true, nil
 		}
-		if rule.IsTCP() || rule.IsDNS() {
+		if rule.IsTCP() || rule.IsDNS() || (r.Method == http.MethodHead && (rule.Kind == chaos.KindHTTPMalformedJSON || rule.Kind == chaos.KindHTTPTruncatedBody || rule.Kind == chaos.KindHTTPResponseLost)) {
 			continue
 		}
 		if !chaos.Select(rule, p.chaosOrdinal.Add(1), traceID) {
 			continue
 		}
-		span.SetAttributes(
-			attribute.Bool("gregale.chaos.injected", true),
-			attribute.String("gregale.chaos.kind", rule.Kind),
-		)
-		p.metrics.ObserveServiceChaosInjection(rule.Kind)
-		if p.observeChaosMatch != nil {
-			p.observeChaosMatch(runID, callerAppID, lease.Generation, rule)
+		if rule.Kind == chaos.KindHTTPResponseLost {
+			return false, &scenarioHTTPResponseFault{rule: rule, runID: runID, callerAppID: callerAppID, generation: lease.Generation}
 		}
+		if rule.CorrelationScope != "" && p.observeRequestAttempt != nil {
+			p.observeRequestAttempt(runID, callerAppID, lease.Generation, rule, r.Header.Get(chaos.RequestCorrelationHeader))
+		}
+		p.observeScenarioHTTPFault(span, runID, callerAppID, lease.Generation, rule)
 		w.Header().Set("X-Gregale-Chaos-Injected", rule.Kind)
 		switch rule.Kind {
 		case chaos.KindLatency:
@@ -917,15 +934,38 @@ func (p *ServiceProxy) applyScenarioChaos(w http.ResponseWriter, r *http.Request
 			select {
 			case <-r.Context().Done():
 				timer.Stop()
-				return true
+				return true, nil
 			case <-timer.C:
 			}
+		case chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody:
+			writeScenarioHTTPBodyFault(w, rule.Kind)
+			return true, nil
 		case chaos.KindHTTPStatus:
+			if rule.RetryAfterSeconds > 0 {
+				w.Header().Set("Retry-After", strconv.FormatInt(rule.RetryAfterSeconds, 10))
+			}
 			http.Error(w, "synthetic Gregale scenario fault", rule.StatusCode)
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
+}
+
+// A short Content-Length response makes real HTTP clients detect an incomplete
+// entity body. net/http closes HTTP/1 connections whose declared body is short;
+// HTTP/2 clients validate the declared length when the stream ends.
+func writeScenarioHTTPBodyFault(w http.ResponseWriter, kind string) {
+	const prefix = `{"available":`
+	const complete = `{"available":true}`
+	length := len(prefix)
+	if kind == chaos.KindHTTPTruncatedBody {
+		length = len(complete)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(length))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, prefix)
 }
 
 func isServiceBindingProbeRequest(r *http.Request, targetPath string, alias bool) bool {
@@ -1031,7 +1071,7 @@ func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
 			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
@@ -1050,7 +1090,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 	}
 	p.countForward(woken)
 	p.observeWakeAheadCall(caller, target, woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken, deploymentID)
 }
 
 // observeWakeAheadCall feeds the ADR-977 learner. Preview callers are left
@@ -1492,7 +1532,8 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	// the Connection/Upgrade pair.
 	request.Header.Set("x-faas-upgrade", "true")
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
-	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
+	signal := &staleTargetSignal{}
+	signal.onStale = func() { p.retireEndpoint(target.AppID, endpoint.InstanceID, signal.frozen.Load()) }
 	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
 	request, observe := p.withServiceRequestObservation(request, target, caller, endpoint, woken)
 	probeWriter := &serviceProxyUpgradeProbeWriter{
@@ -1555,7 +1596,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1590,6 +1631,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	if maxAttempts > 1 {
 		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
+	frozenRetried := false
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok {
@@ -1609,7 +1651,8 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			}
 		}
 		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
-		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
+		signal := &staleTargetSignal{}
+		signal.onStale = func() { p.retireEndpoint(appID, endpoint.InstanceID, signal.frozen.Load()) }
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
@@ -1638,6 +1681,16 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			p.metrics.IncRetryExhausted(RetrySkipCommitted)
 			buffer.commitTrailers()
 			return
+		}
+		if signal.frozen.Load() && !frozenRetried {
+			// The guest never saw a request vmmd refused as frozen, so one
+			// retry on a thawed replica sits outside the retry policy.
+			frozenRetried = true
+			if next, ok := p.frozenRetryEndpoints(request, appID, deploymentID, endpoint.InstanceID, endpoints); ok {
+				endpoints = next
+				maxAttempts++
+				continue
+			}
 		}
 		if attempt+1 >= maxAttempts {
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
@@ -1851,6 +1904,55 @@ func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
 	p.publishOpenTargets(appID)
 	p.log.Warn("gateway: service proxy quarantined stale endpoint", "app", appID, "instance", instanceID)
+}
+
+// retireEndpoint takes a replica out of rotation after a stale-target
+// signal. A frozen replica (ADR-1151) is idle, not broken, and thaws under
+// the same instance ID: it leaves the cached endpoint list without counting
+// as a breaker failure, and a half-open probe it held is released. Any other
+// stale replica is quarantined.
+func (p *ServiceProxy) retireEndpoint(appID, instanceID string, frozen bool) {
+	if !frozen {
+		p.quarantine(appID, instanceID)
+		return
+	}
+	p.mu.Lock()
+	if cached, ok := p.snapshots[appID]; ok {
+		cached.endpoints = withoutServiceEndpoint(cached.endpoints, instanceID)
+		p.snapshots[appID] = cached
+	}
+	p.mu.Unlock()
+	p.breaker.Release(serviceProxyEndpointKey(appID, instanceID))
+	p.log.Info("gateway: service proxy withdrew frozen endpoint", "app", appID, "instance", instanceID)
+}
+
+// frozenRetryEndpoints picks where to retry a request vmmd refused because
+// its replica is frozen (ADR-1151): another replica when one is left,
+// otherwise the target woken, which thaws the frozen one. ok=false means
+// there is nowhere to retry or the request body cannot be replayed.
+func (p *ServiceProxy) frozenRetryEndpoints(request *http.Request, appID, deploymentID, frozenID string, endpoints []ServiceEndpoint) ([]ServiceEndpoint, bool) {
+	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
+		return nil, false
+	}
+	if rest := withoutServiceEndpoint(endpoints, frozenID); len(rest) > 0 {
+		return rest, true
+	}
+	woken, err := p.wakeAndRefresh(request.Context(), appID, deploymentID)
+	if err != nil || len(woken) == 0 {
+		return nil, false
+	}
+	return woken, true
+}
+
+// withoutServiceEndpoint returns endpoints without instanceID, in order.
+func withoutServiceEndpoint(endpoints []ServiceEndpoint, instanceID string) []ServiceEndpoint {
+	out := make([]ServiceEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.InstanceID != instanceID {
+			out = append(out, endpoint)
+		}
+	}
+	return out
 }
 
 // healthy reports a successful transport for an endpoint, and closes a

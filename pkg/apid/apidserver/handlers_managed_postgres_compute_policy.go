@@ -35,7 +35,7 @@ func (s *server) admitManagedPostgresComputePolicy(ctx context.Context, account 
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(account.Plan)
 	if !ok || limits.DatabasesMax == 0 || (!*request.ScaleToZero && !limits.AlwaysOnAllowed) {
-		return managedpostgres.ErrQuotaExceeded
+		return managedpostgres.ErrNotInPlan
 	}
 	return nil
 }

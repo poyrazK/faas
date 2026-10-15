@@ -29,7 +29,6 @@ AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
-AppendDeploymentAudit
 AppendDeploymentLog
 AppendDeploymentStage
 AppendEventWithTrace
@@ -241,21 +240,15 @@ InstallationIDForRepo
 InstanceListByNodeForRecovery
 IsMailSuppressed
 JobConcurrentByAccount
-JobCountByAccount
-JobGetByID
 JobGetByName
-JobListByAccount
 JobRunIncrementDeadLetter
 JobRunListByAccount
-JobRunListByJob
 JobRunReopenDeadLetter
-JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
 JobTaskList
 JobTaskRequeue
-JobTaskRetry
 JobUpdate
 LatestBuilderHeartbeatStats
 LatestDeployment
@@ -279,7 +272,6 @@ ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
 ListAllEventsPaged
-ListAllInstances
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
@@ -364,6 +356,7 @@ ListMirrorResults
 ListMirrorRules
 ListOIDCTrustPoliciesForAccount
 ListOpenStatusIncidents
+ListOperatorIncidents
 ListOperatorIntentsByTraceID
 ListOrgAPIKeys
 ListOrgInvitationsForOrg
@@ -439,7 +432,10 @@ NodeMarkRecovered
 OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
+OperatorAuditTraceCoverage
 OperatorIntentOutcomeMissingCounts
+OperatorOverviewActivity
+OperatorTenantCounts
 OrgByID
 OrgByPersonalAccount
 OrgBySlug
@@ -478,7 +474,6 @@ RecordGitHubBinding
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
-RecordScenarioTestChaosInjections
 RecordStripePushHour
 RecordUploadCommitOutcome
 RecordWebhookDelivery
@@ -498,6 +493,7 @@ RequestTelemetryAnalyticsTimeseriesGrouped
 RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
+RequestTelemetryErrorsByRoute
 RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
@@ -512,7 +508,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScenarioTestChaosMatchEvidence
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow

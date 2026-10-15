@@ -1,3 +1,4 @@
+// adr: 595
 package sched
 
 // Extra coverage for the deletion subscriber's internal helpers.
@@ -21,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // errStore is a minimal state.Store stub used by the
@@ -29,7 +31,7 @@ import (
 // guarantees an accidental call to a different method from
 // evictAccount surfaces as a test crash instead of a silent pass.
 type errStore struct {
-	state.Store
+	Store   state.Store
 	listErr error
 }
 
@@ -60,7 +62,7 @@ func newSubscriberForTest(store state.Store) *DeletionSubscriber {
 // block the channel consumer.
 func TestEvictAccount_StoreErrorLogsWarning(t *testing.T) {
 	store := &errStore{listErr: errors.New("simulated store failure")}
-	sub := newSubscriberForTest(store)
+	sub := newSubscriberForTest(statetest.NewStore(store))
 
 	// Should return without panic. The warn log is captured via the
 	// discard-backed logger, so the assertion is "no panic + no row
@@ -105,14 +107,14 @@ func TestEvictAccount_NoLiveInstances(t *testing.T) {
 func TestEvictAccount_SkipsTerminalInstances(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "mixed-account@example.com")
-	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
-		t.Fatalf("mark account pending: %v", err)
-	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("create RUNNING instance: %v", err)
 	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateParked), 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("create PARKED instance: %v", err)
+	}
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("mark account pending: %v", err)
 	}
 
 	sub := newSubscriberForTest(store)

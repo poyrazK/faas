@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "checks": [
+    {
+      "name": "Nonnegative stock",
+      "sql": "SELECT NOT EXISTS(SELECT 1 FROM api.__OP___inventory WHERE stock<0) AS passed"
+    },
+    {
+      "name": "No orphan order items",
+      "sql": "SELECT NOT EXISTS(SELECT 1 FROM api.__OP___items i WHERE NOT EXISTS(SELECT 1 FROM api.__OP___orders o WHERE o.tenant_id=i.tenant_id AND o.id=i.order_id)) AS passed"
+    },
+    {
+      "name": "Order totals match items",
+      "sql": "SELECT NOT EXISTS(SELECT 1 FROM api.__OP___orders o WHERE o.total_cents IS DISTINCT FROM (SELECT COALESCE(sum(i.quantity::bigint*i.unit_price_cents),0) FROM api.__OP___items i WHERE i.tenant_id=o.tenant_id AND i.order_id=o.id)) AS passed"
+    }
+  ]
+}

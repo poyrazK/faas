@@ -99,7 +99,7 @@ func nativeSnapshotBackingName(name string) bool {
 func (r nativeSnapshotBackingRecord) validate(capture nativeQualificationCaptureRecord) error {
 	initial := capture
 	initial.CompletedAt, initial.Info, initial.Backing = r.Capture.CompletedAt, SnapshotInfo{}, BackingIdentity{}
-	if r.Version != 1 || !r.Capture.CompletedAt.IsZero() || r.Capture != initial || !r.Backing.complete() ||
+	if r.Version != 1 || !r.Capture.CompletedAt.IsZero() || !r.Capture.Equal(initial) || !r.Backing.complete() ||
 		!capture.CompletedAt.IsZero() && r.Backing != capture.Backing {
 		return errors.New("native snapshot backing: evidence differs from the original capture")
 	}

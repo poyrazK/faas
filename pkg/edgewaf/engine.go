@@ -42,22 +42,74 @@ type Result struct {
 	Categories []string
 }
 
+// CRS assumes a website; platformPolicy and platformOverrides adapt it to a
+// general compute platform (ADR-831 amendment 6), where which methods and
+// body formats an app accepts is the app's business:
+//
+//   - REST methods are allowed. CRS allows GET, HEAD, POST and OPTIONS, so
+//     911100 scored every PUT, PATCH and DELETE as critical.
+//   - The content-type allow-list (920420) is dropped. It scored every
+//     text/plain, octet-stream or NDJSON body as critical. So are the two
+//     rules that score a body sent without a Content-Type (920340, 920640),
+//     as Python's requests.post(url, data=json.dumps(...)) sends it. 920470
+//     still flags a malformed Content-Type header.
+//   - 921150 (CR/LF in an argument name) looks at query argument names
+//     only. CRS parses a body of unknown type as URL-encoded so its rules
+//     still see it (901340), which makes any multi-line body without "=" one
+//     argument name containing a newline. The rule keeps its ID, so
+//     exclude_rule_ids and the rule_id metric label are unchanged.
+const (
+	platformPolicy    = `SecAction "id:900200,phase:1,pass,t:none,nolog,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE'"`
+	platformOverrides = `SecRuleRemoveById 920340 920420 920640
+SecRuleRemoveById 921150
+SecRule ARGS_GET_NAMES "@rx [\n\r]" "id:921150,phase:2,block,capture,t:none,msg:'HTTP Header Injection Attack via payload (CR/LF detected)',tag:'attack-protocol',tag:'paranoia-level/1',tag:'OWASP_CRS',tag:'OWASP_CRS/PROTOCOL-ATTACK',severity:'CRITICAL',setvar:'tx.http_violation_score=+%{tx.critical_anomaly_score}',setvar:'tx.inbound_anomaly_score_pl1=+%{tx.critical_anomaly_score}'"`
+)
+
+// engineOptions are engine settings that must not change a verdict, so
+// tests can compare an engine with and without them.
+type engineOptions struct {
+	// rxPrefilter turns on Coraza's @rx pre-filter (SecRxPreFilter): at
+	// load time each regex yields a minimum input length and literals any
+	// match must contain, and an input without them skips the regex.
+	rxPrefilter bool
+}
+
+// engine is the configuration the inspector compiles.
+var engine = engineOptions{}
+
+// directive returns the engine's directives, to follow
+// coraza.conf-recommended (which sets SecRxPreFilter Off) and precede the
+// rules they apply to.
+func (o engineOptions) directive() string {
+	if o.rxPrefilter {
+		return "SecRxPreFilter On"
+	}
+	return "SecRxPreFilter Off"
+}
+
 // compile builds the Coraza WAF for one paranoia level. The directives keep
 // CRS in detection-only mode, turn off audit logging and response
 // inspection, and cap the request body at the largest sample a rule can ask
 // for; the gateway has already cut each sample to its rule's size.
 func compile(paranoiaLevel int) (coraza.WAF, error) {
+	return compileWith(paranoiaLevel, engine)
+}
+
+func compileWith(paranoiaLevel int, opts engineOptions) (coraza.WAF, error) {
 	directives := fmt.Sprintf(`Include @coraza.conf-recommended
+%s
 Include @crs-setup.conf.example
 SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level=%d"
+%s
 Include @owasp_crs/*.conf
+%s
 SecRuleEngine DetectionOnly
 SecAuditEngine Off
 SecResponseBodyAccess Off
 SecRequestBodyLimit %d
 SecRequestBodyInMemoryLimit %d
 SecRequestBodyLimitAction ProcessPartial`,
-		paranoiaLevel, api.MaxEdgeWAFInspectBodyBytes, api.MaxEdgeWAFInspectBodyBytes)
+		opts.directive(), paranoiaLevel, platformPolicy, platformOverrides, api.MaxEdgeWAFInspectBodyBytes, api.MaxEdgeWAFInspectBodyBytes)
 	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile OWASP CRS at paranoia level %d: %w", paranoiaLevel, err)

@@ -1,5 +1,7 @@
 package api
 
+import "context"
+
 // CLI auth device-code flow (spec §2.2). The CLI mints a code
 // anonymously, the user pastes it into the browser at /cli-auth, the
 // dashboard binds it to an account (creating one if needed), and the
@@ -45,4 +47,24 @@ type CliAuthExchangeResponse struct {
 	KeyID     string          `json:"key_id"`
 	ExpiresAt string          `json:"expires_at"`
 	Account   AccountResponse `json:"account"`
+}
+
+// CliAuthCodeRequest selects an immutable, limited browser authorization.
+// Empty Purpose preserves the normal CLI login contract.
+type CliAuthCodeRequest struct {
+	Purpose string `json:"purpose,omitempty"`
+}
+
+const CliAuthPurposeMCPRead = "mcp-read"
+const CliAuthPurposeMCPWrite = "mcp-write"
+
+// MintMCPAuthCode uses the existing dashboard sign-in and account-bound consent.
+func (c *Client) MintMCPAuthCode(ctx context.Context, writes bool) (CliAuthCodeResponse, error) {
+	purpose := CliAuthPurposeMCPRead
+	if writes {
+		purpose = CliAuthPurposeMCPWrite
+	}
+	var out CliAuthCodeResponse
+	err := c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Purpose: purpose}, &out)
+	return out, err
 }

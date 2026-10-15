@@ -92,7 +92,7 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 	       ON p.app_id = a.id AND p.node_id = i.node_id
 	WHERE a.status <> 'deleted'
 	  AND i.node_id IS NOT NULL
-	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining')
+	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining')
 	  AND ($1 = '' OR a.id = $1::uuid)
 	  AND (
 	       COALESCE(p.applied_revision, 0) < a.egress_allowlist_revision
@@ -183,7 +183,7 @@ func (s *PgStore) ListServingAppEgressPolicyNodeStates(ctx context.Context, appI
 	WHERE a.id = $1
 	  AND a.status <> 'deleted'
 	  AND i.node_id IS NOT NULL
-	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining')
+	  AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining')
 	GROUP BY n.name, a.egress_allowlist_revision, p.applied_revision, p.observed_at, p.last_error
 	ORDER BY n.name
 	`, appID)

@@ -22,7 +22,7 @@ type instanceState struct {
 	// across compute nodes.
 	total uint64
 	// quietAt is when inflight last dropped to zero: the end of the
-	// instance's last request. ADR-957's quiet pause measures idleness
+	// instance's last request. ADR-1151's quiet pause measures idleness
 	// from here, not from the request's start.
 	quietAt time.Time
 }

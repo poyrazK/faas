@@ -15,8 +15,12 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
+    from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
+    from ..models.operation_workflow_case_obligation_history_item import OperationWorkflowCaseObligationHistoryItem
     from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
     from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+    from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
+    from ..models.operation_workflow_obligation_context import OperationWorkflowObligationContext
     from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
     from ..models.operation_workflow_playbook_progress import OperationWorkflowPlaybookProgress
     from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
@@ -29,6 +33,25 @@ T = TypeVar("T", bound="OperationWorkflowCase")
 class OperationWorkflowCase:
     """OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow."""
 
+    obligation_assessments: list[OperationWorkflowObligationAssessment]
+    obligation_history: list[OperationWorkflowCaseObligationHistoryItem]
+    obligation_history_count: int
+    """Matching obligation groups found in this bounded retained source scan."""
+    obligation_history_truncated: bool
+    """Known receipt pruning or response caps limited this history view."""
+    obligation_history_limited: bool
+    """Deleted sources and older receipts without case attribution are unavailable; missing events never establish
+    completion."""
+    obligation_history_checked_at: datetime.datetime
+    next_actions: list[OperationWorkflowCaseNextAction]
+    """Current obligations and suggestions from retained source records, matched to the exact case before follow-up
+    page truncation. Ordered overdue first, then dated work by due time. Historical delivery snapshots do not create
+    work."""
+    next_action_count: int
+    """Number of retained matching action rows before the 100-row cap. One source can have several obligations;
+    this is not a workflow or global task count."""
+    next_actions_truncated: bool
+    """Additional retained actions were omitted from the bounded response."""
     playbook_progress: list[OperationWorkflowPlaybookProgress]
     """OperationWorkflowCase.playbook_progress. Durable pinned checklists for this exact case, retained
     independently of inboxes and current guidance; at most 100."""
@@ -72,6 +95,11 @@ class OperationWorkflowCase:
     limitations: list[str]
     """OperationWorkflowCase.limitations. Explicit read consistency, retention and application authority
     boundaries."""
+    obligation_context: OperationWorkflowObligationContext | Unset = UNSET
+    """Fresh exact-case transition context shared by obligation assessments. Detailed declared requirements and
+    dependency identities remain in instance.readiness, avoiding duplicated evidence payloads. Stale or absent
+    reports never produce a positive transition verdict; a satisfied edge does not grant application execution or
+    bind a free-form plan."""
     instance: OperationWorkflowInstanceSnapshot | Unset = UNSET
     """Grouped view of the selected contract's declared steps and allowed transitions, current explicit state, and
     transition-history page for one workflow instance. Allowed transitions are contract edges by target Operation;
@@ -81,6 +109,33 @@ class OperationWorkflowCase:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        obligation_assessments = []
+        for obligation_assessments_item_data in self.obligation_assessments:
+            obligation_assessments_item = obligation_assessments_item_data.to_dict()
+            obligation_assessments.append(obligation_assessments_item)
+
+        obligation_history = []
+        for obligation_history_item_data in self.obligation_history:
+            obligation_history_item = obligation_history_item_data.to_dict()
+            obligation_history.append(obligation_history_item)
+
+        obligation_history_count = self.obligation_history_count
+
+        obligation_history_truncated = self.obligation_history_truncated
+
+        obligation_history_limited = self.obligation_history_limited
+
+        obligation_history_checked_at = self.obligation_history_checked_at.isoformat()
+
+        next_actions = []
+        for next_actions_item_data in self.next_actions:
+            next_actions_item = next_actions_item_data.to_dict()
+            next_actions.append(next_actions_item)
+
+        next_action_count = self.next_action_count
+
+        next_actions_truncated = self.next_actions_truncated
+
         playbook_progress = []
         for playbook_progress_item_data in self.playbook_progress:
             playbook_progress_item = playbook_progress_item_data.to_dict()
@@ -127,6 +182,10 @@ class OperationWorkflowCase:
 
         limitations = self.limitations
 
+        obligation_context: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.obligation_context, Unset):
+            obligation_context = self.obligation_context.to_dict()
+
         instance: dict[str, Any] | Unset = UNSET
         if not isinstance(self.instance, Unset):
             instance = self.instance.to_dict()
@@ -135,6 +194,15 @@ class OperationWorkflowCase:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "obligation_assessments": obligation_assessments,
+                "obligation_history": obligation_history,
+                "obligation_history_count": obligation_history_count,
+                "obligation_history_truncated": obligation_history_truncated,
+                "obligation_history_limited": obligation_history_limited,
+                "obligation_history_checked_at": obligation_history_checked_at,
+                "next_actions": next_actions,
+                "next_action_count": next_action_count,
+                "next_actions_truncated": next_actions_truncated,
                 "playbook_progress": playbook_progress,
                 "guidance": guidance,
                 "guidance_status": guidance_status,
@@ -154,6 +222,8 @@ class OperationWorkflowCase:
                 "limitations": limitations,
             }
         )
+        if obligation_context is not UNSET:
+            field_dict["obligation_context"] = obligation_context
         if instance is not UNSET:
             field_dict["instance"] = instance
 
@@ -162,13 +232,52 @@ class OperationWorkflowCase:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
+        from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
+        from ..models.operation_workflow_case_obligation_history_item import OperationWorkflowCaseObligationHistoryItem
         from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
         from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+        from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
+        from ..models.operation_workflow_obligation_context import OperationWorkflowObligationContext
         from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
         from ..models.operation_workflow_playbook_progress import OperationWorkflowPlaybookProgress
         from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
 
         d = dict(src_dict)
+        obligation_assessments = []
+        _obligation_assessments = d.pop("obligation_assessments")
+        for obligation_assessments_item_data in _obligation_assessments:
+            obligation_assessments_item = OperationWorkflowObligationAssessment.from_dict(
+                obligation_assessments_item_data
+            )
+
+            obligation_assessments.append(obligation_assessments_item)
+
+        obligation_history = []
+        _obligation_history = d.pop("obligation_history")
+        for obligation_history_item_data in _obligation_history:
+            obligation_history_item = OperationWorkflowCaseObligationHistoryItem.from_dict(obligation_history_item_data)
+
+            obligation_history.append(obligation_history_item)
+
+        obligation_history_count = d.pop("obligation_history_count")
+
+        obligation_history_truncated = d.pop("obligation_history_truncated")
+
+        obligation_history_limited = d.pop("obligation_history_limited")
+
+        obligation_history_checked_at = datetime.datetime.fromisoformat(d.pop("obligation_history_checked_at"))
+
+        next_actions = []
+        _next_actions = d.pop("next_actions")
+        for next_actions_item_data in _next_actions:
+            next_actions_item = OperationWorkflowCaseNextAction.from_dict(next_actions_item_data)
+
+            next_actions.append(next_actions_item)
+
+        next_action_count = d.pop("next_action_count")
+
+        next_actions_truncated = d.pop("next_actions_truncated")
+
         playbook_progress = []
         _playbook_progress = d.pop("playbook_progress")
         for playbook_progress_item_data in _playbook_progress:
@@ -223,6 +332,13 @@ class OperationWorkflowCase:
 
         limitations = cast(list[str], d.pop("limitations"))
 
+        _obligation_context = d.pop("obligation_context", UNSET)
+        obligation_context: OperationWorkflowObligationContext | Unset
+        if isinstance(_obligation_context, Unset):
+            obligation_context = UNSET
+        else:
+            obligation_context = OperationWorkflowObligationContext.from_dict(_obligation_context)
+
         _instance = d.pop("instance", UNSET)
         instance: OperationWorkflowInstanceSnapshot | Unset
         if isinstance(_instance, Unset):
@@ -231,6 +347,15 @@ class OperationWorkflowCase:
             instance = OperationWorkflowInstanceSnapshot.from_dict(_instance)
 
         operation_workflow_case = cls(
+            obligation_assessments=obligation_assessments,
+            obligation_history=obligation_history,
+            obligation_history_count=obligation_history_count,
+            obligation_history_truncated=obligation_history_truncated,
+            obligation_history_limited=obligation_history_limited,
+            obligation_history_checked_at=obligation_history_checked_at,
+            next_actions=next_actions,
+            next_action_count=next_action_count,
+            next_actions_truncated=next_actions_truncated,
             playbook_progress=playbook_progress,
             guidance=guidance,
             guidance_status=guidance_status,
@@ -248,6 +373,7 @@ class OperationWorkflowCase:
             coordination_checked_at=coordination_checked_at,
             evaluated_at=evaluated_at,
             limitations=limitations,
+            obligation_context=obligation_context,
             instance=instance,
         )
 

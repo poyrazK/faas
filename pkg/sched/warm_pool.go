@@ -121,6 +121,9 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if !e.ownsApp(app) {
 		return nil
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return err
+	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: load account: %w", err)
@@ -158,8 +161,11 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if depErr != nil && !reaperProductionScope(scope) && app.Status == state.AppActive && acct.Active() && api.Plan(acct.Plan).WarmPoolAllowed() {
 		return e.reclaimWarmPool(ctx, obsolete, 0)
 	}
+	// A paused warm VM holds resident RAM and is billed, so an account at its
+	// spend cap keeps no pool until the cap is raised or the month rolls over
+	// (ADR-1162).
 	if desired == 0 || app.Status != state.AppActive || !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() ||
-		!instanceModeUsesSnapshots(instanceModeForApp(app)) {
+		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, acct.ID) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
 	}
 	if depErr != nil {
@@ -374,6 +380,10 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 			}
 		}
 	}
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		return err
+	}
 	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequestsForManifest(app.Manifest)); err != nil {
 		_ = e.store.DeleteInstance(ctx, ins.ID)
 		return fmt.Errorf("acquire host ports: %w", err)
@@ -411,10 +421,13 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	vmstatePath, vmstateStorageKey := e.snapshotStateLocators(placement.NodeID, snap)
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
-	out, err := paused.CreatePausedFromSnapshot(restoreCtx, placement.NodeID, ins.ID, spec, SnapshotRef{
+	out, err := e.createRuntimeWithStandards(restoreCtx, placement.NodeID, ins.ID, string(state.StateWaking), spec, &SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
-		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey, MemBytes: snap.MemBytes,
-	})
+		ApplicationStandardCaptureToken: snap.ApplicationStandardCaptureToken,
+		VMStatePath:                     vmstatePath,
+		VMStateStorageKey:               vmstateStorageKey,
+		MemBytes:                        snap.MemBytes,
+	}, true)
 	cancel()
 	if err != nil {
 		cleanup("paused_restore_failed")
@@ -437,7 +450,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		cleanup("runtime_fence_failed")
 		return err
 	}
-	fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+	fresh, err := e.publishOwnedRuntimeWithStandards(ctx, out, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID,
 		ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence.SecretFence, ConfigFence: fence,
 		Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),

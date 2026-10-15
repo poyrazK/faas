@@ -90,6 +90,15 @@ func (c *Client) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx contex
 
 func readinessFollowUpQuery(opts OperationWorkflowReadinessFollowUpOptions) url.Values {
 	q := readinessSubscriptionQuery(opts.AppID, opts.Scope, opts.TenantID)
+	if opts.View != "" {
+		q.Set("view", opts.View)
+	}
+	if opts.ActionKind != "" {
+		q.Set("action_kind", opts.ActionKind)
+	}
+	if opts.ActionTrigger != "" {
+		q.Set("action_trigger", opts.ActionTrigger)
+	}
 	if opts.ReminderOnly {
 		q.Set("reminder_only", "true")
 	}
@@ -209,5 +218,23 @@ func (c *Client) ReviewPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Co
 	opts.Limit = 0
 
 	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/reviews?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) ConfigureAccountWorkflowPlaybookEvidenceWatch(ctx context.Context, slug string, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookEvidenceWatchRequest) (OperationWorkflowPlaybookEvidenceWatch, error) {
+	var out OperationWorkflowPlaybookEvidenceWatch
+	opts.Offset = 0
+	opts.Limit = 0
+	opts.AppID = ""
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/evidence-watch?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
+	return out, err
+}
+
+func (c *Client) ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookEvidenceWatchRequest) (OperationWorkflowPlaybookEvidenceWatch, error) {
+	var out OperationWorkflowPlaybookEvidenceWatch
+	opts.Offset = 0
+	opts.Limit = 0
+
+	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/playbook-progress/"+url.PathEscape(id)+"/evidence-watch?"+workflowCoordinationTimelineQuery(opts).Encode(), req, &out)
 	return out, err
 }

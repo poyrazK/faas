@@ -18,6 +18,7 @@ var ErrManagedRealtimeScheduleLimit = errors.New("state: realtime schedule limit
 
 type managedRealtimeScheduleKey struct{ endpointID, channel, id string }
 type ManagedRealtimeSchedule struct {
+	TTLSeconds           int               `json:"ttl_seconds,omitempty"`
 	Group                string            `json:"group,omitempty"`
 	Conditions           json.RawMessage   `json:"conditions,omitempty"`
 	OnConditionFailure   string            `json:"on_condition_failure,omitempty"`
@@ -106,6 +107,9 @@ func recordRealtimeScheduleFailure(row ManagedRealtimeSchedule, code string, now
 	return row
 }
 func validateRealtimeSchedule(row ManagedRealtimeSchedule) error {
+	if row.TTLSeconds < 0 || row.TTLSeconds > api.RealtimeMessageTTLMaxSeconds {
+		return ErrManagedRealtimeHistoryInvalid
+	}
 	if row.Group != "" && !reducerKeyValid(row.Group) {
 		return ErrManagedRealtimeHistoryInvalid
 	}
@@ -165,7 +169,7 @@ func cloneRealtimeSchedule(row ManagedRealtimeSchedule) ManagedRealtimeSchedule 
 	return row
 }
 func scheduleMatches(row, candidate ManagedRealtimeSchedule, now time.Time) bool {
-	return row.Status == "pending" && row.Version == candidate.Version && row.Occurrence == candidate.Occurrence && row.Version < managedRealtimeMaxEntityVersion && row.Attempts < managedRealtimeMaxEntityVersion && row.CycleAttempts < row.MaxAttempts && row.DeliverAt.Equal(candidate.DeliverAt) && !realtimeScheduleDueAt(row).After(now) && row.Binary == candidate.Binary && bytes.Equal(row.Data, candidate.Data) && equalRealtimeMetadata(row.Metadata, candidate.Metadata)
+	return row.TTLSeconds == candidate.TTLSeconds && row.Status == "pending" && row.Version == candidate.Version && row.Occurrence == candidate.Occurrence && row.Version < managedRealtimeMaxEntityVersion && row.Attempts < managedRealtimeMaxEntityVersion && row.CycleAttempts < row.MaxAttempts && row.DeliverAt.Equal(candidate.DeliverAt) && !realtimeScheduleDueAt(row).After(now) && row.Binary == candidate.Binary && bytes.Equal(row.Data, candidate.Data) && equalRealtimeMetadata(row.Metadata, candidate.Metadata)
 }
 func scheduleKey(row ManagedRealtimeSchedule) managedRealtimeScheduleKey {
 	return managedRealtimeScheduleKey{row.EndpointID, row.Channel, row.ID}
@@ -339,6 +343,10 @@ func (m *MemStore) ListDueManagedRealtimeSchedules(ctx context.Context, limit in
 	return out, nil
 }
 func (m *MemStore) PublishManagedRealtimeSchedule(ctx context.Context, row ManagedRealtimeSchedule) (ManagedRealtimeChannelMessage, error) {
+	ctx, err := ttlContext(ctx, row.TTLSeconds)
+	if err != nil {
+		return ManagedRealtimeChannelMessage{}, err
+	}
 	return m.appendManagedRealtimeChannel(ctx, row.EndpointID, row.Channel, row.Data, row.Binary, "", scheduledRealtimeMetadata(row), nil, nil, &row)
 }
 func (m *MemStore) FailManagedRealtimeSchedule(ctx context.Context, candidate ManagedRealtimeSchedule, code string) error {

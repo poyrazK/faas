@@ -32,7 +32,7 @@ func (m *MemStore) PinDeploymentBuildDigest(_ context.Context, id, export, diges
 	}
 	if d.Kind == DeploymentKindImage || d.RootfsPath != export ||
 		(d.ImageDigest != "" && d.ImageDigest != digest) ||
-		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
+		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging && d.Status != DeploySnapshotting) {
 		return ErrInvalidStateTransition
 	}
 	d.ImageDigest = digest
@@ -47,7 +47,7 @@ func (s *PgStore) PinDeploymentBuildDigest(ctx context.Context, id, export, dige
 	tag, err := s.pool.Exec(ctx, `update deployments set image_digest=$3
 		where id=$1 and rootfs_path=$2 and kind<>'image'
 		and (image_digest='' or image_digest=$3)
-		and status in ('pending','building','imaging')`, id, export, digest)
+		and status in ('pending','building','imaging','snapshotting')`, id, export, digest)
 	if err != nil {
 		return mapErr(err)
 	}

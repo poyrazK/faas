@@ -11,11 +11,15 @@ package edgewaf
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -191,5 +195,170 @@ func TestInspectorLoad(t *testing.T) {
 		obs.count(OutcomeDropped), pct(obs.count(OutcomeDropped)), obs.count(OutcomeError))
 	if obs.count(OutcomeError) > 0 {
 		t.Errorf("%d inspections errored", obs.count(OutcomeError))
+	}
+}
+
+// inlineAttacks are header and URI attacks the in-path rule set must catch.
+func inlineAttacks() []gateway.WAFSample {
+	return []gateway.WAFSample{
+		sample(http.MethodGet, "/api/items?q=1%27%20OR%201%3D1--", nil, ""),
+		sample(http.MethodGet, "/search?q=%3Cscript%3Ealert(document.cookie)%3C%2Fscript%3E", nil, ""),
+		sample(http.MethodGet, "/download?file=..%2F..%2F..%2Fetc%2Fpasswd", nil, ""),
+		sample(http.MethodGet, "/ping?host=127.0.0.1%3Bcat%20%2Fetc%2Fpasswd", nil, ""),
+		sample(http.MethodGet, "/login?next=%0d%0aSet-Cookie:%20session=attacker", nil, ""),
+		withUA(sample(http.MethodGet, "/api/items?id=1", nil, ""), "sqlmap/1.7.2#stable (https://sqlmap.org)"),
+	}
+}
+
+// TestInlineLoad drives CheckInline the way gatewayd-internal does, one
+// goroutine per request, with Poisson arrivals at fixed mean rates, for the
+// ADR-831 preview gate (gateway_waf_inline_seconds p95 under 2 ms). Per rate
+// it reports check-time percentiles, process CPU per check (wall time well
+// above it means the checks waited for a CPU), GC cycles, the skipped
+// fraction and the detection rate. It is opt-in (FAAS_WAF_INLINE_LOAD=1)
+// because it saturates the CPU on purpose. To measure contention, load the
+// node from a separate process: a goroutine spinning in this one holds a Go
+// scheduler slot for 10 ms at a time, which no tenant VM does.
+//
+// FAAS_WAF_INLINE_RATES (comma-separated mean req/s across all apps,
+// default 100,500,1000,2000), FAAS_WAF_INLINE_APPS (default 10) and
+// FAAS_WAF_INLINE_SECONDS per rate (default 10) tune the run.
+//
+//	FAAS_WAF_INLINE_LOAD=1 go test ./pkg/edgewaf/ -run TestInlineLoad -v
+func TestInlineLoad(t *testing.T) {
+	if os.Getenv("FAAS_WAF_INLINE_LOAD") != "1" {
+		t.Skip("set FAAS_WAF_INLINE_LOAD=1 to run the in-path WAF load test")
+	}
+	env := func(name string, def int) int {
+		if v, err := strconv.Atoi(os.Getenv(name)); err == nil && v >= 0 {
+			return v
+		}
+		return def
+	}
+	rates := []int{100, 500, 1000, 2000}
+	if v := os.Getenv("FAAS_WAF_INLINE_RATES"); v != "" {
+		rates = rates[:0]
+		for _, f := range strings.Split(v, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(f))
+			if err != nil || n <= 0 {
+				t.Fatalf("FAAS_WAF_INLINE_RATES: bad rate %q", f)
+			}
+			rates = append(rates, n)
+		}
+	}
+	apps := max(env("FAAS_WAF_INLINE_APPS", 10), 1)
+	seconds := max(env("FAAS_WAF_INLINE_SECONDS", 10), 1)
+
+	var benign []gateway.WAFSample
+	for _, br := range benignCorpus() {
+		if !br.content && br.inPathFP == nil {
+			benign = append(benign, br.s)
+		}
+	}
+	t.Logf("in-path load: %d apps, %ds per rate, GOMAXPROCS %d, %d check slots, %d ms/s per app (burst %d)",
+		apps, seconds, runtime.GOMAXPROCS(0), api.EdgeWAFInlineConcurrency, api.EdgeWAFInlineMsPerAppPerSecond, api.EdgeWAFInlineMsPerAppBurst)
+	for _, rate := range rates {
+		runInlineLoad(t, rate, apps, seconds, benign, inlineAttacks())
+	}
+}
+
+// inlineLoadStats collects one rate's outcomes.
+type inlineLoadStats struct {
+	mu                         sync.Mutex
+	checked                    []float64
+	outcomes                   map[string]int
+	attacksSent, attacksCaught int
+	benignFlagged              int
+}
+
+func (st *inlineLoadStats) record(res gateway.WAFInlineResult, attack bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.outcomes[res.Outcome]++
+	if res.Outcome != gateway.WAFInlineSkipped {
+		st.checked = append(st.checked, res.Seconds)
+	}
+	switch {
+	case attack:
+		st.attacksSent++
+		if res.Outcome == gateway.WAFInlineDetected {
+			st.attacksCaught++
+		}
+	case res.Outcome == gateway.WAFInlineDetected:
+		st.benignFlagged++
+	}
+}
+
+func cpuSeconds(t *testing.T) float64 {
+	t.Helper()
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		t.Fatalf("getrusage: %v", err)
+	}
+	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano()).Seconds()
+}
+
+func runInlineLoad(t *testing.T, rate, apps, seconds int, benign, attacks []gateway.WAFSample) {
+	t.Helper()
+	i := New(&recordingObserver{}, nil)
+	if _, err := i.inlineWAF(); err != nil {
+		t.Fatal(err)
+	}
+	st := &inlineLoadStats{outcomes: map[string]int{}}
+	var reqs sync.WaitGroup
+	var gcBefore, gcAfter runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&gcBefore)
+	cpuBefore := cpuSeconds(t)
+
+	// One scheduler draws exponential gaps, so arrivals are Poisson at the
+	// mean rate; when a sleep overshoots, the requests that fell due are
+	// sent at once, as a burst of real traffic would arrive.
+	mean := float64(time.Second) / float64(rate)
+	start := time.Now()
+	deadline := start.Add(time.Duration(seconds) * time.Second)
+	next := start
+	for n := 0; ; n++ {
+		next = next.Add(time.Duration(rand.ExpFloat64() * mean))
+		if next.After(deadline) {
+			break
+		}
+		if d := time.Until(next); d > 0 {
+			time.Sleep(d)
+		}
+		attack := n%20 == 10
+		s := benign[n%len(benign)]
+		if attack {
+			s = attacks[(n/20)%len(attacks)]
+		}
+		s.AppID = "app-" + strconv.Itoa(n%apps)
+		reqs.Add(1)
+		go func() {
+			defer reqs.Done()
+			st.record(i.CheckInline(s), attack)
+		}()
+	}
+	reqs.Wait()
+	cpu := cpuSeconds(t) - cpuBefore
+	runtime.ReadMemStats(&gcAfter)
+
+	total := 0
+	for _, n := range st.outcomes {
+		total += n
+	}
+	checked := st.checked
+	slices.Sort(checked)
+	ms := func(p float64) float64 {
+		if len(checked) == 0 {
+			return 0
+		}
+		return 1000 * checked[min(int(p*float64(len(checked))), len(checked)-1)]
+	}
+	pct := func(n, d int) float64 { return 100 * float64(n) / float64(max(d, 1)) }
+	t.Logf("rate %5d req/s: %6d requests, check p50 %.2f ms, p95 %.2f ms, p99 %.2f ms, max %.2f ms; CPU %.2f ms per check, %d GCs; skipped %.1f%%; attacks detected %d/%d (skips included); benign flagged %d; errors %d",
+		rate, total, ms(0.50), ms(0.95), ms(0.99), ms(1), 1000*cpu/float64(max(len(checked), 1)), gcAfter.NumGC-gcBefore.NumGC,
+		pct(st.outcomes[gateway.WAFInlineSkipped], total), st.attacksCaught, st.attacksSent, st.benignFlagged, st.outcomes[gateway.WAFInlineError])
+	if st.outcomes[gateway.WAFInlineError] > 0 {
+		t.Errorf("rate %d: %d checks errored", rate, st.outcomes[gateway.WAFInlineError])
 	}
 }

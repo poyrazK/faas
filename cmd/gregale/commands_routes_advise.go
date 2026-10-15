@@ -67,6 +67,9 @@ func applyRouteAdvice(ctx context.Context, client *api.Client, advice api.RouteA
 	if suggestion == nil {
 		return printErr("Unknown route advice", fmt.Errorf("no current suggestion %q for %s; run `gregale routes advise %s` with the same window", id, advice.Slug, advice.Slug))
 	}
+	if suggestion.Setting != nil {
+		return applyRouteAdviceSetting(ctx, client, advice.Slug, *suggestion.Setting)
+	}
 	created := []api.EdgeRuleResponse{}
 	for _, rule := range suggestion.Rules {
 		rule.Enabled = &enable
@@ -98,6 +101,47 @@ func routeAdviceRuleIDs(rules []api.EdgeRuleResponse) string {
 	return strings.Join(ids, ", ")
 }
 
+// applyRouteAdviceSetting applies an app-level suggestion through the
+// setting's own API (ADR-1152).
+func applyRouteAdviceSetting(ctx context.Context, client *api.Client, slug string, setting api.RouteAdviceSetting) int {
+	switch {
+	case setting.WakeAhead != nil:
+		out, err := client.SetServiceWakeAhead(ctx, slug, *setting.WakeAhead)
+		if err != nil {
+			return printErr("Could not turn on service wake-ahead", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(out))
+		}
+		renderWakeAhead(osStdout, out)
+	case len(setting.RoutePriorities) > 0:
+		out, err := client.SetRoutePriorities(ctx, slug, setting.RoutePriorities)
+		if err != nil {
+			return printErr("Could not save route priorities", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(out))
+		}
+		renderRoutePriorities(osStdout, out)
+	default:
+		return printErr("Unknown route advice", errors.New("the suggestion carries no setting this CLI can apply"))
+	}
+	return 0
+}
+
+func renderRouteAdviceSetting(w io.Writer, setting api.RouteAdviceSetting) {
+	if setting.WakeAhead != nil {
+		_, _ = fmt.Fprintf(w, "  Setting: service wake-ahead %s\n", map[bool]string{true: "on", false: "off"}[*setting.WakeAhead])
+	}
+	for _, r := range setting.RoutePriorities {
+		method := r.Method
+		if method == "" {
+			method = "any"
+		}
+		_, _ = fmt.Fprintf(w, "  Setting: %s %s %s\n", r.Class, method, r.Path)
+	}
+}
+
 func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 	_, _ = fmt.Fprintf(w, "Route advice for %s — traffic %s to %s, %ds cache what-if\n", a.Slug, a.From, a.Until, a.CacheMaxAgeSeconds)
 	if a.WindowClamped {
@@ -112,8 +156,15 @@ func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 		_, _ = fmt.Fprintf(w, "\n[%s] %s — %s\n", s.ID, s.Kind, s.Title)
 		_, _ = fmt.Fprintf(w, "  Why:     %s\n", s.Rationale)
 		_, _ = fmt.Fprintf(w, "  Impact:  %s\n", s.Impact.Summary)
+		if line := routeAdviceContentLine(s.Evidence); line != "" {
+			_, _ = fmt.Fprintf(w, "  Content: %s\n", line)
+		}
 		for _, c := range s.Cautions {
 			_, _ = fmt.Fprintf(w, "  Caution: %s\n", c)
+		}
+		if s.Setting != nil {
+			renderRouteAdviceSetting(w, *s.Setting)
+			continue
 		}
 		hosts := make([]string, 0, len(s.Rules))
 		for _, r := range s.Rules {
@@ -121,5 +172,20 @@ func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  Rules:   %d (%s)\n", len(s.Rules), strings.Join(hosts, ", "))
 	}
-	_, _ = fmt.Fprintf(w, "\nApply one with `gregale routes advise %s --apply ID` (same --since and --cache-max-age); rules are created disabled unless you add --enable.\n", a.Slug)
+	_, _ = fmt.Fprintf(w, "\nApply one with `gregale routes advise %s --apply ID` (same --since and --cache-max-age); rules are created disabled unless you add --enable, and settings take effect at once.\n", a.Slug)
+}
+
+// routeAdviceContentLine summarizes learned cacheability evidence (ADR-1188).
+func routeAdviceContentLine(e api.RouteAdviceEvidence) string {
+	if e.ContentObserved == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("%d responses compared; %d repeats, %d changed", e.ContentObserved, e.ContentRepeats, e.ContentChanges)
+	if e.ContentUncacheable > 0 {
+		line += fmt.Sprintf(", %d not storable", e.ContentUncacheable)
+	}
+	if e.SafeMaxAgeSeconds > 0 {
+		return line + fmt.Sprintf("; safe max-age %ds", e.SafeMaxAgeSeconds)
+	}
+	return line + "; not enough repeats to measure a safe max-age yet"
 }

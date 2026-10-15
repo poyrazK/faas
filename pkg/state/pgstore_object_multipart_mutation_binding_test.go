@@ -88,7 +88,7 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	const shape = `SELECT jsonb_build_array((SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='guard_bound_multipart_mutation'),(SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='compose_object_multipart_mutation'),(SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='protect_bound_multipart_journal'),(SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname='object_multipart_mutation_composition'))::text`
+	const shape = `SELECT jsonb_build_array((SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='guard_bound_multipart_mutation'),(SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='compose_object_multipart_mutation'),(SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='protect_bound_multipart_journal'),(SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname='object_multipart_mutation_composition'),(SELECT pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='object_multipart_checksum_guard'),(SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname='object_multipart_checksum_guard' AND tgrelid='object_storage_multipart_uploads'::regclass))::text`
 	var before, after string
 	if err := tx.QueryRow(ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -109,6 +109,18 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 	}
 	copyIntentParts := strings.SplitN(string(copyIntent), "-- +goose Down", 2)
 	putIntentParts := partPutMigrationParts(t)
+	checksumRaw, err := migrations.FS.ReadFile("20261013135901265_object_multipart_checksums.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksumParts := strings.SplitN(string(checksumRaw), "-- +goose Down", 2)
+	if len(checksumParts) != 2 {
+		t.Fatal("missing checksum migration rollback")
+	}
+	// Unwind and restore every layer that defines the bound journal guard.
+	if _, err = tx.Exec(ctx, checksumParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = tx.Exec(ctx, putIntentParts[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +150,9 @@ func TestPgObjectMultipartMutationBindingGuardsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, putIntentParts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, checksumParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {

@@ -1,0 +1,25 @@
+name: Team orders Data API
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Restore the pinned CLI and SDK
+        run: node tools/artifacts.mjs restore --cli
+      - name: Check types, client behavior and team isolation
+        run: ./.gregale-tools/gregale data-api dev --port 0 --once --check-types --check
+      - name: Build the dashboard
+        run: npm run build:browser --prefix client

@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -181,12 +182,25 @@ type Config struct {
 	// check either way.
 	MeasuredAdmission bool `toml:"measured_admission"`
 
-	// QuietPauseAdmission (ADR-957) makes the vCPU and CPU gates count only
+	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
 	// active instances: bookings less those vmmd reports quiet-paused, with
 	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
 	// budget. Off by default; turn it on together with vmmd's quiet_pause on
 	// the same nodes. A node without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
+
+	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
+	// place at its idle timeout instead of parking it: vmmd keeps the VM
+	// paused in memory, unbilled, and the next request thaws it. Off by
+	// default. Thawing and parking frozen instances run either way, so
+	// turning it off drains the tier within FrozenTTL. FAAS_FROZEN_TIER
+	// overrides it.
+	FrozenTier bool `toml:"frozen_tier"`
+	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
+	// functions to request-mode apps whose declared pause is not never.
+	// Off by default and ignored unless frozen_tier is on.
+	// FAAS_FROZEN_TIER_APPS overrides it.
+	FrozenTierApps bool `toml:"frozen_tier_apps"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -498,6 +512,21 @@ func LoadConfig(path string) (*Config, error) {
 	// (single-box dev back-compat).
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
+	}
+	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
+	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER must be a boolean (got %q)", v)
+		}
+		c.FrozenTier = enabled
+	}
+	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
+		}
+		c.FrozenTierApps = enabled
 	}
 	applyRoutingEnv()
 	return c, nil

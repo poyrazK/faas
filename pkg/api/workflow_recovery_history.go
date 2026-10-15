@@ -51,25 +51,35 @@ type WorkflowRecoveryCandidateEvidence struct {
 }
 
 type WorkflowRecoveryHistoryEntry struct {
-	CandidateEvidence *WorkflowRecoveryCandidateEvidence `json:"candidate_evidence,omitempty"`
-	EvaluationReason  string                             `json:"evaluation_reason,omitempty"`
-	Durable           bool                               `json:"durable,omitempty"`
-	EpisodeID         string                             `json:"episode_id,omitempty"`
-	Policy            *WorkflowRecoveryPolicy            `json:"policy,omitempty"`
-	ID                string                             `json:"id"`
-	OccurredAt        time.Time                          `json:"occurred_at"`
-	Kind              string                             `json:"kind"`
-	Outcome           string                             `json:"outcome"`
-	Reason            string                             `json:"reason"`
-	PolicyVersion     int64                              `json:"policy_version,omitempty"`
-	Workflow          string                             `json:"workflow,omitempty"`
-	RunID             string                             `json:"run_id,omitempty"`
-	ReviewID          string                             `json:"review_id,omitempty"`
-	ActionID          string                             `json:"action_id,omitempty"`
-	JobID             string                             `json:"job_id,omitempty"`
-	ChildJobID        string                             `json:"child_job_id,omitempty"`
-	ActorKind         string                             `json:"actor_kind,omitempty"`
-	ActorID           string                             `json:"actor_id,omitempty"`
+	PollingNotification *WorkflowRecoveryPollingNotification `json:"polling_notification,omitempty"`
+	InitialFailureID    string                               `json:"initial_failure_id,omitempty"`
+	EvidenceKind        string                               `json:"evidence_kind,omitempty"`
+	ResumeCount         *int                                 `json:"resume_count,omitempty"`
+	RequestID           string                               `json:"request_id,omitempty"`
+	NotificationEventID string                               `json:"notification_event_id,omitempty"`
+	DiagnosisReason     string                               `json:"diagnosis_reason,omitempty"`
+	ReviewURL           string                               `json:"review_url,omitempty"`
+	EvidenceURL         string                               `json:"evidence_url,omitempty"`
+	JobURL              string                               `json:"job_url,omitempty"`
+	CandidateEvidence   *WorkflowRecoveryCandidateEvidence   `json:"candidate_evidence,omitempty"`
+	EvaluationReason    string                               `json:"evaluation_reason,omitempty"`
+	Durable             bool                                 `json:"durable,omitempty"`
+	EpisodeID           string                               `json:"episode_id,omitempty"`
+	Policy              *WorkflowRecoveryPolicy              `json:"policy,omitempty"`
+	ID                  string                               `json:"id"`
+	OccurredAt          time.Time                            `json:"occurred_at"`
+	Kind                string                               `json:"kind"`
+	Outcome             string                               `json:"outcome"`
+	Reason              string                               `json:"reason"`
+	PolicyVersion       int64                                `json:"policy_version,omitempty"`
+	Workflow            string                               `json:"workflow,omitempty"`
+	RunID               string                               `json:"run_id,omitempty"`
+	ReviewID            string                               `json:"review_id,omitempty"`
+	ActionID            string                               `json:"action_id,omitempty"`
+	JobID               string                               `json:"job_id,omitempty"`
+	ChildJobID          string                               `json:"child_job_id,omitempty"`
+	ActorKind           string                               `json:"actor_kind,omitempty"`
+	ActorID             string                               `json:"actor_id,omitempty"`
 }
 type WorkflowRecoveryHistory struct {
 	ObservedAt           time.Time                      `json:"observed_at"`

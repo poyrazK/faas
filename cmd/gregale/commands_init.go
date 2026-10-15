@@ -114,11 +114,11 @@ func runCmdInitList(stdout io.Writer) int {
 	if jsonOutput {
 		return jsonOut(writeJSONTo(stdout, struct {
 			Templates []string `json:"templates"`
-		}{Templates: templates.Names}))
+		}{Templates: templates.ListedNames()}))
 	}
 	for _, cat := range templates.CategoryOrder {
 		var inCat []string
-		for _, n := range templates.Names {
+		for _, n := range templates.ListedNames() {
 			if templates.CategoryFor(n) == cat {
 				inCat = append(inCat, n)
 			}
@@ -159,7 +159,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// touch the embed FS.
 	if !templates.Exists(tpl) {
 		PrintFail(stderr, "unknown --template %q (known: %s)",
-			tpl, strings.Join(templates.Names, ", "))
+			tpl, strings.Join(templates.ListedNames(), ", "))
 		return 1
 	}
 	if deploy && (templates.CategoryFor(tpl) == "operations" || templates.CategoryFor(tpl) == "durable-entities") {
@@ -275,8 +275,10 @@ func docsURLForTemplate(name string) string {
 		return secretsDocsURL
 	case "durable-entity-node":
 		return "https://gregale.dev/docs/durable-entity-development"
-	case "data-api", "data-api-starter":
+	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
+	case "auth":
+		return "https://gregale.dev/docs/application-auth"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
@@ -489,8 +491,21 @@ func nextStepsFor(tpl string) []string {
 			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
 			"  cd <dest> && gregale deploy",
 		}
+	case "auth":
+		return []string{"Deploy application Auth bound to a ready managed database:", "  gregale auth create <slug> --database <database> --site-url https://app.example.com", "See README.md for sign-up, tokens and Data API RLS."}
 	case "data-api":
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
+	case "data-api-support-console":
+		return []string{"Run the synthetic staff sign-in demo:", "  cd <dest> && npm ci && npm run demo", "Configure your OIDC provider, read-only API tokens and approved support views using README.md.", "Run npm test before deploying the console; the demo is never used in production."}
+	case "data-api-teams":
+		return []string{
+			"Install the approved matching SDK bundle:",
+			"  cd <dest> && gregale data-api install --bundle /path/to/data-api-bundle.json --client-directory client",
+			"Verify the client, team access and reliable save scenarios:",
+			"  gregale data-api dev --port 0 --once --check-types --check",
+			"Start the API with `gregale data-api dev --port 0 --check` and follow README.md for the dashboard.",
+			"The seed identities are local test data; provision real membership through reviewed owner migrations.",
+		}
 	case "data-api-starter":
 		return []string{
 			"With Node.js 22+, npm and local Docker, run the starter scenarios:",

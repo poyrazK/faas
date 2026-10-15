@@ -21,6 +21,7 @@ import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeRespo
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
@@ -34,6 +35,7 @@ import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequ
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
+import type { WorkerRolloutObservation } from '../models/WorkerRolloutObservation.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -248,6 +250,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        409: `code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -481,7 +484,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found`,
-        409: `code: dev_source_base_missing. Retry with a complete source snapshot.`,
+        409: `code: dev_source_base_missing | application_standards_pending. A missing source base requires a complete snapshot; pending inherited controls require enrollment to finish.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -551,7 +554,8 @@ export class DeploymentsService {
         (code: github_install_not_found).
         `,
         409: `code: source_ref_stale. source_branch no longer points at the
-        requested immutable commit SHA.
+        requested immutable commit SHA. A service awaiting inherited
+        controls instead returns code: application_standards_pending.
         `,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -663,12 +667,58 @@ export class DeploymentsService {
         on the CLI path is the symptom of a misconfigured
         --name pointing at a row the caller doesn't own.
         `,
+        409: `code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes.`,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a coherent worker-generation residency snapshot
+   * @returns WorkerRolloutObservation Database snapshot of selected and retired worker residents. Does not establish queue processing or external consumer completion.
+   * @returns Problem Generic 503 envelope. Used by the apid capacity gate (e.g.
+   * host age recipient not loaded → registry credential PUT
+   * returns 503 instead of accepting plaintext).
+   *
+   * @throws ApiError
+   */
+  public static getWorkerRolloutObservation({
+    slug,
+    id,
+    environment,
+    scope,
+  }: {
+    /**
+     * Application slug for worker rollout observation.
+     */
+    slug: string,
+    /**
+     * Exact deployment ID for worker rollout observation.
+     */
+    id: string,
+    /**
+     * Selected environment for passive worker generation observations; omit for the default scope.
+     */
+    environment?: string,
+    /**
+     * Explicit default scope. Exactly one selector is required.
+     */
+    scope?: 'default',
+  }): CancelablePromise<WorkerRolloutObservation | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollouts/{id}/observation',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'environment': environment,
+        'scope': scope,
       },
     });
   }
@@ -1197,6 +1247,10 @@ export class DeploymentsService {
    * `invalid_traffic_percent`). The Σ invariant is asserted
    * post-write as a defensive backstop (409
    * `traffic_percent_sum_invalid`).
+   * Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+   * audit timeline. Accepted evidence commits with traffic; rejected evidence
+   * is saved after rollback. Audit-storage failure returns 503
+   * mcp_admission_evidence_unavailable.
    * An optional expected_serving_deployment_id is checked under the
    * same live-row locks before rebalance. A stale expectation returns
    * 409 `traffic_serving_changed` without changing traffic.
@@ -1255,6 +1309,7 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `MCP traffic admission evidence could not be committed (mcp_admission_evidence_unavailable). Inspect traffic before retrying.`,
       },
     });
   }

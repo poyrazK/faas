@@ -202,12 +202,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
-	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled)
+	if handler.AIGatewayRollout, err = cfg.AIGatewayRollout(os.Getenv); err != nil {
+		return fmt.Errorf("outboundd: %w", err)
+	}
+	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled,
+		"rollout_accounts", len(handler.AIGatewayRollout), "rollout_limited", handler.AIGatewayRollout != nil)
 	// ADR-990: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err
 	}
 	go runAIUsagePrune(ctx, backend, log)
+	// ADR-997: replays recorded by apid run through this daemon's handler.
+	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
+	go replayWorker.Run(ctx)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err

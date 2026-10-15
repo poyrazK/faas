@@ -19,7 +19,7 @@ type appReadinessProbeLoop struct {
 	events     *events.Platform
 	log        *slog.Logger
 	probeFn    func(context.Context, int) string
-	// quietGate reports ADR-957 quiet pause state; nil means never paused.
+	// quietGate reports ADR-1151 quiet pause state; nil means never paused.
 	quietGate func() (paused bool, epoch uint64)
 	failures  int
 	ready     bool
@@ -62,7 +62,7 @@ func (l *appReadinessProbeLoop) runOne(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	// ADR-957: skip a quiet-paused guest, and drop an outcome if the guest
+	// ADR-1151: skip a quiet-paused guest, and drop an outcome if the guest
 	// was paused at any point while the probe ran. A paused instance keeps
 	// its last readiness; the next request resumes it.
 	pausedBefore, epochBefore := l.quiet()
