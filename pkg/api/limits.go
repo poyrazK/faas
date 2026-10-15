@@ -361,6 +361,11 @@ const (
 // invocation plus wake and queueing margin.
 const RealtimeTriggerMinLeaseSeconds = 120
 
+// RealtimeTriggerDefaultBatchSize is how many messages one invocation of a
+// batch-delivery realtime trigger receives when batch_size_max is not set
+// (ADR-1321); RealtimeConsumerGroupBatchMax caps it.
+const RealtimeTriggerDefaultBatchSize = 10
+
 // Realtime usage recording (ADR-1323: recorded, never billed). Each
 // realtimed process reports its cumulative per-endpoint usage for the current
 // UTC hour once per RealtimeUsageReportInterval, in reports of at most

@@ -113,6 +113,7 @@ func triggerResponse(t sqlc.Trigger) api.Trigger {
 		BatchSizeMax:         int(t.BatchSizeMax),
 		BatchWindowMs:        int(t.BatchWindowMs),
 		MaxAttempts:          int(t.MaxAttempts),
+		Delivery:             triggerDeliveryOrDefault(t.Delivery),
 		RetryPolicy:          retryPolicyFromTriggerConfig(t.Config),
 		PayloadMaxBytes:      int(t.PayloadMaxBytes),
 		BrokerPoisonStrategy: t.BrokerPoisonStrategy,
@@ -227,9 +228,15 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, p)
 		return
 	}
+	delivery, p := requestedTriggerDelivery(req.Kind, req.Delivery)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if realtimeCfg != nil {
-		// One message per delivery; the bound group owns attempts (ADR-1322).
-		batchSizeMax, maxAttempts = 1, 1
+		// The bound group owns attempts (ADR-1322); batch delivery may claim
+		// several messages per invocation (ADR-1321).
+		batchSizeMax, maxAttempts = managedrealtime.RealtimeTriggerBatchSize(delivery, req.BatchSizeMax), 1
 	}
 	sealedConfig, p := sealTriggerConfig(req.Kind, req.Config)
 	if p != nil {
@@ -240,8 +247,13 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	source := triggerSourceForConfig(req.Kind, req.Config)
 	// A realtime trigger is created disabled and enabled only once it is
 	// bound, so no dispatcher polls a group it cannot consume.
-	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil,
+	// Batch delivery is switched on before the trigger is enabled, so no record
+	// is ever delivered in the wrong shape.
+	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil && delivery == api.TriggerDeliveryRecord,
 		source, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
+	if problem == nil && delivery != api.TriggerDeliveryRecord {
+		t, problem = s.applyTriggerDelivery(r.Context(), t, delivery, enabled && realtimeCfg == nil)
+	}
 	if problem == nil && realtimeCfg != nil {
 		t, problem = s.bindRealtimeTrigger(r.Context(), acct, t, *realtimeCfg, enabled)
 	}
@@ -774,7 +786,13 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if t.Kind == string(api.TriggerKindRealtime) {
-		if p := managedrealtime.CheckRealtimeTriggerUpdate(t.Config, &req); p != nil {
+		if p := managedrealtime.CheckRealtimeTriggerUpdate(t.Config, triggerDeliveryOrDefault(t.Delivery), t.BatchSizeMax, &req); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
+	if req.Delivery != nil {
+		if _, p := requestedTriggerDelivery(api.TriggerKind(t.Kind), req.Delivery); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -918,6 +936,12 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			api.WriteProblem(w, api.ErrCapacity("could not update trigger"))
 			return
 		}
+		if req.Delivery != nil && *req.Delivery != triggerDeliveryOrDefault(updated.Delivery) {
+			if updated, err = s.setTriggerDelivery(r.Context(), id, *req.Delivery); err != nil {
+				api.WriteProblem(w, api.ErrCapacity("could not change trigger delivery"))
+				return
+			}
+		}
 	}
 	triggerUUID := uuidFromPgtype(updated.ID).String()
 	appUUID := uuidFromPgtype(updated.AppID).String()
@@ -931,6 +955,10 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	if req.MaxAttempts != nil {
 		oldT["max_attempts"] = t.MaxAttempts
 		newT["max_attempts"] = updated.MaxAttempts
+	}
+	if req.Delivery != nil {
+		oldT["delivery"] = triggerDeliveryOrDefault(t.Delivery)
+		newT["delivery"] = triggerDeliveryOrDefault(updated.Delivery)
 	}
 	s.audit.Emit(r.Context(), "trigger.updated", &acct.ID, map[string]any{
 		"trigger_id": triggerUUID,
@@ -1253,8 +1281,14 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			MaxAttempts:          positiveIntPointer(t.MaxAttempts),
 			PayloadMaxBytes:      positiveIntPointer(t.PayloadMaxBytes),
 			BrokerPoisonStrategy: nonEmptyStringPointer(t.BrokerPoisonStrategy),
+			Delivery:             nonEmptyStringPointer(t.Delivery),
 		}
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+			continue
+		}
+		delivery, problem := requestedTriggerDelivery(kind, createReq.Delivery)
+		if problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
@@ -1270,14 +1304,15 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			continue
 		}
 		if realtimeCfg != nil {
-			bsm, ma = 1, 1
+			bsm, ma = managedrealtime.RealtimeTriggerBatchSize(delivery, createReq.BatchSizeMax), 1
 		}
 		sealedConfig, problem := sealTriggerConfig(kind, config)
 		if problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
-		initialEnabled := t.IsEnabled() && t.WorkPolicy == "" && realtimeCfg == nil
+		enableAtCreate := t.IsEnabled() && t.WorkPolicy == "" && realtimeCfg == nil
+		initialEnabled := enableAtCreate && delivery == api.TriggerDeliveryRecord
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
 			string(t.Kind), t.Slug, initialEnabled, sealedConfig,
@@ -1294,6 +1329,12 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 				errs = append(errs, batchError{Slug: t.Slug, Message: "internal error"})
 			}
 			continue
+		}
+		if delivery != api.TriggerDeliveryRecord {
+			if created, problem = s.applyTriggerDelivery(r.Context(), created, delivery, enableAtCreate); problem != nil {
+				errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+				continue
+			}
 		}
 		if realtimeCfg != nil {
 			bound, problem := s.bindRealtimeTrigger(r.Context(), acct, created, *realtimeCfg, t.IsEnabled())

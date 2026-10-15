@@ -3584,11 +3584,16 @@ Creation checks that the account owns the endpoint, that the group exists with
 invocation plus wake), and that no other trigger consumes it. The trigger is
 created disabled, bound, then enabled; a failed binding deletes it again.
 `batch_window_ms`, `max_attempts`, `retry_policy`, `broker_poison_strategy`
-and `filter_criteria` are rejected (configure them on the group), and
-`batch_size_max` may only be 1. The binding is immutable; PATCH may change only
-`max_concurrency`.
+and `filter_criteria` are rejected (configure them on the group).
+`batch_size_max` is 1 unless the trigger uses `delivery: batch` (ADR-1321), which
+allows up to 16 (default 10). The binding is immutable; PATCH may change
+`max_concurrency`, `delivery` and `batch_size_max`.
 
-Each message is one invocation with a JSON body carrying `endpoint_id`,
+With `delivery: batch`, one invocation receives `{"records": [...]}` with up to
+`batch_size_max` messages (each as `data`, the JSON body below, plus
+`item_identifier`) and reports failures in `batchItemFailures`; the gateway
+retries only the listed messages. Otherwise each message is one invocation with
+a JSON body carrying `endpoint_id`,
 `channel`, `group`, `sequence`, `message_id`, `event`, `version`, `deleted`,
 `data_base64`, `binary`, `metadata`, `created_at`, `attempt` and
 `fencing_token`. Handlers return an empty or JSON body.

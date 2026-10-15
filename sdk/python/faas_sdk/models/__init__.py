@@ -694,6 +694,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
+from .create_trigger_request_delivery import CreateTriggerRequestDelivery
 from .create_udp_listener_request import CreateUDPListenerRequest
 from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
@@ -4174,6 +4175,7 @@ from .trigger_config import TriggerConfig
 from .trigger_dead_letter import TriggerDeadLetter
 from .trigger_dead_letter_detail import TriggerDeadLetterDetail
 from .trigger_dead_letter_reason import TriggerDeadLetterReason
+from .trigger_delivery import TriggerDelivery
 from .trigger_kind import TriggerKind
 from .trigger_metrics_response import TriggerMetricsResponse
 from .trigger_record import TriggerRecord
@@ -4297,6 +4299,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_trigger_request_delivery import UpdateTriggerRequestDelivery
 from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
@@ -5251,6 +5254,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType2Type1",
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
+    "CreateTriggerRequestDelivery",
     "CreateUDPListenerRequest",
     "CreateUDPListenerRequestPublicPortType0",
     "CreateWorkflowCallbackWebhookBindingRequest",
@@ -8475,6 +8479,7 @@ __all__ = (
     "TriggerDeadLetter",
     "TriggerDeadLetterDetail",
     "TriggerDeadLetterReason",
+    "TriggerDelivery",
     "TriggerKind",
     "TriggerMetricsResponse",
     "TriggerRecord",
@@ -8584,6 +8589,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateTriggerRequestDelivery",
     "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",

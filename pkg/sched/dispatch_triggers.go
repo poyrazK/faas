@@ -135,6 +135,9 @@ type triggerDispatchRequest struct {
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
+	// Delivery "batch" asks the gateway for one invocation carrying every
+	// record (ADR-1321); empty keeps one invocation per record.
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // triggerDispatchResponse mirrors pkg/gateway/synth.go's batch
@@ -1187,13 +1190,17 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 			Metadata:                   r.Metadata,
 		})
 	}
-	return triggerDispatchRequest{
+	env := triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,
 	}
+	if t.Delivery == api.TriggerDeliveryBatch {
+		env.Delivery = api.TriggerDeliveryBatch
+	}
+	return env
 }
 
 func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, trigger sqlc.Trigger, binding state.ExclusiveTriggerBinding, batch []SourceRecord, claimed []sqlc.TriggerRecord) triggerDispatchResponse {

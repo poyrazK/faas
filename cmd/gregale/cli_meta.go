@@ -1573,6 +1573,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
 				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
 				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+				{Name: "delivery", Short: "one invocation per record or per dispatch batch", Value: "record|batch", ClosedSet: []string{api.TriggerDeliveryRecord, api.TriggerDeliveryBatch}},
 			}},
 			{Name: "update", Short: "Update one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "enabled", Short: "enable the trigger"},
@@ -1585,6 +1586,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},
 				{Name: "payload-max-bytes", Short: "maximum broker payload size", Value: "N"},
 				{Name: "broker-poison-strategy", Short: "kafka poison strategy", Value: "commit|seek-to-offset", ClosedSet: []string{api.BrokerPoisonStrategyCommit, api.BrokerPoisonStrategySeekToOffset}},
+				{Name: "delivery", Short: "one invocation per record or per dispatch batch", Value: "record|batch", ClosedSet: []string{api.TriggerDeliveryRecord, api.TriggerDeliveryBatch}},
 			}},
 			{Name: "delete", Short: "Delete one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},

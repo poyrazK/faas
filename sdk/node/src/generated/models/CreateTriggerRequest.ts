@@ -31,6 +31,10 @@ export type CreateTriggerRequest = {
   batch_window_ms?: number | null;
   max_attempts?: number | null;
   /**
+   * Defaults to record. batch delivers every claimed record in one invocation; not available for cron or queue triggers (ADR-1321).
+   */
+  delivery?: 'record' | 'batch';
+  /**
    * Optional retry delay and jitter configuration; max_attempts remains the trigger attempt cap.
    */
   retry_policy?: RetryPolicyDTO;

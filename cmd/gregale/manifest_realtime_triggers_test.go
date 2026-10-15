@@ -42,6 +42,12 @@ func (f *fakeRealtimeTriggerClient) GetTriggers(_ context.Context, appID string,
 func (f *fakeRealtimeTriggerClient) PostTriggers(_ context.Context, req api.CreateTriggerRequest) (api.Trigger, error) {
 	f.nextID++
 	t := api.Trigger{ID: fmt.Sprintf("t%d", f.nextID), AppID: req.AppID, Kind: req.Kind, Slug: req.Slug, Enabled: *req.Enabled, Config: req.Config}
+	if req.Delivery != nil {
+		t.Delivery = *req.Delivery
+	}
+	if req.BatchSizeMax != nil {
+		t.BatchSizeMax = *req.BatchSizeMax
+	}
 	f.triggers[t.ID] = t
 	f.calls = append(f.calls, "create "+req.Slug)
 	return t, nil
@@ -55,6 +61,12 @@ func (f *fakeRealtimeTriggerClient) PatchTriggersId(_ context.Context, id string
 	t.Config, _ = json.Marshal(cfg)
 	if req.Enabled != nil {
 		t.Enabled = *req.Enabled
+	}
+	if req.Delivery != nil {
+		t.Delivery = *req.Delivery
+	}
+	if req.BatchSizeMax != nil {
+		t.BatchSizeMax = *req.BatchSizeMax
 	}
 	f.triggers[id] = t
 	f.calls = append(f.calls, "update "+t.Slug)
@@ -196,5 +208,30 @@ func TestFunctionRealtimeTriggersSelectsOneFunction(t *testing.T) {
 	cleared := functionRealtimeTriggers(&gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{}}, fn)
 	if cleared.Triggers == nil || len(cleared.Triggers) != 0 {
 		t.Fatalf("explicit empty triggers must clear: %+v", cleared.Triggers)
+	}
+}
+
+func TestReconcileManifestRealtimeTriggerDelivery(t *testing.T) {
+	client := newFakeRealtimeTriggerClient(existingRealtimeTrigger("e1", "orders", "billing", 0))
+	want := realtimeManifestTrigger("orders-fn", "orders", "billing", 0)
+	want.Delivery, want.BatchSizeMax = api.TriggerDeliveryBatch, 8
+	txn := &manifestCronTransaction{}
+	if err := reconcileManifestRealtimeTriggers(t.Context(), client, "orders-fn", &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{want}}, txn); err != nil {
+		t.Fatal(err)
+	}
+	got := client.triggers["e1"]
+	if !slices.Equal(client.calls, []string{"update orders"}) || got.Delivery != api.TriggerDeliveryBatch || got.BatchSizeMax != 8 {
+		t.Fatalf("calls = %v, trigger = %+v, want an in-place switch to batch of 8", client.calls, got)
+	}
+	// Rolling back restores record delivery of one message.
+	if err := txn.rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.triggers["e1"]; got.Delivery != api.TriggerDeliveryRecord || got.BatchSizeMax != 1 {
+		t.Fatalf("after rollback = %+v", got)
+	}
+	// Batch delivery without a size uses the server default.
+	if got := realtimeTriggerBatchSize(api.TriggerDeliveryBatch, 0); got != api.RealtimeTriggerDefaultBatchSize {
+		t.Fatalf("default batch = %d", got)
 	}
 }

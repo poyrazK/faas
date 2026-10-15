@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -57,11 +58,37 @@ func rejectGroupOwnedTriggerFields(req *api.CreateTriggerRequest) *api.Problem {
 				f.name+" is not supported for kind=realtime; configure it on the consumer group")
 		}
 	}
-	if req.BatchSizeMax != nil && *req.BatchSizeMax > 1 {
+	return checkRealtimeTriggerBatchSize(req.Delivery, req.BatchSizeMax)
+}
+
+// checkRealtimeTriggerBatchSize allows several messages per invocation only
+// with batch delivery (ADR-1321), up to the most one group claim returns.
+func checkRealtimeTriggerBatchSize(delivery *string, batchSizeMax *int) *api.Problem {
+	if batchSizeMax == nil || *batchSizeMax <= 1 {
+		return nil
+	}
+	if delivery == nil || *delivery != api.TriggerDeliveryBatch {
 		return realtimeTriggerProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "One message per invocation",
-			"kind=realtime delivers one message per invocation; batch_size_max must be 1")
+			"kind=realtime delivers one message per invocation unless delivery is batch; set delivery: batch or batch_size_max: 1")
+	}
+	if *batchSizeMax > api.RealtimeConsumerGroupBatchMax {
+		return realtimeTriggerProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Batch too large",
+			fmt.Sprintf("kind=realtime with delivery: batch receives at most %d messages per invocation", api.RealtimeConsumerGroupBatchMax)).
+			WithLimit(api.RealtimeConsumerGroupBatchMax, int64(*batchSizeMax))
 	}
 	return nil
+}
+
+// RealtimeTriggerBatchSize is the claim size for a realtime trigger: one
+// message with record delivery, otherwise the requested size or 10.
+func RealtimeTriggerBatchSize(delivery string, requested *int) int32 {
+	if delivery != api.TriggerDeliveryBatch {
+		return 1
+	}
+	if requested != nil && *requested > 0 {
+		return int32(*requested)
+	}
+	return api.RealtimeTriggerDefaultBatchSize
 }
 
 func (s *Service) checkRealtimeTriggerGroup(ctx context.Context, acct state.Account, cfg api.RealtimeTriggerConfig) *api.Problem {
@@ -124,12 +151,21 @@ func (s *Service) BindRealtimeTrigger(ctx context.Context, acct state.Account, t
 }
 
 // CheckRealtimeTriggerUpdate validates a PATCH of a kind=realtime trigger.
-// The binding is immutable: only max_concurrency may change, and the
-// delivery settings the group owns stay rejected.
-func CheckRealtimeTriggerUpdate(current json.RawMessage, req *api.UpdateTriggerRequest) *api.Problem {
+// The binding is immutable: max_concurrency, delivery and batch_size_max may
+// change (ADR-1321), and the delivery settings the group owns stay rejected.
+func CheckRealtimeTriggerUpdate(current json.RawMessage, currentDelivery string, currentBatchSize int32, req *api.UpdateTriggerRequest) *api.Problem {
+	delivery := currentDelivery
+	if req.Delivery != nil {
+		delivery = *req.Delivery
+	}
+	batchSize := int(currentBatchSize)
+	if req.BatchSizeMax != nil {
+		batchSize = *req.BatchSizeMax
+	}
 	if p := rejectGroupOwnedTriggerFields(&api.CreateTriggerRequest{
-		BatchSizeMax: req.BatchSizeMax, BatchWindowMs: req.BatchWindowMs, MaxAttempts: req.MaxAttempts,
+		BatchSizeMax: &batchSize, BatchWindowMs: req.BatchWindowMs, MaxAttempts: req.MaxAttempts,
 		RetryPolicy: req.RetryPolicy, BrokerPoisonStrategy: req.BrokerPoisonStrategy, FilterCriteria: req.FilterCriteria,
+		Delivery: &delivery,
 	}); p != nil {
 		return p
 	}

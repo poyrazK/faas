@@ -32,8 +32,11 @@ func (t Trigger) validateRealtime(idx int) error {
 			return fmt.Errorf("trigger[%d]: %s is not supported for kind=realtime; configure it on the consumer group", idx, f.name)
 		}
 	}
-	if t.BatchSizeMax > 1 {
-		return fmt.Errorf("trigger[%d]: kind=realtime delivers one message per invocation; batch_size_max must be 1", idx)
+	if t.BatchSizeMax > 1 && t.Delivery != api.TriggerDeliveryBatch {
+		return fmt.Errorf("trigger[%d]: kind=realtime delivers one message per invocation unless delivery is batch; set delivery: batch or batch_size_max: 1", idx)
+	}
+	if t.BatchSizeMax > api.RealtimeConsumerGroupBatchMax {
+		return fmt.Errorf("trigger[%d]: kind=realtime with delivery: batch receives at most %d messages per invocation", idx, api.RealtimeConsumerGroupBatchMax)
 	}
 	return nil
 }

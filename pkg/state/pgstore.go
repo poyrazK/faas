@@ -29906,7 +29906,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		 returning id, account_id, app_id, kind, slug, enabled, config,
 		           batch_size_max, batch_window_ms, max_attempts,
 		           cron_id, source, payload_max_bytes, broker_poison_strategy,
-		           created_at, updated_at`,
+		           delivery, created_at, updated_at`,
 		accountID, appID, kind, slug, enabled, config,
 		batchSizeMax, batchWindowMs, maxAttempts,
 		pgtype.UUID{}, nullableTriggerSource(source), payloadMaxBytes, bps)
@@ -29915,7 +29915,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,
 		&t.Config, &t.BatchSizeMax, &t.BatchWindowMs, &t.MaxAttempts,
 		&t.CronID, &t.Source, &t.PayloadMaxBytes, &t.BrokerPoisonStrategy,
-		&t.CreatedAt, &t.UpdatedAt,
+		&t.Delivery, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return sqlc.Trigger{}, mapErr(err)
 	}
@@ -30259,6 +30259,7 @@ func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
 func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                        r.ID,
+		Delivery:                  r.Delivery,
 		QueueBindingID:            r.QueueBindingID,
 		QueueBindingScope:         r.QueueBindingScope,
 		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
@@ -30288,6 +30289,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                        r.ID,
+		Delivery:                  r.Delivery,
 		QueueBindingID:            r.QueueBindingID,
 		QueueBindingScope:         r.QueueBindingScope,
 		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
@@ -30315,6 +30317,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                        r.ID,
+		Delivery:                  r.Delivery,
 		QueueBindingID:            r.QueueBindingID,
 		QueueBindingScope:         r.QueueBindingScope,
 		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,

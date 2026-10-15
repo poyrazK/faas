@@ -27,9 +27,11 @@ type manifestRealtimeTriggerClient interface {
 }
 
 type desiredRealtimeTrigger struct {
-	slug    string
-	enabled bool
-	cfg     api.RealtimeTriggerConfig
+	slug      string
+	enabled   bool
+	cfg       api.RealtimeTriggerConfig
+	delivery  string
+	batchSize int
 }
 
 // manifestRealtimeTriggers returns the realtime triggers declared for slug
@@ -51,7 +53,8 @@ func manifestRealtimeTriggers(m *gregalemanifest.Manifest, slug string) ([]desir
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return nil, false, fmt.Errorf("realtime trigger %q config: %w", t.Slug, err)
 		}
-		out = append(out, desiredRealtimeTrigger{slug: t.Slug, enabled: t.IsEnabled(), cfg: cfg})
+		out = append(out, desiredRealtimeTrigger{slug: t.Slug, enabled: t.IsEnabled(), cfg: cfg,
+			delivery: realtimeTriggerDelivery(t.Delivery), batchSize: realtimeTriggerBatchSize(t.Delivery, t.BatchSizeMax)})
 	}
 	return out, manage, nil
 }
@@ -119,30 +122,57 @@ func (r realtimeTriggerReconcile) apply(ctx context.Context, want desiredRealtim
 		}
 		return r.create(ctx, want)
 	}
-	if haveCfg.Concurrency() == want.cfg.Concurrency() && have.Enabled == want.enabled {
+	before := desiredRealtimeTrigger{slug: have.Slug, enabled: have.Enabled, cfg: haveCfg,
+		delivery: realtimeTriggerDelivery(have.Delivery), batchSize: max(have.BatchSizeMax, 1)}
+	if haveCfg.Concurrency() == want.cfg.Concurrency() && have.Enabled == want.enabled &&
+		before.delivery == want.delivery && before.batchSize == want.batchSize {
 		return nil
 	}
-	if err := r.patch(ctx, have.ID, want.cfg.MaxConcurrency, want.enabled); err != nil {
+	if err := r.patch(ctx, have.ID, want); err != nil {
 		return fmt.Errorf("update realtime trigger %q: %w", want.slug, err)
 	}
 	r.txn.steps = append(r.txn.steps, manifestCronRollbackStep{
 		description: "restore realtime trigger " + want.slug,
-		undo:        func(ctx context.Context) error { return r.patch(ctx, have.ID, haveCfg.MaxConcurrency, have.Enabled) },
+		undo:        func(ctx context.Context) error { return r.patch(ctx, have.ID, before) },
 	})
 	return nil
 }
 
-func (r realtimeTriggerReconcile) patch(ctx context.Context, id string, concurrency int, enabled bool) error {
-	raw, _ := json.Marshal(map[string]int{"max_concurrency": concurrency})
-	_, err := r.client.PatchTriggersId(ctx, id, api.UpdateTriggerRequest{Config: raw, Enabled: &enabled})
+// patch applies concurrency, enablement, delivery and batch size together:
+// the server only accepts a batch size above one with batch delivery.
+func (r realtimeTriggerReconcile) patch(ctx context.Context, id string, want desiredRealtimeTrigger) error {
+	raw, _ := json.Marshal(map[string]int{"max_concurrency": want.cfg.MaxConcurrency})
+	enabled, delivery, batchSize := want.enabled, want.delivery, want.batchSize
+	_, err := r.client.PatchTriggersId(ctx, id, api.UpdateTriggerRequest{Config: raw, Enabled: &enabled, Delivery: &delivery, BatchSizeMax: &batchSize})
 	return err
+}
+
+// realtimeTriggerDelivery defaults an omitted manifest delivery to record.
+func realtimeTriggerDelivery(delivery string) string {
+	if delivery == "" {
+		return api.TriggerDeliveryRecord
+	}
+	return delivery
+}
+
+// realtimeTriggerBatchSize mirrors the server: one message with record
+// delivery, otherwise the declared size or ten.
+func realtimeTriggerBatchSize(delivery string, declared int) int {
+	if realtimeTriggerDelivery(delivery) != api.TriggerDeliveryBatch {
+		return 1
+	}
+	if declared > 0 {
+		return declared
+	}
+	return api.RealtimeTriggerDefaultBatchSize
 }
 
 func (r realtimeTriggerReconcile) create(ctx context.Context, want desiredRealtimeTrigger) error {
 	raw, _ := json.Marshal(want.cfg)
 	enabled := want.enabled
+	delivery, batchSize := want.delivery, want.batchSize
 	created, err := r.client.PostTriggers(ctx, api.CreateTriggerRequest{AppID: r.appID, Kind: api.TriggerKindRealtime,
-		Slug: want.slug, Enabled: &enabled, Config: raw})
+		Slug: want.slug, Enabled: &enabled, Config: raw, Delivery: &delivery, BatchSizeMax: &batchSize})
 	if err != nil {
 		return fmt.Errorf("create realtime trigger %q: %w", want.slug, err)
 	}
@@ -160,9 +190,9 @@ func (r realtimeTriggerReconcile) remove(ctx context.Context, have api.Trigger) 
 	r.txn.steps = append(r.txn.steps, manifestCronRollbackStep{
 		description: "recreate realtime trigger " + have.Slug,
 		undo: func(ctx context.Context) error {
-			enabled := have.Enabled
+			enabled, delivery, batchSize := have.Enabled, realtimeTriggerDelivery(have.Delivery), max(have.BatchSizeMax, 1)
 			_, err := r.client.PostTriggers(ctx, api.CreateTriggerRequest{AppID: r.appID, Kind: api.TriggerKindRealtime,
-				Slug: have.Slug, Enabled: &enabled, Config: have.Config})
+				Slug: have.Slug, Enabled: &enabled, Config: have.Config, Delivery: &delivery, BatchSizeMax: &batchSize})
 			return err
 		},
 	})

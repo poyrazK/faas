@@ -221,6 +221,7 @@ func cmdTriggersCreate(args []string) int {
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
+	delivery := fs.String("delivery", "", "record (one invocation per record) or batch (one per dispatch batch)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -283,6 +284,9 @@ func cmdTriggersCreate(args []string) int {
 	if explicit["broker-poison-strategy"] {
 		req.BrokerPoisonStrategy = triggerStringPtr(*poisonStrategy)
 	}
+	if explicit["delivery"] {
+		req.Delivery = triggerStringPtr(*delivery)
+	}
 	trigger, err := client.PostTriggers(ctx, req)
 	if err != nil {
 		return printErr("Could not create trigger", err)
@@ -308,6 +312,7 @@ func cmdTriggersUpdate(args []string) int {
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
+	delivery := fs.String("delivery", "", "record (one invocation per record) or batch (one per dispatch batch)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -364,6 +369,9 @@ func cmdTriggersUpdate(args []string) int {
 	}
 	if explicit["broker-poison-strategy"] {
 		req.BrokerPoisonStrategy = triggerStringPtr(*poisonStrategy)
+	}
+	if explicit["delivery"] {
+		req.Delivery = triggerStringPtr(*delivery)
 	}
 	trigger, err := client.PatchTriggersId(context.Background(), pos[0], req)
 	if err != nil {
@@ -662,6 +670,9 @@ func renderTriggerHuman(w io.Writer, trigger api.Trigger) {
 		}
 	}
 	_, _ = fmt.Fprintf(w, "  batch:    %d records / %d ms\n", trigger.BatchSizeMax, trigger.BatchWindowMs)
+	if trigger.Delivery == api.TriggerDeliveryBatch {
+		_, _ = fmt.Fprintln(w, "  delivery: batch (one invocation per dispatch batch)")
+	}
 	_, _ = fmt.Fprintf(w, "  attempts: %d\n", trigger.MaxAttempts)
 }
 

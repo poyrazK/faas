@@ -8962,6 +8962,7 @@ type Trigger struct {
 	QueueBindingID            pgtype.UUID
 	QueueBindingScope         string
 	QueueBindingEnvironmentID pgtype.UUID
+	Delivery                  string
 }
 
 type TriggerConsumerHealth struct {

@@ -775,6 +775,9 @@ type Trigger struct {
 	// so a YAML typo surfaces at load time rather than at
 	// poison-record dispatch time.
 	BrokerPoisonStrategy string `yaml:"broker_poison_strategy,omitempty"`
+	// Delivery is "record" (default: one invocation per record) or
+	// "batch" (one invocation per dispatch batch, ADR-1321).
+	Delivery string `yaml:"delivery,omitempty"`
 	// FilterCriteria (ADR-118 / issue #757 closure, migration
 	// 00300) is the per-source record filter tree. nil means
 	// "every record passes through". The shape is evaluated
@@ -2342,6 +2345,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			// time.
 			if t.BrokerPoisonStrategy != "" && t.BrokerPoisonStrategy != "commit" && t.BrokerPoisonStrategy != "seek-to-offset" {
 				return fmt.Errorf("trigger[%d]: broker_poison_strategy=%q invalid; must be one of commit, seek-to-offset", i, t.BrokerPoisonStrategy)
+			}
+		}
+		if t.Delivery != "" {
+			if err := api.ValidateTriggerDelivery(api.TriggerKind(t.Kind), t.Delivery); err != nil {
+				return fmt.Errorf("trigger[%d]: %w", i, err)
 			}
 		}
 		k := triggerKey{app: t.App, kind: t.Kind, schedule: t.Schedule, path: t.Path, slug: t.Slug}

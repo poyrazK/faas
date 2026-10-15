@@ -4763,7 +4763,7 @@ Show one trigger
 
 Create a broker trigger
 
-`gregale triggers create --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>]`
+`gregale triggers create --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4778,12 +4778,13 @@ Create a broker trigger
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
+| `--delivery <record|batch>` | one invocation per record or per dispatch batch | one of `record` · `batch` |
 
 ### triggers update
 
 Update one trigger
 
-`gregale triggers update [--enabled] [--disabled] [--config <JSON>] [--schedule <EXPR>] [--path <PATH>] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] <id>`
+`gregale triggers update [--enabled] [--disabled] [--config <JSON>] [--schedule <EXPR>] [--path <PATH>] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4797,6 +4798,7 @@ Update one trigger
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
+| `--delivery <record|batch>` | one invocation per record or per dispatch batch | one of `record` · `batch` |
 
 ### triggers delete
 

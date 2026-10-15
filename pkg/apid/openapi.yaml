@@ -76034,6 +76034,10 @@ components:
           minimum: 1
           maximum: 25
           description: "Omitted create values use min(5, the account plan cap)."
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "record invokes the function once per record; batch invokes it once per dispatch batch with every record (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -76124,6 +76128,10 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "Defaults to record. batch delivers every claimed record in one invocation; not available for cron or queue triggers (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -76162,6 +76170,10 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'

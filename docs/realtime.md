@@ -109,3 +109,43 @@ triggers:
 Deploy matches the app's realtime triggers to the file by `slug` and rolls the
 change back if the deploy fails. See the
 [function-trigger operations guide](ops/realtime.md#realtime-function-triggers).
+
+### Several messages per invocation
+
+On a busy channel, set `delivery: batch` (with an optional `batch_size_max` up
+to 16, default 10) so one invocation handles several messages, which costs
+less compute than one invocation each (ADR-1321). The same option works for
+Kafka, NATS, Redis Streams and SQS-compatible triggers; it is not available for
+cron or queue triggers. Your function receives:
+
+```json
+{"records": [
+  {"item_identifier": "…", "data": {"endpoint_id": "…", "channel": "orders", "sequence": "42", "…": "…"}},
+  {"item_identifier": "…", "data_base64": "…"}
+]}
+```
+
+`data` holds a JSON payload as-is and `data_base64` any other payload, with
+header `X-Gregale-Batch-Size`. Return a 2xx response to complete every record,
+or list the ones to retry:
+
+```json
+{"batchItemFailures": [{"itemIdentifier": "…"}]}
+```
+
+An error or non-2xx response retries the whole batch. For realtime triggers the
+group's ordering still holds: messages with the same ordering key never share a
+batch while one of them is unfinished.
+
+```yaml
+triggers:
+  - kind: realtime
+    app: notify
+    slug: orders
+    delivery: batch
+    batch_size_max: 10
+    config: {endpoint_id: 6f1c2a4e-1d9b-4c7a-9a39-0b8d6f0f4c11, channel: orders, group: billing}
+```
+
+`gregale triggers add --delivery batch` and `PATCH /v1/triggers/{id}` with
+`{"delivery": "batch"}` set it outside a manifest.

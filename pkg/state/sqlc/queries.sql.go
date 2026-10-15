@@ -9904,7 +9904,7 @@ values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
-          created_at, updated_at
+          delivery, created_at, updated_at
 `
 
 type CreateTriggerParams struct {
@@ -9938,6 +9938,7 @@ type CreateTriggerRow struct {
 	Source               pgtype.Text
 	PayloadMaxBytes      int32
 	BrokerPoisonStrategy string
+	Delivery             string
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 }
@@ -9988,6 +9989,7 @@ func (q *Queries) CreateTrigger(ctx context.Context, db DBTX, arg CreateTriggerP
 		&i.Source,
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
+		&i.Delivery,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -35904,7 +35906,7 @@ const listEnabledTriggers = `-- name: ListEnabledTriggers :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true
 `
@@ -35928,6 +35930,7 @@ type ListEnabledTriggersRow struct {
 	PayloadMaxBytes           int32
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
+	Delivery                  string
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -35968,6 +35971,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.PayloadMaxBytes,
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
+			&i.Delivery,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -40654,7 +40658,7 @@ const listTriggersForApp = `-- name: ListTriggersForApp :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc
 `
@@ -40678,6 +40682,7 @@ type ListTriggersForAppRow struct {
 	PayloadMaxBytes           int32
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
+	Delivery                  string
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -40713,6 +40718,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.PayloadMaxBytes,
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
+			&i.Delivery,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -57062,7 +57068,7 @@ payload_max_bytes=coalesce($6::integer,payload_max_bytes),
 broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
 filter_criteria=coalesce($8::jsonb,filter_criteria),
 source=coalesce($9::text,source)
-where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
 `
 
 type PublicPatchTriggerParams struct {
@@ -57113,6 +57119,7 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.QueueBindingID,
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
+		&i.Delivery,
 	)
 	return i, err
 }
@@ -58194,7 +58201,7 @@ insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enable
 batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
 values ($1,$2,$3::uuid,'queue','queue',$4,
 $5,$6::jsonb,$7,$8,
-$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
 `
 
 type QueueConsumerCreateTriggerParams struct {
@@ -58245,6 +58252,7 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 		&i.QueueBindingID,
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
+		&i.Delivery,
 	)
 	return i, err
 }
@@ -75544,6 +75552,26 @@ func (q *Queries) SetServiceCapacityProtection(ctx context.Context, db DBTX, ena
 	return snapshot, err
 }
 
+const setTriggerDelivery = `-- name: SetTriggerDelivery :execrows
+update triggers set delivery = $2, updated_at = now()
+where id = $1 and queue_binding_id is null
+`
+
+type SetTriggerDeliveryParams struct {
+	ID       pgtype.UUID
+	Delivery string
+}
+
+// ADR-1321: switch a public trigger between per-record and batch delivery.
+// The CHECK constraint refuses batch for cron and queue triggers.
+func (q *Queries) SetTriggerDelivery(ctx context.Context, db DBTX, arg SetTriggerDeliveryParams) (int64, error) {
+	result, err := db.Exec(ctx, setTriggerDelivery, arg.ID, arg.Delivery)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUDPListenerEnabled = `-- name: SetUDPListenerEnabled :one
 UPDATE app_udp_listeners SET enabled = $1, updated_at = now()
 WHERE id = $2::text::uuid RETURNING id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at
@@ -77118,7 +77146,7 @@ const triggerByID = `-- name: TriggerByID :one
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where id = $1
 `
@@ -77142,6 +77170,7 @@ type TriggerByIDRow struct {
 	PayloadMaxBytes           int32
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
+	Delivery                  string
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -77174,6 +77203,7 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
+		&i.Delivery,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
