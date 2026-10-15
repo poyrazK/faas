@@ -360,3 +360,48 @@ budgets. Existing coverage checks remain the source of truth after execution.
 Planning returns 0 even with blocked entries, like preview. Invalid policies,
 manifests, reports, options, or stdout errors return 1. No requirements produces
 an empty plan. Shell output redirection must use a separate file.
+
+## Merging batch reports
+
+```sh
+gregale test report merge --output combined-current.json current.json extra-batch-1.json extra-batch-2.json
+gregale test policy preview --policy regression-policy.yaml --from combined-current.json --baseline previous.json
+```
+
+Merge accepts 2..100 report paths after its flags and produces the same nonempty
+JSON receipt-array format used by digest, preview, and policy comparisons.
+Input order and each source's top-level receipt order are retained. Campaign
+hierarchies, statuses, run IDs, replay metadata, numeric precision, and unknown
+evidence fields are preserved. Counters and verdicts are not recomputed.
+
+Each output root receives `report_provenance`: a versioned list of source-report
+SHA-256 hashes, source file basenames, and zero-based original receipt indexes.
+Merging an already merged report appends its immediate source while retaining
+earlier lineage. Metadata is descriptive, not cryptographic proof of execution.
+Original evidence references remain available through provenance; an evidence
+URL supplied to digest must still correspond to the report being summarized.
+
+Duplicate run IDs anywhere in primary matrix/resilience hierarchies are errors.
+Repeated report content and overlapping source receipt provenance are rejected,
+including overlaps involving skipped receipts. There is no silent deduplication
+or force flag. Embedded diagnostic/minimization trials remain evidence and are
+not treated as additional campaign execution leaves.
+
+Executed passed/failed leaves require stable run IDs. Older or local/simulated
+reports without such identities cannot be safely merged; record distinct
+identified runs instead. Skipped leaves and aggregate parents may lack IDs.
+Unsupported receipt metadata, ambiguous or empty aggregate hierarchies, and
+invalid provenance are rejected. Merge does not authenticate run IDs or detect
+deliberately rewritten evidence.
+
+Inputs cannot alias the output, including hard links and symlinks. All input
+decoding and overlap checks complete before writing. The output is written via
+a private temporary file in its destination directory and renamed only after
+successful encoding. Failures leave existing destination contents intact.
+Combined inputs and output are each limited to 64 MiB; receipt depth, node
+count, and provenance history are also bounded.
+
+Keep baseline and current batches separate and preserve their source revision.
+Merge records input origins but cannot infer whether two reports belong to
+different application revisions or environments. Each successful merge is
+informational and returns 0 even when receipts record failures; errors return 1.

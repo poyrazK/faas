@@ -193,6 +193,7 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
+	ReportProvenance []testReportProvenance `json:"report_provenance,omitempty"`
 	CampaignSeed           *testCampaignSeedSetting           `json:"campaign_seed,omitempty"`
 	Minimization           *testFaultMinimizationEvidence     `json:"minimization,omitempty"`
 	Replay                 *testReplayManifest                `json:"replay,omitempty"`
@@ -315,6 +316,12 @@ func cmdTest(args []string) int {
 }
 
 func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
+	if len(args) > 0 && args[0] == "report" {
+		if chaosOverride != nil {
+			return printErr("Invalid report command", errors.New("report merging cannot override chaos"))
+		}
+		return cmdTestReport(args[1:])
+	}
 	if len(args) > 0 && args[0] == "policy" {
 		if chaosOverride != nil {
 			return printErr("Invalid policy command", errors.New("policy inspection cannot override chaos"))
