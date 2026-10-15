@@ -116,3 +116,35 @@ Policy mode uses named `--from` and `--baseline` inputs. It does not combine
 with legacy positional comparisons, `--budget`, or legacy output flags.
 Without `--policy`, existing comparison behavior is unchanged. Digest output
 remains informational and continues to return success for recorded test failures.
+
+## JUnit policy results
+
+Add `--junit` in policy mode to publish decisions in CI test reports:
+
+```sh
+gregale test compare --from current.json --baseline previous.json --policy regression-policy.yaml --junit policy-results.xml > policy-result.json
+```
+
+The optional XML output contains a `gregale.campaign-policy` testsuite.
+Each violation becomes one failed testcase. Names include the rule,
+configuration fingerprint, and structured context; an ordinal distinguishes
+multiple violations. Failure details contain JSON with policy thresholds,
+baseline/current sample counts, measurements, coverage explanations, report
+links, and recorded replay commands where available. XML metacharacters are
+escaped by the standard encoder.
+
+A passing policy produces one passing `campaign policy accepted` testcase.
+This means the configured policy accepted the comparison, including explicitly
+ignored coverage/sample conditions; it does not assert that all application
+tests passed. Policy and application JUnit reports can be uploaded separately.
+
+The policy's JSON stdout and exit statuses are unchanged: 0 accepted,
+2 rejected, 1 invalid input or report write error. XML is written before JSON
+stdout, including for policy rejections. A later stdout failure can leave a
+complete XML report. Invalid inputs do not generate a new report; existing
+outputs may remain, so CI should use a fresh artifact path per job.
+
+The JUnit path cannot alias either input report, the policy file, or an existing
+file used for JSON stdout, including hard links. Shell redirection can truncate
+an input before Gregale starts; always redirect JSON to a separate destination.
+JUnit output is available only in explicit `--policy` mode.

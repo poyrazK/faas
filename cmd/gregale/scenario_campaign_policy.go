@@ -84,6 +84,7 @@ func cmdTestCampaignPolicy(args []string) int {
 	fs := newFlagSet("test compare --policy", flag.ContinueOnError)
 	from := fs.String("from", "", "current raw JSON report")
 	baseline := fs.String("baseline", "", "baseline raw JSON report")
+	junitPath := fs.String("junit", "", "write campaign policy violations as JUnit XML")
 	policyPath := fs.String("policy", "", "versioned YAML campaign regression policy")
 	evidence := fs.String("evidence-url", "", "current HTML evidence URL")
 	baselineEvidence := fs.String("baseline-evidence-url", "", "baseline HTML evidence URL")
@@ -95,6 +96,22 @@ func cmdTestCampaignPolicy(args []string) int {
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *from == "" || *baseline == "" || *policyPath == "" {
 		return printErr("Invalid campaign policy options", errors.New("--from, --baseline and --policy are required; positional reports and legacy budget flags are not supported in policy mode"))
+	}
+	if *junitPath != "" {
+		for _, input := range []string{*from, *baseline, *policyPath} {
+			aliases, err := testReportPathAliases(*junitPath, input)
+			if err != nil {
+				return printErr("Invalid JUnit output path", err)
+			}
+			if aliases {
+				return printErr("Invalid JUnit output path", fmt.Errorf("JUnit output must not overwrite input %q", input))
+			}
+		}
+		if output, err := os.Stat(*junitPath); err == nil {
+			if stdout, err := os.Stdout.Stat(); err == nil && os.SameFile(output, stdout) {
+				return printErr("Invalid JUnit output path", errors.New("JUnit output must not alias JSON stdout"))
+			}
+		}
 	}
 	policy, err := readTestCampaignPolicy(*policyPath)
 	if err != nil {
@@ -119,6 +136,15 @@ func cmdTestCampaignPolicy(args []string) int {
 	result, err := evaluateTestCampaignPolicy(policy, before, after, oldURL, currentURL)
 	if err != nil {
 		return printErr("Could not evaluate policy", err)
+	}
+	if *junitPath != "" {
+		body, err := marshalTestCampaignPolicyJUnit(policy, result)
+		if err != nil {
+			return printErr("Could not encode policy JUnit", err)
+		}
+		if err := os.WriteFile(*junitPath, body, 0o600); err != nil {
+			return printErr("Could not write policy JUnit", err)
+		}
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
