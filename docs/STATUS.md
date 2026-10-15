@@ -7,6 +7,18 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Evidence-paced default rollouts — 2026-10-15
+
+[ADR-1321](adr/1321-evidence-paced-default-rollouts.md) makes the default
+production rollout `adaptive`: the balanced 1% → 10% → 50% → 100% ladder, but
+each stage advances as soon as the circuit breaker has conclusive, clean
+evidence against the serving predecessor, after at least one minute, instead
+of always waiting for its 2-minute timer. `gregale deploy --safe` uses it;
+explicit presets keep their timers. The default probe now sends 20 probes per
+revision per round, and each minute's round starts within about 15 s. On the
+n2 node a flag-free release of a quiet app reached 100% in 248 s, down from
+about 9 minutes; all six safe-release drill cases passed, leakcheck clean.
+
 ## Explained rollout decisions — 2026-10-14
 
 [ADR-1237](adr/1237-explained-rollout-decisions.md) records the evidence behind

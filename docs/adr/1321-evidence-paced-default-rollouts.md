@@ -1,6 +1,6 @@
 # ADR-1321 · Evidence-paced default rollouts
 
-- **Status:** proposed
+- **Status:** proposed; n2 drill passed 2026-10-15 (see Rollout)
 - **Date:** 2026-10-14
 - **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (default ladder and probe cadence), [ADR-122](122-safe-releases.md) (preset catalog)
 - **Follows:** [ADR-1237](1237-explained-rollout-decisions.md) decision records, [ADR-847](847-synthetic-route-probes.md) route probes
@@ -62,3 +62,5 @@ For a quiet app, a stage's first counted round arrives at most about 75 s after 
 ## Rollout
 
 Ship with the preset, the early-advance rule and the probe cadence together. The safe-release drill's flag-free case asserts that a default release of a quiet app is stamped `adaptive` and completes before the balanced timers would allow (6 minutes), with at least one advance whose decision window is shorter than its stage's 2 minutes.
+
+The drill passed on the n2 node on 2026-10-15 (all six cases, leakcheck clean). A flag-free release of a quiet app reached 100% in 248 s, down from about 9 minutes under ADR-1160: three `advance_probe_evidence` advances after 66 s, 90 s and 90 s, each on one or two probe rounds of 20 per side. The custom 1%@30s canary advanced on probes after 54 s (170 s in the ADR-1237 drill), the late-failing release aborted on probes after 76 s (127 s before), and the bad release, crash loop and worker-down fallback behaved as before; rollback recovered in 10.5 s. The first drill run failed the flag-free case at 7m12s with no early advance: APID's worker transaction still enforced the full stage timer, which the pkg/canary unit tests could not see because they stub APID. `release.StageDwell` fixed it, and `TestSafeDeployWorkerAdvancesPacedStageOnEvidence` now covers the worker route.
