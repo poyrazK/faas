@@ -2077,6 +2077,39 @@ Summaries are regenerated from raw receipts whenever serialized. Saved
 cannot override the original assertions, verdict, replay configuration or HTML.
 The existing underlying receipt fields remain the source of truth.
 
+### Group recurring failures across runs
+
+Repeated-run and matrix HTML reports include a recurring-failures table. It
+groups the **first recorded assertion per failed terminal receipt**, rather than
+claiming to enumerate every assertion failure. Keys include scenario, profile,
+engine, inherited matrix case, step, phase, assertion kind/name, named request,
+and the sorted set of captured fault kinds. Missing fault evidence has an
+explicit unavailable signature; names and error text are not parsed for kinds.
+Unclassified failures group only when their recorded failure message agrees.
+
+Frequency is failed receipts in that group divided by passed plus failed terminal
+receipts in the same scenario/profile/engine/case. Skipped or unexecuted receipts
+are excluded. A group is descriptive even when the parent passes its allowed
+failure budget. Aggregate-only failures without a failed terminal receipt remain
+in the existing failure summary, rather than becoming invented failed runs.
+
+For numeric upper bounds, the worst available observation is the maximum; for
+lower bounds it is the minimum. The displayed limit comes from the same
+observation. Opposing operators produce a mixed result with no worst value;
+missing/composite measurements remain unavailable, not zero. Values are raw
+observations, not normalized exceedance or statistical confidence estimates.
+Groups sort by frequency, preserving recorded order for ties.
+
+Each group lists affected run IDs/attempts, links to the containing full receipt,
+and retains supported replay commands with explicit path placeholders. Run
+entries are counted as recorded; the view does not deduplicate or validate
+duplicate run IDs. JSON and JUnit `system-out` include derived
+`failure_groups` arrays with schema `version: 1`, numerical counts, keys,
+worst/associated-limit values and occurrence selectors. Fault-kind keys use a
+canonical JSON-array string signature (or `unavailable`). Saved groups are
+ignored on decode and regenerated from raw receipts. Grouping changes no verdict
+and performs no new test execution.
+
 ### Recovery regressions between CI runs
 
 Set a recovery regression budget on a resilience scenario:

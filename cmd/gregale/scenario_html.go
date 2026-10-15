@@ -43,6 +43,15 @@ const testHTMLReportTemplate = `<!doctype html>
 <div class="run-body">
   {{if or .Error .CleanupError .SkipReason}}<div class="error failed">{{if .Error}}{{.Error}}{{end}}{{if .CleanupError}}<br>Cleanup: {{.CleanupError}}{{end}}{{if .SkipReason}}<br>{{.SkipReason}}{{end}}</div>{{end}}
 
+
+  {{with .FailureGroups}}<section class="panel" aria-label="Repeated failure groups">
+  <h3>Recurring failures</h3>
+  <p class="muted">First recorded assertion per failed run. Frequencies exclude skipped runs and use the same scenario/profile/engine/case. Tolerated failures do not change the group verdict. Worst values use available measurements; the accompanying limit belongs to that same observation.</p>
+  <table><thead><tr><th>Context / assertion</th><th>Fault kinds</th><th>Failed / executed runs</th><th>Worst / associated limit</th><th>Affected runs and replay</th></tr></thead><tbody>
+  {{range .}}<tr><td>{{.Key.Scenario}} / {{.Key.Profile}} / {{.Key.Engine}}{{if .Key.Case}} / {{.Key.Case}}{{end}}<br>{{.Key.Step}} / {{.Key.Phase}} / {{.Key.Request}}<br>{{.Key.Kind}}: {{.Key.Assertion}}</td><td>{{.Key.FaultKinds}}</td><td>{{.Failures}} / {{.ExecutedRuns}}</td>
+  <td>{{comparisonValue .WorstObserved ""}} / {{comparisonValue .WorstLimit ""}} ({{.Operator}})</td><td>{{range .Occurrences}}<div><a href="#run-evidence-{{$runIndex}}">Run {{if .RunID}}{{.RunID}}{{else}}ID unavailable{{end}} (attempt {{.Attempt}}): supporting receipt</a><br>{{.Failure}}{{if .Replay}}<br><code>{{.Replay}}</code>{{end}}</div>{{end}}</td></tr>{{end}}</tbody></table>
+  <p>Replay commands require replacing the report/manifest path placeholders with the original files.</p>
+  </section>{{end}}
   {{with .FailureSummary}}<section class="panel" aria-label="Failure summary">
   <h3>First recorded failure: {{.Scope}}</h3>
   {{if .GroupError}}<p>Group result: {{.GroupError}}</p>{{end}}

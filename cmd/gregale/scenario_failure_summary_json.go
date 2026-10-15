@@ -10,7 +10,8 @@ func (r testRunReceipt) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		rawReceipt
 		Summary *testFailureSummary `json:"failure_summary,omitempty"`
-	}{rawReceipt: rawReceipt(r), Summary: r.FailureSummary()})
+		Groups  []testFailureGroup  `json:"failure_groups,omitempty"`
+	}{rawReceipt: rawReceipt(r), Summary: r.FailureSummary(), Groups: r.FailureGroups()})
 }
 
 type testFailureAssertionSummary struct {
