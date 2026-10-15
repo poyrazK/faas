@@ -406,7 +406,7 @@ func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.App
 }
 
 func recordIssueImpactThresholdTransition(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, minimumCustomers, before, after int64, deploymentID string, now time.Time) error {
-	if minimumCustomers <= 0 || before >= minimumCustomers || after < minimumCustomers {
+	if !issues.ImpactAlertCrossesThreshold(issueRow(row), minimumCustomers, before, after, now) {
 		return nil
 	}
 	details := map[string]string{

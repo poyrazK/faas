@@ -212,6 +212,14 @@ to that event to receive it. Delivery uses Gregale's durable outbox and retry
 ledger. The payload's `details` contains the threshold, observed customer
 count, window bounds, and deployment that supplied the crossing evidence.
 
+An active ignore period suppresses customer-impact threshold activity and its
+webhook, including crossings discovered through delayed request attribution.
+Occurrences and verified impact still accumulate. Reopening or expiry does not
+replay suppressed crossings; a later below-to-above crossing can alert again.
+Expiry takes effect at its timestamp even if lifecycle maintenance has not yet
+changed the stored issue state. This does not cancel webhooks queued before the
+issue was ignored or suppress explicit lifecycle webhooks such as `issue.ignored`.
+
 Issue identity survives deployments. Grouping removes line numbers and known
 container/build roots but preserves source directories and function names.
 Use an explicit fingerprint for unsupported or unstable stack representations.
@@ -548,6 +556,26 @@ Payloads contain the issue, transition ID, and bounded action details. The issue
 transaction snapshots recipients in the existing webhook outbox. The normal
 relay and signed delivery ledger recover committed transitions after restart.
 Receivers must deduplicate delivery IDs: network retries are at least once.
+
+### Application error alerting compared with Sentry
+
+The current application-error alert surface has these boundaries (reviewed
+2026-10-15 against Sentry's [issue alert configuration](https://docs.sentry.io/product/alerts/create-alerts/issue-alert-config/)):
+
+| Workflow | Gregale today | Remaining gap |
+| --- | --- | --- |
+| New issue and release-aware regression | Durable `issue.created` and `issue.regressed` webhooks | Configurable trigger/filter/action rules |
+| Customer impact | One policy per app, counting verified distinct customers per issue over a fixed rolling 24 hours | Per-rule windows and thresholds; verified customers differ from Sentry user counts |
+| Event frequency | Retained event counts in the inbox | Event-count threshold alerts over selectable short windows |
+| Environment routing | Issue groups are isolated by environment; webhook payload includes the issue environment | Native environment selectors on application alert policies |
+| Noise control | Threshold crossings avoid repeats while impact stays above threshold; active ignore periods suppress impact crossings | Configurable cooldowns and repeat-notification policies |
+| Slack | Customer-operated application webhook bridge | Native application-error delivery; native team Slack destinations currently cover tracker-sync incidents only |
+
+The next implementation priority is event-frequency alerts with explicit window,
+environment and cooldown semantics. Tracker-sync acknowledgment, reminders and
+escalation policies are a separate workflow and do not provide these application
+error alert rules. Ending an ignore period does not retroactively notify about
+suppressed customer-impact crossings.
 
 ## Limits
 
