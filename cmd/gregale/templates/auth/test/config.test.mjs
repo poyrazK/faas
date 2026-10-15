@@ -86,7 +86,9 @@ test('one signing key and up to three verification-only keys, each its own secre
   const jwk = JSON.parse(keySecret('0A1B2C3D').AUTH_JWT_KEY_0A1B2C3D)
   const { d, ...publicOnly } = jwk
   assert.ok(d)
-  for (const bad of [publicOnly, { ...jwk, kid: 'gregale-ffff0001' }, { ...jwk, alg: 'RS256' }, { ...jwk, d: 'AAAA' }]) {
+  const different = JSON.parse(keySecret('FFFF0001').AUTH_JWT_KEY_FFFF0001)
+  for (const bad of [publicOnly, { ...jwk, kid: 'gregale-ffff0001' }, { ...jwk, alg: 'RS256' }, { ...jwk, d: 'AAAA' },
+    { ...jwk, d: Buffer.alloc(32).toString('base64url') }, { ...jwk, d: different.d }]) {
     assert.throws(() => signingKeys({ AUTH_JWT_KEY_0A1B2C3D: JSON.stringify(bad), AUTH_JWT_SIGNER_0A1B2C3D: '1700000000' }), /ES256 private key gregale-0a1b2c3d/)
   }
   assert.throws(() => signingKeys({ AUTH_JWT_KEY_0A1B2C3D: 'not json', AUTH_JWT_SIGNER_0A1B2C3D: '1700000000' }), /Invalid AUTH_JWT_KEY_0A1B2C3D/)
