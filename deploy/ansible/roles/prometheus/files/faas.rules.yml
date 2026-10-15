@@ -5115,3 +5115,33 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Account dashboard rollups (hunt #10, 2026-10-15)
+  # ─────────────────────────────────────────────────────────────────
+  #
+  # The account analytics panel sums the gateway request counter and
+  # latency histogram per app over windows up to 15d. The raw series
+  # carry one copy per gateway instance and node; over 24h the latency
+  # buckets (about 11.5k series on production-us) took 17 s on the
+  # 2 vCPU control plane against apid's 5 s budget, so every window
+  # past an hour came back degraded. These rules keep only the labels
+  # the panel groups on. pkg/appmetrics.AccountIncreaseQuery sums the
+  # 5m rollup for 6h and 24h windows and the hourly one for 7d and 15d.
+  # Each evaluation records the increase since the previous one, so a
+  # sum_over_time across a window is the increase over that window.
+  - name: faas_gateway_account_rollups_5m
+    interval: 5m
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase5m
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[5m]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase5m
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[5m]))
+
+  - name: faas_gateway_account_rollups_1h
+    interval: 1h
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase1h
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[1h]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))
