@@ -1482,6 +1482,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume":                         "ResumeEventSubscription",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands":               "ListEventSubscriptionCapacityCommands",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}":   "GetEventSubscriptionCapacityCommand",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages":                     "ListEventAcknowledgmentHistoryPage",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history":                           "ListEventAcknowledgmentHistory",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy":                            "GetEventAcknowledgmentPolicy",
 	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy":                            "SetEventAcknowledgmentPolicy",
