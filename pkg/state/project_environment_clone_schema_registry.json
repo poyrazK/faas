@@ -3294,6 +3294,20 @@
     "kind": "operational"
   },
   {
+    "table": "event_acknowledgment_outcomes",
+    "columns": [
+      "attempt",
+      "first_at",
+      "invocation_id",
+      "kind",
+      "last_at",
+      "occurrences",
+      "replay_generation",
+      "retain_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_delivery_acknowledgments",
     "columns": [
       "attempt",
