@@ -43,7 +43,7 @@ type QuotaResult struct {
 // CheckQuota applies the per-plan quota ladder. The rule (spec §4.7,
 // financial-model §1):
 //
-//	Free       — included 5 GB-h/month.  ≥100 % ⇒ hard stop.
+//	Free       — included GB-h/month (limits.go).  ≥100 % ⇒ hard stop.
 //	Hobby/Pro/Scale — included quotas; overage accrues at €0.01/GB-h.
 //	                        ≥100 % ⇒ one warning event per UTC day (the
 //	                        caller de-duplicates; see EmitQuotaWarning).

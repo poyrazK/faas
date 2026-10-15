@@ -1357,10 +1357,10 @@ type PlanResourceShape struct {
 // PlanResourceShapes is the single joint RAM/vCPU table used by API
 // validation and documentation. Keep this ordered with Plans.
 var PlanResourceShapes = []PlanResourceShape{
-	{Plan: PlanFree, RAMMB: 128, VCPU: 2},
-	{Plan: PlanHobby, RAMMB: 256, VCPU: 2},
-	{Plan: PlanPro, RAMMB: 512, VCPU: 2},
-	{Plan: PlanScale, RAMMB: 1024, VCPU: 4},
+	{Plan: PlanFree, RAMMB: 256, VCPU: 2},
+	{Plan: PlanHobby, RAMMB: 512, VCPU: 2},
+	{Plan: PlanPro, RAMMB: 1024, VCPU: 2},
+	{Plan: PlanScale, RAMMB: 2048, VCPU: 4},
 }
 
 // VCPUPerPlan exposes the plan-derived guest topology to SDK and CLI callers.
@@ -1615,7 +1615,8 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1320). Every plan currently leaves it zero.
+	// (ADR-1320). Plans include stored bytes per ADR-1350; request and egress
+	// allowances wait for exporters that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
@@ -3168,7 +3169,7 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
-		RAMMB:          128,
+		RAMMB:          256,
 		// ConcurrencyPerVMBound (issue #559): Free allows four
 		// concurrent requests per VM. This keeps the demo tier useful
 		// for small bursts while MaxConcurrency (= 1) still limits a
@@ -3178,13 +3179,15 @@ var planLimits = map[Plan]Limits{
 		// layer build ... Free 256 MB") and the limits table both read 256
 		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
 		// alignment comment; the value was 256 before this audit too.
-		AppLayerMaxMB:                  256,
-		SourceTarballMaxMB:             100,
-		VCPU:                           2,
-		IdleTimeoutS:                   60,
-		RequestBudgetMaxMs:             30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
-		CertExpiryWarningDays:          30,
-		IncludedGBHours:                5,
+		AppLayerMaxMB:         256,
+		SourceTarballMaxMB:    100,
+		VCPU:                  2,
+		IdleTimeoutS:          60,
+		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
+		CertExpiryWarningDays: 30,
+		IncludedGBHours:       20,
+		// ADR-1350: 1 GiB included and Free's hard stop.
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -3517,7 +3520,7 @@ var planLimits = map[Plan]Limits{
 		ConcurrentTailsPerInstance: 4,
 		// Liveness (issue #554 / ADR-078): Free is gated off — a
 		// wedged Free VM is already bounded by the §13 M7
-		// free-stop path at 5 GB-h, so the liveness probe adds no
+		// free-stop path at its GB-h allowance, so the liveness probe adds no
 		// safety on the abuse-floor tier. The zero-valued fields
 		// (Period=0, Consecutive=0, Cooldown=0, MaxRestarts=0,
 		// Window=0) cause `Plan.LivenessAllowed()` to return false
@@ -3570,15 +3573,17 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
-		RAMMB:                 256,
+		RAMMB:                 512,
 		AppLayerMaxMB:         512,
 		SourceTarballMaxMB:    100,
 		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
-		IncludedGBHours:       50,
-		PriceMillicents:       900_000, // €9.00
+		IncludedGBHours:       200,
+		// ADR-1350: 10 GiB included; usage above it is priced at month close.
+		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
+		PriceMillicents: 900_000, // €9.00
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound:          5,
@@ -3990,15 +3995,17 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
-		RAMMB:                 512,
+		RAMMB:                 1024,
 		AppLayerMaxMB:         1024,
 		SourceTarballMaxMB:    250,
 		VCPU:                  2,
 		IdleTimeoutS:          300,
 		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
-		IncludedGBHours:       250,
-		PriceMillicents:       2_900_000, // €29.00
+		IncludedGBHours:       1000,
+		// ADR-1350: 50 GiB included; usage above it is priced at month close.
+		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
+		PriceMillicents: 2_900_000, // €29.00
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
@@ -4372,15 +4379,17 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
-		RAMMB:                 1024,
+		RAMMB:                 2048,
 		AppLayerMaxMB:         2048,
 		SourceTarballMaxMB:    250,
 		VCPU:                  4,
 		IdleTimeoutS:          600,
 		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
-		IncludedGBHours:       1500,
-		PriceMillicents:       9_900_000, // €99.00
+		IncludedGBHours:       3000,
+		// ADR-1350: 200 GiB included; usage above it is priced at month close.
+		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
+		PriceMillicents: 9_900_000, // €99.00
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
 		// body cites this number directly). 80 concurrent requests

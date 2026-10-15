@@ -240,7 +240,7 @@ Every error carries: a **stable `code`** string, a plain-language **title**, the
 | Situation | code | User sees (short form) |
 |---|---|---|
 | Over app/plan limit | `plan_limit_apps` | "Free allows 1 app; you have 1. Upgrade or remove one." |
-| RAM size over plan cap | `plan_limit_ram` | "Hobby caps 256 MB/app; requested 512. Upgrade to Pro." |
+| RAM size over plan cap | `plan_limit_ram` | "Hobby caps 512 MB/app; requested 1024. Upgrade to Pro." |
 | Build detection failed | `build_undetected` | "Couldn't detect a stack. Add a Dockerfile or see docs." |
 | Build OOM | `build_oom` | "Build hit the 2 GB limit. Fewer deps, or upgrade." |
 | Quota exhausted (free) | `quota_exhausted` | "Free monthly compute used up. Resets on the 1st, or upgrade." |
@@ -288,10 +288,10 @@ Events that email the user: email verification; deploy failed (with log link) �
 
   | Plan | Canonical RAM | Guest vCPU |
   |---|---:|---:|
-  | Free | 128 MB | 2 |
-  | Hobby | 256 MB | 2 |
-  | Pro | 512 MB | 2 |
-  | Scale | 1024 MB | 4 |
+  | Free | 256 MB | 2 |
+  | Hobby | 512 MB | 2 |
+  | Pro | 1024 MB | 2 |
+  | Scale | 2048 MB | 4 |
 
   Omitting `vcpu` preserves the plan default and existing custom RAM/profile behavior. Supplying it with a different `ram_mb` pair returns `invalid_cpu_ram_pair` before the app is created.
 - **Usage before cost:** `gregale usage` and the dashboard bar always show current GB-h vs. the included quota and any accrued overage at €0.01/GB-h, updated hourly (matches metering push cadence, implementation spec §4.7).

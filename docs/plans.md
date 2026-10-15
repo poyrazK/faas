@@ -8,10 +8,10 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 
 | Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Free** | €0 | 1 | 1 | 1 | 1 | 128 MB | 5 | 256 MB | 1m | 30s |
-| **Hobby** | €9 | 5 | 2 | 2 | 2 | 256 MB | 50 | 512 MB | 1m | 1m |
-| **Pro** | €29 | 25 | 5 | 5 | 5 | 512 MB | 250 | 1024 MB | 5m | 5m |
-| **Scale** | €99 | 100 | 20 | 10 | 20 | 1024 MB | 1500 | 2048 MB | 10m | 15m |
+| **Free** | €0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 256 MB | 1m | 30s |
+| **Hobby** | €9 | 5 | 2 | 2 | 2 | 512 MB | 200 | 512 MB | 1m | 1m |
+| **Pro** | €29 | 25 | 5 | 5 | 5 | 1024 MB | 1000 | 1024 MB | 5m | 5m |
+| **Scale** | €99 | 100 | 20 | 10 | 20 | 2048 MB | 3000 | 2048 MB | 10m | 15m |
 
 ## What each limit means
 
