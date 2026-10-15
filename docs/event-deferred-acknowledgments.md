@@ -428,3 +428,6 @@ schedulers before rollback. No production migration or deployment is performed.
 
 For the Go receipt-aware worker, renewal lifecycle, explicit failure methods and
 crash recovery, see [Go worker acknowledgments](event-acknowledgment-worker.md).
+
+[Durable Go acknowledgment intents](event-acknowledgment-intents.md) persists
+completion with the business receipt and replays saved callbacks after crashes.

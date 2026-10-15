@@ -125,7 +125,7 @@ func WithEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventCo
 	return withEventConsumerTransaction(ctx, db, input, handler, nil)
 }
 
-func withEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventConsumerRequest, handler func(EventConsumerSQLTransaction) (json.RawMessage, error), lease *EventConsumerProcessingLease) (EventConsumerTransactionResult, error) {
+func withEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventConsumerRequest, handler func(EventConsumerSQLTransaction) (json.RawMessage, error), lease *EventConsumerProcessingLease, hooks ...func(context.Context, *sql.Tx, EventConsumerTransactionResult) error) (EventConsumerTransactionResult, error) {
 	if !input.valid || db == nil || handler == nil {
 		return EventConsumerTransactionResult{}, ErrInvalidEventConsumerRequest
 	}
@@ -177,10 +177,18 @@ func withEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventCo
 			return EventConsumerTransactionResult{}, err
 		}
 	}
+	result := EventConsumerTransactionResult{Body: json.RawMessage(response), Replayed: replayed}
+	for _, hook := range hooks {
+		if hook != nil {
+			if err := hook(ctx, tx, result); err != nil {
+				return EventConsumerTransactionResult{}, err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return EventConsumerTransactionResult{}, fmt.Errorf("%w: %w", ErrEventConsumerCommitUnknown, err)
 	}
-	return EventConsumerTransactionResult{Body: json.RawMessage(response), Replayed: replayed}, nil
+	return result, nil
 }
 
 func validEventConsumerResponse(body string) bool {

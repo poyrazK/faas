@@ -127,3 +127,10 @@ transaction within that local lease; do not run a competing local renewal loop
 while Complete holds the row. An already committed receipt can replay after the
 old local lease expires. Business receipts still require explicit application
 retention and operational recovery policies.
+
+## Persist callbacks across process death
+
+[Durable Go acknowledgment intents](event-acknowledgment-intents.md) adds opt-in
+application-owned storage, atomic receipt/intent commits, and leased recovery
+without rerunning business code. Use that mode instead of immediate terminal
+callbacks when the application wants database-backed intent recovery.
