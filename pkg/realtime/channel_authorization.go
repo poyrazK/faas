@@ -36,6 +36,9 @@ func (a *channelAuthorization) check(ctx context.Context, c *connection, channel
 	if ctx.Err() != nil || c.m.closed.Load() || c.state.revoked.Load() {
 		return channelAuthorizationUnavailable
 	}
+	if !c.identityAllows(ctx) {
+		return channelAuthorizationUnavailable
+	}
 	if c.ticketToken != "" {
 		if c.accessAllows(ctx, channel) {
 			return channelAuthorizationAllowed
@@ -62,6 +65,9 @@ func (a *channelAuthorization) check(ctx context.Context, c *connection, channel
 	}
 	allowed, err := c.m.checkResumeChannel(ctx, c, channel, current)
 	if err != nil || ctx.Err() != nil || c.state.revoked.Load() || c.state.config.Load() != current || time.Since(now) >= channelReauthorizeInterval {
+		return channelAuthorizationUnavailable
+	}
+	if !c.identityAllows(ctx) {
 		return channelAuthorizationUnavailable
 	}
 	if !allowed {

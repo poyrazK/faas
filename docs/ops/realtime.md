@@ -2849,8 +2849,20 @@ includes the configured history poll interval and callback deadline. Already
 written frames cannot be recalled. These callbacks may wake the application and
 keep it billable while subscriptions remain active.
 
-This does not add periodic WebSocket JWT verification, identify individual Auth
-sessions, or change legacy management, inbox or direct-message authorization.
+Retained JWT connections also cache verification of their pinned subject and
+session for up to 30 seconds ([ADR-1332](../adr/1332-session-bound-retained-realtime.md)). An
+expiry timer closes idle sockets, and all output checks token validity. Expired
+or changed identities close with code 1008; verification outages use 1013.
+Custom principal projections must still match. Tokens require `exp` in the
+production retained transports; clients reconnect with a refreshed token.
+Signing-key removal follows the existing JWKS cache freshness/grace contract.
+
+The Auth template now requires a verified `session_id` in channel callbacks and
+uses `gregale_auth.authorize` in a transaction scoped to that session. Upgrade
+the daemon, redeploy Auth apps from the new template and reconnect clients. An
+older Auth app still uses subject-wide checks; an updated app fails closed on
+callbacks from daemons that omit the session ID. Legacy management and
+inbox/direct-message session authorization retain their existing contracts.
 Ticket subscriptions continue using their existing one-second durable checks.
 Before deployment qualification, exercise membership removal, bans/global
 sign-out, callback outages, policy rotation and slow consumers across nodes.

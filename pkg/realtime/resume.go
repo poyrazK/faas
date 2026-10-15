@@ -196,6 +196,9 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "access_revoked", Channel: frame.Channel})
 			continue
 		}
+		if !c.identityAllows(ctx) {
+			return
+		}
 		if !m.admitResumeCommand(ctx, c, frame) {
 			continue
 		}
@@ -858,6 +861,9 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 		ConnectionID: c.info.ID, Principal: c.info.Principal, Channel: channel,
 		Permission: "read", At: time.Now().UTC(), CallbackURL: endpoint.CallbackURL,
 		CallbackAuthToken: endpoint.CallbackAuthToken,
+	}
+	if c.identity != nil {
+		event.SessionID = c.identity.identity.SessionID
 	}
 	parent, scope, parseErr := api.ParseRealtimeActivityScope(channel)
 	if parseErr != nil {

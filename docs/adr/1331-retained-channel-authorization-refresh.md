@@ -34,11 +34,10 @@ deadline; an already written frame cannot be recalled.
 
 Ticket subscriptions retain their existing one-second durable checks. Legacy
 management subscriptions and inbox/direct messages keep their existing contracts.
-This change does not enable previews or qualify a deployed fleet. WebSocket JWT
-identity is still verified at connection admission. Auth's callback remains
-subject-scoped: it checks membership, bans, deletion and at least one active
-session, rather than a particular session ID. Session-specific revocation is a
-separate follow-up.
+This change does not enable previews or qualify a deployed fleet.
+[ADR-1332](1332-session-bound-retained-realtime.md) subsequently adds periodic
+retained WebSocket JWT verification and replaces Auth's subject-wide callback
+check with the verified token's particular session.
 
 ## Validation
 

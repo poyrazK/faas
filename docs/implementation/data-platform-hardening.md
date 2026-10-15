@@ -37,10 +37,27 @@ Earlier race attempts intermittently timed out in the existing
 `TestManagerKeepsIdleConnectionAcrossPongs`; its original-source baseline passed
 ten runs and the final full race run passed. No data race was reported.
 
-Follow-up work must address individual Auth session binding and WebSocket token
-reverification. The current Auth callback authorizes a subject with at least one
-active session. This slice does not claim session-specific revocation, direct
-message/inbox coverage or deployed fleet acceptance.
+## Second slice: session-specific retained channels
+
+ADR-1332 hands off the verified JWT session and expiry to retained WebSocket and
+SSE authorization. The Auth template now scopes its existing SQL authorization
+to that exact session, and retained WebSockets refresh their JWT decision and
+enforce expiry even while idle. The first slice is preserved in local commit
+`77bd4cc6c`; the second slice is reviewed and verified separately.
+
+Existing Auth apps require a template redeploy after the daemon upgrade and
+client reconnection. Live Auth database/cross-node qualification and
+direct-message/inbox session authorization remain open. No capability gate has
+been promoted.
+
+The Auth suite also exposed permissive private-key import under Node 24. Signing
+key validation now checks the P-256 parameter widths and derives the public point
+to reject invalid scalars and inconsistent public/private key pairs.
+
+Local verification passed: the full `pkg/realtime` and `cmd/realtimed` suites,
+the full realtime suite under `-race`, all 55 Auth template tests, changed-line
+lint for both Go packages, documentation links and the repository policy checks.
+The signing-key validator fix is independently committed as `9b5184376`.
 
 ## Release boundaries
 
