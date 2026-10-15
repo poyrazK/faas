@@ -1994,6 +1994,36 @@ observed values, and results at the confirming window (or final checked window
 on failure). Terminal and HTML reports show those comparisons. Scenario and
 JUnit failures identify the recovery phase and failed relative metrics.
 
+### Baseline, fault and recovery report overview
+
+Terminal and HTML reports show an informational comparison table for each timed
+chaos load, including loads inside staged steps. Each row identifies the baseline,
+fault, recovery or control role and shows request count, p95 latency, error rate,
+request rate, and changes from the **initial** baseline. Roles describe the declared
+schedule; recorded rule matches independently confirm injection. Later recovery phases do
+not replace that baseline during repeated outages.
+
+Latency and request-rate changes are percentages; error-rate changes are
+percentage points. Missing samples, incomplete latency samples, nonfinite values,
+zero baseline denominators, and missing actual phase durations are shown as
+unavailable where the corresponding measurement or comparison cannot be computed.
+An observed zero request rate does not imply measured zero latency or errors.
+
+The overview uses existing phase metrics: requests belong to the phase in which
+they started, including responses that complete after a phase boundary. Request
+rate is those attributed requests divided by the actual phase duration; it is
+not successful completion throughput. Different traffic mixes or offered loads
+can affect these descriptive comparisons. The existing baseline-relative recovery
+assertion uses its separately filtered, completed baseline samples.
+
+Configured HTTP/TCP attempt evidence, strict per-request retry maxima, observed
+recovery times and failed assertions appear beside the measurements. The overview
+adds no pass/fail budget: existing thresholds, retry limits, recovery deadlines,
+sample requirements, fault-match checks and cleanup checks determine the verdict.
+JSON and JUnit retain the underlying metrics, assertions and explicit phase roles
+in `chaos_phases`. Older reports without roles use their recorded rule and recovery
+evidence for display, rather than guessing from phase names.
+
 ### Recovery regressions between CI runs
 
 Set a recovery regression budget on a resilience scenario:

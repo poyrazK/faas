@@ -239,6 +239,7 @@ type testLoadEvidence struct {
 }
 
 type testLoadChaosPhaseEvidence struct {
+	Role                string                                  `json:"role,omitempty"`
 	RequestDeadlines    map[string]*testRequestDeadlineEvidence `json:"request_deadlines,omitempty"`
 	PoolExhaustion      *testPoolPhaseEvidence                  `json:"pool_exhaustion,omitempty"`
 	ConnectionLeaks     *testConnectionLeakEvidence             `json:"connection_leaks,omitempty"`
@@ -1129,7 +1130,7 @@ func (c *testLoadCollector) reportChaosPhases(cfg *testLoadConfig) []testLoadCha
 	phases := make([]testLoadChaosPhaseEvidence, 0, len(cfg.ChaosSchedule))
 	var plannedStart time.Duration
 	for i, phase := range cfg.ChaosSchedule {
-		entry := testLoadChaosPhaseEvidence{CorrelationRequests: slices.Clone(c.chaosPhases[i].correlationRequests), CorrelationOverflow: c.chaosPhases[i].correlationOverflow, Assertions: append([]string(nil), phase.Assertions...), Cycle: phase.Cycle,
+		entry := testLoadChaosPhaseEvidence{Role: testLoadPhaseRole(i, cfg.ChaosSchedule), CorrelationRequests: slices.Clone(c.chaosPhases[i].correlationRequests), CorrelationOverflow: c.chaosPhases[i].correlationOverflow, Assertions: append([]string(nil), phase.Assertions...), Cycle: phase.Cycle,
 			CircuitRequests: append([]testCircuitIncomingSample(nil), c.chaosPhases[i].circuitSamples...), Name: phase.Name, PlannedStartMS: plannedStart.Milliseconds(),
 			PlannedEndMS:    (plannedStart + phase.Duration).Milliseconds(),
 			testLoadMetrics: testLoadMetrics{Statuses: map[string]int{}},
@@ -1303,6 +1304,7 @@ func loadMilliseconds(duration time.Duration) float64 {
 }
 
 func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
+	printTestLoadPhaseComparisons(out, report)
 	printTestRequestDeadlines(out, report)
 	printTestPoolExhaustion(out, report)
 	if report != nil && report.ConnectionLeaks != nil {
