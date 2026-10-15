@@ -14,13 +14,34 @@ import (
 // overlap of those intervals with it, so asking again for the same past
 // window gives the same answer.
 
-// Ledger meters.
+// Ledger meters. A production database's standby holds real resources
+// too: its vCPUs while its VM runs and a second copy of the volume while it
+// has a node. Its meters count into compute units and storage (not active
+// seconds), so the account's usage ceilings see what the database holds.
 const (
-	MeterCompute = "compute"
-	MeterStorage = "storage"
-	MeterHistory = "history"
-	MeterEgress  = "egress"
+	MeterCompute        = "compute"
+	MeterStorage        = "storage"
+	MeterHistory        = "history"
+	MeterEgress         = "egress"
+	MeterStandbyCompute = "standby_compute"
+	MeterStandbyStorage = "standby_storage"
 )
+
+// rateMeters are the meters a deleted database's ledger closes.
+var rateMeters = []string{MeterCompute, MeterStorage, MeterHistory, MeterStandbyCompute, MeterStandbyStorage}
+
+// standbyRates are the standby's open rates vm implies: compute while its
+// VM runs, storage while it has a node.
+func standbyRates(vm VM) map[string]int64 {
+	rates := map[string]int64{}
+	if vm.StandbyRunning {
+		rates[MeterStandbyCompute] = computeRate(vm)
+	}
+	if vm.StandbyNode != "" {
+		rates[MeterStandbyStorage] = vm.VolumeBytes
+	}
+	return rates
+}
 
 // UsageRow is one ledger row. Rate meters have a per-second rate over
 // [Start, End) (End zero: still open); egress rows count Rate bytes in the
@@ -74,7 +95,9 @@ func sumUsage(rows []UsageRow, from, to, now time.Time) Usage {
 		case MeterCompute:
 			u.ActiveSeconds += ms / 1000
 			u.ComputeUnitSeconds += quantity
-		case MeterStorage:
+		case MeterStandbyCompute:
+			u.ComputeUnitSeconds += quantity
+		case MeterStorage, MeterStandbyStorage:
 			u.StorageByteSeconds += quantity
 		case MeterHistory:
 			u.HistoryByteSeconds += quantity

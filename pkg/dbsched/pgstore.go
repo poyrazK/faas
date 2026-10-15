@@ -194,8 +194,38 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if err := s.open(ctx, tx, key, MeterStorage, vm.VolumeBytes, time.Now()); err != nil {
 			return VM{}, err
 		}
-		return s.get(ctx, tx, vm.DatabaseID)
+		return s.getSyncingStandby(ctx, tx, vm.DatabaseID)
 	})
+}
+
+// getSyncingStandby reads a database inside tx and opens and closes its
+// standby's ledger intervals to match it, starting a new interval when a
+// rate changed. Every write that changes the standby ends with it.
+func (s *PgStore) getSyncingStandby(ctx context.Context, tx pgx.Tx, id string) (VM, error) {
+	vm, err := s.get(ctx, tx, id)
+	if err != nil {
+		return VM{}, err
+	}
+	key, now, want := mustUUID(id), time.Now(), standbyRates(vm)
+	for _, meter := range []string{MeterStandbyCompute, MeterStandbyStorage} {
+		rate, on := want[meter]
+		current, err := s.q.OpenDatabaseUsageRate(ctx, tx, sqlc.OpenDatabaseUsageRateParams{DatabaseID: key, Meter: meter})
+		open := err == nil
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return VM{}, fmt.Errorf("dbsched: read %s usage: %w", meter, err)
+		}
+		if open && (!on || current != rate) {
+			if err := s.close(ctx, tx, key, meter, now); err != nil {
+				return VM{}, err
+			}
+		}
+		if on && (!open || current != rate) {
+			if err := s.open(ctx, tx, key, meter, rate, now); err != nil {
+				return VM{}, err
+			}
+		}
+	}
+	return vm, nil
 }
 
 func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
@@ -375,7 +405,7 @@ func (s *PgStore) Delete(ctx context.Context, id string) error {
 			}
 			return VM{}, ErrConflict
 		}
-		for _, meter := range []string{MeterCompute, MeterStorage, MeterHistory} {
+		for _, meter := range rateMeters {
 			if err := s.close(ctx, tx, key, meter, time.Now()); err != nil {
 				return VM{}, err
 			}
@@ -530,7 +560,7 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 				return VM{}, err
 			}
 		}
-		return VM{}, nil
+		return s.getSyncingStandby(ctx, tx, id)
 	})
 	return err
 }
@@ -785,7 +815,7 @@ func (s *PgStore) ClaimStandby(ctx context.Context, id string) (VM, error) {
 		if err := s.changed(ctx, tx, id, n, err); err != nil {
 			return VM{}, err
 		}
-		return s.get(ctx, tx, id)
+		return s.getSyncingStandby(ctx, tx, id)
 	})
 }
 
@@ -794,8 +824,14 @@ func (s *PgStore) ReleaseStandby(ctx context.Context, id string, keepSynced bool
 	if err != nil {
 		return err
 	}
-	n, err := s.q.ReleaseDatabaseStandby(ctx, s.pool, sqlc.ReleaseDatabaseStandbyParams{KeepSynced: keepSynced, DatabaseID: key})
-	return s.changed(ctx, s.pool, id, n, err)
+	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		n, err := s.q.ReleaseDatabaseStandby(ctx, tx, sqlc.ReleaseDatabaseStandbyParams{KeepSynced: keepSynced, DatabaseID: key})
+		if err := s.changed(ctx, tx, id, n, err); err != nil {
+			return VM{}, err
+		}
+		return s.getSyncingStandby(ctx, tx, id)
+	})
+	return err
 }
 
 func (s *PgStore) MarkStandbySynced(ctx context.Context, id string, synced bool) error {
@@ -841,7 +877,7 @@ func (s *PgStore) ReplaceStandby(ctx context.Context, id string, avoid ...string
 		if err := s.changed(ctx, tx, id, n, err); err != nil {
 			return VM{}, err
 		}
-		return s.get(ctx, tx, id)
+		return s.getSyncingStandby(ctx, tx, id)
 	})
 }
 
@@ -858,7 +894,7 @@ func (s *PgStore) Failover(ctx context.Context, id string) (VM, error) {
 		if err := s.changed(ctx, tx, id, n, err); err != nil {
 			return VM{}, err
 		}
-		after, err := s.get(ctx, tx, id)
+		after, err := s.getSyncingStandby(ctx, tx, id)
 		if err != nil {
 			return VM{}, err
 		}

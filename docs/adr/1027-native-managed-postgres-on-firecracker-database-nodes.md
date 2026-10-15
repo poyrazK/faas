@@ -1197,9 +1197,6 @@ shows a shape that matches no class.
 
 Not yet done:
 
-- **Standby metering.** The standby's vCPUs and volume are allocated but
-  not metered. Whether production is priced as two VMs or carried in its
-  class price is an owner decision against the financial model.
 - **After every wake the primary runs asynchronous until its standby
   syncs**, typically a few seconds. A node loss in that window falls back
   to the archive (up to 60 s of loss), as for other classes.
@@ -1347,10 +1344,20 @@ intervals at a constant per-second rate, or hourly counts:
 | `storage_byte_seconds` | `storage`: provisioned volume bytes | opened at placement, closed at deletion |
 | `history_byte_seconds` | `history`: archive bytes | sampled from each node's dbbackupd (`DatabaseArchiveBytes`, admin `size`) by the 10-minute maintenance sweep; a new size closes the interval and opens another |
 | `egress_bytes` | `egress`: bytes per hour | pgproxyd counts bytes sent to clients and reports them on its 30 s touches and at session end (`TouchDatabase.egress_bytes`), at most once |
+| `compute_unit_seconds` (standby) | `standby_compute`: the standby's vCPUs | opened when a production database's standby VM is claimed, closed when it stops, is promoted or the database is deleted |
+| `storage_byte_seconds` (standby) | `standby_storage`: volume bytes | open while the database has a standby node, at the volume's current size; closed when replication turns off, on failover and at deletion |
 
 - A window's usage is the overlap of the rows with it (`DatabaseUsage`, apid
   only); a database with no ledger is `NotFound`. Provisioning and restore
   VM time is not billed, since it is not the customer's compute.
+- **The standby counts.** A production database's standby holds real
+  resources: a second VM and a second copy of the volume. Following the
+  rule of plan limits rather than prices, it adds no meter or price. Its
+  vCPU-seconds count into `compute_unit_seconds` and its volume into
+  `storage_byte_seconds`, so the account's usage ceilings see what the
+  database holds. `active_seconds` stays the primary's. Every store write
+  that changes the standby re-syncs those intervals in the same
+  transaction (`getSyncingStandby`).
 - A restore is its own database with its own ledger
   (`RestoreUsageIsolated`, only where point-in-time restore is on).
 - When the operator marks a node unavailable, schedd's 30-second sweep

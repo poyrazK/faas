@@ -17639,7 +17639,7 @@ CREATE TABLE public.database_usage (
     rate bigint NOT NULL,
     CONSTRAINT database_usage_egress_open CHECK (((meter <> 'egress'::text) OR (ended_at IS NULL))),
     CONSTRAINT database_usage_interval CHECK (((ended_at IS NULL) OR (ended_at >= started_at))),
-    CONSTRAINT database_usage_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'storage'::text, 'history'::text, 'egress'::text]))),
+    CONSTRAINT database_usage_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'storage'::text, 'history'::text, 'egress'::text, 'standby_compute'::text, 'standby_storage'::text]))),
     CONSTRAINT database_usage_rate_check CHECK ((rate >= 0))
 );
 

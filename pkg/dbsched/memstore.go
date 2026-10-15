@@ -126,7 +126,25 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 	vm.CreatedAt, vm.StateChangedAt, vm.LastActiveAt = now, now, time.Time{}
 	m.vms[vm.DatabaseID] = vm
 	m.openLocked(vm.DatabaseID, MeterStorage, vm.VolumeBytes, now)
+	m.syncStandbyLedgerLocked(vm, now)
 	return vm, nil
+}
+
+// syncStandbyLedgerLocked opens and closes the standby's ledger intervals
+// to match vm, starting a new interval when a rate changed.
+func (m *MemStore) syncStandbyLedgerLocked(vm VM, at time.Time) {
+	want := standbyRates(vm)
+	for _, meter := range []string{MeterStandbyCompute, MeterStandbyStorage} {
+		rate, on := want[meter]
+		for _, r := range m.ledger[vm.DatabaseID] {
+			if r.Meter == meter && r.End.IsZero() && (!on || r.Rate != rate) {
+				m.closeLocked(vm.DatabaseID, meter, at)
+			}
+		}
+		if on {
+			m.openLocked(vm.DatabaseID, meter, rate, at)
+		}
+	}
 }
 
 func (m *MemStore) AdmitWake(_ context.Context, id string) (VM, error) {
@@ -233,7 +251,7 @@ func (m *MemStore) Delete(_ context.Context, id string) error {
 		return ErrConflict
 	}
 	delete(m.vms, id)
-	for _, meter := range []string{MeterCompute, MeterStorage, MeterHistory} {
+	for _, meter := range rateMeters {
 		m.closeLocked(id, meter, m.now())
 	}
 	return nil
@@ -392,6 +410,7 @@ func (m *MemStore) Resize(_ context.Context, id string, shape Shape, at time.Tim
 	replicationChange(&vm, shape, standby)
 	vm.VcpuCount, vm.MemMiB, vm.VolumeBytes, vm.ResizePending = shape.VcpuCount, shape.MemMiB, shape.VolumeBytes, true
 	m.vms[id] = vm
+	m.syncStandbyLedgerLocked(vm, at)
 	if grew {
 		m.closeLocked(id, MeterStorage, at)
 		m.openLocked(id, MeterStorage, shape.VolumeBytes, at)
@@ -508,6 +527,7 @@ func (m *MemStore) ClaimStandby(_ context.Context, id string) (VM, error) {
 	}
 	vm.StandbyRunning = true
 	m.vms[id] = vm
+	m.syncStandbyLedgerLocked(vm, m.now())
 	return vm, nil
 }
 
@@ -520,6 +540,7 @@ func (m *MemStore) ReleaseStandby(_ context.Context, id string, keepSynced bool)
 	}
 	vm.StandbyRunning, vm.StandbySynced = false, vm.StandbySynced && keepSynced
 	m.vms[id] = vm
+	m.syncStandbyLedgerLocked(vm, m.now())
 	return nil
 }
 
@@ -558,6 +579,7 @@ func (m *MemStore) ReplaceStandby(_ context.Context, id string, avoid ...string)
 	}
 	vm.StandbyNode, vm.StandbySynced = standby.ID, false
 	m.vms[id] = vm
+	m.syncStandbyLedgerLocked(vm, m.now())
 	return vm, nil
 }
 
@@ -580,6 +602,7 @@ func (m *MemStore) Failover(_ context.Context, id string) (VM, error) {
 	}
 	vm.StandbyRunning, vm.LastError, vm.StateChangedAt = false, errCodeFailedOver, now
 	m.vms[id] = vm
+	m.syncStandbyLedgerLocked(vm, now)
 	switch {
 	case isActive(vm.State) && !wasActive:
 		m.openLocked(id, MeterCompute, computeRate(vm), now)

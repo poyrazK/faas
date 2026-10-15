@@ -320,3 +320,75 @@ func TestStoreResizeChecksTheStandbysNode(t *testing.T) {
 		})
 	}
 }
+
+// A production database's standby counts into compute units while its VM
+// runs and into storage while it has a node, in both stores; active
+// seconds stay the primary's, and turning replication off stops the
+// standby's storage.
+func TestStoreStandbyCountsIntoUsage(t *testing.T) {
+	const gib = int64(1 << 30)
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s,
+				Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 20 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 20 << 30, Lifecycle: NodeActive},
+			)
+			vm := newVM(gib, 384)
+			vm.VcpuCount, vm.Replicated = 2, true
+			start := time.Now()
+			placed, err := s.Place(ctx, vm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := placed.DatabaseID
+			if err := s.Transition(ctx, id, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AdmitWake(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimStandby(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(1100 * time.Millisecond)
+			if err := s.ReleaseStandby(ctx, id, true); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range []State{StateParking, StateParked} {
+				if err := s.Transition(ctx, id, []State{StateRunning, StateParking}, step, TransitionOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			u, err := s.Usage(ctx, id, start, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Primary: 2 vCPUs for ActiveSeconds; the standby added at
+			// least 2 vCPU-seconds more while it ran.
+			if u.ActiveSeconds < 1 || u.ComputeUnitSeconds < 2*u.ActiveSeconds+2 {
+				t.Fatalf("usage %+v: the standby's vCPUs are not counted", u)
+			}
+			if u.StorageByteSeconds < 2*gib {
+				t.Fatalf("usage %+v: the standby's volume is not counted", u)
+			}
+
+			// Out of production: only one copy is stored from then on.
+			if err := s.Resize(ctx, id, Shape{VcpuCount: 2, MemMiB: 384, VolumeBytes: gib}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			mark := time.Now()
+			time.Sleep(1100 * time.Millisecond)
+			after, err := s.Usage(ctx, id, mark, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.StorageByteSeconds > 2*gib || after.StorageByteSeconds < gib || after.ComputeUnitSeconds != 0 {
+				t.Fatalf("usage after leaving production %+v; want one volume's storage and no compute", after)
+			}
+		})
+	}
+}

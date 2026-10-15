@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS database_vms_node_state_idx
 CREATE TABLE IF NOT EXISTS database_usage (
     database_id uuid NOT NULL,
     meter text NOT NULL
-        CHECK (meter IN ('compute', 'storage', 'history', 'egress')),
+        CHECK (meter IN ('compute', 'storage', 'history', 'egress', 'standby_compute', 'standby_storage')),
     started_at timestamptz NOT NULL,
     ended_at timestamptz,
     rate bigint NOT NULL
