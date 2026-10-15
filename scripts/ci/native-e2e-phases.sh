@@ -99,7 +99,7 @@ native_e2e_phase_files() {
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
     jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go \
-      image_runs_metal_test.go job_task_logs_metal_test.go ;;
+      image_runs_metal_test.go job_task_logs_metal_test.go image_run_interactive_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
 }
