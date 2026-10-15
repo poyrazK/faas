@@ -76,7 +76,7 @@ func (s *server) loadDashboardEdgeRuleEvents(r *http.Request, log *slog.Logger, 
 		data.Events = append(data.Events, dashboard.EdgeRuleEventPageItem{
 			OccurredAt: e.OccurredAt.Format("2006-01-02 15:04:05"), RuleID: e.RuleID, RuleLabel: label,
 			Outcome: e.Outcome, Method: e.Method, HostPath: e.Host + e.Path, ClientIP: e.ClientIP,
-			Country: e.Country, UserAgent: e.UserAgent, RequestID: e.RequestID,
+			Country: e.Country, UserAgent: e.UserAgent, RequestID: e.RequestID, WAF: e.WAFSummary(),
 		})
 	}
 	if page.NextCursor != "" {

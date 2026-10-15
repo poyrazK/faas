@@ -999,7 +999,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// sourceApp is the app as the staged archive sees it: a Compose
 		// build context is staged as the archive root (H10-25).
 		sourceApp := app
-		composeContext := composeDockerBuildContext(scanDir, project, app)
+		composeContext := composeDockerBuildContext(scanDir, workload, app)
 		if composeContext {
 			sourceApp.RootDir = ""
 		}
@@ -1133,14 +1133,17 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 }
 
 // composeDockerBuildContext reports whether app.RootDir is a Compose service's
-// Docker build context. Workspace and convention Dockerfiles keep the
-// repository context so they can COPY root lockfiles (ADR-144), but Compose
-// declares the context explicitly: with the repository as context, `build:
-// ./web` plus `COPY server.js .` failed with "/server.js: not found" on prod
-// (H10-25). Only a Dockerfile build changes; a context the builder detects
-// from language markers keeps the repository for workspace lockfiles.
-func composeDockerBuildContext(scanDir string, project state.Project, app state.App) bool {
-	if project.ScanSource != state.ProjectScanSourceCompose || app.Manifest.ProjectImage != "" {
+// Docker build context (ADR-1288). Workspace and convention Dockerfiles keep
+// the repository context so they can COPY root lockfiles (ADR-144), but
+// Compose declares the context explicitly: with the repository as context,
+// `build: ./web` plus `COPY server.js .` failed with "/server.js: not found"
+// on prod (H10-25). The rule is per workload: a Dockerfile workload that the
+// scanner found beside the Compose file, not in it, keeps the repository even
+// though the project's scan source is compose. Only a Dockerfile build
+// changes; a context the builder detects from language markers keeps the
+// repository for workspace lockfiles.
+func composeDockerBuildContext(scanDir string, workload reposcan.Workload, app state.App) bool {
+	if workload.DetectedBy.Detector != reposcan.DetectorCompose || app.Manifest.ProjectImage != "" {
 		return false
 	}
 	root, err := sourcecontext.EffectiveRoot(app.RootDir)

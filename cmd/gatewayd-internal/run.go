@@ -2900,6 +2900,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
 		handler.WithEdgeRuleHitRecorder(hitCounter)
+		// ADR-831 amendment 5: off-path WAF detections become events too.
+		wafInspector.WithEventRecorder(hitCounter)
 		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
@@ -3502,6 +3504,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		attachMux := http.NewServeMux()
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
 			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		// ADR-1330: an interactive image run's task uses the same session.
+		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
 		// ADR-1163: live job task output follows the task VM on its node.
 		logsMux := http.NewServeMux()

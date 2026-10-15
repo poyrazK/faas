@@ -21,6 +21,7 @@ import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeRespo
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
@@ -34,6 +35,7 @@ import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequ
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
+import type { WorkerRolloutObservation } from '../models/WorkerRolloutObservation.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -669,6 +671,51 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a coherent worker-generation residency snapshot
+   * @returns WorkerRolloutObservation Database snapshot of selected and retired worker residents. Does not establish queue processing or external consumer completion.
+   * @returns Problem Generic 503 envelope. Used by the apid capacity gate (e.g.
+   * host age recipient not loaded → registry credential PUT
+   * returns 503 instead of accepting plaintext).
+   *
+   * @throws ApiError
+   */
+  public static getWorkerRolloutObservation({
+    slug,
+    id,
+    environment,
+    scope,
+  }: {
+    /**
+     * Application slug for worker rollout observation.
+     */
+    slug: string,
+    /**
+     * Exact deployment ID for worker rollout observation.
+     */
+    id: string,
+    /**
+     * Selected environment for passive worker generation observations; omit for the default scope.
+     */
+    environment?: string,
+    /**
+     * Explicit default scope. Exactly one selector is required.
+     */
+    scope?: 'default',
+  }): CancelablePromise<WorkerRolloutObservation | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollouts/{id}/observation',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'environment': environment,
+        'scope': scope,
       },
     });
   }

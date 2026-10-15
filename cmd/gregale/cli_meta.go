@@ -972,7 +972,7 @@ var cliCommands = []cliCommand{
 				{Name: "custom-metric", Short: "Pushed custom metric to watch; required with --metric custom_metric", Value: "NAME"},
 				{Name: "slo", Short: "SLO id for slo_budget_burn or slo_budget_remaining_pct", Value: "SLO_ID"},
 				{Name: "synthetic-check", Short: "synthetic check id for synthetic_check_* metrics", Value: "CHECK_ID"},
-				{Name: "webhook-url", Short: "https webhook URL (required unless --channel)", Value: "URL"},
+				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted); required unless --channel", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
@@ -2163,7 +2163,7 @@ var cliCommands = []cliCommand{
 			{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 			{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 			{Name: "all", Short: "walk every page"},
-			{Name: "wide", Short: "include annotation columns (by / pr / tag / reason)"},
+			{Name: "wide", Short: "include the revision (vN) and annotation columns (by / pr / tag / reason)"},
 		},
 	},
 	{
@@ -2209,7 +2209,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
-		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)",
+		Short:   "Deployment drill-downs (deploys show|status|logs|cancel|reorder|clear|clear-obsolete|retry)",
 		CompletionPositions: []cliCompletionPosition{
 			{Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"show"}, Position: 1, Role: cliCompletionDeploymentID},
@@ -2233,6 +2233,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance", Examples: []string{"gregale deploys status 00000000000000000000000000000001", "gregale deploys status v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+			}},
+			{Name: "logs", Short: "Print one deployment's build and deploy log", Examples: []string{"gregale deploys logs v42 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+				{Name: "limit", Short: "most recent log lines to print (1-5000)", Value: "N"},
 			}},
 			{Name: "cancel", Short: "Cancel one pending deployment", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to the linked project, or the deployment's own app)", Value: "slug"},
@@ -3238,12 +3242,13 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
-			{Name: "events", Short: "Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)", Examples: []string{
+			{Name: "events", Short: "Sampled requests rules matched and kind=waf detections, newest first (up to 10 of each per rule per minute; kept 7 days)", Examples: []string{
 				"gregale edge-rules events --app my-api --outcome logged --since 7d",
+				"gregale edge-rules events --app my-api --outcome blocked",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "rule", Short: "only this rule id", Value: "ID"},
-				{Name: "outcome", Short: "outcome filter", Value: "OUTCOME", ClosedSet: []string{"matched", "logged"}},
+				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked"}},
 				{Name: "since", Short: "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)", Value: "DURATION"},
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
@@ -3679,9 +3684,12 @@ var cliCommands = []cliCommand{
 		Examples: []string{
 			"gregale run --image alpine echo hello",
 			"gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'",
+			"gregale run -it --image alpine sh",
 		},
 		Flags: []cliFlag{
 			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161)", Value: "REF"},
+			{Name: "interactive", Short: "with --image, attach stdin and relay the session until the command exits (-i; ADR-1330)"},
+			{Name: "tty", Short: "with --image --interactive, give the command a terminal (-t; -it for both)"},
 			{Name: "entrypoint", Short: "with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute", Value: "CMD|FILE"},
 			{Name: "env", Short: "with --image, KEY=VALUE environment variable (repeatable; -e)", Value: "KEY=VALUE"},
 			{Name: "ram", Short: "with --image, memory in MB (default: Job default)", Value: "MB"},
@@ -3989,7 +3997,7 @@ var cliCommands = []cliCommand{
 			{Name: "since", Short: "lookback duration or RFC3339 timestamp", Value: "15m|3d|RFC3339"},
 			{Name: "level", Short: "only show lines at this level", Value: "LEVEL", ClosedSet: []string{"info", "warn", "error"}},
 			{Name: "status", Short: "only show HTTP requests with this status", Value: "100..599"},
-			{Name: "route", Short: "only show HTTP requests for this route", Value: "PATH"},
+			{Name: "route", Short: "only show HTTP requests for this route label", Value: "METHOD /path"},
 			{Name: "request", Short: "show one HTTP request by public request id or row id", Value: "ID"},
 			{Name: "trace", Short: "show HTTP access logs correlated with a W3C trace id", Value: "TRACE_ID"},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
@@ -4200,6 +4208,38 @@ var cliCommands = []cliCommand{
 				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
 			}, Examples: []string{"gregale auth create shop-auth --database shop-db --site-url https://shop.example.com", "gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --authz authz.json"}},
 			{Name: "status", Short: "Show the issuer, JWKS URL and readiness of an Auth app", Positionals: []string{"<name>"}},
+			{Name: "config", Short: "Show the running Auth settings, or change them and restart the app", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "site-url", Value: "URL", Short: "application URL users return to after sign-in"},
+				{Name: "redirect-urls", Value: "URLS", Short: "comma-separated additional allowed redirect URLs; replaces the list (none clears it)"},
+				{Name: "signup", Value: "on|off", Short: "whether anyone may sign up", ClosedSet: []string{"on", "off"}},
+				{Name: "autoconfirm", Value: "on|off", Short: "sign users in without email confirmation (development only)", ClosedSet: []string{"on", "off"}},
+				{Name: "password-min-length", Value: "N", Short: "minimum password length (6-72)"},
+				{Name: "password-require", Value: "CLASSES", Short: "character classes every password needs: lower,upper,digit,symbol, or none"},
+				{Name: "leaked-password-check", Value: "on|off", Short: "refuse passwords found in known breaches (Have I Been Pwned)", ClosedSet: []string{"on", "off"}},
+				{Name: "mfa", Value: "on|off", Short: "let users enrol an authenticator app (TOTP); enrolled users keep verifying when off", ClosedSet: []string{"on", "off"}},
+				{Name: "email-provider", Value: "PROVIDER", Short: "HTTPS email provider, or none to remove it", ClosedSet: []string{"resend", "postmark", "none"}},
+				{Name: "email-from", Value: "SENDER", Short: "sender address, or a display name with the address in angle brackets"},
+				{Name: "email-api-key-stdin", Short: "read the email provider API key from stdin (prompted on a terminal)"},
+				{Name: "authz", Value: "FILE", Short: "JSON file declaring custom roles and policies (applied on restart)"},
+				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
+			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
+				{Name: "list", Short: "List the enabled providers", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "enable", Short: "Enable a provider, replacing its credentials", Positionals: []string{"<name>", "<provider>"}, Flags: []cliFlag{
+					{Name: "client-id", Value: "ID", Req: true, Short: "OAuth client ID from the provider"},
+					{Name: "client-secret-stdin", Short: "read the OAuth client secret from stdin (prompted on a terminal)"},
+					{Name: "url", Value: "URL", Short: "provider server URL (Keycloak, or a self-hosted GitLab, Azure tenant or WorkOS)"},
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				}, Examples: []string{"gregale auth providers enable shop-auth google --client-id ID --client-secret-stdin"}},
+				{Name: "disable", Short: "Disable a provider and remove its credentials", Positionals: []string{"<name>", "<provider>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+			}},
+			{Name: "keys", Short: "Rotate the ES256 keys that sign the Auth app's tokens", Subcommands: []cliSub{
+				{Name: "list", Short: "List signing keys and their state", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "rotate", Short: "Add a key, wait until it is published, then make it sign", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "create", Short: "Add a standby key that verifies but does not sign yet", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "activate", Short: "Make a published key sign; the previous key keeps verifying", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "revoke", Short: "Remove a key that no longer signs; its tokens stop verifying", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+			}},
 			{Name: "admin-key", Short: "Manage owner keys for the dashboard's users and organizations screens and imports", Subcommands: []cliSub{
 				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
@@ -4444,7 +4484,7 @@ var cliCommands = []cliCommand{
 				}, Examples: []string{"gregale postgres bindings rotate BINDING_ID --wait"}},
 			}},
 			{Name: "attach", Short: "Attach a database to an app", Positionals: []string{"<database>", "<app>"}, Flags: []cliFlag{
-				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
+				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise default)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
 				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
 			}, Examples: []string{"gregale postgres attach orders my-api --env DATABASE_URL --access read_write"}},
@@ -5235,11 +5275,11 @@ var cliCommands = []cliCommand{
 		Short:   "Manage app and account release webhooks (webhooks account <verb>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's webhooks (slug defaults to linked context)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{{Name: "app", Short: "app slug (alternative to the positional)", Value: "slug"}}},
-			{Name: "add", Short: "Add a webhook", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "target-url", Short: "HTTPS target URL", Req: true, Value: "URL"}, {Name: "event", Short: "event to deliver (repeat)", Value: "EVENT"}, {Name: "retry-policy", Short: "default|aggressive|none", Value: "POLICY"}, {Name: "delivery-format", Short: "json|cloudevents", Value: "FORMAT"}}},
+			{Name: "add", Short: "Add a webhook", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "target-url", Short: "http(s) target URL (https recommended: deliveries are signed, not encrypted)", Req: true, Value: "URL"}, {Name: "event", Short: "event to deliver (repeat)", Value: "EVENT"}, {Name: "retry-policy", Short: "default|aggressive|none", Value: "POLICY"}, {Name: "delivery-format", Short: "json|cloudevents", Value: "FORMAT"}}},
 			{Name: "info", Short: "Show one webhook", Positionals: []string{"<webhook-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "update", Short: "Update one webhook", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
-				{Name: "target-url", Short: "new HTTPS target URL", Value: "URL"},
+				{Name: "target-url", Short: "new http(s) target URL", Value: "URL"},
 				{Name: "retry-policy", Short: "new retry policy", Value: "POLICY", ClosedSet: []string{"default", "aggressive", "none"}},
 				{Name: "delivery-format", Short: "new delivery format", Value: "FORMAT", ClosedSet: []string{"json", "cloudevents"}},
 				{Name: "enable", Short: "enable the webhook"},

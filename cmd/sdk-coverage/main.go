@@ -52,6 +52,7 @@ var routeExclude = map[string]bool{
 
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":               true, // ADR-1037 WebSocket attach; the CLI drives it directly
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":    true, // ADR-1330 WebSocket attach; the CLI drives it directly
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
@@ -283,6 +284,14 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
+	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
+	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
+	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
+	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": "ExchangeBrowserPromotionApproval",
+
 	// BEGIN managed realtime SDK routes
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                   "ListRealtimePublisherCredentials",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                  "IssueRealtimePublisherCredential",

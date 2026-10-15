@@ -75,7 +75,10 @@ func normalizeCrawlerPolicy(policy string) string {
 func writeCrawlerPolicyResponse(w http.ResponseWriter, policy string) {
 	w.Header().Set("Retry-After", "60")
 	code := "crawler_cached_miss"
-	detail := "known monitor/crawler traffic is not allowed to wake a parked app"
+	// crawler_policy=cached serves known monitors and crawlers only from a
+	// fresh edge cache entry, whether or not the app is running (spec 12.7);
+	// the old text blamed a parked app even while it served browsers (H10-42).
+	detail := "the app's crawler policy serves known monitor/crawler traffic only from the edge cache, and no fresh cached response exists for this request"
 	if policy == "block" {
 		code = "crawler_blocked"
 		detail = "known monitor/crawler traffic is blocked by the app policy"

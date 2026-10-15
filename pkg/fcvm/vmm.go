@@ -464,8 +464,13 @@ func guestInitStageLine(line []byte) bool {
 // on every boot (hunt #10, H10-15). The console file keeps them for operators.
 var guestInitPlatformMessages = []string{
 	"workload identity proxy ", "event publish proxy ", "outbound relay ",
-	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
+	"stateless advisory", "trace bridge ", "tail_events proxy ", "vsock ",
 	"sidecar ", "healthcheck: ", "WatchOOM",
+	// Every boot also logged these four; the tail_events prefix above was
+	// spelled with a space and never matched (hunt #10, after rc.261).
+	"framework_ready ", "secrets loaded", "api_env loaded",
+	// Boot characterization and port normalization (H10-56).
+	"characterization ", "portnorm ",
 	// Job exit/cancel delivery over vsock: "INFO job-exit shipped ... attempt=1"
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).

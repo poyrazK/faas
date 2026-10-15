@@ -16,7 +16,7 @@ gregale auth status shop-auth
 ```
 
 The command reserves an ordinary app, attaches an `auth` database binding,
-generates one ES256 signing key and seals it with the other settings, and
+generates an ES256 signing key and seals it with the other settings, and
 deploys a pinned GoTrue (Supabase Auth) v2.197.0 server through the normal
 builder and deploy path. Repeat with `--resume` to continue after a failure;
 existing signing keys are never replaced.
@@ -58,16 +58,83 @@ GoTrue migrations run in the deployment's release task. The image checks every
 pinned upstream migration byte for byte and replaces one migration whose grants
 assumed a role named `postgres`.
 
-## Configure providers and policies
+## Change settings
 
-Set these app secrets to configure GoTrue, then redeploy:
+`gregale auth config shop-auth` shows the running app's settings. Add flags to
+change them; the app restarts to apply the change. The dashboard's Auth page
+(`/dashboard/apps/shop-auth/auth`) shows and edits the same settings and
+providers.
 
-- `GOTRUE_EXTERNAL_*` for OAuth providers such as GitHub or Google
-- `GOTRUE_MFA_*` for MFA factors
-- `GOTRUE_PASSWORD_*` for password rules
-- `GOTRUE_SECURITY_CAPTCHA_*` for CAPTCHA
+```sh
+gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit
+gregale auth config shop-auth --signup off --mfa on --leaked-password-check on
+gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@shop.example.com>' --email-api-key-stdin
+```
 
-Any other `GOTRUE_*` secret stops startup, because Gregale owns that setting.
+| Flag | Meaning |
+| --- | --- |
+| `--site-url`, `--redirect-urls` | Where users return after sign-in; `--redirect-urls none` clears the list. |
+| `--signup on\|off` | Whether anyone may sign up, or only invited and administrator-created users. |
+| `--autoconfirm on\|off` | Skip email confirmation. Development only. |
+| `--password-min-length N` | Minimum password length, 6 to 72. |
+| `--password-require CLASSES` | `lower`, `upper`, `digit` and `symbol`, comma-separated, or `none`. |
+| `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). |
+| `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
+| `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
+| `--authz FILE` | Replace custom roles and policies (see Organizations and roles). |
+
+Settings are app secrets, which are write-only, so the CLI and the dashboard
+read them back from the running app's public `/settings/v1`. It reports only
+values that are public anyway or harmless: URLs, enabled providers, password
+rules, whether MFA and email are on, and the signing key IDs.
+
+### Sign-in providers
+
+```sh
+gregale auth providers enable shop-auth google --client-id ID --client-secret-stdin
+gregale auth providers shop-auth
+gregale auth providers disable shop-auth google
+```
+
+Register `https://<auth-host>/auth/v1/callback` as the callback URL with the
+provider; the Auth app sets it for every enabled provider. Supported:
+`apple`, `azure`, `bitbucket`, `discord`, `facebook`, `figma`, `github`,
+`gitlab`, `google`, `kakao`, `keycloak` (requires `--url`), `linkedin_oidc`,
+`notion`, `slack_oidc`, `spotify`, `twitch`, `workos`, `x` and `zoom`. `--url`
+also points `gitlab`, `azure` or `workos` at a self-hosted server or tenant.
+Enabling replaces the provider's credentials; disabling removes them. The
+hosted sign-in page shows a button for each enabled provider.
+
+### Other GoTrue settings
+
+Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*` and
+`GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as app secrets. Any other
+`GOTRUE_*` secret stops startup, because Gregale owns that setting. The hosted
+pages do not render a CAPTCHA, so enabling one blocks sign-up there.
+
+## Rotate signing keys
+
+Each ES256 key is its own sealed secret. One key signs; up to three others
+only verify, so tokens they signed stay valid. Rotate without signing anyone
+out:
+
+```sh
+gregale auth keys rotate shop-auth
+gregale auth keys list shop-auth
+gregale auth keys revoke shop-auth 0A1B2C3D   # the previous key, ten minutes later
+```
+
+`rotate` adds a standby key and waits until the restarted app publishes it in
+its JWKS, so every verifier can learn it before it signs. Then it makes the
+key sign and waits again. The step-by-step commands are `keys create` (standby)
+and `keys activate KEY_ID`. The previous key keeps verifying the tokens it
+signed, which expire within 600 seconds, so revoke it afterwards. Revoking a
+key that signs, or is being made the signer, is refused.
+
+To cut off a leaked key, rotate and revoke the old key at once. Its tokens stop
+verifying as soon as the Auth app restarts, and in Gregale's gateway, Data API
+and realtime within 5 minutes, when they refresh the JWKS. Signed-in users keep
+their sessions: their next refresh returns tokens from the new key.
 
 ## Organizations and roles
 
@@ -259,6 +326,7 @@ reported as `email_exists`.
 
 - The Auth app counts as an ordinary deployed app for plan quotas and RAM
   billing.
+- An Auth app holds at most 4 signing keys.
 - The dashboard page reaches the Auth app at its canonical address. If you
   serve the dashboard from another origin than the Gregale API URL that
   `gregale auth create` used, the Auth app refuses the page's requests.

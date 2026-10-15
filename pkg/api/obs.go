@@ -599,10 +599,11 @@ type ObsWakeLatencyQuantile struct {
 // handlers_account_scoped.go) so the operator can compare the
 // per-node numbers to the fleet p95 in the same window.
 type ObsNodeWakeLatencyResponse struct {
-	Window     string                   `json:"window"`
-	Quantiles  []ObsWakeLatencyQuantile `json:"quantiles"`
-	FleetP95MS float64                  `json:"fleet_p95_ms"`
-	AsOf       time.Time                `json:"as_of"`
+	PrometheusAvailable bool                     `json:"prometheus_available"`
+	Window              string                   `json:"window"`
+	Quantiles           []ObsWakeLatencyQuantile `json:"quantiles"`
+	FleetP95MS          float64                  `json:"fleet_p95_ms"`
+	AsOf                time.Time                `json:"as_of"`
 }
 
 // ObsHeartbeatRow is one row of the heartbeat list. The fields
@@ -859,12 +860,11 @@ type ObsBuilderHeartbeatRow struct {
 //
 //   - AuditLogWriteTotal5m / AuditLogWriteFailures5m: counter
 //     deltas over a 5m window from the apid Prometheus
-//     (`audit_log_write_total` / `audit_log_write_failures_total`,
+//     (`apid_audit_log_write_total` / `apid_audit_log_write_failures_total`,
 //     PR #TBD / C5).
-//   - AuditLogCoverageRatio5m: ratio of audit_log writes with a
-//     non-NULL trace_id over all audit_log writes in the window.
-//     Surfaces the same trace_id completeness metric from the
-//     C5 audit metric set, scoped to all kinds.
+//   - AuditLogCoverageRatio5m: ratio of durable audit rows with a valid
+//     W3C trace_id in data over all audit rows in the window.
+//     Read directly from the durable audit_log table, scoped to all kinds.
 //   - OperatorIntentOutcomeMissingCounts: stuck-running intents
 //     grouped by kind (force_park / force_cold_boot /
 //     force_restart). When the count is non-zero the operator
@@ -875,7 +875,7 @@ type ObsBuilderHeartbeatRow struct {
 //     events in the window. Kinds with zero rows are seeded to
 //     1.0 (vacuous truth — see Store interface comment).
 //   - AlertsFiring: count of Prometheus alert rules in the firing
-//     state via PromQL ALERTS{alertstate="firing"} (existing
+//     state, excluding the watchdog and info-only rules (existing
 //     Alertmanager integration).
 //
 // Prometheus-derived fields retain stable numeric fallbacks for compatibility,
@@ -939,14 +939,15 @@ type ObsIncident struct {
 // deterministically ordered by observed_at DESC, id DESC. Items is always a
 // non-nil slice so an empty fleet has a stable JSON shape.
 type ObsIncidentListResponse struct {
-	GeneratedAt  time.Time     `json:"generated_at"`
-	Items        []ObsIncident `json:"items"`
-	Limit        int           `json:"limit"`
-	Since        time.Time     `json:"since"`
-	SinceClamped bool          `json:"since_clamped"`
-	Type         string        `json:"type,omitempty"`
-	Severity     string        `json:"severity,omitempty"`
-	NextCursor   string        `json:"next_cursor"`
+	UnavailableSources []string      `json:"unavailable_sources"`
+	GeneratedAt        time.Time     `json:"generated_at"`
+	Items              []ObsIncident `json:"items"`
+	Limit              int           `json:"limit"`
+	Since              time.Time     `json:"since"`
+	SinceClamped       bool          `json:"since_clamped"`
+	Type               string        `json:"type,omitempty"`
+	Severity           string        `json:"severity,omitempty"`
+	NextCursor         string        `json:"next_cursor"`
 }
 
 // ServiceCapacityProtection is the ADR-422 aggregate placement certificate.

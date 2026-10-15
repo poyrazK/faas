@@ -390,6 +390,15 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if command == nil { // existing runs created before command snapshots
 		command = job.Command
 	}
+	interactive, err := e.jobRunAttach(ctx, runID)
+	if err == nil && interactive != nil && startHeld {
+		err = errors.New("an interactive run cannot be start-held")
+	}
+	if err != nil {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_interactive_session_unavailable", "the interactive session could not be prepared; start a new run")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob interactive session: %w", err)
+	}
 	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
 		AccountID:  accountID,
 		RunID:      runID,
@@ -410,6 +419,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		KernelKey:        KernelKey(e.fcVer),
 		BaseKey:          BaseKey(""),
 		VcpuCount:        1,
+		Interactive:      interactive,
 	})
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
@@ -426,6 +436,12 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 			"job_vmm_start_gate_mismatch", "job VM did not honor the reviewed service-binding start gate; retry the run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd held-start mismatch: requested=%t returned=%t", startHeld, out.StartHeld)
+	}
+	if out.Interactive != (interactive != nil) {
+		// A vmmd that predates ADR-1330 boots the command without stdin.
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_vmm_interactive_unsupported", "this node cannot run interactive sessions yet; start the run again after the platform update")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd interactive mismatch: requested=%t returned=%t", interactive != nil, out.Interactive)
 	}
 	if nodeID != "" && out.NodeID != nodeID {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_node_mismatch", "vmmd returned a mismatched job node; contact support")
@@ -480,6 +496,9 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	exitDeadline := fcvm.EffectiveDestroyWait(taskTimeoutSec)
 	if startHeld {
 		exitDeadline += fcvm.JobStartGateTimeout
+	}
+	if interactive != nil {
+		exitDeadline += time.Duration(interactive.AttachTimeoutSec) * time.Second
 	}
 	e.startJobExitWatch(ctx, JobExitSpec{
 		AccountID: accountID, RunID: runID, TaskIndex: taskIndex,
@@ -1225,6 +1244,9 @@ type JobVmmSpec struct {
 	KernelKey        string
 	BaseKey          string
 	VcpuCount        int
+	// Interactive holds the guest command until one client attaches
+	// (ADR-1330). Only the token digest is carried.
+	Interactive *state.JobRunAttach
 }
 
 // JobVmmResult is the vmmd-side cold-boot outcome.
@@ -1235,6 +1257,9 @@ type JobVmmResult struct {
 	HostIP     string
 	GuestUID   int
 	StartHeld  bool
+	// Interactive echoes JobVmmSpec.Interactive; an older vmmd leaves it
+	// false.
+	Interactive bool
 }
 
 type JobStartSpec struct {

@@ -132,7 +132,7 @@ func cmdAlertAdd(args []string) int {
 	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
 	syntheticCheck := fs.String("synthetic-check", "", "synthetic check id — required iff --metric is synthetic_check_*")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
-	webhookURL := fs.String("webhook-url", "", "webhook URL (https://...); optional with --channel")
+	webhookURL := fs.String("webhook-url", "", "webhook URL (http(s)://...; https recommended); optional with --channel")
 	var channels stringListFlag
 	fs.Var(&channels, "channel", "notification channel id to deliver to (repeatable, up to 5)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")

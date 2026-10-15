@@ -602,6 +602,19 @@ type AppEnv struct {
 	Scope     string
 }
 
+type AppEnvironmentRouteBudget struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Inherit       bool
+	Enabled       bool
+	Revision      int64
+	Routes        []byte
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AppEnvironmentSecretRef struct {
 	AccountID     pgtype.UUID
 	ProjectID     pgtype.UUID
@@ -2426,18 +2439,21 @@ type EdgeRuleChangeLog struct {
 }
 
 type EdgeRuleEvent struct {
-	ID         int64
-	RuleID     pgtype.UUID
-	AppID      pgtype.UUID
-	OccurredAt pgtype.Timestamptz
-	Outcome    string
-	RequestID  string
-	Method     string
-	Host       string
-	Path       string
-	ClientIp   *netip.Addr
-	Country    string
-	UserAgent  string
+	ID            int64
+	RuleID        pgtype.UUID
+	AppID         pgtype.UUID
+	OccurredAt    pgtype.Timestamptz
+	Outcome       string
+	RequestID     string
+	Method        string
+	Host          string
+	Path          string
+	ClientIp      *netip.Addr
+	Country       string
+	UserAgent     string
+	WafRuleIds    []int32
+	WafCategories []string
+	WafScore      int32
 }
 
 type EdgeRuleHitCount struct {
@@ -2769,6 +2785,15 @@ type EnvironmentQualificationSnapshotReceipt struct {
 	Snapshot   []byte
 	Inputs     []byte
 	RecordedAt pgtype.Timestamptz
+}
+
+type EnvironmentRouteBudgetReceipt struct {
+	AccountID   pgtype.UUID
+	RequestID   pgtype.UUID
+	AppID       pgtype.UUID
+	RequestHash string
+	Response    []byte
+	CreatedAt   pgtype.Timestamptz
 }
 
 type EnvironmentWorkloadGraph struct {
@@ -4183,6 +4208,14 @@ type JobRun struct {
 	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
+}
+
+type JobRunAttachSession struct {
+	RunID             pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	AttachTimeoutS    int32
+	CreatedAt         pgtype.Timestamptz
 }
 
 type JobTask struct {

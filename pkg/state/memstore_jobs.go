@@ -828,6 +828,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
 	}
+	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
+		return JobRun{}, nil, err
+	}
 	manifestVersion, inputDigest := jobInputDigest(inputs)
 	inputManifestURI, inputManifestSHA256 := "", ""
 	if len(options) > 0 {
@@ -932,6 +935,14 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		taskMap[i] = t
 	}
 	m.jobTasks[run.ID] = taskMap
+	if attach := opts.Attach; attach != nil {
+		if m.jobRunAttach == nil {
+			m.jobRunAttach = make(map[string]JobRunAttach)
+		}
+		record := *attach
+		record.TokenSHA256 = append([]byte(nil), attach.TokenSHA256...)
+		m.jobRunAttach[run.ID] = record
+	}
 
 	return run, fanned, nil
 }
@@ -946,7 +957,7 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 	if !ok || source.AccountID != accountID {
 		return JobRun{}, nil, ErrNotFound
 	}
-	if source.FinishedAt == nil {
+	if _, interactive := m.jobRunAttach[sourceRunID]; source.FinishedAt == nil || interactive {
 		return JobRun{}, nil, ErrConflict
 	}
 	job, ok := m.jobs[source.JobID]
@@ -1825,6 +1836,10 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 		return ErrNotFound
 	} else if !m.exclusiveJobRunCurrentLocked(run) {
 		return exclusivework.ErrStaleOwner
+	}
+	// ADR-1330: a retry would run the command again with no client attached.
+	if _, interactive := m.jobRunAttach[runID]; interactive {
+		return ErrConflict
 	}
 	if t.Status != "failed" && t.Status != "timeout" && t.Status != "oom" && t.Status != "cancelled" {
 		return ErrConflict
