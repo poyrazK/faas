@@ -37,7 +37,7 @@ jobs:
     env:
       GOMEMLIMIT: 6GiB
       CGO_ENABLED: '1'
-      RECOVERY_GATE_OUTPUT: ${{ runner.temp }}/gregale-recovery
+      RECOVERY_GATE_OUTPUT: .cache/gregale-recovery-ci
     steps:
       - uses: actions/checkout@v7
         with:
@@ -65,6 +65,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gregale-recovery-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/gregale-recovery/
+          path: .cache/gregale-recovery-ci/
           if-no-files-found: warn
           retention-days: 14
