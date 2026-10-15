@@ -146,8 +146,8 @@ func (a pressureApp) subscribeCaptureWebhook(t *testing.T) {
 // profile.capture_oom_linked: a kill during the capture is announced with it.
 func (a pressureApp) assertCaptureNotified(t *testing.T, captureID string, wantOOM bool) {
 	t.Helper()
-	const q = `SELECT event, payload FROM app_webhook_event_outbox WHERE app_id = $1::uuid AND source_id = $2::uuid
-		UNION ALL SELECT event, payload FROM app_webhook_deliveries WHERE app_id = $1::uuid AND payload->'capture'->>'id' = $2`
+	const q = `SELECT event, payload FROM app_webhook_event_outbox WHERE app_id = $1::text::uuid AND source_id = $2::text::uuid
+		UNION ALL SELECT event, payload FROM app_webhook_deliveries WHERE app_id = $1::text::uuid AND payload->'capture'->>'id' = $2::text`
 	var events []string
 	var payload api.ProfileCaptureWebhookPayload
 	deadline := time.Now().Add(15 * time.Second)
