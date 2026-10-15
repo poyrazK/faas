@@ -558,3 +558,15 @@ func providerError(err error) error {
 	}
 	return fmt.Errorf("%w: schedd %s: %s", sentinel, st.Code(), st.Message())
 }
+
+var _ managedpostgres.DatabaseObserver = (*Provider)(nil)
+
+// Observe reports the database for the health collector. It reads schedd's
+// record only, as Inspect does: it never wakes the VM or connects to
+// PostgreSQL, so a parked database stays parked.
+func (p *Provider) Observe(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
+	if providerResourceID == "" {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
+	}
+	return p.Inspect(ctx, providerResourceID)
+}

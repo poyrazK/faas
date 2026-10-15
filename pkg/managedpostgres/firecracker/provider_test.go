@@ -1003,3 +1003,24 @@ func TestImportCopiesIntoTheCustomerDatabaseAsItsOwner(t *testing.T) {
 		t.Fatalf("unknown database = %v, want ErrNotFound", err)
 	}
 }
+
+// The health collector observes native databases from schedd's record,
+// without waking them.
+func TestObserveReadsTheRecordWithoutWaking(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: devSpec()}); err != nil {
+		t.Fatal(err)
+	}
+	admin := len(sched.admin)
+	obs, err := p.Observe(ctx, testDatabaseID)
+	if err != nil || obs.ProviderResourceID != testDatabaseID || obs.Status != managedpostgres.ProviderStatusReady || obs.ComputeState != managedpostgres.ComputeStateSuspended {
+		t.Fatalf("observe = %+v, %v; want a ready, suspended database", obs, err)
+	}
+	if len(sched.admin) != admin {
+		t.Fatal("observing ran SQL in the database")
+	}
+	if _, err := p.Observe(ctx, "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("unknown database = %v, want ErrNotFound", err)
+	}
+}
