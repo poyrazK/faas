@@ -139,3 +139,12 @@ concurrent workers may each report the pause, and errors can start a new episode
 A resume is noticed on a later poll, with up to IdleMax polling delay. Already
 committed claims can settle after a pause. Install the control schema and replace
 older workers before relying on this fence.
+
+## Shared publishing rate limits
+
+[Durable rate limits](event-outbox-rate-limit.md) coordinate claim capacity across
+workers. Rate-limited polls back off without spending attempts. The optional
+callback emits outcome `rate_limited`, code `publishing_rate_limited`, and capacity
+observation fields RetryAt/RetryAfterMillis once per worker per consecutive
+throttled episode. Poll delay is capped at IdleMax. Pause takes priority; existing
+committed claims continue. Install rate storage and replace older workers first.

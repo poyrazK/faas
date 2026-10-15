@@ -25,14 +25,16 @@ type EventOutboxWorkerOptions struct {
 // capabilities or raw driver/server errors. Status is absent when no row result
 // was obtained. A snapshot can be stale by the time the callback observes it.
 type EventOutboxWorkerEvent struct {
-	AccountID   string             `json:"account_id"`
-	AppID       string             `json:"app_id"`
-	ProducerKey string             `json:"producer_key,omitempty"`
-	Worker      int                `json:"worker"`
-	At          time.Time          `json:"at"`
-	Outcome     string             `json:"outcome"`
-	ErrorCode   string             `json:"error_code,omitempty"`
-	Status      *EventOutboxStatus `json:"status,omitempty"`
+	AccountID        string             `json:"account_id"`
+	AppID            string             `json:"app_id"`
+	ProducerKey      string             `json:"producer_key,omitempty"`
+	Worker           int                `json:"worker"`
+	At               time.Time          `json:"at"`
+	Outcome          string             `json:"outcome"`
+	ErrorCode        string             `json:"error_code,omitempty"`
+	RetryAt          *time.Time         `json:"retry_at,omitempty"`
+	RetryAfterMillis int64              `json:"retry_after_millis,omitempty"`
+	Status           *EventOutboxStatus `json:"status,omitempty"`
 }
 
 func eventOutboxWorkerOptions(o EventOutboxWorkerOptions) (EventOutboxWorkerOptions, error) {
@@ -121,6 +123,7 @@ func RunEventOutboxWorker(ctx context.Context, db *sql.DB, client *Client, accou
 func runEventOutboxWorker(ctx, drainCtx context.Context, db *sql.DB, client *Client, account, app string, worker int, options EventOutboxWorkerOptions, notify func(context.Context, EventOutboxWorkerEvent)) {
 	idle := options.IdleMin
 	wasPaused := false
+	wasRateLimited := false
 	for ctx.Err() == nil {
 		claimCtx, cancelClaim := context.WithTimeout(ctx, options.OperationTimeout)
 		deliveryCtx, cancelDelivery := context.WithTimeout(drainCtx, options.OperationTimeout)
@@ -131,19 +134,27 @@ func runEventOutboxWorker(ctx, drainCtx context.Context, db *sql.DB, client *Cli
 			status, err = claim.publish(deliveryCtx, db, client, claim.request, options.Recovery)
 		}
 		paused := errors.Is(err, ErrEventOutboxPublishingPaused)
-		if errors.Is(err, ErrEventOutboxEmpty) || paused {
-			if paused && !wasPaused && notify != nil {
+		limited := errors.Is(err, ErrEventOutboxRateLimited)
+		if errors.Is(err, ErrEventOutboxEmpty) || paused || limited {
+			if ((paused && !wasPaused) || (limited && !wasRateLimited)) && notify != nil {
 				notify(deliveryCtx, eventOutboxWorkerOutcome(account, app, worker, status, err))
 			}
 			wasPaused = paused
+			wasRateLimited = limited
 			cancelDelivery()
-			if !eventOutboxWorkerWait(ctx, idle) {
+			delay := idle
+			var wait *EventOutboxRateLimitWaitError
+			if errors.As(err, &wait) {
+				delay = min(options.IdleMax, max(delay, wait.RetryAfter))
+			}
+			if !eventOutboxWorkerWait(ctx, delay) {
 				return
 			}
 			idle = min(options.IdleMax, 2*idle)
 			continue
 		}
 		wasPaused = false
+		wasRateLimited = false
 		// Shutdown cancellation of an uncommitted claim is not a storage incident.
 		// Unknown commits remain reportable because a lease may have been committed.
 		if !claimed && ctx.Err() != nil && status.ProducerKey == "" && !errors.Is(err, ErrEventOutboxCommitUnknown) && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
@@ -184,6 +195,13 @@ func eventOutboxWorkerOutcome(account, app string, worker int, status EventOutbo
 		out.Status = &status
 	}
 	switch {
+	case errors.Is(err, ErrEventOutboxRateLimited):
+		out.Outcome, out.ErrorCode = "rate_limited", "publishing_rate_limited"
+		var wait *EventOutboxRateLimitWaitError
+		if errors.As(err, &wait) {
+			out.RetryAt = &wait.RetryAt
+			out.RetryAfterMillis = int64((wait.RetryAfter + time.Millisecond - 1) / time.Millisecond)
+		}
 	case errors.Is(err, ErrEventOutboxPublishingPaused):
 		out.Outcome, out.ErrorCode = "paused", "publishing_paused"
 	case errors.Is(err, ErrEventOutboxCommitUnknown):

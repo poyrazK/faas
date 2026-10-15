@@ -1289,3 +1289,10 @@ See [saved policies and required migration](../../docs/event-outbox-stored-retry
 replayable command receipts. `GetEventOutboxPublishingControl` reads current
 state; command lookup/history APIs retain interventions separately from per-row
 controls. See [pause fencing and upgrade](../../docs/event-outbox-publishing-control.md).
+
+`SetEventOutboxRateLimit` configures an app-scoped token bucket shared by recovery
+workers. Claim commit consumes capacity atomically with its lease and attempt;
+rate-limited polls spend no attempts. Configuration uses revision guards and
+replayable command receipts. Health exposes throttled work separately from due or
+stalled work. Install the opt-in schema and replace older workers before relying
+on enforcement. See [rate limits](../../docs/event-outbox-rate-limit.md).

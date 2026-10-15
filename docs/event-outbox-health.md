@@ -134,3 +134,13 @@ eligibility age; no schedule or deadline is moved.
 
 Install [publishing-control storage](event-outbox-publishing-control.md) before
 upgrading health readers or claim workers. Older workers do not enforce pauses.
+
+## Publishing rate limits
+
+[Shared rate limits](event-outbox-rate-limit.md) add RateLimitEnabled,
+RateLimitRevision, PublishingRateLimited, optional RateLimitNextAt and ThrottledDue
+to the same snapshot. ThrottledDue counts otherwise eligible sampled work while
+not paused; Due and Stalled exclude it. PausedDue has priority when both controls
+apply. Due/stall watches use unknown/confirmation_lost with reason
+publishing_rate_limited, subject to existing proof requirements. Blocked/expired
+conditions continue. Install rate storage before upgrading readers and workers.

@@ -302,3 +302,10 @@ Use `SetEventOutboxPublishingPaused` for guarded, durable app-scope pause/resume
 Workers stop claiming while existing claims can finish; keys, schedules and
 deadlines remain unchanged. See [publishing controls and required upgrade](event-outbox-publishing-control.md)
 for command history and pause-aware health semantics.
+
+## Shared recovery rate limits
+
+Use `SetEventOutboxRateLimit` for a durable app-scoped interval and burst shared by
+all upgraded workers using the same database. Claims consume a token atomically
+with the lease and attempt; unavailable capacity does not spend attempts or extend
+retry deadlines. See [rate-limit configuration, upgrade and health](event-outbox-rate-limit.md).

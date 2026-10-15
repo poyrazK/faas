@@ -15,6 +15,11 @@ type EventOutboxHealthOptions struct {
 // Health describes retained local publication recovery, not consumer completion.
 // Counts are lower bounds when Complete is false. No capabilities or payloads appear.
 type EventOutboxHealth struct {
+	RateLimitEnabled            bool       `json:"rate_limit_enabled"`
+	PublishingRateLimited       bool       `json:"publishing_rate_limited"`
+	RateLimitRevision           int64      `json:"rate_limit_revision"`
+	RateLimitNextAt             *time.Time `json:"rate_limit_next_at,omitempty"`
+	ThrottledDue                int64      `json:"throttled_due"`
 	PublishingPaused            bool       `json:"publishing_paused"`
 	PublishingRevision          int64      `json:"publishing_revision"`
 	PublishingUpdatedAt         *time.Time `json:"publishing_updated_at,omitempty"`
@@ -74,11 +79,18 @@ func GetEventOutboxHealth(ctx context.Context, db *sql.DB, accountID, appID stri
 	if err != nil {
 		return out, err
 	}
-	var oldest, eligible, publishingUpdated sql.NullTime
+	var oldest, eligible, publishingUpdated, rateNext sql.NullTime
 	err = db.QueryRowContext(ctx, `WITH control AS MATERIALIZED (
  SELECT paused,revision,updated_at FROM public.gregale_event_outbox_publishing_controls WHERE account_id=$1::uuid AND app_id=$2::uuid
+ ), observation AS MATERIALIZED (SELECT clock_timestamp() AS observed_at), rate AS MATERIALIZED (
+ SELECT r.*,o.observed_at,least(r.interval_ms*r.burst,r.credit_ms+least(r.interval_ms*r.burst,greatest(0,floor(extract(epoch FROM o.observed_at-r.refilled_at)*1000)))::bigint) AS available_credit
+ FROM public.gregale_event_outbox_rate_limits r CROSS JOIN observation o WHERE r.account_id=$1::uuid AND r.app_id=$2::uuid
  ), clock AS MATERIALIZED (
- SELECT clock_timestamp() AS observed_at,coalesce(p.paused,false) AS publishing_paused,coalesce(p.revision,0)::bigint AS publishing_revision,p.updated_at AS publishing_updated_at FROM (SELECT 1) seed LEFT JOIN control p ON true
+ SELECT o.observed_at,coalesce(p.paused,false) AS publishing_paused,coalesce(p.revision,0)::bigint AS publishing_revision,p.updated_at AS publishing_updated_at,
+ coalesce(r.enabled,false) AS rate_enabled,coalesce(r.enabled AND r.available_credit<r.interval_ms,false) AS rate_limited,coalesce(r.revision,0)::bigint AS rate_revision,
+ CASE WHEN r.enabled AND r.available_credit<r.interval_ms THEN r.refilled_at+(r.interval_ms-r.credit_ms)*interval '1 millisecond' ELSE NULL END AS rate_next_at,
+ coalesce(r.version<>1 OR r.refilled_at>o.observed_at OR r.updated_at>o.observed_at,false) AS rate_invalid
+ FROM observation o LEFT JOIN control p ON true LEFT JOIN rate r ON true
  ), sample AS MATERIALIZED (
  SELECT state,next_attempt_at,claim_expires_at,created_at,updated_at,retry_until,producer_key
  FROM public.gregale_event_outbox
@@ -87,24 +99,25 @@ func GetEventOutboxHealth(ctx context.Context, db *sql.DB, accountID, appID stri
  ), classified AS (
  SELECT *,greatest(created_at,next_attempt_at,coalesce(claim_expires_at,next_attempt_at)) AS eligible_at
  FROM sample ORDER BY created_at,producer_key COLLATE "C" LIMIT $3::integer
- ) SELECT c.observed_at,c.publishing_paused,c.publishing_revision,c.publishing_updated_at,(SELECT count(*) FROM sample)>$3::integer,
+ ) SELECT c.observed_at,c.publishing_paused,c.publishing_revision,c.publishing_updated_at,c.rate_enabled,c.rate_limited,c.rate_revision,c.rate_next_at,(SELECT count(*) FROM sample)>$3::integer,
  count(s.state)::bigint,
  count(*) FILTER(WHERE s.state='pending')::bigint,
  count(*) FILTER(WHERE s.state='unconfirmed')::bigint,
  count(*) FILTER(WHERE s.state='blocked')::bigint,
  count(*) FILTER(WHERE s.retry_until<=c.observed_at)::bigint,
- count(*) FILTER(WHERE NOT c.publishing_paused AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
+ count(*) FILTER(WHERE NOT c.publishing_paused AND NOT c.rate_limited AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
  count(*) FILTER(WHERE c.publishing_paused AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
+ count(*) FILTER(WHERE NOT c.publishing_paused AND c.rate_limited AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
  count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.claim_expires_at>c.observed_at)::bigint,
  count(*) FILTER(WHERE s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at>c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
  count(*) FILTER(WHERE s.claim_expires_at<=c.observed_at)::bigint,
- count(*) FILTER(WHERE NOT c.publishing_paused AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at-$4::double precision*interval '1 second' AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
- count(*) FILTER(WHERE s.created_at>c.observed_at OR s.updated_at>c.observed_at OR s.updated_at<s.created_at OR NOT isfinite(s.created_at) OR NOT isfinite(s.updated_at) OR s.retry_until<=s.created_at OR NOT isfinite(s.retry_until) OR NOT isfinite(s.next_attempt_at) OR (s.claim_expires_at IS NOT NULL AND (NOT isfinite(s.claim_expires_at) OR s.claim_expires_at>s.retry_until OR s.claim_expires_at<s.created_at)))::bigint+(CASE WHEN c.publishing_updated_at>c.observed_at THEN 1 ELSE 0 END)::bigint,
+ count(*) FILTER(WHERE NOT c.publishing_paused AND NOT c.rate_limited AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at-$4::double precision*interval '1 second' AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::bigint,
+ count(*) FILTER(WHERE s.created_at>c.observed_at OR s.updated_at>c.observed_at OR s.updated_at<s.created_at OR NOT isfinite(s.created_at) OR NOT isfinite(s.updated_at) OR s.retry_until<=s.created_at OR NOT isfinite(s.retry_until) OR NOT isfinite(s.next_attempt_at) OR (s.claim_expires_at IS NOT NULL AND (NOT isfinite(s.claim_expires_at) OR s.claim_expires_at>s.retry_until OR s.claim_expires_at<s.created_at)))::bigint+(CASE WHEN c.publishing_updated_at>c.observed_at OR c.rate_invalid THEN 1 ELSE 0 END)::bigint,
  min(s.created_at) FILTER(WHERE isfinite(s.created_at))::timestamptz,
  coalesce(greatest(0,extract(epoch FROM c.observed_at-min(s.created_at) FILTER(WHERE isfinite(s.created_at)))),0)::double precision,
  min(s.eligible_at) FILTER(WHERE isfinite(s.eligible_at) AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at))::timestamptz,
  coalesce(greatest(0,extract(epoch FROM c.observed_at-min(s.eligible_at) FILTER(WHERE isfinite(s.eligible_at) AND s.state IN ('pending','unconfirmed') AND s.retry_until>c.observed_at AND s.eligible_at<=c.observed_at AND (s.claim_expires_at IS NULL OR s.claim_expires_at<=c.observed_at)))),0)::double precision
- FROM clock c LEFT JOIN classified s ON true GROUP BY c.observed_at,c.publishing_paused,c.publishing_revision,c.publishing_updated_at`, account, app, options.ScanLimit, options.StallAfter.Seconds()).Scan(&out.ObservedAt, &out.PublishingPaused, &out.PublishingRevision, &publishingUpdated, &out.Truncated, &out.Outstanding, &out.Pending, &out.Unconfirmed, &out.Blocked, &out.Expired, &out.Due, &out.PausedDue, &out.Leased, &out.Scheduled, &out.ExpiredClaims, &out.Stalled, &out.InvalidRows, &oldest, &out.OldestOutstandingAgeSeconds, &eligible, &out.OldestOverdueAgeSeconds)
+ FROM clock c LEFT JOIN classified s ON true GROUP BY c.observed_at,c.publishing_paused,c.publishing_revision,c.publishing_updated_at,c.rate_enabled,c.rate_limited,c.rate_revision,c.rate_next_at,c.rate_invalid`, account, app, options.ScanLimit, options.StallAfter.Seconds()).Scan(&out.ObservedAt, &out.PublishingPaused, &out.PublishingRevision, &publishingUpdated, &out.RateLimitEnabled, &out.PublishingRateLimited, &out.RateLimitRevision, &rateNext, &out.Truncated, &out.Outstanding, &out.Pending, &out.Unconfirmed, &out.Blocked, &out.Expired, &out.Due, &out.PausedDue, &out.ThrottledDue, &out.Leased, &out.Scheduled, &out.ExpiredClaims, &out.Stalled, &out.InvalidRows, &oldest, &out.OldestOutstandingAgeSeconds, &eligible, &out.OldestOverdueAgeSeconds)
 	if err != nil {
 		return EventOutboxHealth{}, eventOutboxStoreError(ctx)
 	}
@@ -115,6 +128,9 @@ func GetEventOutboxHealth(ctx context.Context, db *sql.DB, accountID, appID stri
 	out.Complete = !out.Truncated && out.InvalidRows == 0
 	if publishingUpdated.Valid {
 		out.PublishingUpdatedAt = &publishingUpdated.Time
+	}
+	if rateNext.Valid {
+		out.RateLimitNextAt = &rateNext.Time
 	}
 	if oldest.Valid {
 		out.OldestOutstandingAt = &oldest.Time

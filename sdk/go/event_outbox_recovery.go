@@ -114,6 +114,10 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 	if paused {
 		return eventOutboxClaim{}, zero, ErrEventOutboxPublishingPaused
 	}
+	bucket, err := claimEventOutboxRateBucket(ctx, tx, account, app)
+	if err != nil {
+		return eventOutboxClaim{}, zero, err
+	}
 	var digest []byte
 	var expired bool
 	err = tx.QueryRowContext(ctx, `SELECT producer_key,app_slug,request_body,request_digest,retry_until<=clock_timestamp(),attempts FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed') AND next_attempt_at<=clock_timestamp() AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) ORDER BY next_attempt_at,producer_key LIMIT 1 FOR UPDATE SKIP LOCKED`, account, app).Scan(&claim.key, &claim.slug, &claim.body, &digest, &expired, &claim.attempts)
@@ -154,6 +158,9 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 	err = tx.QueryRowContext(ctx, `UPDATE public.gregale_event_outbox SET claim_token=$4,claim_expires_at=least(retry_until,clock_timestamp()+$5::bigint*interval '1 millisecond'),attempts=least(attempts+1,2147483647),updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3 RETURNING attempts`, account, app, claim.key, claim.token[:], options.ClaimDuration.Milliseconds()).Scan(&claim.attempts)
 	if err != nil {
 		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
+	}
+	if err = bucket.consume(ctx, tx, account, app); err != nil {
+		return eventOutboxClaim{}, zero, err
 	}
 	if err = tx.Commit(); err != nil {
 		return eventOutboxClaim{key: claim.key}, zero, errors.Join(ErrEventOutboxCommitUnknown, eventOutboxStoreError(ctx))

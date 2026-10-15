@@ -135,6 +135,9 @@ func WatchEventOutboxHealth(ctx context.Context, db *sql.DB, accountID, appID st
 				if conditionReason == "" && health.PublishingPaused && (conditions[i].metric == "due_backlog" || conditions[i].metric == "stalled_recovery") {
 					conditionReason = "publishing_paused"
 				}
+				if conditionReason == "" && health.PublishingRateLimited && (conditions[i].metric == "due_backlog" || conditions[i].metric == "stalled_recovery") {
+					conditionReason = "publishing_rate_limited"
+				}
 				conditions[i].update(value, conditionReason, now, options.Sustain, emit)
 			}
 			timer.Reset(options.PollInterval)
