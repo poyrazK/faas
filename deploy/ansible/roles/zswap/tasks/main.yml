@@ -7,8 +7,8 @@
 #   - memory.zswap.writeback=0 on faas-tenant.slice, so tenant memory that
 #     goes to swap stays compressed in RAM and never reaches the disk;
 #   - MemoryZSwapMax on faas-tenant.slice, the compressed bytes tenants may hold;
-#   - MemorySwapMax=0 on the control-plane, builder, system and user slices,
-#     so nothing else swaps at all.
+#   - MemorySwapMax=0 on the control-plane, builder, system and user slices
+#     and on init.scope (PID 1), so nothing else swaps at all.
 #
 # vmmd closes swap (memory.swap.max=0) on every running VM and opens it only
 # while a VM is frozen, and only once it sees this setup in place. Without
@@ -85,14 +85,14 @@
   register: zswap_unit
   when: faas_zswap_enabled | bool
 
-- name: zswap — create slice drop-in directories
+- name: zswap — create drop-in directories
   ansible.builtin.file:
     path: "/etc/systemd/system/{{ item }}.d"
     state: directory
     owner: root
     group: root
     mode: "0755"
-  loop: [faas-tenant.slice, faas-cp.slice, faas-cp-build.slice, system.slice, user.slice]
+  loop: [faas-tenant.slice, faas-cp.slice, faas-cp-build.slice, system.slice, user.slice, init.scope]
   when: faas_zswap_enabled | bool
 
 - name: zswap — bound the compressed bytes tenants may hold
@@ -108,7 +108,10 @@
   register: zswap_tenant_dropin
   when: faas_zswap_enabled | bool
 
-- name: zswap — keep every other slice out of swap
+# Besides the slices, PID 1 sits directly under the root cgroup in
+# init.scope, which takes the same drop-in (daemon-reload applies it). The
+# root cgroup itself has no swap limit; it holds only kernel threads.
+- name: zswap — keep everything else out of swap
   ansible.builtin.copy:
     dest: "/etc/systemd/system/{{ item }}.d/80-faas-noswap.conf"
     owner: root
@@ -116,9 +119,9 @@
     mode: "0644"
     content: |
       # ADR-906 decision 6: only frozen tenant VMs swap, and only into zswap.
-      [Slice]
+      [{{ 'Scope' if item.endswith('.scope') else 'Slice' }}]
       MemorySwapMax=0
-  loop: [faas-cp.slice, faas-cp-build.slice, system.slice, user.slice]
+  loop: [faas-cp.slice, faas-cp-build.slice, system.slice, user.slice, init.scope]
   register: zswap_noswap_dropins
   when: faas_zswap_enabled | bool
 

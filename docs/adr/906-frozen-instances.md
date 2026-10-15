@@ -95,14 +95,14 @@ Prototype (`TestMetalFreezeThawCycle`, this ADR): see "Prototype results".
    per host, enables zswap with lz4 and no shrinker in front of a swapfile
    that only provides slots, sets `memory.zswap.writeback=0` and
    `MemoryZSwapMax` on `faas-tenant.slice`, and `MemorySwapMax=0` on the
-   control-plane, builder, system and user slices. vmmd writes
-   `memory.swap.max=0` on every running VM and opens swap only while a VM is
-   frozen, and only when it finds zswap enabled, a swap device and writeback
-   disabled on an ancestor of the VM's cgroup; the fence keeps the value. A
-   freeze does not reclaim by default, so a thaw stays fast. Under memory
-   pressure schedd first asks vmmd to compress a frozen VM (FreezeInstance
-   with reclaim on a frozen instance): if that frees at least half its
-   memory, the VM stays frozen and its reservation books the smaller
+   control-plane, builder, system and user slices and on `init.scope`. vmmd
+   writes `memory.swap.max=0` on every running VM and opens swap only while a
+   VM is frozen, and only when it finds zswap enabled, a swap device and
+   writeback disabled on an ancestor of the VM's cgroup; the fence keeps the
+   value. A freeze does not reclaim by default, so a thaw stays fast. Under
+   memory pressure schedd first asks vmmd to compress a frozen VM
+   (FreezeInstance with reclaim on a frozen instance): if that frees at least
+   half its memory, the VM stays frozen and its reservation books the smaller
    footprint; otherwise, or on a host without the role
    (`frozen_compress_unavailable`), it parks as before.
    `schedd_frozen_compress_total{outcome}` counts the outcomes.)

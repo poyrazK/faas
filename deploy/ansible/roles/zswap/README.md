@@ -15,7 +15,7 @@ VM take longer (pages fault back in), but still avoid a snapshot restore.
 | A swapfile that only provides zswap's slots (`faas_zswap_swapfile`, `faas_zswap_swapfile_size_mb`) | written once, never written again |
 | `memory.zswap.writeback=0` on `faas-tenant.slice`: tenant memory never reaches the disk | `faas-zswap-setup` |
 | `MemoryZSwapMax=faas_zswap_tenant_max` on `faas-tenant.slice` | `faas-tenant.slice.d/80-faas-zswap.conf` |
-| `MemorySwapMax=0` on `faas-cp.slice`, `faas-cp-build.slice`, `system.slice`, `user.slice` | `80-faas-noswap.conf` drop-ins |
+| `MemorySwapMax=0` on `faas-cp.slice`, `faas-cp-build.slice`, `system.slice`, `user.slice` and `init.scope` (PID 1) | `80-faas-noswap.conf` drop-ins |
 
 vmmd closes swap on every running VM (`memory.swap.max=0`) and opens it only
 while a VM is frozen, and only when it finds zswap enabled, a swap device and
