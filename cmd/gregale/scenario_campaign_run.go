@@ -38,8 +38,13 @@ func launchTestCampaignBatch(ctx context.Context, batch testCampaignCostBatch, m
 	command.Stdout, command.Stderr = log, log
 	// Let the native runner finish its cleanup after interruption. No forced
 	// kill deadline is added; active workers are always drained before return.
-	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
+	configureTestCampaignWorker(command)
 	return command.Run()
+}
+
+// Shared by campaign launch and process-boundary acceptance tests.
+func configureTestCampaignWorker(command *exec.Cmd) {
+	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 }
 
 func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, scenarios map[string]testScenario,
