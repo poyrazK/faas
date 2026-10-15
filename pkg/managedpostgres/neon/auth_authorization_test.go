@@ -22,8 +22,9 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz);
-CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz);`
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false);
+CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text);
+CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
 
 type authUser struct{ id, session uuid.UUID }
 
@@ -290,4 +291,69 @@ func TestSQLSubjectAuthorizationForRealtimeIsOwnerOnlyAndUserLevel(t *testing.T)
 	reader := f.connect(t, f.readonly.name)
 	deniedSQL(t, reader, `SELECT gregale_auth.authorize_subject('`+bob.id.String()+`', 'realtime:read', '`+resource+`')`)
 	deniedSQL(t, reader, `SELECT gregale_auth.user_active('`+bob.id.String()+`')`)
+}
+
+// TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the
+// Auth app publishes (ADR-1190): nothing while off, one row per change while
+// on, and never an address or metadata.
+func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	newAuthUser(t, owner, "before@example.test")
+	var queued int
+	if err := owner.QueryRow(ctx, `SELECT count(*) FROM gregale_auth.event_outbox`).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("recorded %d events while off: %v", queued, err)
+	}
+	executeSQL(t, owner, `UPDATE gregale_auth.event_settings SET enabled = true`)
+	id, session := uuid.New(), uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ($1, 'carol@example.test', '{"provider":"google","secret":"x"}')`, id)
+	executeSQL(t, owner, `UPDATE auth.users SET email_confirmed_at = now() WHERE id = $1`, id)
+	executeSQL(t, owner, `INSERT INTO auth.sessions (id, user_id, aal) VALUES ($1, $2, 'aal1')`, session, id)
+	executeSQL(t, owner, `UPDATE auth.users SET banned_until = now() + interval '1 day' WHERE id = $1`, id)
+	executeSQL(t, owner, `UPDATE auth.users SET email = 'carol2@example.test' WHERE id = $1`, id)
+	executeSQL(t, owner, `UPDATE auth.users SET banned_until = NULL WHERE id = $1`, id)
+	executeSQL(t, owner, `DELETE FROM auth.users WHERE id = $1`, id)
+	rows, err := owner.Query(ctx, `SELECT type, user_id, data::text FROM gregale_auth.event_outbox ORDER BY occurred_at, ctid`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var kind, data string
+		var user uuid.UUID
+		if err := rows.Scan(&kind, &user, &data); err != nil {
+			t.Fatal(err)
+		}
+		if user != id || strings.Contains(data, "@") || strings.Contains(data, "secret") {
+			t.Fatalf("event %s for %s carries %s", kind, user, data)
+		}
+		got = append(got, kind+" "+data)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`auth.user.created {"provider": "google", "anonymous": false}`,
+		`auth.user.confirmed {}`,
+		`auth.user.signed_in {"aal": "aal1", "session_id": "` + session.String() + `"}`,
+		`auth.user.banned`,
+		`auth.user.unbanned {}`,
+		`auth.user.deleted {}`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("events = %q", got)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Fatalf("event %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Only the auth credential reaches the outbox.
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT count(*) FROM gregale_auth.event_outbox`); code != "42501" {
+		t.Fatalf("runtime credential read the outbox: %s", code)
+	}
 }

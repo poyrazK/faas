@@ -596,6 +596,8 @@ export type { EnvironmentRouteContract } from './EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './EnvironmentServiceBinding.js';
 export type { EnvironmentWorkload } from './EnvironmentWorkload.js';
 export type { EnvironmentWorkloadActivationEvidence } from './EnvironmentWorkloadActivationEvidence.js';
+export type { EnvironmentWorkloadRetirement } from './EnvironmentWorkloadRetirement.js';
+export type { EnvironmentWorkloadRetirementImpact } from './EnvironmentWorkloadRetirementImpact.js';
 export type { EnvironmentWorkloadSource } from './EnvironmentWorkloadSource.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
 export type { EventBacklogConsumer } from './EventBacklogConsumer.js';

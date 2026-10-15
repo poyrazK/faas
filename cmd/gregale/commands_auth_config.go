@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -42,6 +42,7 @@ func cmdAuthConfig(args []string) int {
 	emailFrom := fs.String("email-from", "", "sender address, or a display name with the address in angle brackets")
 	emailKeyStdin := fs.Bool("email-api-key-stdin", false, "read the email provider API key from stdin (prompted on a terminal)")
 	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on restart)")
+	events := fs.String("events", "", "on or off: publish user lifecycle events (auth.user.*) to Gregale's event bus")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -62,6 +63,13 @@ func cmdAuthConfig(args []string) int {
 	if err := authConfigExtras(given, set, &unset, *emailProvider, *emailFrom, *emailKeyStdin, *authzFile); err != nil {
 		return printErr("Invalid Auth settings", err)
 	}
+	if given["events"] {
+		on, err := parseOnOff("events", *events)
+		if err != nil {
+			return printErr("Invalid Auth settings", err)
+		}
+		set["AUTH_LIFECYCLE_EVENTS"] = authFlag(on)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -74,6 +82,13 @@ func cmdAuthConfig(args []string) int {
 	}
 	if len(set) == 0 && len(unset) == 0 {
 		return showAuthConfig(ctx, app)
+	}
+	// Lifecycle events publish with the same events:publish key as workflow
+	// starts; the key is minted once and kept when events are turned off.
+	if set["AUTH_LIFECYCLE_EVENTS"] == "1" {
+		if err := ensureAuthEventsKey(ctx, client, app.Slug, *scope); err != nil {
+			return printErr("Could not create the events key", err)
+		}
 	}
 	if err := applyAuthSecrets(ctx, client, app.Slug, *scope, set, unset); err != nil {
 		return printErr("Could not update Auth settings", err)
@@ -215,6 +230,10 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 		passwords += "; must include " + strings.Join(settings.Password.Required, ", ")
 	}
 	passwords += "; leaked-password check " + onOff(settings.Password.LeakedPasswordCheck)
+	events := "off"
+	if settings.Events.Lifecycle {
+		events = "on (auth.user.* events from this app)"
+	}
 	email := "not configured (email sign-in links and invitations fail)"
 	if settings.Email.Configured {
 		email = "configured"
@@ -227,7 +246,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"email delivery", email}, {"signing key", keys},
+		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"email delivery", email}, {"lifecycle events", events}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
 	}

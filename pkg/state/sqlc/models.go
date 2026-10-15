@@ -3165,6 +3165,32 @@ type EnvironmentWorkloadQualificationRequest struct {
 	ReservedInstanceID pgtype.UUID
 }
 
+type EnvironmentWorkloadRetirement struct {
+	ID                   pgtype.UUID
+	SourceID             pgtype.UUID
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	EnvironmentID        pgtype.UUID
+	AppID                pgtype.UUID
+	Resource             string
+	RevisionID           pgtype.UUID
+	Generation           int64
+	PlanHash             string
+	Phase                string
+	DeploymentIds        []pgtype.UUID
+	QueueBindingIds      []pgtype.UUID
+	JobID                pgtype.UUID
+	RouteDeploymentID    pgtype.UUID
+	RouteGeneration      int64
+	ExpectedGateways     []string
+	AcknowledgedGateways []string
+	RequestedAt          pgtype.Timestamptz
+	RetiredAt            pgtype.Timestamptz
+	RecoveryRevisionID   pgtype.UUID
+	RecoveryGeneration   int64
+	RecoveredAt          pgtype.Timestamptz
+}
+
 type EnvironmentWorkloadServingQueueAck struct {
 	GraphID        pgtype.UUID
 	BindingID      pgtype.UUID

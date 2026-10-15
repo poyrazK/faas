@@ -108,7 +108,7 @@ test('enabled providers get this app\'s callback, and settings report only publi
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
     signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
-    mfa: { totp: false }, email: { configured: false }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    mfa: { totp: false }, email: { configured: false }, events: { lifecycle: false }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
