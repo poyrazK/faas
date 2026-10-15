@@ -432,6 +432,7 @@ func TestStartDeclinedGreetingEditDoesNotDeploy(t *testing.T) {
 	})
 	runner := startTestRunner(t, source, "new greeting\nn\n")
 	runner.session.Template = "hello-node"
+	runner.session.AppID = "app-1"
 	runner.deploy = func(context.Context, []string, bool, ...deployExecution) int {
 		t.Fatal("declined greeting triggered deployment")
 		return 1

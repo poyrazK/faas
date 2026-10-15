@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func (r *startRunner) sourcePreflight() (doctorReport, bool, error) {
@@ -26,9 +25,14 @@ func (r *startRunner) sourcePreflight() (doctorReport, bool, error) {
 			}
 			continue
 		}
+		if err := r.resolveLaunchTarget(); err != nil {
+			return doctorReport{}, false, err
+		}
 		report := runDoctorChecksForShape(r.session.SourcePath, detectShape(r.session.SourcePath))
+		var pairs []secretsPair
 		if r.secretsFile != "" {
-			pairs, err := readSecretsFile(r.secretsFile)
+			var err error
+			pairs, err = readSecretsFile(r.secretsFile)
 			if err != nil {
 				PrintWarn(osStdout, "The supplied secrets file could not be validated: %v", err)
 				choice, err := r.prompt.choose(r.ctx, "Secrets file needs attention.", []string{"Choose a secrets file", "I've fixed the file — recheck", "Finish"}, 0)
@@ -42,32 +46,9 @@ func (r *startRunner) sourcePreflight() (doctorReport, bool, error) {
 				}
 				continue
 			}
-			keys := make(map[string]bool, len(pairs))
-			for _, pair := range pairs {
-				keys[pair.Key] = true
-			}
-			for i := range report.Checks {
-				check := &report.Checks[i]
-				if check.Name != "env-required" {
-					continue
-				}
-				var missing []string
-				for _, key := range check.Sources {
-					if !keys[key] {
-						missing = append(missing, key)
-					}
-				}
-				check.Sources = missing
-				if len(missing) == 0 {
-					*check = doctorCheck{Name: "env-required", Status: "ok"}
-				} else {
-					// The doctor's decorated prose may refer to the first key
-					// that was just supplied. Name only the still-missing keys.
-					check.Hint = "Supply these environment keys: " + strings.Join(missing, ", ")
-					check.Why = "These keys have not been supplied by the selected secrets file."
-					check.Fix = "Add the remaining keys to the file, or choose another secrets file, then recheck."
-				}
-			}
+		}
+		if err := r.checkStartConfiguration(&report, pairs); err != nil {
+			return report, false, err
 		}
 		if !report.HasErrors() {
 			PrintOK(osStdout, "Source checks passed")
@@ -89,7 +70,7 @@ func (r *startRunner) sourcePreflight() (doctorReport, bool, error) {
 		for _, check := range report.Checks {
 			if check.Name == "env-required" && check.Status == "error" {
 				secretsIndex = len(choices)
-				choices = append(choices, "Supply missing keys from a secrets file")
+				choices = append(choices, "Supply required keys from a secrets file")
 				break
 			}
 		}
@@ -132,6 +113,11 @@ func (r *startRunner) changeSourceDirectory() error {
 	}
 	r.session.SourcePath, r.session.Template = abs, ""
 	r.session.HealthPath = ""
+	r.target, r.configuration, r.secretKeys = nil, nil, nil
+	if r.session.DeploymentID == "" {
+		r.session.AppSlug, r.session.AppID = "", ""
+		r.session.Project, r.session.ProjectID, r.session.Environment, r.session.EnvironmentID, r.session.SourceContext = "", "", "", "", ""
+	}
 	// Choosing a new project must not carry a secrets file from another one.
 	r.secretsFile = ""
 	if info, err := os.Stat(abs); err == nil && info.IsDir() {

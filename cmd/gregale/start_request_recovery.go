@@ -57,7 +57,7 @@ func (r *startRunner) checkFirstResponse(path, expectedGreeting string) int {
 			}
 			choices := []string{"Retry this GET check"}
 			pathIndex, logsIndex := -1, -1
-			if expectedGreeting == "" && (failure.httpStatus == http.StatusNotFound || failure.httpStatus == http.StatusMethodNotAllowed) {
+			if expectedGreeting == "" && failure.logsAllowed {
 				pathIndex = len(choices)
 				choices = append(choices, "Check another GET path")
 			}

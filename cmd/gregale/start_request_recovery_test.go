@@ -113,6 +113,39 @@ func TestStartMissingRouteCanCheckAnotherPathWithoutPersistingQuery(t *testing.T
 	}
 }
 
+func TestStartOtherHTTPFailuresCanCheckAnotherHealthPath(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusFound, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprintf("HTTP %d", status), func(t *testing.T) {
+			startTestEnvironment(t)
+			requests := 0
+			public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Header.Get("Authorization") != "" || r.Method != http.MethodGet {
+					t.Error("health-path recovery sent credentials or changed the request method")
+				}
+				if r.URL.Path == "/" {
+					w.Header().Set("Location", "https://must-not-follow.example.test")
+					w.WriteHeader(status)
+					return
+				}
+				if r.URL.Path != "/ready" {
+					t.Error("unexpected recovery path")
+				}
+				w.Header().Set(api.DeploymentIDHeader, "d1")
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer public.Close()
+			runner, mutations := startRecoveryRunner(t, "2\n/ready\n", public.URL, nil)
+			before, _ := os.ReadFile(runner.statePath)
+			code := runner.checkFirstResponse("/", "")
+			after, _ := os.ReadFile(runner.statePath)
+			if code != 0 || requests != 2 || mutations.Load() != 0 || !bytes.Equal(before, after) {
+				t.Fatalf("alternate path changed deployment state: code=%d requests=%d mutations=%d", code, requests, mutations.Load())
+			}
+		})
+	}
+}
+
 func TestStartFirstResponseRecoveryCannotBypassGreetingOrRevision(t *testing.T) {
 	for _, mismatch := range []string{"greeting", "revision"} {
 		t.Run(mismatch, func(t *testing.T) {
@@ -154,7 +187,7 @@ func TestStartUnresolvedRequestFinishEOFAndCancelKeepFailure(t *testing.T) {
 			defer public.Close()
 			input := ""
 			if outcome == "finish" {
-				input = "3\n"
+				input = "4\n"
 			}
 			runner, mutations := startRecoveryRunner(t, input, public.URL, nil)
 			want := 1
@@ -206,7 +239,7 @@ func TestStartRequestRecoveryCancellationWhileFetchingLogs(t *testing.T) {
 	}
 }
 
-func TestStartPrivateRequestRecoveryUsesAuthenticatedInvocation(t *testing.T) {
+func TestStartPrivateRequestRecoveryUsesPinnedResponseCheck(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
 	var invocations, deployments atomic.Int32
 	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -215,17 +248,17 @@ func TestStartPrivateRequestRecoveryUsesAuthenticatedInvocation(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/apps/first-app":
-			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app", RequireAuthn: true, CanonicalURL: "https://must-not-contact.example.test"})
-		case "/v1/apps/first-app/invoke":
-			var request api.InvokeRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Method != http.MethodGet || request.Path != "/" {
-				t.Errorf("retry changed the invocation: %+v, %v", request, err)
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: startResponseAppID, Slug: "first-app", RequireAuthn: true, CanonicalURL: "https://must-not-contact.example.test"})
+		case "/v1/apps/first-app/deployments/" + startResponseDeploymentID + "/response-check":
+			var request api.DeploymentResponseCheckRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.AppID != startResponseAppID || request.Path != "/" || request.Scope != "default" {
+				t.Errorf("retry changed the response check: %+v, %v", request, err)
 			}
+			response := api.DeploymentResponseCheckResult{AppID: startResponseAppID, DeploymentID: startResponseDeploymentID, InstanceID: startResponseInstanceID, Scope: "default", HTTPStatus: 200, Body: `{"message":"hello"}`}
 			if invocations.Add(1) == 1 {
-				_ = json.NewEncoder(w).Encode(api.InvokeResponse{ID: "i1", Status: "failed", Error: "Temporary error"})
-			} else {
-				_ = json.NewEncoder(w).Encode(api.InvokeResponse{ID: "i2", Status: "completed", Result: json.RawMessage(`{"message":"hello"}`)})
+				response.HTTPStatus, response.Body = 503, "Temporary error"
 			}
+			_ = json.NewEncoder(w).Encode(response)
 		case "/v1/apps/first-app/deployments":
 			deployments.Add(1)
 		default:
@@ -233,12 +266,12 @@ func TestStartPrivateRequestRecoveryUsesAuthenticatedInvocation(t *testing.T) {
 		}
 	})
 	runner := startTestRunner(t, startTestSource(t), "\n")
-	runner.session.AppID, runner.session.DeploymentID = "app-1", "d1"
-	if code := runner.checkFirstResponse("/", ""); code != 0 || invocations.Load() != 2 || deployments.Load() != 0 || runner.lastRequest == nil || runner.lastRequest.invocationID != "i2" {
+	runner.session.AppID, runner.session.DeploymentID = startResponseAppID, startResponseDeploymentID
+	if code := runner.checkFirstResponse("/", ""); code != 0 || invocations.Load() != 2 || deployments.Load() != 0 || runner.lastRequest == nil || runner.lastRequest.servedDeployment != startResponseDeploymentID {
 		t.Fatalf("code=%d invocations=%d deployments=%d stderr=%s stdout=%s", code, invocations.Load(), deployments.Load(), stderr(), stdout)
 	}
-	if strings.Contains(stdout.String(), loadToken()) || strings.Contains(stdout.String(), "HTTP 200") || strings.Contains(stdout.String(), "Verified URL") {
-		t.Fatalf("private invocation falsely proved public HTTP: %s", stdout)
+	if strings.Contains(stdout.String(), loadToken()) || !strings.Contains(stdout.String(), "HTTP 200") || strings.Contains(stdout.String(), "Verified URL") {
+		t.Fatalf("private response check falsely proved public access: %s", stdout)
 	}
 }
 
@@ -316,6 +349,7 @@ func TestStartStarterChangedFileIsNotWrittenOrDeployed(t *testing.T) {
 	source := startTestSource(t)
 	runner := startTestRunner(t, source, "")
 	runner.session.Template = "hello-node"
+	runner.session.AppID = "app-1"
 	input := &startChangedGreetingInput{path: filepath.Join(source, "handler.js")}
 	runner.prompt.reader = bufio.NewReader(input)
 	runner.deploy = func(context.Context, []string, bool, ...deployExecution) int {

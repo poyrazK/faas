@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,9 +20,12 @@ import (
 // Request bodies and user-entered paths stay in memory. They may contain
 // customer data and must not become durable onboarding metadata.
 type startRequestResult struct {
-	path, appURL, body, invocationID, status, servedDeployment string
-	httpStatus                                                 int
-	elapsed                                                    time.Duration
+	path, appURL, body, servedDeployment string
+	httpStatus                           int
+	elapsed                              time.Duration
+	private, bodyTruncated               bool
+	edgeHealth                           bool
+	publicDeploymentCheck                bool
 }
 
 func validStartRequestPath(path string) bool {
@@ -75,7 +79,7 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 	if !validStartRequestPath(path) {
 		return printErr("Invalid request path", errors.New("enter an app-relative path such as / or /health, without a fragment"))
 	}
-	app, err := r.client.GetApp(r.ctx, r.session.AppSlug)
+	app, err := r.getLaunchApp(r.ctx, r.client, r.session.AppSlug)
 	if err != nil {
 		return printErr("Could not look up app access", err)
 	}
@@ -84,8 +88,13 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 	}
 	r.requestFailure.logsAllowed = true
 	var result startRequestResult
-	if !app.RequireAuthn && (app.PublicAuth.Mode == "" || app.PublicAuth.Mode == api.AppPublicAuthModeOpen) {
+	if api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) != api.AppVisibilityInternal && !app.RequireAuthn && (app.PublicAuth.Mode == "" || app.PublicAuth.Mode == api.AppPublicAuthModeOpen) {
 		result, err = r.requestPublic(app, path)
+		if err == nil && !result.edgeHealth && result.httpStatus >= 200 && result.httpStatus < 300 && result.servedDeployment == "" && (r.projectUpdates || r.session.RequireDeploymentEvidence) {
+			PrintProgress(osStdout, "The public response did not identify its deployment. Checking the selected deployment through your account...")
+			result, err = r.requestPrivate(app, path)
+			result.publicDeploymentCheck = true
+		}
 	} else {
 		result, err = r.requestPrivate(app, path)
 	}
@@ -100,23 +109,37 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 }
 
 func (r *startRunner) requestPrivate(app api.AppResponse, path string) (startRequestResult, error) {
-	// Account credentials stay on the configured control plane. Invocation
-	// completion is reported honestly; it is not proof of an HTTP 200.
+	request := api.DeploymentResponseCheckRequest{AppID: r.session.AppID, Scope: scopeOrDefault(r.session.Environment), ProjectID: r.session.ProjectID, EnvironmentID: r.session.EnvironmentID, Path: path}
 	started := time.Now()
-	response, err := r.client.InvokeApp(r.ctx, r.session.AppSlug, api.InvokeRequest{Method: http.MethodGet, Path: path})
+	response, err := r.client.CheckDeploymentResponse(r.ctx, r.session.AppSlug, r.session.DeploymentID, request)
 	if err != nil {
+		var problem *APIError
+		if errors.As(err, &problem) && (problem.Problem.Status == http.StatusNotFound || problem.Problem.Status == http.StatusMethodNotAllowed) {
+			PrintWarn(osStdout, "The private deployment response could not be verified. This check needs server support for deployment response checks; no default-environment invocation was sent.")
+		}
 		return startRequestResult{}, err
 	}
-	result := startRequestResult{path: path, appURL: canonicalAppURL(app), body: string(response.Result), invocationID: response.ID, status: response.Status, elapsed: time.Since(started)}
-	if response.Status != "completed" {
-		return result, fmt.Errorf("invocation %s ended with status %s: %s", response.ID, response.Status, startResponseText(response.Error))
+	if !response.Matches(request, r.session.DeploymentID) {
+		return startRequestResult{}, errors.New("private response did not identify the accepted app, deployment, environment, and running replica")
 	}
-	return result, nil
+	return startRequestResult{path: path, appURL: canonicalAppURL(app), body: response.Body, httpStatus: response.HTTPStatus, servedDeployment: response.DeploymentID, private: true, bodyTruncated: response.BodyTruncated, elapsed: time.Since(started)}, nil
 }
 
 func (r *startRunner) requestPublic(app api.AppResponse, path string) (startRequestResult, error) {
 	targetURL := canonicalAppURL(app)
-	if preview := deploymentPreviewURL(r.ctx, r.client, r.session.DeploymentID); preview != "" {
+	if r.session.Environment != "" {
+		readCtx, cancel := context.WithTimeout(r.ctx, deploymentReceiptFetchTimeout)
+		defer cancel()
+		preview, err := r.client.GetDeploymentURL(readCtx, r.session.DeploymentID)
+		if err != nil {
+			PrintWarn(osStdout, "The environment deployment URL could not be verified; no request was sent.")
+			return startRequestResult{}, fmt.Errorf("get environment deployment URL: %w", err)
+		}
+		if !preview.Alive || preview.DeploymentID != r.session.DeploymentID || preview.AppID != r.session.AppID || preview.URL == "" {
+			return startRequestResult{}, errors.New("no live URL matching the accepted environment deployment is available; inspect its deployment URL and retry this check")
+		}
+		targetURL = preview.URL
+	} else if preview := deploymentPreviewURL(r.ctx, r.client, r.session.DeploymentID); preview != "" {
 		targetURL = preview
 	}
 	base, err := url.Parse(targetURL)
@@ -149,7 +172,7 @@ func (r *startRunner) requestPublic(app api.AppResponse, path string) (startRequ
 	if served == "" {
 		served = response.Header.Get(api.RevisionHeader)
 	}
-	return startRequestResult{path: path, appURL: target.String(), body: string(body), httpStatus: response.StatusCode, elapsed: time.Since(started), servedDeployment: served}, nil
+	return startRequestResult{path: path, appURL: target.String(), body: string(body), httpStatus: response.StatusCode, elapsed: time.Since(started), servedDeployment: served, edgeHealth: response.Header.Get("X-Faas-Health-Source") == "edge"}, nil
 }
 
 // Keep the direct helper for CLI integration tests and callers that already
@@ -167,7 +190,12 @@ func (r *startRunner) publicRequest(app api.AppResponse, path string) int {
 
 func (r *startRunner) verifyRequest(result startRequestResult, expectedGreeting string) int {
 	r.lastRequest, r.requestFailure = nil, &startRequestFailure{httpStatus: result.httpStatus, logsAllowed: true}
-	if result.httpStatus != 0 && (result.httpStatus < 200 || result.httpStatus >= 300) {
+	if result.edgeHealth {
+		r.renderRequestDetails(result, false)
+		PrintWarn(osStdout, "The gateway answered this health check without contacting the app. Choose Check another GET path and use an app route such as / to verify this deployment.")
+		return 1
+	}
+	if result.httpStatus < 200 || result.httpStatus >= 300 {
 		r.renderRequestDetails(result, false)
 		PrintWarn(osStdout, "%s", startHTTPFailureHint(result.httpStatus))
 		return 1
@@ -175,6 +203,11 @@ func (r *startRunner) verifyRequest(result startRequestResult, expectedGreeting 
 	if result.servedDeployment != "" && r.session.DeploymentID != "" && result.servedDeployment != r.session.DeploymentID {
 		r.renderRequestDetails(result, false)
 		PrintWarn(osStdout, "The request reached deployment %s, while this session deployed %s. Inspect traffic before retrying.", startResponseText(result.servedDeployment), r.session.DeploymentID)
+		return 1
+	}
+	if (r.projectUpdates || r.session.RequireDeploymentEvidence) && result.servedDeployment == "" {
+		r.renderRequestDetails(result, false)
+		PrintWarn(osStdout, "The response did not identify the new deployment. Inspect its routing or retry this check before treating the update as verified.")
 		return 1
 	}
 	if expectedGreeting != "" && startResponseGreeting(result.body) != expectedGreeting {
@@ -198,14 +231,18 @@ func (r *startRunner) renderRequestSuccess(result startRequestResult) {
 }
 
 func (r *startRunner) renderRequestDetails(result startRequestResult, verified bool) {
-	if result.httpStatus != 0 {
+	if result.private {
+		label := "Private app"
+		if result.publicDeploymentCheck {
+			label = "App"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-13s %s\n  Deployment    %s\n  Request       GET %s · HTTP %d · %s · owner-authorized check\n", label, startResponseText(result.appURL), result.servedDeployment, result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+	} else {
 		label := "Request URL"
 		if verified {
 			label = "Verified URL"
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %s  %s\n  Request       GET %s · HTTP %d · %s\n", label, startResponseText(result.appURL), result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
-	} else {
-		_, _ = fmt.Fprintf(osStdout, "  Private app   %s\n  Request       GET %s · invocation %s · %s · %s\n", startResponseText(result.appURL), result.path, result.invocationID, result.status, result.elapsed.Round(time.Millisecond))
 	}
 	body := strings.TrimSpace(startResponseText(result.body))
 	if body == "" {
@@ -216,6 +253,9 @@ func (r *startRunner) renderRequestDetails(result startRequestResult, verified b
 		lines[8] = "... (response shortened)"
 	}
 	_, _ = fmt.Fprintf(osStdout, "  Response\n    %s\n", strings.Join(lines, "\n    "))
+	if result.bodyTruncated {
+		_, _ = fmt.Fprintln(osStdout, "  (response preview shortened)")
+	}
 }
 
 func startResponseGreeting(body string) string {
@@ -275,6 +315,9 @@ func (r *startRunner) starterWalkthrough() int {
 	}
 	PrintProgress(osStdout, "Checking the new greeting with GET /...")
 	if code := r.checkFirstResponse("/", greeting); code != 0 {
+		return code
+	}
+	if code := r.rememberVerifiedDeployment(); code != 0 {
 		return code
 	}
 	PrintOK(osStdout, "You changed the code, deployed it, and saw the new greeting live.")

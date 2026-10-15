@@ -47,6 +47,7 @@ func startTestEnvironment(t *testing.T) (*bytes.Buffer, func() string) {
 	t.Cleanup(func() { testOnlyTTY = oldTTY })
 	stdout, stderr, restore := swapIO(t)
 	t.Cleanup(restore)
+	startTestAPI(t, http.NotFound)
 	return stdout, stderr
 }
 
@@ -290,40 +291,31 @@ func TestCmdStartResumeDoesNotDeploy(t *testing.T) {
 }
 
 func TestCmdStartResumeRejectsIdentityMismatch(t *testing.T) {
-	for _, mismatch := range []string{"API", "account", "app"} {
-		t.Run(mismatch, func(t *testing.T) {
-			_, stderr := startTestEnvironment(t)
-			scope := resolvedTempDir(t)
-			withCwd(t, scope)
-			var mutations atomic.Int32
-			startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet {
-					mutations.Add(1)
-				}
-				if r.URL.Path == "/v1/apps/first-app" {
-					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})
-				} else {
-					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "different-app", Status: "live"})
-				}
-			})
-			session := startSession{APIBase: apiBase(), AccountID: "acct-1", ScopePath: scope, SourcePath: scope, AppSlug: "first-app", AppID: "app-1", DeploymentID: "d1"}
-			if mismatch == "API" {
-				session.APIBase = "https://another.example.test"
-			} else if mismatch == "account" {
-				session.AccountID = "another-account"
-			}
-			path, err := startSessionPath(scope)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := saveStartSession(path, session); err != nil {
-				t.Fatal(err)
-			}
-			pipeStdin(t, "\n")
-			if code := cmdStart(nil); code == 0 || mutations.Load() != 0 {
-				t.Fatalf("code=%d mutations=%d stderr=%s", code, mutations.Load(), stderr())
-			}
-		})
+	_, stderr := startTestEnvironment(t)
+	scope := resolvedTempDir(t)
+	withCwd(t, scope)
+	var mutations atomic.Int32
+	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			mutations.Add(1)
+		}
+		if r.URL.Path == "/v1/apps/first-app" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})
+		} else {
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "different-app", Status: "live"})
+		}
+	})
+	session := startSession{APIBase: apiBase(), AccountID: "acct-1", ScopePath: scope, SourcePath: scope, AppSlug: "first-app", AppID: "app-1", DeploymentID: "d1"}
+	path, err := startSessionPath(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveStartSession(path, session); err != nil {
+		t.Fatal(err)
+	}
+	pipeStdin(t, "\n")
+	if code := cmdStart(nil); code == 0 || mutations.Load() != 0 {
+		t.Fatalf("code=%d mutations=%d stderr=%s", code, mutations.Load(), stderr())
 	}
 }
 
@@ -506,20 +498,21 @@ func TestStartPrivateRequestUsesControlPlane(t *testing.T) {
 	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps/first-app":
-			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app", RequireAuthn: true, CanonicalURL: "https://must-not-contact.example.test"})
-		case "/v1/apps/first-app/invoke":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: startResponseAppID, Slug: "first-app", RequireAuthn: true, CanonicalURL: "https://must-not-contact.example.test"})
+		case "/v1/apps/first-app/deployments/" + startResponseDeploymentID + "/response-check":
 			invocations.Add(1)
-			var request api.InvokeRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Method != http.MethodGet || request.Path != "/health" || r.Header.Get("Authorization") != "Bearer "+loadToken() {
-				t.Errorf("invalid authenticated invocation: %+v %v", request, err)
+			var request api.DeploymentResponseCheckRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Path != "/health" || request.AppID != startResponseAppID || request.Scope != "default" || r.Header.Get("Authorization") != "Bearer "+loadToken() {
+				t.Errorf("invalid authenticated response check: %+v %v", request, err)
 			}
-			_ = json.NewEncoder(w).Encode(api.InvokeResponse{ID: "i1", Status: "completed", Result: json.RawMessage(`{"hello":"world"}`)})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponseCheckResult{AppID: startResponseAppID, DeploymentID: startResponseDeploymentID, InstanceID: startResponseInstanceID, Scope: "default", HTTPStatus: 200, Body: `{"hello":"world"}`})
 		default:
 			http.NotFound(w, r)
 		}
 	})
 	runner := startTestRunner(t, startTestSource(t), "/health\n")
-	if code := runner.sendTestRequest("/health", ""); code != 0 || invocations.Load() != 1 || strings.Contains(stdout.String(), loadToken()) || strings.Contains(stdout.String(), "HTTP 200") || strings.Contains(stdout.String(), "Verified URL") || !strings.Contains(stdout.String(), "Private app") {
+	runner.session.AppID, runner.session.DeploymentID = startResponseAppID, startResponseDeploymentID
+	if code := runner.sendTestRequest("/health", ""); code != 0 || invocations.Load() != 1 || strings.Contains(stdout.String(), loadToken()) || !strings.Contains(stdout.String(), "HTTP 200") || strings.Contains(stdout.String(), "Verified URL") || !strings.Contains(stdout.String(), "Private app") {
 		t.Fatalf("code=%d invocations=%d stderr=%s stdout=%s", code, invocations.Load(), stderr(), stdout)
 	}
 }

@@ -2232,6 +2232,7 @@ type deployExecution struct {
 	onWaitEnd        func()
 	onFailure        func(api.DeploymentResponse, string, string)
 	onError          func(error)
+	resolveApp       func(context.Context, *Client, api.CreateAppRequest) (api.AppResponse, error)
 	prefixBuildLogs  bool
 	compactProgress  bool // Guided sessions own their review and progress display.
 	streamLogsOnJSON bool
@@ -3212,6 +3213,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid deploy manifest", fnErr)
 		}
 		if isFunctionSet {
+			// A guided single-app launch owns its target; fan-out would
+			// bypass that resolver and deploy different app names.
+			if execution.resolveApp != nil {
+				return printErr("Function set needs a separate deployment", errors.New("this guided launch targets one app; use gregale deploy to review and deploy the function set"))
+			}
 			return deployFunctionSet(ctx, functionSetDeploy{
 				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
@@ -3983,7 +3989,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
 			return printErr("Template needs secrets", err)
 		}
-		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp); err != nil {
+		if execution.resolveApp != nil {
+			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
+		} else {
+			err = createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+		}
+		if err != nil {
 			return printErr("Could not create or fetch app", err)
 		}
 		if *createOnly {
