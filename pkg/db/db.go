@@ -62,9 +62,11 @@ var DaemonMaxConnections = map[string]int32{
 	"imaged":            3,
 	"builderd":          3,
 	"meterd":            3,
-	"githubd":           2,
-	"outboundd":         2,
-	"s3-gatewayd":       2,
+	// One connection is the notify hub's LISTEN; with 2, every claim-loop
+	// query ran at the cap and 12% of acquires waited on prod (H10-83).
+	"githubd":     3,
+	"outboundd":   2,
+	"s3-gatewayd": 2,
 }
 
 // DaemonMaxConnectionsNotifyHubDisabled is the budget used when
@@ -105,9 +107,11 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"imaged":            3,
 	"builderd":          3,
 	"meterd":            3,
-	"githubd":           2,
-	"outboundd":         2,
-	"s3-gatewayd":       2,
+	// Never below the hub-on budget: githubd's one subscriber parks a
+	// connection on this path too.
+	"githubd":     3,
+	"outboundd":   2,
+	"s3-gatewayd": 2,
 }
 
 const defaultMaxConnections int32 = 4
