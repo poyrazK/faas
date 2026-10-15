@@ -2,6 +2,24 @@ package api
 
 import "time"
 
+// HostingCapabilities is an operator-only view of the enforced pilot limits.
+// UploadBaseURL identifies private storage; it conveys no access credentials.
+type HostingCapabilities struct {
+	UploadBaseURL          string `json:"upload_base_url"`
+	FilesMax               int    `json:"files_max"`
+	FileMaxBytes           int64  `json:"file_max_bytes"`
+	ReleaseMaxBytes        int64  `json:"release_max_bytes"`
+	ManifestMaxBytes       int64  `json:"manifest_max_bytes"`
+	PathMaxBytes           int    `json:"path_max_bytes"`
+	ContentTypeMaxBytes    int    `json:"content_type_max_bytes"`
+	NameMaxBytes           int    `json:"name_max_bytes"`
+	SitesPerAccount        int    `json:"sites_per_account"`
+	ReleasesPerSite        int    `json:"releases_per_site"`
+	UploadTTLSeconds       int    `json:"upload_ttl_seconds"`
+	StorageTimeoutSeconds  int    `json:"storage_timeout_seconds"`
+	FinalizeTimeoutSeconds int    `json:"finalize_timeout_seconds"`
+}
+
 const (
 	HostingRouteErrorOrigin   = "origin_unavailable"
 	HostingRouteErrorProvider = "publication_unavailable"

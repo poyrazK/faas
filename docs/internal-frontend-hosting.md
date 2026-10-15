@@ -65,6 +65,57 @@ blocks management and reconciliation for old sites; their last accepted durable
 heads can still serve from the old Worker/bucket. Stop that Worker before moving
 backends, and migrate explicitly rather than repurposing their storage.
 
+## Internal operations dashboard and browser uploads
+
+The `poyrazK/faas-frontend` operations console has a default-off hosting page
+on its `codex/internal-static-hosting` branch. Build a dedicated internal
+operations deployment with `NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED=true` and
+`APID_BACKEND_URL` set to this pilot's API. This Next.js flag is evaluated at
+build time; it hides the navigation and makes `/operations/hosting` return 404
+when off. `/hosting` is the clean operations-host URL. This does not enable any
+API or Worker flag and does not deploy the feature to the customer console.
+
+The dashboard checks `GET /v1/internal/hosting/capabilities`, which has the same
+default-off, operator, MFA, and read-scope gates as site reads. Its no-store
+response provides the enforced limits from `pkg/api/limits.go` and the private
+upload base URL, with no credentials. Existing ownership checks still apply
+to every site/release operation. Project and environment selectors use the
+signed-in account's registered resources. There is no account impersonation.
+
+For direct browser uploads, explicitly set `dashboard_upload_origins` in the
+[Terraform module](../deploy/cloudflare/hosting-worker/terraform/README.md#browser-uploads-independent-opt-in)
+to the exact HTTPS operations-console origin and review/apply the plan. The
+empty default installs no allowed origins. Only PUT/content-type are allowed;
+GET/list/delete and wildcard origins are excluded. CORS is bucket-wide, not a
+path authorization rule: private S3 authorization and five-minute staging-only
+signed grants enforce each writable path. Removing all origins revokes CORS
+again. The bucket remains private; the CLI needs no CORS configuration.
+
+The operations origin must also pass apid's existing session-write origin
+guard, normally `https://operations.<apps-domain>`. A preview hostname added
+to CORS alone does not grant API access. Use a dedicated API and trusted HTTPS
+operations hostname; do not point development previews at production.
+
+The browser selects one prebuilt output folder containing root `index.html`,
+validates paths/count/size/manifest limits, and hashes one file at a time. It
+uploads directly to the configured private origin's exact staging paths with
+cookies omitted, no Gregale authorization/organization headers, no referrer,
+and redirects rejected. Host and Content-Length are supplied by the browser
+from the URL/File, not manually set as forbidden headers. Grants are refreshed
+before half their TTL expires; completed uploads are not repeated. Progress
+counts completed files and bytes. Server finalization still verifies the
+size/digest before promotion.
+
+Deploy, rollback, and suspend/resume use the revision the operator reviewed;
+conflicts never automatically retry with a newer revision. On cancellation or
+an uncertain response, refresh the inventory: server work may have finished.
+Verified releases can be published; incomplete ones can be verified or retired.
+Retired/deleting resources count against limits until safe cleanup finishes.
+Publication is displayed separately from accepted intent and serving health;
+legacy leased sites show untracked publication. Cloudflare Access sign-in for
+site visits is separate from the Gregale session. No cloud configuration or
+feature switch is changed merely by shipping the dashboard code.
+
 ## Deploy and roll back
 
 Enable the internal CLI command on an operator workstation and authenticate

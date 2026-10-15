@@ -90,6 +90,29 @@ Durable routing leaves small terminal heads in `hosting/routes/` after site
 cleanup. Preserve them while the pilot can receive traffic or delayed writes;
 do not add a lifecycle expiration for this prefix.
 
+## Browser uploads (independent opt-in)
+
+The internal Operations hosting dashboard needs an explicit browser CORS
+allowlist on this private bucket. Set `dashboard_upload_origins` to the exact
+HTTPS origin of the dedicated operations console, review a plan, and apply it.
+The default empty list installs an empty ruleset. Removing all origins clears
+the ruleset again, including after a previously enabled pilot.
+
+Only `PUT` and `content-type` are allowed; there is no browser read/list/delete
+rule, wildcard origin, or public bucket endpoint. CORS applies to the bucket
+and is not an authorization boundary: the API's five-minute signed URLs
+authorize only individual `hosting/staging/SITE/RELEASE/PATH` objects. Browser
+uploads omit cookies, authorization headers, and referrers. Browsers provide
+the signed Host and Content-Length from the URL and File body. Finalization
+still verifies every size and SHA-256 before immutable publication.
+
+The operations origin must also be trusted by apid's existing session-write
+origin guard (normally `https://operations.<apps-domain>`). A random preview
+hostname in CORS alone does not grant API access. Use the same dedicated pilot
+API for the operations deployment; do not point a development preview at
+production. This configuration neither enables the dashboard build flag nor
+changes any API/Worker feature switch.
+
 ## Portable validation
 
 These checks do not authenticate to Cloudflare or create cloud resources:

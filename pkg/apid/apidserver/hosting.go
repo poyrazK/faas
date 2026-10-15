@@ -65,6 +65,13 @@ func (s *server) configureHosting(getenv func(string) string) error {
 	return nil
 }
 
+func (h hostingHost) HostingUploadBaseURL() string {
+	if h.s.hostingConfig == nil {
+		return ""
+	}
+	return h.s.hostingConfig.Artifacts.UploadBaseURL()
+}
+
 func (s *server) runHostingReconciler(ctx context.Context) {
 	if s.hostingConfig == nil {
 		return

@@ -80,3 +80,15 @@ variable "durable_routing_enabled" {
   description = "Allow durable R2 routing heads; apid separately opts new sites into this routing mode."
   default     = false
 }
+
+variable "dashboard_upload_origins" {
+  type        = set(string)
+  description = "Exact HTTPS operations-console origins allowed to PUT signed staging uploads. Empty disables browser CORS."
+  default     = []
+  validation {
+    condition = alltrue([for origin in var.dashboard_upload_origins :
+      can(regex("^https://([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$", origin))
+    ])
+    error_message = "Use exact lowercase HTTPS origins without wildcards, ports, paths, credentials, or trailing slashes."
+  }
+}

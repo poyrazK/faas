@@ -68,6 +68,16 @@ func TestStagingIsVerifiedAndPublishedImmutably(t *testing.T) {
 	if err != nil || !strings.Contains(grant.URL, "/hosting/staging/") || strings.Contains(grant.URL, "/published/") {
 		t.Fatalf("grant namespace: %v", err)
 	}
+	if backend.UploadBaseURL() != server.URL+"/bucket" {
+		t.Fatal("browser upload base disagrees with signed staging placement")
+	}
+	for header := range grant.Headers {
+		switch strings.ToLower(header) {
+		case "host", "content-length", "content-type":
+		default:
+			t.Fatalf("browser CORS does not permit signed header %q", header)
+		}
+	}
 	objects[stagingKey(site, release, file.Path)] = []byte("wrong")
 	if err := backend.Publish(t.Context(), site, release, manifest); err == nil {
 		t.Fatal("accepted corrupt staging object")

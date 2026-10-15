@@ -48,6 +48,23 @@ resource "cloudflare_r2_managed_domain" "private" {
   enabled     = false
 }
 
+# CORS grants no storage authorization. Apid issues only short-lived signed
+# PUTs in hosting/staging/; browsers receive no R2 or Gregale credentials.
+# Own the empty ruleset as well so removing origins revokes browser CORS.
+resource "cloudflare_r2_bucket_cors" "dashboard" {
+  account_id  = var.account_id
+  bucket_name = cloudflare_r2_bucket.artifacts.name
+  rules = length(var.dashboard_upload_origins) == 0 ? [] : [{
+    id = "internal-dashboard-staging-upload"
+    allowed = {
+      origins = sort(tolist(var.dashboard_upload_origins))
+      methods = ["PUT"]
+      headers = ["content-type"]
+    }
+    max_age_seconds = 300
+  }]
+}
+
 # Only abandoned staging objects expire automatically. Published releases are
 # removed by Gregale after routing leases and upload grants have expired.
 resource "cloudflare_r2_bucket_lifecycle" "staging" {

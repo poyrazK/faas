@@ -21,6 +21,7 @@ type Host interface {
 	HostingArtifacts() artifacts.ArtifactStore
 	HostingDomain() string
 	HostingOriginID() string
+	HostingUploadBaseURL() string
 	HostingProject(context.Context, string, string, string) (state.Project, error)
 	HostingAudit(context.Context, string, string, map[string]any)
 }

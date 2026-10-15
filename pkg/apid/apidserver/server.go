@@ -1305,6 +1305,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
 	// Internal static hosting remains default-off and operator-only. The
 	// handler repeats the gate so direct invocation cannot bypass it.
+	mux.HandleFunc("GET /v1/internal/hosting/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.Capabilities)))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListSites)))))
 	mux.HandleFunc("POST /v1/internal/hosting/sites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.Require(s.idempotent(s.hosting.CreateSite)))))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetSite)))))

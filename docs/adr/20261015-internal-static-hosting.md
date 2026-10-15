@@ -29,6 +29,16 @@ grants never target published objects. Retries can only reuse identical bytes.
 Sites pin the endpoint/bucket fingerprint; changing placement fails closed and
 never silently reads or deletes from a replacement backend.
 
+The internal operations dashboard reuses this lifecycle behind an additional
+default-off build flag. A guarded capability read supplies limits and the
+private upload base URL without credentials. An explicitly configured, exact
+HTTPS origin allowlist permits only browser PUT/content-type CORS. Staging
+signatures remain the authorization boundary; browser requests omit Gregale
+credentials, reject redirects, and bind each grant to its site/release/path.
+The dashboard hashes bounded files, renews grants, and verifies before promoting
+with the reviewed revision. It distinguishes publication receipts from global
+serving health and retains uncertain/cancelled release work for operator review.
+
 Promotion checks the expected site revision and requires a ready release owned
 by that site. The active pointer and revision commit together in PostgreSQL.
 Rollback promotes a retained ready release through the same operation. Durable

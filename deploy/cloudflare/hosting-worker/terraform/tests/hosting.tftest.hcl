@@ -18,6 +18,10 @@ variables {
 run "disabled_defaults" {
   command = plan
   assert {
+    condition     = length(cloudflare_r2_bucket_cors.dashboard.rules) == 0
+    error_message = "Default infrastructure must not permit browser uploads."
+  }
+  assert {
     condition     = !output.hosting.worker_enabled && !output.hosting.route_attached
     error_message = "Initial infrastructure must not enable serving or attach routing."
   }
@@ -41,6 +45,37 @@ run "disabled_defaults" {
     condition     = !output.hosting.durable_routing_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"]) == "false"
     error_message = "Durable routing must require an independent explicit opt-in."
   }
+}
+
+run "explicit_dashboard_uploads" {
+  command = plan
+  variables { dashboard_upload_origins = ["https://operations.gregale.dev"] }
+  assert {
+    condition     = cloudflare_r2_bucket_cors.dashboard.rules[0].allowed.origins == tolist(["https://operations.gregale.dev"]) && cloudflare_r2_bucket_cors.dashboard.rules[0].allowed.methods == tolist(["PUT"]) && cloudflare_r2_bucket_cors.dashboard.rules[0].allowed.headers == tolist(["content-type"])
+    error_message = "Browser CORS must permit only exact origins and the upload method/header."
+  }
+  assert {
+    condition     = !cloudflare_r2_managed_domain.private.enabled && !var.worker_enabled && !var.attach_route
+    error_message = "Browser CORS must not make storage public or enable site serving."
+  }
+}
+
+run "reject_wildcard_upload_origin" {
+  command = plan
+  variables { dashboard_upload_origins = ["https://*.gregale.dev"] }
+  expect_failures = [var.dashboard_upload_origins]
+}
+
+run "reject_http_upload_origin" {
+  command = plan
+  variables { dashboard_upload_origins = ["http://operations.gregale.dev"] }
+  expect_failures = [var.dashboard_upload_origins]
+}
+
+run "reject_upload_origin_path" {
+  command = plan
+  variables { dashboard_upload_origins = ["https://operations.gregale.dev/hosting"] }
+  expect_failures = [var.dashboard_upload_origins]
 }
 
 run "explicit_enable" {

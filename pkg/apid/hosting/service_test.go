@@ -29,10 +29,13 @@ func (h *testHost) HostingDurableRoutingEnabled() bool { return h.durable }
 func (h *testHost) AdminAllows(state.Account) (bool, *api.Problem) {
 	return h.allowed, api.NewProblem(403, "admin_required", "Internal access required", "")
 }
-func (h *testHost) HostingStore() state.HostingStore                             { return h.store }
-func (h *testHost) HostingArtifacts() artifacts.ArtifactStore                    { return h.artifacts }
-func (h *testHost) HostingDomain() string                                        { return "hosting.example" }
-func (h *testHost) HostingOriginID() string                                      { return strings.Repeat("a", 64) }
+func (h *testHost) HostingStore() state.HostingStore          { return h.store }
+func (h *testHost) HostingArtifacts() artifacts.ArtifactStore { return h.artifacts }
+func (h *testHost) HostingDomain() string                     { return "hosting.example" }
+func (h *testHost) HostingOriginID() string                   { return strings.Repeat("a", 64) }
+func (h *testHost) HostingUploadBaseURL() string {
+	return "https://example.r2.cloudflarestorage.com/bucket"
+}
 func (h *testHost) HostingAudit(context.Context, string, string, map[string]any) {}
 func (h *testHost) HostingProject(ctx context.Context, account, slug, environment string) (state.Project, error) {
 	p, err := h.store.ProjectBySlug(ctx, account, slug)
@@ -64,7 +67,7 @@ func (a *testArtifacts) Publish(context.Context, string, string, api.HostingMani
 func TestEveryHostingHandlerRequiresFlagAndOperator(t *testing.T) {
 	h := &testHost{store: state.NewMemStore(), artifacts: &testArtifacts{}}
 	s := Service{Host: h}
-	handlers := []httpkit.AccountHandler{s.CreateSite, s.ListSites, s.GetSite, s.GetStatus, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
+	handlers := []httpkit.AccountHandler{s.Capabilities, s.CreateSite, s.ListSites, s.GetSite, s.GetStatus, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
 	for index, handler := range handlers {
 		for _, check := range []struct {
 			enabled, allowed bool

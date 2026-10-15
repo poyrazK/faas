@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -42,11 +43,12 @@ func (b *R2) Remove(ctx context.Context, site, release string, manifest api.Host
 // R2 uses a private, operator-provisioned bucket. It never creates a public
 // bucket or gives a client credentials for the published namespace.
 type R2 struct {
-	client *s3.Client
-	signer *s3.PresignClient
-	bucket string
-	id     string
-	slots  chan struct{}
+	client        *s3.Client
+	signer        *s3.PresignClient
+	bucket        string
+	id            string
+	uploadBaseURL string
+	slots         chan struct{}
 }
 
 func NewR2(endpoint, bucket, accessKey, secretKey string) (*R2, error) {
@@ -62,10 +64,12 @@ func NewR2(endpoint, bucket, accessKey, secretKey string) (*R2, error) {
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
 	digest := sha256.Sum256([]byte(endpoint + "\n" + bucket))
-	return &R2{client: client, signer: s3.NewPresignClient(client), bucket: bucket, id: hex.EncodeToString(digest[:]), slots: make(chan struct{}, api.HostingPublishConcurrency)}, nil
+	return &R2{client: client, signer: s3.NewPresignClient(client), bucket: bucket, id: hex.EncodeToString(digest[:]), uploadBaseURL: strings.TrimRight(endpoint, "/") + "/" + url.PathEscape(bucket), slots: make(chan struct{}, api.HostingPublishConcurrency)}, nil
 }
 
 func (b *R2) ID() string { return b.id }
+
+func (b *R2) UploadBaseURL() string { return b.uploadBaseURL }
 
 func (b *R2) Upload(ctx context.Context, site, release string, f api.HostingFile) (api.HostingUpload, error) {
 	if !ValidPath(f.Path) || f.Size < 0 || f.Size > api.HostingFileMaxBytes {
