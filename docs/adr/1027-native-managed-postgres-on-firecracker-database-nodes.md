@@ -673,6 +673,15 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     idle-parked, and that a VM stopped behind the scheduler's back is
     detected and rebooted in 1.4 s.
 
+- **Discovery after a lost acknowledgement.** If a `Provision` or
+  `Restore` reply is lost, the service records no provider id. It then
+  needs `ResourceDiscoverer` to delete that database or collect its usage.
+  Without it the delete failed `ErrUnsupported` on every retry and the
+  usage was never collected. Native ids derive from the resource id, so
+  `Discover` is schedd's record under that id: the id if it exists,
+  `ErrNotFound` if not (the service does not treat that as proof that
+  nothing will appear). A restore must name the same source, or it is
+  `ErrConflict`.
 - **Deterministic credentials.** The contract makes issuance idempotent:
   re-issuing an identity must return the same login, and qualification
   checks it.

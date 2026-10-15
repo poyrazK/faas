@@ -424,6 +424,29 @@ func (p *Provider) Restore(ctx context.Context, req managedpostgres.RestoreReque
 	return p.observed(rt), nil
 }
 
+var _ managedpostgres.ResourceDiscoverer = (*Provider)(nil)
+
+// Discover finds the database a resource id names when its creation may
+// have succeeded without an acknowledgement (a timed-out Provision or
+// Restore). The database id derives from the resource id, so it is
+// schedd's record under that id; absent is ErrNotFound, which the service
+// does not take as proof that nothing will appear. A record restored from
+// another source is not this restore.
+func (p *Provider) Discover(ctx context.Context, req managedpostgres.ResourceDiscoveryRequest) (string, error) {
+	if req.ResourceID == "" || len(req.ResourceID) > 255 {
+		return "", managedpostgres.ErrInvalid
+	}
+	id := resourceUUID(req.ResourceID)
+	rt, err := p.scheduler.GetDatabase(ctx, &scheddpb.DatabaseRef{DatabaseId: id})
+	if err != nil {
+		return "", providerError(err)
+	}
+	if rt.GetDatabaseId() != id || rt.GetRestoreSourceId() != req.RestoreSourceResourceID {
+		return "", managedpostgres.ErrConflict
+	}
+	return id, nil
+}
+
 // Delete removes the VM, its volume and every published verifier.
 func (p *Provider) Delete(ctx context.Context, req managedpostgres.DeleteRequest) (managedpostgres.DeleteResult, error) {
 	id := req.ProviderResourceID

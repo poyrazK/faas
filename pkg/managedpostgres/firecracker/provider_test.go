@@ -1069,3 +1069,49 @@ func TestObserveReadsTheRecordWithoutWaking(t *testing.T) {
 		t.Fatalf("unknown database = %v, want ErrNotFound", err)
 	}
 }
+
+// A creation whose acknowledgement was lost is found again under the id
+// its resource id derives, so the service can delete it and collect its
+// usage; a restore must match its source.
+func TestDiscoverRecoversAnUnacknowledgedCreation(t *testing.T) {
+	p, _ := newPITRProvider(t)
+	ctx := context.Background()
+	spec := devSpec()
+	spec.RestoreWindowSeconds = 86400
+	if _, err := p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{ResourceID: testDatabaseID}); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("discover before creation = %v, want ErrNotFound", err)
+	}
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{ResourceID: testDatabaseID}); err != nil || id != testDatabaseID {
+		t.Fatalf("discover = %q, %v", id, err)
+	}
+	const target = "1b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"
+	if _, err := p.Restore(ctx, managedpostgres.RestoreRequest{ResourceID: target, SourceResourceID: testDatabaseID, Spec: spec,
+		PointInTime: time.Now().Add(-time.Minute), IdempotencyKey: "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{ResourceID: target, RestoreSourceResourceID: testDatabaseID}); err != nil || id != target {
+		t.Fatalf("discover the restore = %q, %v", id, err)
+	}
+	for name, req := range map[string]managedpostgres.ResourceDiscoveryRequest{
+		"restore as a plain database": {ResourceID: target},
+		"another source":              {ResourceID: target, RestoreSourceResourceID: "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"},
+		"plain database as a restore": {ResourceID: testDatabaseID, RestoreSourceResourceID: target},
+	} {
+		if _, err := p.Discover(ctx, req); !errors.Is(err, managedpostgres.ErrConflict) {
+			t.Errorf("%s = %v, want ErrConflict", name, err)
+		}
+	}
+	if _, err := p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{}); !errors.Is(err, managedpostgres.ErrInvalid) {
+		t.Fatalf("empty request = %v", err)
+	}
+	// What the service does with it: delete by the discovered id.
+	if res, err := p.Delete(ctx, managedpostgres.DeleteRequest{ResourceID: target, ProviderResourceID: target}); err != nil || !res.Done {
+		t.Fatalf("delete = %+v, %v", res, err)
+	}
+	if _, err := p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{ResourceID: target, RestoreSourceResourceID: testDatabaseID}); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("discover after delete = %v", err)
+	}
+}
