@@ -145,3 +145,6 @@ restores can recur; deleting the newest rows erases the local supersession fence
 Terminal payload clearing is not erasure from backups. This feature adds no new
 ordering guarantee, exactly-once external effects, notification service or platform
 rollout. Failures and recovery remain independent per consumer delivery.
+
+For bounded backlog summaries and sustained local stall alerts, see
+[acknowledgment intent recovery health](event-acknowledgment-intent-health.md).
