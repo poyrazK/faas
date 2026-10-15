@@ -32,3 +32,25 @@
 
 See [scenario test configuration](../scenario-tests.md) for all limits, commands,
 report contracts, and CI gate semantics.
+
+
+## Saved campaign execution (2026-10-15)
+
+An explicit `test policy run` command may execute the native batches of a saved,
+budgeted coverage plan. Bind the expanded manifest, policy and input reports;
+require an explicit clean source revision per baseline/current side. Execute one
+side per checkpoint directory, with concurrency 1 by default and an upper bound
+of 4. Recompute batch costs and enforce the saved plan budgets before scheduling.
+Do not execute arbitrary saved command text or bypass native workload limits.
+
+Checkpoint before launch and record the exact completed report hash afterwards.
+Verify context, case/configuration counts and source provenance before accepting
+completion. Resume skips verified completed work. Uncertain in-flight or partial
+work must be reconciled rather than automatically repeated. Cancellation stops
+new scheduling and lets active native runners finish cleanup. Cleanup failure
+halts scheduling without discarding available evidence.
+
+Merge completed receipts through the existing provenance, duplicate and revision
+guards, then reevaluate required coverage and environment policies from raw
+execution evidence. Planned coverage, preflight data and checkpoint completion
+alone do not satisfy assertions.

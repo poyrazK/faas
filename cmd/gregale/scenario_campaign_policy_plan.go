@@ -11,6 +11,7 @@ import (
 )
 
 type testCampaignPolicyPlan struct {
+	Execution *testCampaignExecutionBinding `json:"execution,omitempty"`
 	Costs *testCampaignPlanCosts `json:"costs,omitempty"`
 	Batches []testCampaignCostBatch `json:"batches,omitempty"`
 	Preflight *testPlanPreflightSummary `json:"preflight,omitempty"`
@@ -115,6 +116,15 @@ func cmdTestPolicyPlan(args []string) int {
 	}
 	if err := optimizeTestCampaignPlan(&plan, manifest.Scenarios, *manifestPath, testCampaignPlanBudget{Runs: *maxRuns, Deployments: *maxDeployments, WorkloadMinutes: *maxMinutes}); err != nil {
 		return printErr("Could not budget coverage plan", err)
+	}
+	plan.Execution = &testCampaignExecutionBinding{ManifestSHA256:testCampaignJSONHash(manifest.Scenarios), PolicySHA256:testCampaignJSONHash(policy)}
+	if *from != "" {
+		_, plan.Execution.CurrentSHA256, err = readTestBaselineReport(*from, nil)
+		if err != nil { return printErr("Could not bind current report", err) }
+	}
+	if *baseline != "" {
+		_, plan.Execution.BaselineSHA256, err = readTestBaselineReport(*baseline, nil)
+		if err != nil { return printErr("Could not bind baseline report", err) }
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")

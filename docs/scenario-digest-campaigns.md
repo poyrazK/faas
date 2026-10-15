@@ -808,3 +808,63 @@ Preflight and environment blockers are applied before allocation; budgeting
 cannot waive them. Historical configurations without a reproducible manifest
 remain gaps. Use fresh report paths, execute each side at its intended revision,
 merge the resulting receipts into that side, and reevaluate the policy.
+
+
+### Running and resuming a saved campaign
+
+Generate a fresh cost-aware plan, then execute one revision side at a time.
+The runner is an explicit execution command: it provisions workloads through
+the existing native test runner, whose workload limits and cleanup rules apply.
+
+```sh
+gregale test policy plan --policy campaign-policy.yaml --manifest gregale-test.yaml --from current.json --baseline baseline.json --plan-max-runs 100 > campaign-plan.json
+
+gregale test policy run --plan campaign-plan.json --policy campaign-policy.yaml --manifest gregale-test.yaml --from current.json --baseline baseline.json --side current --revision FULL_CURRENT_COMMIT --directory /tmp/gregale-current-campaign --concurrency 1
+```
+
+Use a separate directory and the intended clean checkout for the baseline side.
+All source-backed workloads on a side must use the explicit full Git commit.
+Tracked modifications and nonignored untracked files are rejected. Fixture
+workloads retain their normal source hashes. Git checks are best effort against
+checkout changes; do not edit source files or ignored deployment inputs during
+execution. Actual source hashes and build inputs are also checked by report merge.
+
+Plans bind the expanded manifest, policy and original report hashes. Older
+unbound plans must be regenerated. The same original inputs are required when
+resuming. Rerun the identical invocation to resume; checkpoints also bind the
+plan, revision and side. Policy and manifest bindings and checkout state are
+checked again before scheduling each batch. Saved argument arrays are never
+executed; the runner rebuilds an allowlisted native command.
+
+The output directory must be private (0700), initially empty, and outside source
+trees (or ignored by Git). A lock prevents simultaneous runners in the same
+directory. Each batch writes a private log and raw report, and the atomic
+checkpoint records completion plus the exact report hash. Resume verifies saved
+receipts before skipping completed work. Concurrency is 1 by default, with an
+explicit range of 1..4 active batches. SIGINT/SIGTERM stops scheduling and signals
+active native runners to finish cleanup; the parent drains them before returning.
+
+Completion requires the exact planned profile, cases, configuration hashes,
+execution count and source revision. Assertion failures with complete receipts
+are completed work, not automatic retry requests. Skipped, partial or unverified
+reports stop scheduling. Cleanup errors halt the campaign. Already active
+batches may finish, so choose concurrency 1 when strict sequential stopping is
+required. Budgets cover the saved batches and are checked again before execution;
+the runner does not spend additional runs to fill residual gaps.
+
+If a crash leaves a batch marked running, or interruption leaves a partial batch,
+the runner cannot prove that repeating it is safe and refuses automatic replay.
+Inspect its log, receipts and resource cleanup, merge valid evidence separately,
+and make a new plan for the remaining gaps. After an abnormal process exit a
+stale `runner.lock` may remain: remove it only after verifying no runner is
+active. Removing the lock does not bypass an uncertain checkpoint.
+
+Completed receipts are merged with the original report for the selected side
+into `combined-current.json` or `combined-baseline.json`, using the existing
+duplicate/provenance/source checks without a mixed-revision override.
+`policy-result.json` reevaluates both sides and shows actual remaining coverage
+and environment violations. Planning projections never count as execution
+evidence. The other side is unchanged; use the completed side report as input to
+a new plan when preparing the next stage. Exit codes are 0 for accepted policy,
+2 for policy violations, and 1 for input, execution, cleanup or evidence errors.
+Raw logs, receipts and checkpoints remain available after a stop.
