@@ -307,3 +307,87 @@ func TestMetalProductionClassChange(t *testing.T) {
 	t.Logf("into production (restart, standby copy, synchronous) %v; out of production (restart, standby retired) %v",
 		joined.Round(time.Millisecond), left.Round(time.Millisecond))
 }
+
+// adr: 1027 — automatic failover of a parked database: its node goes
+// silent with nothing running there. The monitor probes the node, fails
+// the database over after the threshold, and the next wake promotes the
+// standby volume on its node with every acknowledged commit. The old
+// volume goes once the node answers again.
+func TestMetalAutomaticFailoverOfAParkedDatabase(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	}
+	bucket := &dbarchive.FileRemote{Dir: filepath.Join(workdir, "apbucket")}
+	t.Cleanup(func() { _ = os.RemoveAll(bucket.Dir) })
+	a := newMetalNode(t, workdir, map[int]string{17: base}, "ka", 20<<30, &rangeLeaser{next: fcvm.MaxSlots - 40}, bucket)
+	b := newMetalNode(t, workdir, map[int]string{17: base}, "kb", 10<<30, &rangeLeaser{next: fcvm.MaxSlots - 60}, bucket)
+	store := NewMemStore()
+	seedNodes(t, store, a.node, b.node)
+	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	})
+	t.Cleanup(func() { _ = vmm.Close() })
+	s := New(store, vmm, Config{IdleTimeout: time.Hour, ReadyTimeout: time.Minute, SharedArchive: true, AutoFailoverAfter: 3 * time.Second}, nil)
+	t.Cleanup(s.standbyWG.Wait)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	id, password := uuid.NewString(), uuid.NewString()
+	t.Cleanup(func() { _ = s.Delete(context.Background(), id) })
+	if _, err := s.Provision(ctx, ProvisionRequest{DatabaseID: id, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, Replicated: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{"CREATE ROLE app LOGIN PASSWORD '" + password + "'", "CREATE DATABASE app OWNER app"} {
+		if resp, err := s.Admin(ctx, id, sql); err != nil || resp.Error != "" {
+			t.Fatalf("admin: %+v %v", resp, err)
+		}
+	}
+	s.standbyWG.Wait()
+	query(ctx, t, a.rt, id, password, "CREATE TABLE kept(v text); INSERT INTO kept SELECT 'acknowledged' FROM generate_series(1, 5000)")
+	if err := s.Park(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.Get(ctx, id); got.State != StateParked || !got.StandbySynced {
+		t.Fatalf("after the park: %+v", got)
+	}
+
+	a.partition()
+	silent := time.Now()
+	for {
+		if _, err := s.CheckStandbys(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := store.Get(ctx, id); got.NodeID == "kb" {
+			if !got.PromotePending || got.State != StateParked {
+				t.Fatalf("after the failover: %+v; want parked with its promotion pending", got)
+			}
+			break
+		}
+		if time.Since(silent) > time.Minute {
+			t.Fatal("no automatic failover within a minute of the parked database's node going silent")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	failedOver := time.Since(silent)
+	started := time.Now()
+	if vm, err := s.Wake(ctx, id); err != nil || vm.NodeID != "kb" || vm.PromotePending {
+		t.Fatalf("wake after the failover = %+v, %v", vm, err)
+	}
+	promoted := time.Since(started)
+	if got := query(ctx, t, b.rt, id, password, "SELECT count(*)::text FROM kept"); got != "5000" {
+		t.Fatalf("rows on the new primary = %s; want every acknowledged commit (5000)", got)
+	}
+	query(ctx, t, b.rt, id, password, "INSERT INTO kept VALUES ('after the failover')")
+
+	a.heal(t)
+	for deadline := time.Now().Add(2 * time.Minute); fileExists(a.rt.VolumePath(id)); {
+		if _, err := s.CollectOrphans(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the old primary volume survived its node answering again")
+		}
+		time.Sleep(time.Second)
+	}
+	t.Logf("silent node -> parked database failed over in %v (threshold 3 s); promotion wake %v", failedOver.Round(time.Millisecond), promoted.Round(time.Millisecond))
+}

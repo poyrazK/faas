@@ -820,6 +820,8 @@ func (s *Scheduler) CollectOrphans(ctx context.Context) (int, error) {
 			s.log.Warn("dbsched: list volumes", "node_id", n.ID, "err", err)
 			continue
 		}
+		// It answers: standbys may be placed there again.
+		s.nodeFailing.Delete(n.ID)
 		for _, v := range volumes {
 			if ok, err := s.removeOrphan(ctx, n, v); err != nil {
 				s.log.Warn("dbsched: remove orphaned volume", "node_id", n.ID, "database_id", v.DatabaseID, "err", err)

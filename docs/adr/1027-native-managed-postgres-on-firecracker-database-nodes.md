@@ -1089,6 +1089,28 @@ node's vmmd stopped answering while its VM ran on. The database failed
 over 3.5 s later (threshold 3 s) with all 5,000 acknowledged rows. The
 stale primary stopped and its volume went once the node answered again.
 
+**Parked databases fail over automatically too.** Nothing runs on a parked
+primary's node, so the monitor probes the node itself: once per check, a
+`ListVolumes` call (3 s timeout) to every node holding parked primaries
+with a synchronized standby, all at once. The rule is the running one: no
+answer for `auto_failover_after`, and the standby's node answers.
+The database is then switched to its standby's node, parked with its
+promotion pending; its next wake promotes the standby volume there.
+
+Two fixes keep the old node's stale volume from coming back:
+- **Standby placement avoids silent nodes.** A new standby is never
+  placed on a node the monitor finds silent. The orphan sweep clears that
+  mark once the node lists its volumes again.
+- **A fresh standby starts clean.** A standby placed on a newly chosen
+  node first discards any volume of the database there. That is always
+  stale, for example the old primary's after a failover, and it is never
+  seeded from.
+
+Metal (`TestMetalAutomaticFailoverOfAParkedDatabase`): a parked
+database's node went silent. It failed over 3.0 s later (threshold 3 s).
+The promotion wake on the standby's node took 2.0 s and kept all 5,000
+rows, and the old volume went once the node answered again.
+
 Metal (`TestMetalProductionClassFailover`), two nodes through vmmd's
 handlers:
 
@@ -1148,9 +1170,6 @@ Not yet done:
 - **Storage resize of a production database** grows the standby's volume
   at its next attach, but the standby node's volume capacity is not
   checked at resize time.
-- **Parked databases fail over only through the operator's lost-node
-  mark.** Automatic failover covers running databases, whose primaries the
-  monitor probes.
 - **After every wake the primary runs asynchronous until its standby
   syncs**, typically a few seconds. A node loss in that window falls back
   to the archive (up to 60 s of loss), as for other classes.

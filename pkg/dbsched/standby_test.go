@@ -331,3 +331,72 @@ func TestAutoFailoverCanBeLeftToTheOperator(t *testing.T) {
 		t.Fatalf("failed over with automatic failover off: %+v", got)
 	}
 }
+
+// A parked database fails over like a running one once its node has not
+// answered for AutoFailoverAfter; its standby volume is promoted at the
+// next wake, on the standby's node. Without an answer from the standby's
+// node, or with automatic failover off, nothing moves.
+func TestAutoFailoverOfAParkedDatabase(t *testing.T) {
+	s, store, vmm := newStandbyScheduler(t, "db-a", "db-b", "db-c")
+	ctx := context.Background()
+	vm := wakeReplicated(t, s)
+	if err := s.Park(ctx, vm.DatabaseID); err != nil {
+		t.Fatal(err)
+	}
+	c := &clock{now: time.Now()}
+	s.now = func() time.Time { return c.now }
+	vmm.setDown("db-a", true)
+	if _, err := s.CheckStandbys(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.advance(20 * time.Second)
+	_, _ = s.CheckStandbys(ctx)
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.NodeID != "db-a" {
+		t.Fatalf("failed over after 20 s: %+v", got)
+	}
+	c.advance(15 * time.Second)
+	_, _ = s.CheckStandbys(ctx)
+	got, _ := store.Get(ctx, vm.DatabaseID)
+	if got.NodeID != "db-b" || got.State != StateParked || !got.PromotePending || got.LastError != errCodeFailedOver {
+		t.Fatalf("after 35 s unanswered: %+v; want parked on db-b with its promotion pending", got)
+	}
+	woke, err := s.Wake(ctx, vm.DatabaseID)
+	if err != nil || woke.NodeID != "db-b" || woke.PromotePending || woke.State != StateRunning {
+		t.Fatalf("wake after the failover = %+v, %v", woke, err)
+	}
+	// The new standby avoids the silent node, and anything of the database
+	// on its fresh node goes before it is seeded.
+	s.standbyWG.Wait()
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.StandbyNode != "db-c" || !got.StandbySynced {
+		t.Fatalf("standby after the failover: %+v; want synchronized on db-c", got)
+	}
+	if calls := vmm.nodeCalls(); strings.LastIndex(calls, "discard@db-c") > strings.LastIndex(calls, "start_standby@db-c") || !strings.Contains(calls, "discard@db-c") {
+		t.Fatalf("calls %s; want db-c's stale volume discarded before the standby starts", calls)
+	}
+}
+
+func TestNoParkedFailoverWithoutTheStandbysNode(t *testing.T) {
+	for name, setup := range map[string]func(*Scheduler, *fakeVMM){
+		"standby node silent":    func(_ *Scheduler, vmm *fakeVMM) { vmm.setDown("db-b", true) },
+		"automatic failover off": func(s *Scheduler, _ *fakeVMM) { s.cfg.AutoFailoverAfter = -1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, store, vmm := newStandbyScheduler(t, "db-a", "db-b")
+			ctx := context.Background()
+			vm := wakeReplicated(t, s)
+			if err := s.Park(ctx, vm.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			c := &clock{now: time.Now()}
+			s.now = func() time.Time { return c.now }
+			setup(s, vmm)
+			vmm.setDown("db-a", true)
+			_, _ = s.CheckStandbys(ctx)
+			c.advance(time.Hour)
+			_, _ = s.CheckStandbys(ctx)
+			if got, _ := store.Get(ctx, vm.DatabaseID); got.NodeID != "db-a" || got.PromotePending {
+				t.Fatalf("failed over: %+v", got)
+			}
+		})
+	}
+}

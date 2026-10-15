@@ -232,10 +232,10 @@ type Store interface {
 	// running (else ErrConflict); clearing always succeeds.
 	MarkStandbySynced(ctx context.Context, id string, synced bool) error
 	// ReplaceStandby puts a replicated database's stopped standby on the
-	// active node offering its major, other than its own and the current
-	// standby's, with the most free volume capacity (else ErrNoCapacity),
-	// not synchronized.
-	ReplaceStandby(ctx context.Context, id string) (VM, error)
+	// active node offering its major, other than its own, the current
+	// standby's and avoid, with the most free volume capacity (else
+	// ErrNoCapacity), not synchronized.
+	ReplaceStandby(ctx context.Context, id string, avoid ...string) (VM, error)
 	// Failover makes a synchronized standby's node the database's node:
 	// running if the standby VM ran (it was promoted), else parked with
 	// its promotion pending. A standby not synchronized, or a database

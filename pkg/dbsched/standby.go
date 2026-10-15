@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -62,11 +63,11 @@ func (s *Scheduler) kickStandby(ctx context.Context, id string) {
 // synchronous. A failed attach leaves the primary asynchronous and the
 // standby stopped, for the monitor to retry.
 func (s *Scheduler) attachStandby(ctx context.Context, id string) error {
-	vm, primary, standby, err := s.claimStandby(ctx, id)
+	vm, primary, standby, fresh, err := s.claimStandby(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err = s.bootStandby(ctx, vm, primary, standby); err == nil {
+	if err = s.bootStandby(ctx, vm, primary, standby, fresh); err == nil {
 		err = s.finishAttach(ctx, vm, standby)
 	}
 	if err != nil {
@@ -77,42 +78,53 @@ func (s *Scheduler) attachStandby(ctx context.Context, id string) error {
 
 // claimStandby, under the database's lock, gives a running replicated
 // database a usable standby node and claims the standby's memory there.
-func (s *Scheduler) claimStandby(ctx context.Context, id string) (VM, Node, Node, error) {
+// fresh reports a standby node newly chosen: anything of the database
+// there is stale (an old primary's volume after a failover) and goes
+// before the standby is seeded.
+func (s *Scheduler) claimStandby(ctx context.Context, id string) (vm VM, primary, standby Node, fresh bool, err error) {
 	unlock := s.lock(id)
 	defer unlock()
-	vm, err := s.store.Get(ctx, id)
+	vm, err = s.store.Get(ctx, id)
 	if err != nil {
-		return VM{}, Node{}, Node{}, err
+		return VM{}, Node{}, Node{}, false, err
 	}
 	if vm.State != StateRunning || !vm.Replicated || vm.StandbyRunning {
-		return VM{}, Node{}, Node{}, errStandbyNotNeeded
+		return VM{}, Node{}, Node{}, false, errStandbyNotNeeded
 	}
-	if standby, err := s.node(ctx, vm.StandbyNode); vm.StandbyNode == "" || err != nil || standby.Lifecycle != NodeActive {
-		if vm, err = s.store.ReplaceStandby(ctx, id); err != nil {
-			return VM{}, Node{}, Node{}, fmt.Errorf("dbsched: place a standby: %w", err)
+	if current, err := s.node(ctx, vm.StandbyNode); vm.StandbyNode == "" || err != nil || current.Lifecycle != NodeActive {
+		// Not onto a node the monitor finds silent.
+		var silent []string
+		s.nodeFailing.Range(func(k, _ any) bool { silent = append(silent, k.(string)); return true })
+		if vm, err = s.store.ReplaceStandby(ctx, id, silent...); err != nil {
+			return VM{}, Node{}, Node{}, false, fmt.Errorf("dbsched: place a standby: %w", err)
 		}
+		fresh = true
 	}
-	primary, err := s.node(ctx, vm.NodeID)
-	if err != nil {
-		return VM{}, Node{}, Node{}, err
+	if primary, err = s.node(ctx, vm.NodeID); err != nil {
+		return VM{}, Node{}, Node{}, false, err
 	}
-	standby, err := s.node(ctx, vm.StandbyNode)
-	if err != nil {
-		return VM{}, Node{}, Node{}, err
+	if standby, err = s.node(ctx, vm.StandbyNode); err != nil {
+		return VM{}, Node{}, Node{}, false, err
 	}
 	if vm, err = s.store.ClaimStandby(ctx, id); err != nil {
-		return VM{}, Node{}, Node{}, fmt.Errorf("dbsched: claim the standby: %w", err)
+		return VM{}, Node{}, Node{}, false, fmt.Errorf("dbsched: claim the standby: %w", err)
 	}
-	return vm, primary, standby, nil
+	return vm, primary, standby, fresh, nil
 }
 
 // bootStandby starts the standby, which copies its primary first if its
-// volume is new, and waits until the primary reports it synchronous.
-func (s *Scheduler) bootStandby(ctx context.Context, vm VM, primary, standby Node) error {
+// volume is new, and waits until the primary reports it synchronous. On a
+// fresh standby node any volume of the database is stale and discarded.
+func (s *Scheduler) bootStandby(ctx context.Context, vm VM, primary, standby Node, fresh bool) error {
 	id := vm.DatabaseID
 	// A standby left by an earlier attempt goes first.
 	if err := s.vmm.Stop(ctx, standby, id); err != nil {
 		return fmt.Errorf("stop a leftover standby: %w", err)
+	}
+	if fresh {
+		if err := s.vmm.DiscardVolume(ctx, standby, id); err != nil {
+			return fmt.Errorf("discard a stale volume: %w", err)
+		}
 	}
 	if err := s.vmm.CreateVolume(ctx, standby, id, vm.VolumeBytes); err != nil {
 		return fmt.Errorf("create the standby volume: %w", err)
@@ -273,6 +285,9 @@ func (s *Scheduler) CheckStandbys(ctx context.Context) (int, error) {
 		byID[n.ID] = n
 	}
 	dropped := 0
+	// Parked databases whose synchronized standby could take over, by
+	// their primary's node: nothing runs there to probe, so the node is.
+	parkedOn := map[string][]VM{}
 	for _, vm := range vms {
 		if vm.DropStandbySlot && vm.State == StateRunning {
 			s.dropStandbySlot(ctx, vm, byID[vm.NodeID])
@@ -285,6 +300,8 @@ func (s *Scheduler) CheckStandbys(ctx context.Context) (int, error) {
 		if vm.State == StateParked {
 			if standbyGone {
 				s.replaceParkedStandby(ctx, vm.DatabaseID)
+			} else if vm.StandbySynced {
+				parkedOn[vm.NodeID] = append(parkedOn[vm.NodeID], vm)
 			}
 			continue
 		}
@@ -301,7 +318,74 @@ func (s *Scheduler) CheckStandbys(ctx context.Context) (int, error) {
 			dropped++
 		}
 	}
+	s.failoverParked(ctx, parkedOn, byID)
 	return dropped, nil
+}
+
+// failoverParked probes, at once, each node holding parked databases'
+// primaries, and fails those databases over to their synchronized
+// standbys once their node has not answered for AutoFailoverAfter (the
+// running databases' rule). Nothing runs on the silent node, so the
+// promotion waits for the next wake, on the standby's node. A node the
+// operator marked unavailable is settled by SettleLostNodes.
+func (s *Scheduler) failoverParked(ctx context.Context, parkedOn map[string][]VM, byID map[string]Node) {
+	if s.cfg.AutoFailoverAfter < 0 || len(parkedOn) == 0 {
+		return
+	}
+	probed := make(map[string]error, len(parkedOn))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for nodeID := range parkedOn {
+		node, ok := byID[nodeID]
+		if !ok || node.Lifecycle == NodeUnavailable {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := s.probeNode(ctx, node)
+			mu.Lock()
+			probed[nodeID] = err
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	for nodeID, err := range probed {
+		if err == nil {
+			s.nodeFailing.Delete(nodeID)
+			continue
+		}
+		if !unreachable(err) {
+			continue
+		}
+		first, _ := s.nodeFailing.LoadOrStore(nodeID, s.now())
+		silent := s.now().Sub(first.(time.Time))
+		if silent < s.cfg.AutoFailoverAfter {
+			continue
+		}
+		for _, vm := range parkedOn[nodeID] {
+			standby, ok := byID[vm.StandbyNode]
+			if !ok || s.probeNode(ctx, standby) != nil {
+				s.log.Warn("dbsched: parked database's node unreachable, but its standby's node is not answering either; no failover",
+					"database_id", vm.DatabaseID, "node_id", nodeID, "standby_node", vm.StandbyNode)
+				continue
+			}
+			s.log.Warn("dbsched: parked database's node unreachable; failing over to its synchronized standby", "database_id", vm.DatabaseID,
+				"node_id", nodeID, "unreachable_for", silent)
+			if err := s.failover(ctx, vm.DatabaseID, byID[nodeID]); err != nil {
+				s.log.Warn("dbsched: automatic failover failed", "database_id", vm.DatabaseID, "err", err)
+			}
+		}
+	}
+}
+
+// probeNode asks a node's vmmd for its database volumes, a cheap call
+// that answers only if the node does.
+func (s *Scheduler) probeNode(ctx context.Context, node Node) error {
+	probe, cancel := context.WithTimeout(ctx, standbyProbeTimeout)
+	defer cancel()
+	_, err := s.vmm.ListVolumes(probe, node)
+	return err
 }
 
 // checkStandby checks one running database's standby; it reports whether

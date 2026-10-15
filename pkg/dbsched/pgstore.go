@@ -789,7 +789,7 @@ func (s *PgStore) MarkStandbySynced(ctx context.Context, id string, synced bool)
 	return s.changed(ctx, s.pool, id, n, err)
 }
 
-func (s *PgStore) ReplaceStandby(ctx context.Context, id string) (VM, error) {
+func (s *PgStore) ReplaceStandby(ctx context.Context, id string, avoid ...string) (VM, error) {
 	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
 		vm, err := s.get(ctx, tx, id)
 		if err != nil {
@@ -806,7 +806,7 @@ func (s *PgStore) ReplaceStandby(ctx context.Context, id string) (VM, error) {
 		if err != nil {
 			return VM{}, err
 		}
-		standby, ok := pickStandby(nodes, usage, vm, vm.NodeID, vm.StandbyNode)
+		standby, ok := pickStandby(nodes, usage, vm, append([]string{vm.NodeID, vm.StandbyNode}, avoid...)...)
 		if !ok {
 			return VM{}, ErrNoCapacity
 		}

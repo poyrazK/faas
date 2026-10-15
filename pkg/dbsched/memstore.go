@@ -533,7 +533,7 @@ func (m *MemStore) MarkStandbySynced(_ context.Context, id string, synced bool) 
 	return nil
 }
 
-func (m *MemStore) ReplaceStandby(_ context.Context, id string) (VM, error) {
+func (m *MemStore) ReplaceStandby(_ context.Context, id string, avoid ...string) (VM, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm, ok := m.vms[id]
@@ -547,7 +547,7 @@ func (m *MemStore) ReplaceStandby(_ context.Context, id string) (VM, error) {
 	for _, n := range m.nodes {
 		nodes = append(nodes, n)
 	}
-	standby, ok := pickStandby(nodes, m.usageLocked(), vm, vm.NodeID, vm.StandbyNode)
+	standby, ok := pickStandby(nodes, m.usageLocked(), vm, append([]string{vm.NodeID, vm.StandbyNode}, avoid...)...)
 	if !ok {
 		return VM{}, ErrNoCapacity
 	}

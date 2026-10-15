@@ -222,6 +222,9 @@ func (f *fakeVMM) ListVolumes(_ context.Context, node Node) ([]NodeVolume, error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.onNode = append(f.onNode, "list@"+node.ID)
+	if f.down[node.ID] {
+		return nil, errNodeDown
+	}
 	var out []NodeVolume
 	for id := range f.volumes {
 		if f.volNode[id] == node.ID {
