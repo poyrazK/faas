@@ -1,0 +1,70 @@
+name: gregale-recovery
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/gregale/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'scripts/ci/gregale_recovery_gate*'
+      - '.github/workflows/gregale-recovery.yml'
+  push:
+    branches: [main, codex/gregale-phase-comparison-20261015]
+    paths:
+      - 'cmd/gregale/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'scripts/ci/gregale_recovery_gate*'
+      - '.github/workflows/gregale-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gregale-recovery-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  portable:
+    name: Gregale portable recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      GOMEMLIMIT: 6GiB
+      CGO_ENABLED: '1'
+      RECOVERY_GATE_OUTPUT: ${{ runner.temp }}/gregale-recovery
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.9'
+          # The light tier owns the shared Actions cache budget.
+          cache: false
+      - name: Run portable recovery gate
+        run: make test-gregale-recovery
+      - name: Show actionable failure evidence
+        if: failure()
+        shell: bash
+        run: |
+          for evidence in self-test.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log summary.json; do
+            if [[ -f "$RECOVERY_GATE_OUTPUT/$evidence" ]]; then
+              echo "::group::$evidence"
+              cat "$RECOVERY_GATE_OUTPUT/$evidence"
+              echo "::endgroup::"
+            fi
+          done
+      - name: Retain recovery gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-recovery-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gregale-recovery/
+          if-no-files-found: warn
+          retention-days: 14

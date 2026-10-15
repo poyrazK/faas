@@ -46,6 +46,11 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 
 .DEFAULT_GOAL := help
 
+.PHONY: test-gregale-recovery
+test-gregale-recovery: ## Portable Gregale recovery formatting, compile, acceptance and race gate (no KVM)
+	@GO="$(GO)" python3 scripts/ci/gregale_recovery_gate.py
+
+
 .PHONY: test-customer-platform
 .PHONY: test-commit
 test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit

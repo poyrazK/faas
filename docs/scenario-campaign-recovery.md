@@ -298,3 +298,62 @@ The suite was added while this chat's managed execution environment was failed
 and no shell runner was available. The commands above, compilation, formatting
 and CI have not been run for this change; these are intended assertions rather
 than a passing acceptance result.
+
+
+## Reproducible portable validation gate
+
+Run the same gate locally and in CI:
+
+```sh
+make test-gregale-recovery
+```
+
+It runs the gate's Python contract tests, verifies the Go toolchain against the
+`go.mod` toolchain pin (currently Go 1.26.9), checks formatting for the entire
+CLI package, compiles its test binary, and verifies discovery of the three
+end-to-end acceptance tests. It then executes the focused recovery tests
+uncached, first normally and then under the race detector. Required acceptance
+tests must explicitly pass in both runs; missing tests, skips, malformed event
+JSON, package failures and nonzero process exit codes fail the gate.
+
+The focused filter includes campaign runner/recovery/bundle/journal/cancellation/
+cleanup/status tests plus recovery assessment, completion, cleanup observation
+and portable journal tests. Both runs compile the whole CLI package. This is a
+portable recovery gate, not the full repository suite or native VM qualification.
+
+The runner uses the pinned toolchain's `gofmt`, bounded CLI compiler concurrency,
+one package build at a time, a default 6 GiB soft Go memory limit, and native
+CGO-enabled race builds. Install Python 3 and the pinned Go toolchain plus a
+working C compiler. Cross-compilation and disabled CGO are rejected rather than
+silently skipping race verification. Tests use local HTTP fixtures; the gate
+provides dummy CLI auth defaults and does not deploy workloads.
+
+Evidence is written to a fresh directory under `.cache/gregale-recovery/`.
+Override it with `RECOVERY_GATE_OUTPUT` or the script's `--output` option;
+existing evidence directories are never overwritten. Evidence includes a JSON
+summary with commands, exit codes, toolchain metadata, CLI/module source hashes,
+per-stage logs, formatting diffs and raw normal/race test JSON. Binaries are
+temporary and excluded from retained evidence. Formatting failures do not prevent
+compilation/test diagnostics from being collected, but the final gate still
+fails. Compilation or discovery failures prevent meaningless test runs.
+
+The default gate never rewrites sources. To explicitly fix formatting and run
+the checks, invoke:
+
+```sh
+python3 scripts/ci/gregale_recovery_gate.py --format
+```
+
+Review and commit the resulting source changes. The script never commits them.
+A formatting failure cannot be waived by successful tests.
+
+`.github/workflows/gregale-recovery.yml` runs this command for relevant pull
+requests, main pushes, pushes to the current recovery feature branch, and manual
+dispatch. It uses a read-only token and uploads evidence even on failure, with
+14-day retention. Compiler/formatting diagnostics are also printed to job logs.
+It neither opens nor merges a PR and does not replace the repository's existing
+required checks.
+
+The gate was authored without a usable shell in this chat. Its implementation
+and the previously deferred recovery changes must not be described as validated
+until this workflow or a local run actually passes.
