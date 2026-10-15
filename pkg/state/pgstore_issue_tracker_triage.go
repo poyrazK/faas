@@ -23,7 +23,7 @@ func trackerTriageScope(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, ow
 }
 
 func trackerTriageGet(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, scope sqlc.IssueTrackerTriageScopeRow) (IssueTrackerTriage, error) {
-	out := IssueTrackerTriage{IncidentID: issueID(scope.IncidentID), Active: scope.Active, History: []IssueTrackerTriageActivity{}}
+	out := IssueTrackerTriage{IncidentID: issueID(scope.IncidentID), Active: scope.Active, History: []IssueTrackerTriageActivity{}, Escalated: scope.Escalated, ResponsibleTeamID: issueID(scope.ResponsibleTeamID), ResponsibleTeamName: scope.ResponsibleTeamName}
 	row, err := q.IssueTrackerTriageGet(ctx, tx, scope.IncidentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, nil
@@ -71,6 +71,13 @@ func (s *PgStore) GetIssueTrackerTriage(ctx context.Context, app, owner, actor, 
 	out.Reminders = []IssueTrackerReminder{}
 	for _, v := range reminders {
 		out.Reminders = append(out.Reminders, IssueTrackerReminder{Sequence: int(v.ReminderSequence), CreatedAt: v.CreatedAt.Time, TeamName: v.TeamName})
+	}
+	escalations, err := q.IssueTrackerEscalationHistory(ctx, tx, sqlc.IssueTrackerEscalationHistoryParams{AppID: issueUUID(app), OwnerAccountID: issueUUID(owner), ActorAccountID: issueUUID(actor), IncidentID: scope.IncidentID})
+	if err != nil {
+		return out, err
+	}
+	for _, v := range escalations {
+		out.Escalations = append(out.Escalations, IssueTrackerEscalation{TeamID: issueID(v.TeamID), TeamName: v.TeamName, CreatedAt: v.CreatedAt.Time})
 	}
 	return out, tx.Commit(ctx)
 }

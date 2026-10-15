@@ -11,6 +11,8 @@ import (
 )
 
 type IssueTrackerNotificationStore interface {
+	GetIssueTrackerEscalationPolicy(context.Context, string, string) (IssueTrackerEscalationPolicy, error)
+	SetIssueTrackerEscalationPolicy(context.Context, string, string, IssueTrackerEscalationPolicy) (IssueTrackerEscalationPolicy, error)
 	GetIssueTrackerReminderPolicy(context.Context, string, string) (IssueTrackerReminderPolicy, error)
 	SetIssueTrackerReminderPolicy(context.Context, string, string, IssueTrackerReminderPolicy) (IssueTrackerReminderPolicy, error)
 	UpdateIssueTrackerTriage(context.Context, string, string, string, string, int64, IssueTrackerTriageAction) error
@@ -99,11 +101,14 @@ func trackerSyncNotificationCursorHash(app, owner, actor, team, view string) str
 
 // Triage is local handling state, independent of issue and provider lifecycle.
 type IssueTrackerTriage struct {
+	Escalated                                                            bool
+	ResponsibleTeamID, ResponsibleTeamName                               string
 	IncidentID, AcknowledgedBy, ClaimedBy, AcknowledgedName, ClaimedName string
 	Revision                                                             int64
 	Active                                                               bool
 	History                                                              []IssueTrackerTriageActivity
 	Reminders                                                            []IssueTrackerReminder
+	Escalations                                                          []IssueTrackerEscalation
 	Snoozed, Resurfaced                                                  bool
 	SnoozedUntil                                                         *time.Time
 	SnoozedBy, SnoozedName, SnoozeReason                                 string
@@ -134,4 +139,18 @@ type IssueTrackerReminder struct {
 }
 type IssueTrackerReminderStore interface {
 	EnqueueIssueTrackerReminder(context.Context) (bool, error)
+}
+
+type IssueTrackerEscalationPolicy struct {
+	Enabled      bool
+	TeamID       string
+	DelayMinutes int
+	Revision     int64
+}
+type IssueTrackerEscalation struct {
+	TeamID, TeamName string
+	CreatedAt        time.Time
+}
+type IssueTrackerEscalationStore interface {
+	EnqueueIssueTrackerEscalation(context.Context) (bool, error)
 }

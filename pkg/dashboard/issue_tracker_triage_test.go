@@ -76,3 +76,19 @@ func TestTrackerReminderHistoryEscapesRoutingNames(t *testing.T) {
 		t.Fatal(body)
 	}
 }
+
+func TestTrackerEscalationHistoryAndCurrentResponsibilityEscapeTeams(t *testing.T) {
+	tmpl, err := template.ParseFS(tmplFS, "templates/issue_tracker_triage.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := IssueTrackerTriageView{Triage: state.IssueTrackerTriage{Active: true, Escalated: true, ResponsibleTeamName: "<script>backup</script>", Escalations: []state.IssueTrackerEscalation{{TeamName: "<script>history</script>", CreatedAt: time.Now().UTC()}}}}
+	var out bytes.Buffer
+	if err = tmpl.ExecuteTemplate(&out, "issue_tracker_triage.html", Page{Data: v}); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	if strings.Contains(body, "<script>") || !strings.Contains(body, "Current notification responsibility:") || !strings.Contains(body, "Escalation history") {
+		t.Fatal(body)
+	}
+}

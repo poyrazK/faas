@@ -1622,3 +1622,32 @@ The worker checks due incidents on the maintenance cadence and queues bounded
 batches, so delivery can occur after the selected due time. Opt-out, acknowledgment,
 recovery, app deletion or lost owner entitlement prevents new enqueue. Events
 already queued follow the existing webhook subscription and delivery controls.
+
+### Backup team escalation
+
+Owners can enable **Backup team escalation** in Tracker sync notifications and
+choose one team from the app. Notifications and reminders must also be enabled.
+The default delay is 24 hours, configurable from 15 minutes through seven days.
+An incident escalates once after its first reminder has gone unacknowledged for
+that delay. Later reminders do not move the deadline. Saving escalation settings
+starts a full delay; settings changes do not replay an already completed step.
+
+Snoozes pause escalation and allow a full delay after expiry. Manual unsnooze can
+make an overdue incident eligible at the next sweep. Acknowledgment and confirmed
+recovery stop new escalation; claims alone do not. Opt-out, app deletion, lost owner
+eligibility or stale notification settings also prevent new enqueue. Existing
+queued deliveries follow the app's webhook controls.
+
+The backup team becomes responsible for later incident notifications and reminders.
+Issue assignment stays unchanged. Current organization and team membership still
+control access. A deleted team or a team without eligible members routes new notices
+to the app owner. Changing the policy does not replace the captured backup team on
+an incident that has already escalated. Triage shows current notification responsibility
+and a separate, scoped escalation history alongside reminder and handling history.
+
+Subscribed app webhooks receive `issue.tracker_sync.attention` with kind `escalation`,
+a deterministic event ID and local triage and health links. No provider request is
+made to decide escalation; its safe reason describes the last reported problem.
+Enqueue is atomic and deduplicated, while transport retries can repeat an HTTP
+request with the same event ID. The bounded one-minute sweep is best effort after
+the deadline. Check the existing webhook delivery history for transport results.

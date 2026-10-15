@@ -10479,6 +10479,9 @@ const (
 
 // Automatic native tracker reconciliation is bounded independently of issue ingestion.
 const (
+	IssueTrackerEscalationDelayDefaultMinutes   = 1440
+	IssueTrackerEscalationDelayMinMinutes       = 15
+	IssueTrackerEscalationDelayMaxMinutes       = 10080
 	IssueTrackerReminderIntervalDefaultMinutes  = 1440
 	IssueTrackerReminderIntervalMinMinutes      = 15
 	IssueTrackerReminderIntervalMaxMinutes      = 10080

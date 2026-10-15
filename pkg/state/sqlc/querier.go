@@ -1687,6 +1687,12 @@ type Querier interface {
 	IssueTrackerCallbackSchedule(ctx context.Context, db DBTX, linkID pgtype.UUID) error
 	IssueTrackerCallbackScopeLock(ctx context.Context, db DBTX, scopeKey string) error
 	IssueTrackerCallbackSetup(ctx context.Context, db DBTX, arg IssueTrackerCallbackSetupParams) (IssueTrackerCallbackSetupRow, error)
+	IssueTrackerEscalationApp(ctx context.Context, db DBTX, entitledPlans []string) (IssueTrackerEscalationAppRow, error)
+	IssueTrackerEscalationDue(ctx context.Context, db DBTX, arg IssueTrackerEscalationDueParams) (IssueTrackerSyncIncident, error)
+	IssueTrackerEscalationHistory(ctx context.Context, db DBTX, arg IssueTrackerEscalationHistoryParams) ([]IssueTrackerEscalationHistoryRow, error)
+	IssueTrackerEscalationPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerEscalationPolicyGetParams) (IssueTrackerSyncEscalationPolicy, error)
+	IssueTrackerEscalationPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerEscalationPolicyPutParams) (IssueTrackerSyncEscalationPolicy, error)
+	IssueTrackerEscalationReceipt(ctx context.Context, db DBTX, arg IssueTrackerEscalationReceiptParams) error
 	IssueTrackerInboundApplied(ctx context.Context, db DBTX, arg IssueTrackerInboundAppliedParams) error
 	IssueTrackerInboundDeployments(ctx context.Context, db DBTX, arg IssueTrackerInboundDeploymentsParams) ([]IssueTrackerInboundDeploymentsRow, error)
 	IssueTrackerInboundGuard(ctx context.Context, db DBTX, arg IssueTrackerInboundGuardParams) (int64, error)

@@ -4112,6 +4112,16 @@ type IssueTrackerSourceGuard struct {
 	Revision int64
 }
 
+type IssueTrackerSyncEscalationPolicy struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Enabled      bool
+	TeamID       pgtype.UUID
+	DelayMinutes int32
+	Revision     int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type IssueTrackerSyncHistory struct {
 	ID             pgtype.UUID
 	LinkID         pgtype.UUID
@@ -4142,6 +4152,9 @@ type IssueTrackerSyncIncident struct {
 	OpenedAt            pgtype.Timestamptz
 	ReminderCount       int32
 	LastRemindedAt      pgtype.Timestamptz
+	FirstRemindedAt     pgtype.Timestamptz
+	EscalatedAt         pgtype.Timestamptz
+	EscalationTeamID    pgtype.UUID
 }
 
 type IssueTrackerSyncNotification struct {

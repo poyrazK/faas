@@ -92,7 +92,24 @@ func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *h
 	}
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
-	view := dashboard.IssueTrackerNotificationsView{AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, ReminderPolicy: reminderPolicy, ReminderIntervalMin: api.IssueTrackerReminderIntervalMinMinutes, ReminderIntervalMax: api.IssueTrackerReminderIntervalMaxMinutes, RemindersMax: api.IssueTrackerRemindersMax, ReminderSaved: r.URL.Query().Get("saved") == "reminders", Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
+	escalation := state.IssueTrackerEscalationPolicy{}
+	teams := api.ListIssueTeamsResponse{}
+	if acct.ID == app.AccountID {
+		st := s.store.(state.IssueTrackerNotificationStore)
+		escalation, err = st.GetIssueTrackerEscalationPolicy(r.Context(), app.ID, app.AccountID)
+		if err != nil {
+			writeNativeIssueTrackerError(w, err)
+			return
+		}
+		if issues, ok := s.store.(state.IssueTeamStore); ok {
+			teams, err = issues.ListIssueTeams(r.Context(), app.ID, app.AccountID)
+			if err != nil {
+				writeIssueError(w, err)
+				return
+			}
+		}
+	}
+	view := dashboard.IssueTrackerNotificationsView{EscalationPolicy: escalation, Teams: teams.Items, EscalationDelayMin: api.IssueTrackerEscalationDelayMinMinutes, EscalationDelayMax: api.IssueTrackerEscalationDelayMaxMinutes, EscalationSaved: r.URL.Query().Get("saved") == "escalation", AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, ReminderPolicy: reminderPolicy, ReminderIntervalMin: api.IssueTrackerReminderIntervalMinMinutes, ReminderIntervalMax: api.IssueTrackerReminderIntervalMaxMinutes, RemindersMax: api.IssueTrackerRemindersMax, ReminderSaved: r.URL.Query().Get("saved") == "reminders", Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
 	for _, item := range page.Items {
 		view.Reasons[item.ID] = dashboard.IssueTrackerSyncReason(item.Reason)
 	}
@@ -127,6 +144,10 @@ func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWri
 	}
 	if err := r.ParseForm(); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid notification settings"))
+		return
+	}
+	if r.PostForm.Get("settings_kind") == "escalation" {
+		s.dashboardTrackerEscalationPolicy(w, r, acct, st, app)
 		return
 	}
 	if r.PostForm.Get("settings_kind") == "reminders" {

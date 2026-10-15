@@ -106,7 +106,10 @@ INSERT INTO issue_tracker_sync_incidents(link_id,settings_revision,failures,inci
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $4::uuid IS NOT NULL THEN clock_timestamp() ELSE NULL END) ON CONFLICT(link_id) DO UPDATE SET settings_revision=excluded.settings_revision,failures=excluded.failures,incident_id=excluded.incident_id,announced_kind=excluded.announced_kind,issue_id=excluded.issue_id,team_id=excluded.team_id,recipient_account_ids=excluded.recipient_account_ids,
  opened_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.opened_at WHEN excluded.incident_id IS NOT NULL THEN clock_timestamp() ELSE NULL END,
  reminder_count=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.reminder_count ELSE 0 END,
- last_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.last_reminded_at ELSE NULL END;
+ last_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.last_reminded_at ELSE NULL END,
+ first_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.first_reminded_at ELSE NULL END,
+ escalated_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.escalated_at ELSE NULL END,
+ escalation_team_id=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.escalation_team_id ELSE NULL END;
 -- name: IssueTrackerNotificationTarget :one
 SELECT i.id,i.assignee_account_id,i.assignee_team_id,a.slug FROM issue_tracker_links l
 JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id
@@ -169,6 +172,11 @@ AND a.deleted_at IS NULL AND a.status<>'deleted' AND (a.account_id=sqlc.arg(acto
 
 -- name: IssueTrackerTriageScope :one
 SELECT n.incident_id,n.link_id,statement_timestamp()::timestamptz AS checked_at,
+ COALESCE(c.incident_id=n.incident_id AND c.escalated_at IS NOT NULL,false)::boolean AS escalated,
+ (SELECT t.id FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL))))::uuid AS responsible_team_id,
+ COALESCE((SELECT t.name FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))), '')::text AS responsible_team_name,
  COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
@@ -235,7 +243,7 @@ JOIN LATERAL (SELECT c.* FROM issue_tracker_sync_incidents c
 WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]);
 -- name: IssueTrackerReminderReceipt :exec
-UPDATE issue_tracker_sync_incidents SET reminder_count=sqlc.arg(sequence),last_reminded_at=clock_timestamp(),issue_id=sqlc.narg(issue_id),team_id=sqlc.narg(team_id),recipient_account_ids=sqlc.arg(recipient_ids)::uuid[]
+UPDATE issue_tracker_sync_incidents SET reminder_count=sqlc.arg(sequence),last_reminded_at=clock_timestamp(),first_reminded_at=COALESCE(first_reminded_at,clock_timestamp()),issue_id=sqlc.narg(issue_id),team_id=sqlc.narg(team_id),recipient_account_ids=sqlc.arg(recipient_ids)::uuid[]
 WHERE link_id=sqlc.arg(link_id) AND incident_id=sqlc.arg(incident_id);
 -- name: IssueTrackerReminderOrigin :one
 SELECT outcome,reason FROM issue_tracker_sync_notifications WHERE incident_id=$1 AND kind IN ('paused','closure','failure') ORDER BY created_at DESC,id DESC LIMIT 1;
@@ -248,3 +256,54 @@ AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
  AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))))
 ORDER BY n.reminder_sequence DESC LIMIT sqlc.arg(history_limit);
+
+-- name: IssueTrackerEscalationPolicyGet :one
+SELECT ep.* FROM issue_tracker_sync_escalation_policies ep JOIN apps a ON a.id=ep.app_id AND a.account_id=ep.account_id
+WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted';
+-- name: IssueTrackerEscalationPolicyPut :one
+INSERT INTO issue_tracker_sync_escalation_policies(app_id,account_id,enabled,team_id,delay_minutes) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(app_id) DO UPDATE SET account_id=excluded.account_id,enabled=excluded.enabled,team_id=excluded.team_id,delay_minutes=excluded.delay_minutes,revision=issue_tracker_sync_escalation_policies.revision+1,updated_at=clock_timestamp() RETURNING *;
+-- name: IssueTrackerEscalationApp :one
+SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT (GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
+ JOIN issue_tracker_links l ON l.id=c.link_id
+ JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
+ JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
+ JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id AND p.enabled AND p.revision=c.settings_revision
+ JOIN issue_tracker_sync_reminder_policies rp ON rp.app_id=a.id AND rp.account_id=a.account_id AND rp.enabled
+ JOIN issue_tracker_sync_escalation_policies ep ON ep.app_id=a.id AND ep.account_id=a.account_id AND ep.enabled
+ LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=c.incident_id
+ WHERE c.incident_id IS NOT NULL AND c.first_reminded_at IS NOT NULL AND c.escalated_at IS NULL
+ AND tr.acknowledged_by IS NULL
+ AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
+ AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED;
+-- name: IssueTrackerEscalationDue :one
+SELECT c.* FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT c.* FROM issue_tracker_sync_incidents c
+ JOIN issue_tracker_links l ON l.id=c.link_id
+ JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
+ JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
+ JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id AND p.enabled AND p.revision=c.settings_revision
+ JOIN issue_tracker_sync_reminder_policies rp ON rp.app_id=a.id AND rp.account_id=a.account_id AND rp.enabled
+ JOIN issue_tracker_sync_escalation_policies ep ON ep.app_id=a.id AND ep.account_id=a.account_id AND ep.enabled
+ LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=c.incident_id
+ WHERE c.incident_id IS NOT NULL AND c.first_reminded_at IS NOT NULL AND c.escalated_at IS NULL
+ AND tr.acknowledged_by IS NULL
+ AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
+ AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute',c.link_id LIMIT 1) c ON true
+WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]);
+-- name: IssueTrackerEscalationReceipt :exec
+UPDATE issue_tracker_sync_incidents SET escalated_at=clock_timestamp(),escalation_team_id=sqlc.arg(escalation_team_id),issue_id=sqlc.narg(issue_id),team_id=sqlc.narg(team_id),recipient_account_ids=sqlc.arg(recipient_ids)::uuid[]
+WHERE link_id=sqlc.arg(link_id) AND incident_id=sqlc.arg(incident_id) AND escalated_at IS NULL;
+-- name: IssueTrackerEscalationHistory :many
+SELECT n.team_id,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
+JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+WHERE n.incident_id=sqlc.arg(incident_id) AND n.kind='escalation' AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(owner_account_id)
+AND (a.account_id=sqlc.arg(actor_account_id)::uuid OR (
+ sqlc.arg(actor_account_id)::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=sqlc.arg(actor_account_id) AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=sqlc.arg(actor_account_id)))))
+ORDER BY n.created_at DESC LIMIT 1;

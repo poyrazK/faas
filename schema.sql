@@ -58893,6 +58893,11 @@ CREATE TABLE public.issue_tracker_sync_incidents (
  opened_at timestamptz,
  reminder_count integer NOT NULL DEFAULT 0 CHECK(reminder_count BETWEEN 0 AND 3),
  last_reminded_at timestamptz,
+ first_reminded_at timestamptz,
+ escalated_at timestamptz,
+ escalation_team_id uuid,
+ CONSTRAINT issue_tracker_incident_first_reminder CHECK((reminder_count=0)=(first_reminded_at IS NULL)),
+ CONSTRAINT issue_tracker_incident_escalation_receipt CHECK((escalated_at IS NULL)=(escalation_team_id IS NULL) AND (escalated_at IS NULL OR first_reminded_at IS NOT NULL)),
  CONSTRAINT issue_tracker_incident_reminder_receipt CHECK((reminder_count=0)=(last_reminded_at IS NULL))
 );
 CREATE TABLE public.issue_tracker_sync_notifications (
@@ -58902,7 +58907,7 @@ CREATE TABLE public.issue_tracker_sync_notifications (
  account_id uuid NOT NULL,
  issue_id uuid NOT NULL,
  incident_id uuid NOT NULL,
- kind text NOT NULL CHECK(kind IN ('paused','closure','failure','recovered','reminder')),
+ kind text NOT NULL CHECK(kind IN ('paused','closure','failure','recovered','reminder','escalation')),
  outcome text NOT NULL CHECK(outcome IN ('matched','pending','applied','error','conflict','blocked','disabled')),
  reason text NOT NULL DEFAULT '' CHECK(octet_length(reason)<=128),
  team_id uuid,
@@ -58948,4 +58953,15 @@ CREATE TABLE public.issue_tracker_sync_reminder_policies (
  interval_minutes integer NOT NULL CHECK(interval_minutes BETWEEN 15 AND 10080),
  revision bigint NOT NULL DEFAULT 1 CHECK(revision>0),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE public.issue_tracker_sync_escalation_policies (
+ app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL,
+ enabled boolean NOT NULL DEFAULT false,
+ team_id uuid,
+ delay_minutes integer NOT NULL CHECK(delay_minutes BETWEEN 15 AND 10080),
+ revision bigint NOT NULL DEFAULT 1 CHECK(revision>0),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(NOT enabled OR team_id IS NOT NULL)
 );

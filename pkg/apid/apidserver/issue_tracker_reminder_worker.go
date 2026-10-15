@@ -22,6 +22,11 @@ func (s *server) startIssueTrackerReminders(ctx context.Context) {
 			if err := issuetrackers.EnqueueReminderBatch(batch, store); err != nil && ctx.Err() == nil {
 				s.log.Warn("tracker reminder enqueue failed")
 			}
+			if escalation, ok := s.store.(state.IssueTrackerEscalationStore); ok && batch.Err() == nil {
+				if err := issuetrackers.EnqueueEscalationBatch(batch, escalation); err != nil && ctx.Err() == nil {
+					s.log.Warn("tracker escalation enqueue failed")
+				}
+			}
 			cancel()
 			select {
 			case <-ctx.Done():

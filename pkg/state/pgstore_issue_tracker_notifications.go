@@ -102,7 +102,21 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 	} else {
 		route.IssueID = issueID(target.ID)
 		route.TeamID = issueID(target.AssigneeTeamID)
-		recipients, e := q.IssueTrackerNotificationRecipients(ctx, tx, sqlc.IssueTrackerNotificationRecipientsParams{AppID: issueUUID(r.AppID), AssigneeAccountID: target.AssigneeAccountID, TeamID: target.AssigneeTeamID})
+		account, team := target.AssigneeAccountID, target.AssigneeTeamID
+		if kind == "escalation" {
+			route.TeamID = next.TeamID
+			account, team = issueUUID(""), issueUUID(next.TeamID)
+		} else {
+			incident, e := q.IssueTrackerIncidentGet(ctx, tx, issueUUID(r.Policy.LinkID))
+			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+				return e
+			}
+			if e == nil && incident.EscalatedAt.Valid && issueID(incident.IncidentID) == route.ID {
+				route.TeamID = issueID(incident.EscalationTeamID)
+				account, team = issueUUID(""), incident.EscalationTeamID
+			}
+		}
+		recipients, e := q.IssueTrackerNotificationRecipients(ctx, tx, sqlc.IssueTrackerNotificationRecipientsParams{AppID: issueUUID(r.AppID), AssigneeAccountID: account, TeamID: team})
 		if e != nil {
 			return e
 		}
@@ -129,8 +143,10 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 	issuePath := "/dashboard/apps/" + url.PathEscape(target.Slug) + "/issues?issue=" + url.QueryEscape(issueIDNow)
 	healthPath := "/dashboard/apps/" + url.PathEscape(target.Slug) + "/issues/" + issueIDNow + "/tracker-sync/" + r.Policy.LinkID
 	payloadBody := map[string]any{"id": id, "version": 1, "type": event, "incident_id": route.ID, "kind": kind, "app_id": r.AppID, "issue_id": issueIDNow, "link_id": r.Policy.LinkID, "provider": r.Baseline.Provider, "outcome": r.Policy.Outcome, "reason": r.Policy.Reason, "team_id": route.TeamID, "recipient_account_ids": route.Recipients, "consecutive_failures": next.Failures, "failure_threshold": threshold, "issue_path": issuePath, "health_path": healthPath}
-	if sequence > 0 {
-		payloadBody["reminder_sequence"] = sequence
+	if sequence > 0 || kind == "escalation" {
+		if sequence > 0 {
+			payloadBody["reminder_sequence"] = sequence
+		}
 		payloadBody["triage_path"] = "/dashboard/apps/" + url.PathEscape(target.Slug) + "/issues/tracker-notifications/triage/" + id
 	}
 	payload, err := json.Marshal(payloadBody)

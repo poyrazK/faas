@@ -370,6 +370,216 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const issueTrackerEscalationApp = `-- name: IssueTrackerEscalationApp :one
+SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT (GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
+ JOIN issue_tracker_links l ON l.id=c.link_id
+ JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
+ JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
+ JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id AND p.enabled AND p.revision=c.settings_revision
+ JOIN issue_tracker_sync_reminder_policies rp ON rp.app_id=a.id AND rp.account_id=a.account_id AND rp.enabled
+ JOIN issue_tracker_sync_escalation_policies ep ON ep.app_id=a.id AND ep.account_id=a.account_id AND ep.enabled
+ LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=c.incident_id
+ WHERE c.incident_id IS NOT NULL AND c.first_reminded_at IS NOT NULL AND c.escalated_at IS NULL
+ AND tr.acknowledged_by IS NULL
+ AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
+ AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+AND owner.plan=ANY($1::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+`
+
+type IssueTrackerEscalationAppRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerEscalationApp(ctx context.Context, db DBTX, entitledPlans []string) (IssueTrackerEscalationAppRow, error) {
+	row := db.QueryRow(ctx, issueTrackerEscalationApp, entitledPlans)
+	var i IssueTrackerEscalationAppRow
+	err := row.Scan(&i.ID, &i.AccountID)
+	return i, err
+}
+
+const issueTrackerEscalationDue = `-- name: IssueTrackerEscalationDue :one
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM issue_tracker_sync_incidents c
+ JOIN issue_tracker_links l ON l.id=c.link_id
+ JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
+ JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
+ JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id AND p.enabled AND p.revision=c.settings_revision
+ JOIN issue_tracker_sync_reminder_policies rp ON rp.app_id=a.id AND rp.account_id=a.account_id AND rp.enabled
+ JOIN issue_tracker_sync_escalation_policies ep ON ep.app_id=a.id AND ep.account_id=a.account_id AND ep.enabled
+ LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=c.incident_id
+ WHERE c.incident_id IS NOT NULL AND c.first_reminded_at IS NOT NULL AND c.escalated_at IS NULL
+ AND tr.acknowledged_by IS NULL
+ AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
+ AND GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.first_reminded_at,ep.updated_at,tr.snoozed_until)+ep.delay_minutes*interval '1 minute',c.link_id LIMIT 1) c ON true
+WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($3::text[])
+`
+
+type IssueTrackerEscalationDueParams struct {
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	EntitledPlans []string
+}
+
+func (q *Queries) IssueTrackerEscalationDue(ctx context.Context, db DBTX, arg IssueTrackerEscalationDueParams) (IssueTrackerSyncIncident, error) {
+	row := db.QueryRow(ctx, issueTrackerEscalationDue, arg.AppID, arg.AccountID, arg.EntitledPlans)
+	var i IssueTrackerSyncIncident
+	err := row.Scan(
+		&i.LinkID,
+		&i.SettingsRevision,
+		&i.Failures,
+		&i.IncidentID,
+		&i.AnnouncedKind,
+		&i.IssueID,
+		&i.TeamID,
+		&i.RecipientAccountIds,
+		&i.OpenedAt,
+		&i.ReminderCount,
+		&i.LastRemindedAt,
+		&i.FirstRemindedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
+	)
+	return i, err
+}
+
+const issueTrackerEscalationHistory = `-- name: IssueTrackerEscalationHistory :many
+SELECT n.team_id,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
+JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+WHERE n.incident_id=$1 AND n.kind='escalation' AND a.id=$2 AND a.account_id=$3
+AND (a.account_id=$4::uuid OR (
+ $4::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
+ORDER BY n.created_at DESC LIMIT 1
+`
+
+type IssueTrackerEscalationHistoryParams struct {
+	IncidentID     pgtype.UUID
+	AppID          pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	ActorAccountID pgtype.UUID
+}
+
+type IssueTrackerEscalationHistoryRow struct {
+	TeamID    pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	TeamName  string
+}
+
+func (q *Queries) IssueTrackerEscalationHistory(ctx context.Context, db DBTX, arg IssueTrackerEscalationHistoryParams) ([]IssueTrackerEscalationHistoryRow, error) {
+	rows, err := db.Query(ctx, issueTrackerEscalationHistory,
+		arg.IncidentID,
+		arg.AppID,
+		arg.OwnerAccountID,
+		arg.ActorAccountID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerEscalationHistoryRow{}
+	for rows.Next() {
+		var i IssueTrackerEscalationHistoryRow
+		if err := rows.Scan(&i.TeamID, &i.CreatedAt, &i.TeamName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerEscalationPolicyGet = `-- name: IssueTrackerEscalationPolicyGet :one
+SELECT ep.app_id, ep.account_id, ep.enabled, ep.team_id, ep.delay_minutes, ep.revision, ep.updated_at FROM issue_tracker_sync_escalation_policies ep JOIN apps a ON a.id=ep.app_id AND a.account_id=ep.account_id
+WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+`
+
+type IssueTrackerEscalationPolicyGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerEscalationPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerEscalationPolicyGetParams) (IssueTrackerSyncEscalationPolicy, error) {
+	row := db.QueryRow(ctx, issueTrackerEscalationPolicyGet, arg.ID, arg.AccountID)
+	var i IssueTrackerSyncEscalationPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.TeamID,
+		&i.DelayMinutes,
+		&i.Revision,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueTrackerEscalationPolicyPut = `-- name: IssueTrackerEscalationPolicyPut :one
+INSERT INTO issue_tracker_sync_escalation_policies(app_id,account_id,enabled,team_id,delay_minutes) VALUES($1,$2,$3,$4,$5)
+ON CONFLICT(app_id) DO UPDATE SET account_id=excluded.account_id,enabled=excluded.enabled,team_id=excluded.team_id,delay_minutes=excluded.delay_minutes,revision=issue_tracker_sync_escalation_policies.revision+1,updated_at=clock_timestamp() RETURNING app_id, account_id, enabled, team_id, delay_minutes, revision, updated_at
+`
+
+type IssueTrackerEscalationPolicyPutParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Enabled      bool
+	TeamID       pgtype.UUID
+	DelayMinutes int32
+}
+
+func (q *Queries) IssueTrackerEscalationPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerEscalationPolicyPutParams) (IssueTrackerSyncEscalationPolicy, error) {
+	row := db.QueryRow(ctx, issueTrackerEscalationPolicyPut,
+		arg.AppID,
+		arg.AccountID,
+		arg.Enabled,
+		arg.TeamID,
+		arg.DelayMinutes,
+	)
+	var i IssueTrackerSyncEscalationPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.TeamID,
+		&i.DelayMinutes,
+		&i.Revision,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueTrackerEscalationReceipt = `-- name: IssueTrackerEscalationReceipt :exec
+UPDATE issue_tracker_sync_incidents SET escalated_at=clock_timestamp(),escalation_team_id=$1,issue_id=$2,team_id=$3,recipient_account_ids=$4::uuid[]
+WHERE link_id=$5 AND incident_id=$6 AND escalated_at IS NULL
+`
+
+type IssueTrackerEscalationReceiptParams struct {
+	EscalationTeamID pgtype.UUID
+	IssueID          pgtype.UUID
+	TeamID           pgtype.UUID
+	RecipientIds     []pgtype.UUID
+	LinkID           pgtype.UUID
+	IncidentID       pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerEscalationReceipt(ctx context.Context, db DBTX, arg IssueTrackerEscalationReceiptParams) error {
+	_, err := db.Exec(ctx, issueTrackerEscalationReceipt,
+		arg.EscalationTeamID,
+		arg.IssueID,
+		arg.TeamID,
+		arg.RecipientIds,
+		arg.LinkID,
+		arg.IncidentID,
+	)
+	return err
+}
+
 const issueTrackerInboundApplied = `-- name: IssueTrackerInboundApplied :exec
 UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,baseline=$2,source_state=$3,outcome='disabled',reason='',pending_state='',pending_source_revision=0,claim_id=NULL,claim_until=NULL,last_checked_at=now(),updated_at=now() WHERE link_id=$1
 `
@@ -512,7 +722,7 @@ func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, li
 }
 
 const issueTrackerIncidentGet = `-- name: IssueTrackerIncidentGet :one
-SELECT link_id, settings_revision, failures, incident_id, announced_kind, issue_id, team_id, recipient_account_ids, opened_at, reminder_count, last_reminded_at FROM issue_tracker_sync_incidents WHERE link_id=$1
+SELECT link_id, settings_revision, failures, incident_id, announced_kind, issue_id, team_id, recipient_account_ids, opened_at, reminder_count, last_reminded_at, first_reminded_at, escalated_at, escalation_team_id FROM issue_tracker_sync_incidents WHERE link_id=$1
 `
 
 func (q *Queries) IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerSyncIncident, error) {
@@ -530,6 +740,9 @@ func (q *Queries) IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID p
 		&i.OpenedAt,
 		&i.ReminderCount,
 		&i.LastRemindedAt,
+		&i.FirstRemindedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
 	)
 	return i, err
 }
@@ -539,7 +752,10 @@ INSERT INTO issue_tracker_sync_incidents(link_id,settings_revision,failures,inci
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $4::uuid IS NOT NULL THEN clock_timestamp() ELSE NULL END) ON CONFLICT(link_id) DO UPDATE SET settings_revision=excluded.settings_revision,failures=excluded.failures,incident_id=excluded.incident_id,announced_kind=excluded.announced_kind,issue_id=excluded.issue_id,team_id=excluded.team_id,recipient_account_ids=excluded.recipient_account_ids,
  opened_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.opened_at WHEN excluded.incident_id IS NOT NULL THEN clock_timestamp() ELSE NULL END,
  reminder_count=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.reminder_count ELSE 0 END,
- last_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.last_reminded_at ELSE NULL END
+ last_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.last_reminded_at ELSE NULL END,
+ first_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.first_reminded_at ELSE NULL END,
+ escalated_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.escalated_at ELSE NULL END,
+ escalation_team_id=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.escalation_team_id ELSE NULL END
 `
 
 type IssueTrackerIncidentPutParams struct {
@@ -966,8 +1182,8 @@ func (q *Queries) IssueTrackerReminderApp(ctx context.Context, db DBTX, arg Issu
 }
 
 const issueTrackerReminderDue = `-- name: IssueTrackerReminderDue :one
-SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at FROM apps a JOIN accounts owner ON owner.id=a.account_id
-JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at FROM issue_tracker_sync_incidents c
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at, c.first_reminded_at, c.escalated_at, c.escalation_team_id FROM issue_tracker_sync_incidents c
  JOIN issue_tracker_links l ON l.id=c.link_id
  JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
  JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
@@ -1009,6 +1225,9 @@ func (q *Queries) IssueTrackerReminderDue(ctx context.Context, db DBTX, arg Issu
 		&i.OpenedAt,
 		&i.ReminderCount,
 		&i.LastRemindedAt,
+		&i.FirstRemindedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
 	)
 	return i, err
 }
@@ -1136,7 +1355,7 @@ func (q *Queries) IssueTrackerReminderPolicyPut(ctx context.Context, db DBTX, ar
 }
 
 const issueTrackerReminderReceipt = `-- name: IssueTrackerReminderReceipt :exec
-UPDATE issue_tracker_sync_incidents SET reminder_count=$1,last_reminded_at=clock_timestamp(),issue_id=$2,team_id=$3,recipient_account_ids=$4::uuid[]
+UPDATE issue_tracker_sync_incidents SET reminder_count=$1,last_reminded_at=clock_timestamp(),first_reminded_at=COALESCE(first_reminded_at,clock_timestamp()),issue_id=$2,team_id=$3,recipient_account_ids=$4::uuid[]
 WHERE link_id=$5 AND incident_id=$6
 `
 
@@ -1583,6 +1802,11 @@ func (q *Queries) IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueT
 
 const issueTrackerTriageScope = `-- name: IssueTrackerTriageScope :one
 SELECT n.incident_id,n.link_id,statement_timestamp()::timestamptz AS checked_at,
+ COALESCE(c.incident_id=n.incident_id AND c.escalated_at IS NOT NULL,false)::boolean AS escalated,
+ (SELECT t.id FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL))))::uuid AS responsible_team_id,
+ COALESCE((SELECT t.name FROM app_issue_teams t WHERE t.id=c.escalation_team_id AND c.incident_id=n.incident_id AND t.app_id=a.id AND EXISTS(
+ SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=t.id AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))), '')::text AS responsible_team_name,
  COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
@@ -1603,10 +1827,13 @@ type IssueTrackerTriageScopeParams struct {
 }
 
 type IssueTrackerTriageScopeRow struct {
-	IncidentID pgtype.UUID
-	LinkID     pgtype.UUID
-	CheckedAt  pgtype.Timestamptz
-	Active     bool
+	IncidentID          pgtype.UUID
+	LinkID              pgtype.UUID
+	CheckedAt           pgtype.Timestamptz
+	Escalated           bool
+	ResponsibleTeamID   pgtype.UUID
+	ResponsibleTeamName string
+	Active              bool
 }
 
 func (q *Queries) IssueTrackerTriageScope(ctx context.Context, db DBTX, arg IssueTrackerTriageScopeParams) (IssueTrackerTriageScopeRow, error) {
@@ -1621,6 +1848,9 @@ func (q *Queries) IssueTrackerTriageScope(ctx context.Context, db DBTX, arg Issu
 		&i.IncidentID,
 		&i.LinkID,
 		&i.CheckedAt,
+		&i.Escalated,
+		&i.ResponsibleTeamID,
+		&i.ResponsibleTeamName,
 		&i.Active,
 	)
 	return i, err

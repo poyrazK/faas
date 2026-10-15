@@ -3196,3 +3196,428 @@ func TestNativeIssueTrackerRemindersAreScopedBoundedAndAtomic(t *testing.T) {
 	forceDue()
 	enqueue(false)
 }
+
+func TestNativeIssueTrackerEscalationRoutesOnceAndStopsSafely(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "tracker-escalation")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Reminder", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	full := apidserver.IssueNativeStore(e)
+	st := state.NewPgStore(*e.Pool())
+	org, err := full.CreateOrg(t.Context(), state.Org{Slug: "escalation-" + uuid.NewString()[:8], Name: "Reminders", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := full.CreateAccount(t.Context(), "reminder-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, app.AccountID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE apps SET org_id=$2 WHERE id=$1", app.ID, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	team, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "reminders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{app.AccountID, member.ID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign", AssigneeTeamID: team.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	link, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, accepted.IssueID, app.AccountID, api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: api.IssueTrackerProviderStatus{Provider: "github", ID: "42", URL: link.URL, State: "open"}, Policy: api.IssueTrackerAutoSync{LinkID: link.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "open"}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noticePolicy, err := st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Enabled: true, FailureThreshold: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := full.CreateAppWebhook(t.Context(), state.AppWebhook{AppID: app.ID, AccountID: app.AccountID, TargetURL: "https://example.com/reminders", Enabled: true, EventFilter: []string{"issue.tracker_sync.attention", "issue.tracker_sync.recovered"}, SecretSealed: []byte("fake-sealed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupMember, err := full.CreateAccount(t.Context(), "backup-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, backupMember.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "backup", api.PutIssueTeamRequest{Name: "Backup responders", MemberAccountIDs: []string{backupMember.ID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rp, err := st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerReminderPolicy{Enabled: true, IntervalMinutes: api.IssueTrackerReminderIntervalMinMinutes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep, err := st.GetIssueTrackerEscalationPolicy(t.Context(), app.ID, app.AccountID)
+	if err != nil || ep.Enabled || ep.Revision != 0 || ep.DelayMinutes != api.IssueTrackerEscalationDelayDefaultMinutes {
+		t.Fatal(ep, err)
+	}
+	execSQL := func(query string, args ...any) {
+		t.Helper()
+		if _, err := (*e.Pool()).Exec(t.Context(), query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	complete := func(outcome string) {
+		t.Helper()
+		if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+			t.Fatal(err)
+		}
+		claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		claim.Policy.Outcome = outcome
+		claim.Policy.Reason = ""
+		if outcome == "error" {
+			claim.Policy.Reason = "provider_unavailable"
+		}
+		if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inbox := func(actor string) []state.IssueTrackerSyncNotification {
+		t.Helper()
+		p, err := st.ListIssueTrackerSyncNotificationsView(t.Context(), app.ID, app.AccountID, actor, "", "all", state.IssueCursor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.Items
+	}
+	escalate := func(want bool) {
+		t.Helper()
+		ok, err := st.EnqueueIssueTrackerEscalation(t.Context())
+		if err != nil || ok != want {
+			t.Fatal("escalation", ok, err, "want", want)
+		}
+	}
+	due := func() {
+		t.Helper()
+		execSQL("UPDATE issue_tracker_sync_escalation_policies SET updated_at=clock_timestamp()-interval '2 days' WHERE app_id=$1", app.ID)
+		execSQL("UPDATE issue_tracker_sync_incidents SET first_reminded_at=clock_timestamp()-interval '2 days' WHERE link_id=$1 AND reminder_count>0", link.ID)
+	}
+	remind := func() {
+		t.Helper()
+		execSQL("UPDATE issue_tracker_sync_reminder_policies SET updated_at=clock_timestamp()-interval '2 days' WHERE app_id=$1", app.ID)
+		execSQL("UPDATE issue_tracker_sync_incidents SET opened_at=clock_timestamp()-interval '2 days',last_reminded_at=CASE WHEN reminder_count>0 THEN clock_timestamp()-interval '2 days' ELSE NULL END WHERE link_id=$1", link.ID)
+		ok, err := st.EnqueueIssueTrackerReminder(t.Context())
+		if err != nil || !ok {
+			t.Fatal("reminder", ok, err)
+		}
+	}
+	save := func(enabled bool, team string) {
+		t.Helper()
+		ep.Enabled, ep.TeamID = enabled, team
+		ep.DelayMinutes = api.IssueTrackerEscalationDelayMinMinutes
+		ep, err = st.SetIssueTrackerEscalationPolicy(t.Context(), app.ID, app.AccountID, ep)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	receipt := func() bool {
+		t.Helper()
+		var v bool
+		if err := (*e.Pool()).QueryRow(t.Context(), "SELECT escalated_at IS NOT NULL FROM issue_tracker_sync_incidents WHERE link_id=$1", link.ID).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	complete("error")
+	notice := inbox(app.AccountID)[0].ID
+	escalate(false)
+	save(true, backup.ID)
+	if _, err = st.SetIssueTrackerEscalationPolicy(t.Context(), app.ID, member.ID, ep); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("member configured escalation", err)
+	}
+	stale := ep
+	stale.Revision--
+	if _, err = st.SetIssueTrackerEscalationPolicy(t.Context(), app.ID, app.AccountID, stale); err == nil {
+		t.Fatal("stale policy accepted")
+	}
+	for _, invalid := range []state.IssueTrackerEscalationPolicy{{Enabled: true, DelayMinutes: 15}, {Enabled: true, TeamID: "bad", DelayMinutes: 15}, {Enabled: true, TeamID: uuid.NewString(), DelayMinutes: 15}, {TeamID: backup.ID, DelayMinutes: 14}, {TeamID: backup.ID, DelayMinutes: 10081}} {
+		invalid.Revision = ep.Revision
+		if _, err = st.SetIssueTrackerEscalationPolicy(t.Context(), app.ID, app.AccountID, invalid); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatal("invalid escalation accepted", invalid, err)
+		}
+	}
+	other := apidserver.SeedPGApp(t, e, "other-escalation")
+	otherTeam, err := st.PutIssueTeam(t.Context(), other.ID, other.AccountID, other.AccountID, "other", api.PutIssueTeamRequest{Name: "Other", MemberAccountIDs: []string{other.AccountID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := ep
+	invalid.TeamID = otherTeam.ID
+	if _, err = st.SetIssueTrackerEscalationPolicy(t.Context(), app.ID, app.AccountID, invalid); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("cross-app escalation", err)
+	}
+	if p, err := st.GetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID); err != nil || p.Revision != noticePolicy.Revision {
+		t.Fatal("escalation invalidated incident", p, err)
+	}
+	due()
+	escalate(false) // the first reminder is required
+	remind()
+	escalate(false) // fresh first reminder gets the full delay
+	due()
+	save(true, backup.ID)
+	escalate(false) // configuration starts a new delay
+	due()
+	until := time.Now().UTC().Add(time.Hour)
+	if err = st.UpdateIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice, 0, state.IssueTrackerTriageAction{Action: "snooze", SnoozedUntil: &until}); err != nil {
+		t.Fatal(err)
+	}
+	escalate(false)
+	execSQL("UPDATE issue_tracker_sync_triage SET snoozed_until=clock_timestamp()-interval '1 minute' WHERE incident_id=(SELECT incident_id FROM issue_tracker_sync_incidents WHERE link_id=$1)", link.ID)
+	escalate(false)
+	execSQL("UPDATE issue_tracker_sync_triage SET snoozed_until=clock_timestamp()-interval '2 days' WHERE incident_id=(SELECT incident_id FROM issue_tracker_sync_incidents WHERE link_id=$1)", link.ID)
+	if err = st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice, 1, "claim"); err != nil {
+		t.Fatal(err)
+	}
+	remind() // A later reminder must not move the first-reminder escalation deadline.
+	execSQL(`CREATE FUNCTION reject_escalation_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload->>'kind'='escalation' THEN RAISE EXCEPTION 'outbox unavailable'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_escalation_outbox BEFORE INSERT ON app_webhook_event_outbox FOR EACH ROW EXECUTE FUNCTION reject_escalation_outbox()`)
+	if _, err = st.EnqueueIssueTrackerEscalation(t.Context()); err == nil {
+		t.Fatal("outbox failure committed escalation")
+	}
+	if receipt() {
+		t.Fatal("partial escalation receipt")
+	}
+	for _, n := range inbox(app.AccountID) {
+		if n.Kind == "escalation" {
+			t.Fatal("partial escalation notice")
+		}
+	}
+	execSQL("DROP TRIGGER reject_escalation_outbox ON app_webhook_event_outbox; DROP FUNCTION reject_escalation_outbox()")
+	results := make(chan bool, 2)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() { ok, err := st.EnqueueIssueTrackerEscalation(t.Context()); results <- ok; errs <- err }()
+	}
+	wins := 0
+	for range 2 {
+		if <-results {
+			wins++
+		}
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if wins != 1 || !receipt() {
+		t.Fatal("concurrent escalation dedup", wins)
+	}
+	escalate(false)
+	notices := inbox(backupMember.ID)
+	if len(notices) != 1 || notices[0].Kind != "escalation" || notices[0].TeamID != backup.ID {
+		t.Fatal("backup inbox", notices)
+	}
+	escalationNotice := notices[0].ID
+	triage, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, backupMember.ID, escalationNotice)
+	if err != nil || !triage.Active || !triage.Escalated || triage.ResponsibleTeamID != backup.ID || len(triage.Escalations) != 1 || triage.ClaimedBy != member.ID || triage.Revision != 2 {
+		t.Fatal("escalation triage", triage, err)
+	}
+	original, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice)
+	if err != nil || len(original.Escalations) != 0 {
+		t.Fatal("captured history scope", original, err)
+	}
+	execSQL("UPDATE org_memberships SET removed_at=clock_timestamp() WHERE org_id=$1 AND account_id=$2", org.ID, backupMember.ID)
+	if len(inbox(backupMember.ID)) != 0 {
+		t.Fatal("removed backup member retained access")
+	}
+	fallback, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, escalationNotice)
+	if err != nil || fallback.ResponsibleTeamID != "" {
+		t.Fatal("empty backup responsibility", fallback, err)
+	}
+	execSQL("UPDATE org_memberships SET removed_at=NULL WHERE org_id=$1 AND account_id=$2", org.ID, backupMember.ID)
+	save(false, team.ID)
+	save(true, team.ID)
+	due()
+	escalate(false) // completed escalation never replays or changes team
+	remind()
+	if got := inbox(backupMember.ID); got[0].Kind != "reminder" || got[0].TeamID != backup.ID {
+		t.Fatal("escalated reminder route", got)
+	}
+	complete("conflict") // a new attention kind preserves escalation routing and receipt
+	if got := inbox(backupMember.ID); got[0].Kind != "paused" || got[0].TeamID != backup.ID || !receipt() {
+		t.Fatal("automatic check lost escalation", got)
+	}
+	if err = st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, backupMember.ID, escalationNotice, 2, "acknowledge"); err != nil {
+		t.Fatal(err)
+	}
+	due()
+	escalate(false)
+	resumed, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, resumed, resumed.Policy.Revision); err != nil {
+		t.Fatal(err)
+	}
+	complete("matched")
+	escalate(false)
+	if got := inbox(backupMember.ID); got[0].Kind != "recovered" {
+		t.Fatal("backup recovery", got)
+	}
+	triage, err = st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, backupMember.ID, escalationNotice)
+	if err != nil || triage.Active || len(triage.Escalations) != 1 {
+		t.Fatal("historical escalation", triage, err)
+	}
+	complete("error")
+	if receipt() {
+		t.Fatal("new incident inherited escalation")
+	}
+	remind()
+	save(true, backup.ID)
+	due()
+	// Recheck eligibility at enqueue, even after an incident became overdue.
+	for _, tc := range []struct{ block, restore string }{
+		{"UPDATE accounts SET plan='free' WHERE id=$1", "UPDATE accounts SET plan='pro' WHERE id=$1"},
+		{"UPDATE accounts SET status='suspended' WHERE id=$1", "UPDATE accounts SET status='active' WHERE id=$1"},
+		{"UPDATE accounts SET abuse_hold_at=clock_timestamp(),abuse_hold_reason='operator' WHERE id=$1", "UPDATE accounts SET abuse_hold_at=NULL,abuse_hold_reason=NULL WHERE id=$1"},
+	} {
+		execSQL(tc.block, app.AccountID)
+		escalate(false)
+		execSQL(tc.restore, app.AccountID)
+	}
+	execSQL("UPDATE issue_tracker_sync_notification_policies SET enabled=false WHERE app_id=$1", app.ID)
+	escalate(false)
+	execSQL("UPDATE issue_tracker_sync_notification_policies SET enabled=true,revision=revision+1 WHERE app_id=$1", app.ID)
+	escalate(false)
+	execSQL("UPDATE issue_tracker_sync_notification_policies SET revision=revision-1 WHERE app_id=$1", app.ID)
+	rp.Enabled = false
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	escalate(false)
+	rp.Enabled = true
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	save(false, backup.ID)
+	due()
+	escalate(false)
+	save(true, backup.ID)
+	escalate(false)
+	due()
+	if err = st.DeleteIssueTeam(t.Context(), app.ID, app.AccountID, backup.Key); err != nil {
+		t.Fatal(err)
+	}
+	escalate(true)
+	got := inbox(app.AccountID)[0]
+	if got.Kind != "escalation" || got.TeamID != "" {
+		t.Fatal("deleted backup owner fallback", got)
+	}
+	triage, err = st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, got.ID)
+	if err != nil || triage.ResponsibleTeamID != "" || !triage.Escalated {
+		t.Fatal("current fallback responsibility", triage, err)
+	}
+	remind()
+	if got := inbox(app.AccountID)[0]; got.Kind != "reminder" || got.TeamID != "" {
+		t.Fatal("fallback reminder", got)
+	}
+	if len(inbox(backupMember.ID)) != 0 {
+		t.Fatal("deleted team retained access")
+	}
+	// Owner form uses existing CSRF and compare-and-swap controls.
+	pageURL := "/dashboard/apps/" + app.Slug + "/issues/tracker-notifications"
+	req := httptest.NewRequest("GET", pageURL, nil)
+	e.AddAdminSession(t, req)
+	page := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(page, req)
+	var csrf *http.Cookie
+	for _, c := range page.Result().Cookies() {
+		if c.Name == apidserver.DashboardIssueCookie {
+			csrf = c
+		}
+	}
+	if page.Code != 200 || csrf == nil || !strings.Contains(page.Body.String(), "delay_minutes") {
+		t.Fatal("escalation settings page", page.Code, page.Body.String())
+	}
+	post := func(valid bool) *httptest.ResponseRecorder {
+		form := url.Values{"settings_kind": {"escalation"}, "enabled": {"1"}, "expected_revision": {fmt.Sprint(ep.Revision)}, "delay_minutes": {"15"}, "team_id": {team.ID}}
+		if valid {
+			form.Set("csrf_token", csrf.Value)
+		}
+		r := httptest.NewRequest("POST", pageURL, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if valid {
+			r.AddCookie(csrf)
+		}
+		e.AddAdminSession(t, r)
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, r)
+		return out
+	}
+	if out := post(false); out.Code != 400 {
+		t.Fatal("escalation CSRF", out.Code)
+	}
+	if out := post(true); out.Code != 303 {
+		t.Fatal("escalation save", out.Code, out.Body.String())
+	}
+	if out := post(true); out.Code != 409 {
+		t.Fatal("escalation stale form", out.Code)
+	}
+	if _, err = st.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
+	deliveries, _, err := full.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	count := 0
+	for _, d := range deliveries {
+		var payload map[string]any
+		if err = json.Unmarshal(d.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["kind"] == "escalation" {
+			count++
+			id, _ := payload["id"].(string)
+			if id == "" || ids[id] || payload["triage_path"] == nil || payload["type"] != "issue.tracker_sync.attention" {
+				t.Fatal("escalation payload", payload)
+			}
+			ids[id] = true
+		}
+	}
+	if count != 2 {
+		t.Fatal("escalation delivery count", count)
+	}
+	if _, err = st.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := full.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
+	if err != nil || len(again) != len(deliveries) {
+		t.Fatal("duplicate delivery", len(again), len(deliveries), err)
+	}
+	execSQL("DELETE FROM issue_tracker_sync_notifications WHERE link_id=$1 AND kind='escalation' AND incident_id=(SELECT incident_id FROM issue_tracker_sync_incidents WHERE link_id=$1)", link.ID)
+	due()
+	escalate(false) // Retention never erases the durable completed-step receipt.
+	complete("matched")
+	complete("error")
+	remind()
+	due()
+	latest := inbox(app.AccountID)[0].ID
+	if err = st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, latest, 0, "acknowledge"); err != nil {
+		t.Fatal(err)
+	}
+	escalate(false) // acknowledgment before the escalation step stops it
+	complete("matched")
+	escalate(false)
+	complete("error")
+	remind()
+	due()
+	execSQL("UPDATE apps SET status='deleted',deleted_at=clock_timestamp() WHERE id=$1", app.ID)
+	escalate(false)
+}
