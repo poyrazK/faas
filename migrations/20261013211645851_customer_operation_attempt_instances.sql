@@ -4,7 +4,7 @@
 -- point an attempt at its runtime logs. Rows follow their execution.
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE customer_operation_attempt_instances (
+CREATE TABLE IF NOT EXISTS customer_operation_attempt_instances (
   operation_id uuid NOT NULL,
   generation integer NOT NULL CHECK (generation > 0),
   attempt integer NOT NULL CHECK (attempt > 0),
