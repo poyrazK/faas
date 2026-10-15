@@ -63,3 +63,28 @@ func (c *Client) CompleteEventAcknowledgment(ctx context.Context, app, id string
 	err := c.do(ctx, http.MethodPost, acknowledgmentPath(app, id)+"/complete", req, &out)
 	return out, err
 }
+
+// Processing counts cover retained opted-in invocations, not pruned history.
+type EventConsumerProcessingHealth struct {
+	AppID                           string     `json:"app_id"`
+	SubscriptionID                  string     `json:"subscription_id"`
+	ObservedAt                      time.Time  `json:"observed_at"`
+	WindowStart                     time.Time  `json:"window_start"`
+	Coverage                        string     `json:"coverage"`
+	Complete                        bool       `json:"complete"`
+	Waiting                         int64      `json:"waiting"`
+	Delivering                      int64      `json:"delivering"`
+	Processing                      int64      `json:"processing"`
+	Expired                         int64      `json:"expired"`
+	Completed                       int64      `json:"completed"`
+	DeadLettered                    int64      `json:"dead_lettered"`
+	Failed                          int64      `json:"failed"`
+	Other                           int64      `json:"other"`
+	NearExpiry                      int64      `json:"near_expiry"`
+	NearExpirySeconds               int        `json:"near_expiry_seconds"`
+	OldestProcessingOfferedAt       *time.Time `json:"oldest_processing_offered_at,omitempty"`
+	OldestProcessingAgeSeconds      float64    `json:"oldest_processing_age_seconds"`
+	AcknowledgmentSamples           int64      `json:"acknowledgment_samples"`
+	AcknowledgmentLatencyMaxSeconds float64    `json:"acknowledgment_latency_max_seconds"`
+	RenewalFailureCoverage          string     `json:"renewal_failure_coverage"`
+}

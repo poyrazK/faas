@@ -107,3 +107,50 @@ scheduler treats 202 as ordinary success. Before rollback, reset future policies
 and drain already accepted deferred work with compatible schedulers. The migration
 Down deliberately retains acknowledgment records and snapshot behavior. This
 change performs no production rollout or migrations.
+
+## Consumer processing health and alerts
+
+`GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health`
+now includes an optional `processing` summary. The existing Go, Node and Python
+clients expose it; ordinary subscriptions return zero matching deferred deliveries.
+The aggregate is read-only and contains no payloads, results, token material,
+event IDs or invocation IDs. It never renews a lease or changes processing state.
+
+Counts cover all matching **retained** opted-in invocations: waiting, delivering,
+processing, expired dispatch leases, completed, dead lettered, failed and other
+terminal states. They are current gauges, not counts within the requested window.
+`complete` means the retained scope was aggregated without sampling, not that
+pruned historical evidence exists. Routing, execution and processing are
+independent reads; the top-level response is not one database snapshot.
+
+`near_expiry` counts live handed-off leases in their final third, capped at a
+thirty-second horizon. A fresh short lease does not immediately count as risky.
+The oldest processing age starts at token issue, including the initial delivery,
+and excludes expired or replaced claims. Work-policy terminal expiry belongs to
+`other`, not the current expired-lease gauge. Completion latency is measured from
+token issue to explicit completion, only for matching retained completed claims
+whose completion falls within the selected `window`. Ordinary 2xx completions
+contribute to the completed gauge but not to explicit acknowledgment latency.
+There is no latency measurement when `acknowledgment_samples` is zero. Retention
+can remove samples; this maximum is not a historical SLO or business execution
+latency. Rejected renewal calls are not recorded: `renewal_failure_coverage` is
+`not_recorded`, and no zero failure count is inferred.
+
+```sh
+gregale events subscription-delivery-health my-app SUBSCRIPTION_UUID --window 15m
+gregale events subscription-delivery-health my-app SUBSCRIPTION_UUID \
+  --watch --processing-oldest-threshold 5m \
+  --processing-lease-risk-threshold 30s --processing-expired-threshold 30s \
+  --alerts-json
+```
+
+Processing-age alerts require at least two fresh samples and thirty seconds of
+continuous age-threshold breach. Lease-risk and expired-lease alerts measure
+continuous local observation of a nonzero gauge for the selected duration, also
+requiring two fresh observations. A brief expiry recovered between polls may
+never be observed; these alerts are not a durable expiry-event ledger.
+Existing recovery events fire when conditions clear. Unknown, missing, stale,
+repeated or out-of-order samples lose confirmation rather than falsely proving
+recovery. Checkpoints preserve incident history and require fresh confirmation on
+resume. Older clients reject checkpoints containing unfamiliar processing metrics.
+Alerts are local to a running watch; no background notification service is started.

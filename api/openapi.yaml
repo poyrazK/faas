@@ -72264,12 +72264,40 @@ components:
       properties:
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
 
+    EventConsumerProcessingHealth:
+      type: object
+      additionalProperties: false
+      description: Current retained deferred invocation counts plus issue-to-completion latency of retained completed claims; pruned history and rejected renewals are excluded.
+      required: [app_id, subscription_id, observed_at, window_start, coverage, complete, waiting, delivering, processing, expired, completed, dead_lettered, failed, other, near_expiry, near_expiry_seconds, oldest_processing_age_seconds, acknowledgment_samples, acknowledgment_latency_max_seconds, renewal_failure_coverage]
+      properties:
+        app_id: { type: string, format: uuid, description: Application owning this processing summary. }
+        subscription_id: { type: string, format: uuid, description: Consumer subscription selected for the retained processing aggregate. }
+        observed_at: { type: string, format: date-time, description: Database snapshot clock for processing gauges. }
+        window_start: { type: string, format: date-time, description: Start of the retained acknowledgment completion window. }
+        coverage: { type: string, enum: [retained_deferred_invocations], description: Coverage is limited to currently retained opted-in invocations. }
+        complete: { type: boolean, description: All matching retained invocations were aggregated without sampling; this is not historical completeness. }
+        waiting: { type: integer, format: int64, minimum: 0, description: Deferred invocations currently pending dispatch. }
+        delivering: { type: integer, format: int64, minimum: 0, description: Live deferred dispatches not yet handed off. }
+        processing: { type: integer, format: int64, minimum: 0, description: Unexpired matching leases handed off after HTTP 202. }
+        expired: { type: integer, format: int64, minimum: 0, description: Expired dispatching leases before recovery sweeps. }
+        completed: { type: integer, format: int64, minimum: 0, description: Retained opted-in invocations completed by callback or ordinary success. }
+        dead_lettered: { type: integer, format: int64, minimum: 0, description: Retained deferred invocations in dead letters. }
+        failed: { type: integer, format: int64, minimum: 0, description: Retained deferred invocations permanently failed. }
+        other: { type: integer, format: int64, minimum: 0, description: Other terminal states including cancellation and supersession and work-policy expiry. }
+        near_expiry: { type: integer, format: int64, minimum: 0, description: Active handed-off leases in their final third; the risk horizon is capped by near_expiry_seconds. }
+        near_expiry_seconds: { type: integer, minimum: 1, description: Maximum lease risk horizon in seconds; each claim uses the smaller of this cap and one third of its lease duration. }
+        oldest_processing_offered_at: { type: string, format: date-time, description: Oldest token issue time among live handed-off claims; includes initial dispatch time. }
+        oldest_processing_age_seconds: { type: number, minimum: 0, description: Age since oldest active processing token issue; zero when absent. }
+        acknowledgment_samples: { type: integer, format: int64, minimum: 0, description: Retained matching explicit completions whose completion time falls inside the window. }
+        acknowledgment_latency_max_seconds: { type: number, minimum: 0, description: Maximum token-issue-to-completion seconds among acknowledgment samples; zero requires inspecting sample count. }
+        renewal_failure_coverage: { type: string, enum: [not_recorded], description: Rejected renewal calls are not durably recorded; no failure count is inferred. }
     EventConsumerDeliveryHealth:
       type: object
       additionalProperties: false
       description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
       required: [started_at, observed_at, routing, execution, pending_sample]
       properties:
+        processing: { $ref: '#/components/schemas/EventConsumerProcessingHealth' }
         capacity_pressure: { $ref: '#/components/schemas/EventConsumerCapacityPressure' }
         waiting_reasons: { $ref: '#/components/schemas/EventConsumerWaitingReasons' }
         capacity_waits: { $ref: '#/components/schemas/EventConsumerCapacityWaits' }

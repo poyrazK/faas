@@ -14194,6 +14194,94 @@ func (q *Queries) EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPo
 	return result.RowsAffected(), nil
 }
 
+const eventConsumerProcessingHealth = `-- name: EventConsumerProcessingHealth :one
+WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS observed_at), scoped AS (
+ SELECT i.state,i.lease_expires_at,i.completed_at,a.phase,a.lease_seconds,
+ (a.attempt=i.attempts AND a.replay_generation=i.replay_generation) AS matching,
+ a.deadline_at-$5::integer*interval '1 second' AS offered_at,
+ c.observed_at
+ FROM invocations i CROSS JOIN clock c LEFT JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id
+ WHERE i.account_id=$4::uuid AND i.app_id=$3::uuid
+ AND i.source IN ('async_invoke','replay')
+ AND i.headers->>'x-gregale-event-subscription-id'=$6::text
+ AND CASE WHEN i.headers->>'x-gregale-event-acknowledgment-lease-seconds' ~ '^[1-9][0-9]{0,2}$' THEN (i.headers->>'x-gregale-event-acknowledgment-lease-seconds')::integer<=300 ELSE false END
+), classified AS (
+ SELECT state, lease_expires_at, completed_at, phase, lease_seconds, matching, offered_at, observed_at,CASE WHEN state='expired' THEN 'other' WHEN state='pending' THEN 'waiting'
+ WHEN state='dispatching' AND (lease_expires_at IS NULL OR lease_expires_at<=observed_at) THEN 'expired'
+ WHEN state='dispatching' AND phase='awaiting' AND matching THEN 'processing'
+ WHEN state='dispatching' THEN 'delivering' ELSE state END AS processing_state FROM scoped
+)
+SELECT c.observed_at::timestamptz AS observed_at,
+ count(*) FILTER (WHERE processing_state='waiting')::bigint AS waiting,
+ count(*) FILTER (WHERE processing_state='delivering')::bigint AS delivering,
+ count(*) FILTER (WHERE processing_state='processing')::bigint AS processing,
+ count(*) FILTER (WHERE processing_state='expired')::bigint AS expired,
+ count(*) FILTER (WHERE processing_state='completed')::bigint AS completed,
+ count(*) FILTER (WHERE processing_state='dead_letter')::bigint AS dead_lettered,
+ count(*) FILTER (WHERE processing_state='failed')::bigint AS failed,
+ count(*) FILTER (WHERE processing_state NOT IN ('waiting','delivering','processing','expired','completed','dead_letter','failed'))::bigint AS other,
+ count(*) FILTER (WHERE processing_state='processing' AND lease_expires_at<=c.observed_at+least($1::double precision,lease_seconds::double precision/3)*interval '1 second')::bigint AS near_expiry,
+ min(offered_at) FILTER (WHERE processing_state='processing')::timestamptz AS oldest_processing_offered_at,
+ count(*) FILTER (WHERE processing_state='completed' AND matching AND phase='completed' AND completed_at>=offered_at AND completed_at<=c.observed_at AND completed_at>=c.observed_at-$2::integer*interval '1 second')::bigint AS acknowledgment_samples,
+ coalesce(max(extract(epoch FROM completed_at-offered_at)) FILTER (WHERE processing_state='completed' AND matching AND phase='completed' AND completed_at>=offered_at AND completed_at<=c.observed_at AND completed_at>=c.observed_at-$2::integer*interval '1 second'),0)::double precision AS acknowledgment_latency_max_seconds
+FROM clock c LEFT JOIN classified ON true
+WHERE EXISTS(SELECT 1 FROM apps WHERE id=$3::uuid AND account_id=$4::uuid AND status<>'deleted')
+GROUP BY c.observed_at
+`
+
+type EventConsumerProcessingHealthParams struct {
+	NearExpirySeconds float64
+	WindowSeconds     int32
+	AppID             pgtype.UUID
+	AccountID         pgtype.UUID
+	LifetimeSeconds   int32
+	SubscriptionID    string
+}
+
+type EventConsumerProcessingHealthRow struct {
+	ObservedAt                      pgtype.Timestamptz
+	Waiting                         int64
+	Delivering                      int64
+	Processing                      int64
+	Expired                         int64
+	Completed                       int64
+	DeadLettered                    int64
+	Failed                          int64
+	Other                           int64
+	NearExpiry                      int64
+	OldestProcessingOfferedAt       pgtype.Timestamptz
+	AcknowledgmentSamples           int64
+	AcknowledgmentLatencyMaxSeconds float64
+}
+
+func (q *Queries) EventConsumerProcessingHealth(ctx context.Context, db DBTX, arg EventConsumerProcessingHealthParams) (EventConsumerProcessingHealthRow, error) {
+	row := db.QueryRow(ctx, eventConsumerProcessingHealth,
+		arg.NearExpirySeconds,
+		arg.WindowSeconds,
+		arg.AppID,
+		arg.AccountID,
+		arg.LifetimeSeconds,
+		arg.SubscriptionID,
+	)
+	var i EventConsumerProcessingHealthRow
+	err := row.Scan(
+		&i.ObservedAt,
+		&i.Waiting,
+		&i.Delivering,
+		&i.Processing,
+		&i.Expired,
+		&i.Completed,
+		&i.DeadLettered,
+		&i.Failed,
+		&i.Other,
+		&i.NearExpiry,
+		&i.OldestProcessingOfferedAt,
+		&i.AcknowledgmentSamples,
+		&i.AcknowledgmentLatencyMaxSeconds,
+	)
+	return i, err
+}
+
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
 SELECT id::text, coalesce(project_id::text,'')::text AS project_id
 FROM apps WHERE id=$1::text::uuid

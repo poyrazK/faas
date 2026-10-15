@@ -14,13 +14,14 @@ import (
 // EventDeliveryHealthWatchOptions selects opt-in conditions. Zero disables a
 // threshold. Circuit/capacity durations measure consecutive local fresh reads.
 type EventDeliveryHealthWatchOptions struct {
-	Window                                                 string
-	Interval, Timeout, MaxAge                              time.Duration
-	OldestPending, Paused, CircuitBlocked, CapacityBlocked time.Duration
-	Retrying, DeadLetters                                  int64
-	LineageStalled, LineageRetentionRisk                   int64
-	LineagePaused                                          time.Duration
-	ReceiptBudgetFull                                      time.Duration
+	ProcessingOldest, ProcessingLeaseRisk, ProcessingExpired time.Duration
+	Window                                                   string
+	Interval, Timeout, MaxAge                                time.Duration
+	OldestPending, Paused, CircuitBlocked, CapacityBlocked   time.Duration
+	Retrying, DeadLetters                                    int64
+	LineageStalled, LineageRetentionRisk                     int64
+	LineagePaused                                            time.Duration
+	ReceiptBudgetFull                                        time.Duration
 	// ReceiptBudgetRemaining warns below this many slots; zero disables it.
 	ReceiptBudgetRemaining  int
 	ReceiptBudgetLowSustain time.Duration
@@ -108,7 +109,7 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 		return ErrValidation("invalid delivery health watch interval, timeout or max age")
 	}
 	enabled := false
-	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused, o.ReceiptBudgetFull} {
+	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused, o.ReceiptBudgetFull, o.ProcessingOldest, o.ProcessingLeaseRisk, o.ProcessingExpired} {
 		if d < 0 || d > EventDeliveryHealthWatchThresholdMax || (d > 0 && d < EventDeliveryHealthWatchThresholdMin) {
 			return ErrValidation("invalid delivery health duration threshold")
 		}
@@ -160,6 +161,8 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 		sustained bool
 	}{
 		{"oldest_pending_seconds", o.OldestPending.Seconds(), false},
+		{"processing_lease_risk_seconds", o.ProcessingLeaseRisk.Seconds(), true},
+		{"processing_expired_seconds", o.ProcessingExpired.Seconds(), true},
 		{"retrying_executions", float64(o.Retrying), false},
 		{"dead_lettered_executions", float64(o.DeadLetters), false},
 		{"paused_seconds", o.Paused.Seconds(), false},
@@ -173,6 +176,9 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 		if v.threshold > 0 {
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, State: "unknown", Threshold: v.threshold}, sustained: v.sustained})
 		}
+	}
+	if o.ProcessingOldest > 0 {
+		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "processing_oldest_seconds", State: "unknown", Threshold: o.ProcessingOldest.Seconds(), MinimumSamples: 2, SustainSeconds: EventProcessingAlertSustain.Seconds()}})
 	}
 	if o.ReceiptBudgetRemaining > 0 {
 		sustain := o.ReceiptBudgetLowSustain

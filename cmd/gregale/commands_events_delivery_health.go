@@ -52,6 +52,7 @@ func cmdEventsSubscriptionDeliveryHealth(args []string) int {
 
 func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	r, e, sample := out.Routing, out.Execution, out.PendingSample
+	printEventConsumerProcessingHealth(out.Processing)
 	printLineageRetryJobHealth(e.LineageRetryJobs)
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | pending routing %d | processing routing %d | oldest pending %.0fs\n", oneLine(r.SubscriptionID), r.PendingRecipients, r.ProcessingRecipients, r.OldestAgeSeconds)
 	_, _ = fmt.Fprintf(osStdout, "Execution history %s (%s) | collection start %v | evidence lost %v\n", oneLine(e.HistoryStatus), oneLine(e.HistoryReason), e.CoverageStartedAt, e.CoverageLostAt)
@@ -93,6 +94,9 @@ type deliveryHealthWatchFlags struct {
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f := &deliveryHealthWatchFlags{}
+	fs.DurationVar(&f.options.ProcessingOldest, "processing-oldest-threshold", 0, "active processing attempt age threshold; fresh breach must persist 30s")
+	fs.DurationVar(&f.options.ProcessingLeaseRisk, "processing-lease-risk-threshold", 0, "sustained nonzero leases in their final third (capped at 30s)")
+	fs.DurationVar(&f.options.ProcessingExpired, "processing-expired-threshold", 0, "sustained nonzero expired processing leases")
 	f.watch = fs.Bool("watch", false, "watch configured delivery health thresholds")
 	f.checkpoint = fs.String("checkpoint", "", "persist a bounded delivery health watch checkpoint")
 	f.ackInbox = fs.String("ack-inbox", "", "atomically replaced JSON acknowledgement batch; requires checkpoint")
@@ -278,4 +282,17 @@ func printEventConsumerCapacityPressure(pressure *api.EventConsumerCapacityPress
 			_, _ = fmt.Fprintf(osStdout, "    %s\n", oneLine(scope.Advice))
 		}
 	}
+}
+
+func printEventConsumerProcessingHealth(p *api.EventConsumerProcessingHealth) {
+	if p == nil {
+		_, _ = fmt.Fprintln(osStdout, "Deferred processing: unavailable")
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "Deferred processing: waiting %d | delivering %d | processing %d | expired %d | near expiry %d (final third; cap %ds) | completed %d | dead letters %d | failed %d | other %d\n", p.Waiting, p.Delivering, p.Processing, p.Expired, p.NearExpiry, p.NearExpirySeconds, p.Completed, p.DeadLettered, p.Failed, p.Other)
+	latency := "unavailable"
+	if p.AcknowledgmentSamples > 0 {
+		latency = fmt.Sprintf("%.0fs", p.AcknowledgmentLatencyMaxSeconds)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Processing attempt age %.0fs | retained acknowledgment samples %d | maximum acknowledgment latency %s | renewal failures %s | coverage %s | complete %t | observed %s\n", p.OldestProcessingAgeSeconds, p.AcknowledgmentSamples, latency, oneLine(p.RenewalFailureCoverage), oneLine(p.Coverage), p.Complete, p.ObservedAt.Format(time.RFC3339))
 }

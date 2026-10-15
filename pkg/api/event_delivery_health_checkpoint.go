@@ -55,7 +55,7 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 	}
 	count := metric == "retrying_executions" || metric == "dead_lettered_executions" || metric == "lineage_retry_stalled_jobs" || metric == "lineage_retry_retention_risk_jobs"
 	switch metric {
-	case "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds", "capacity_command_receipt_budget_full_seconds":
+	case "processing_oldest_seconds", "processing_lease_risk_seconds", "processing_expired_seconds", "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds", "capacity_command_receipt_budget_full_seconds":
 	default:
 		parts := strings.Split(metric, ".")
 		if len(parts) != 3 || parts[0] != "waiting_reason" {
@@ -97,6 +97,10 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		if strings.HasPrefix(c.Metric, "slo.") {
 			if c.MinimumSamples < 1 || c.MinimumSamples > EventDeliveryHealthWatchCountMax || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
 				return ErrValidation("invalid checkpoint SLO configuration")
+			}
+		} else if c.Metric == "processing_oldest_seconds" {
+			if c.MinimumSamples != 2 || c.SustainSeconds != EventProcessingAlertSustain.Seconds() {
+				return ErrValidation("invalid processing age confirmation")
 			}
 		} else if c.Metric == "capacity_command_receipt_budget_used_slots" {
 			if c.MinimumSamples != 2 || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() || c.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(c.Value) != c.Value {

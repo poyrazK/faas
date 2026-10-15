@@ -1150,6 +1150,11 @@ from .event_consumer_health_coverage import EventConsumerHealthCoverage
 from .event_consumer_pending_sample import EventConsumerPendingSample
 from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
 from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_processing_health import EventConsumerProcessingHealth
+from .event_consumer_processing_health_coverage import EventConsumerProcessingHealthCoverage
+from .event_consumer_processing_health_renewal_failure_coverage import (
+    EventConsumerProcessingHealthRenewalFailureCoverage,
+)
 from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
 from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
 from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
@@ -5800,6 +5805,9 @@ __all__ = (
     "EventConsumerPendingSample",
     "EventConsumerPendingSampleCoverage",
     "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerProcessingHealth",
+    "EventConsumerProcessingHealthCoverage",
+    "EventConsumerProcessingHealthRenewalFailureCoverage",
     "EventConsumerWaitingReasons",
     "EventConsumerWaitingReasonsCounts",
     "EventConsumerWaitingReasonsCoverage",

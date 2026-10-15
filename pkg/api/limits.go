@@ -11140,3 +11140,6 @@ const (
 	EventAcknowledgmentSweepBatch      = 100
 )
 const EventAcknowledgmentResultMaxBytes = 1 << 20
+
+const EventProcessingNearExpiry = 30 * time.Second
+const EventProcessingAlertSustain = 30 * time.Second
