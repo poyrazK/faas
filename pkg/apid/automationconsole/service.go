@@ -151,6 +151,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this automation."
 	}
 	data.BaseURL = "/dashboard/apps/" + url.PathEscape(scope.Slug) + "/automations"
+	setupLiveProgress(&data)
 	data.CSRFToken = s.Host.IssueCSRF(w, scope)
 	data.ActionKey = uuid.NewString()
 	if data.Run != nil {

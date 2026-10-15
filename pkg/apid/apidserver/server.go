@@ -3916,6 +3916,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	console := &automationconsole.Service{Host: automationConsoleHost{server: s}, Log: s.log}
 	mux.Handle("GET /dashboard/apps/{slug}/automations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Show))))
+	mux.Handle("GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.LiveProgress))))
+	mux.Handle("POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.CheckLiveProgress))))
 	mux.Handle("POST /dashboard/apps/{slug}/automations/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Act))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
 	mux.Handle("POST /dashboard/apps/{slug}/data-api/refresh", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.refreshDashboardDataAPI))))

@@ -153,8 +153,22 @@ assertions, published revision and code deployment together; stale target fences
 reject the request before any run is created. Only the case's `input` is used;
 mock outcomes never control real execution.
 
-**Check live results** reads recorded terminal outcomes against the frozen
-assertions and saves safe results. It does not start a new run, retry a handler,
+While the selected verification is open, automatic updates show queued, running
+and waiting states and check its frozen assertions after execution finishes.
+Only the result panel changes; unsaved editor text stays intact, even when it is
+invalid JSON. Local edits keep a warning visible beside the historical result.
+
+Updates pause while the page is hidden and stop after completion or navigation.
+They also stop on authentication/permission failure, network failure, timeout,
+invalid results or the request limit. **Resume automatic updates** observes the
+same run with a fresh budget. Requests run at 3-second intervals, time out after
+10 seconds, and are limited to 100 reads/checks per observation session. Automatic
+checks send only a protected CSRF token, with a 4 KiB request-body limit.
+
+**Check live results** also refreshes the selected run without replacing editor
+fields when JavaScript is enabled. Without JavaScript it remains a manual form
+submission. Checks read recorded terminal outcomes against the frozen assertions
+and save safe results. They do not start a new run, retry a handler,
 or apply later expectation edits. Running and waiting workflows have no verdict.
 After a continuation/resume, check again once execution reaches a terminal state.
 Reports identify failed fields without returning expected/actual output or errors.

@@ -7,7 +7,8 @@ const { chromium } = require('playwright');
   const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
   const browser = await chromium.launch({ executablePath: process.env.GREGALE_CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
   try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+    // The original live journey qualifies the manual, JavaScript-free fallback.
+    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, javaScriptEnabled: fixture.mode !== 'live' });
     await context.addCookies([{ name: fixture.cookie_name, value: fixture.cookie_value, url: new URL(fixture.url).origin }]);
     const page = await context.newPage();
     const errors = [];
@@ -16,6 +17,108 @@ const { chromium } = require('playwright');
       await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: label, exact: true }).click()]);
       assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label + '; alerts: ' + (await page.locator('[role=alert]').allTextContents()).join('; '));
       assert.equal(await page.locator('[role=alert]').count(), 0, 'action returned an error for ' + label);
+    }
+    if (fixture.mode === 'live-progress') {
+      const progressURL = new URL(new URL(fixture.url).pathname + '/live-verifications/' + fixture.run_id + '?name=progress-report', fixture.url).href;
+      const requests = [];
+      const responses = [];
+      page.on('request', request => { if (request.url() === progressURL) requests.push(request); });
+      await page.route(fixture.url, async route => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace(/data-max-requests="[^"]*"/, 'data-max-requests="5"').replace(/data-timeout-ms="[^"]*"/, 'data-timeout-ms="1500"');
+        await route.fulfill({ response, body });
+      });
+      let pendingHTML;
+      let firstRead;
+      const read = new Promise(resolve => { firstRead = resolve; });
+      await page.route(progressURL, async route => {
+        const response = await route.fetch();
+        const body = await response.text();
+        responses.push({method: route.request().method(), status: response.status()});
+        const first = route.request().method() === 'GET' && !pendingHTML;
+        if (first) pendingHTML = body;
+        await route.fulfill({ response, body });
+        if (first) firstRead();
+      });
+      await page.goto(fixture.url);
+      await read;
+      await page.locator('#automation-sample').fill('PRIVATE unsaved invalid JSON');
+      const status = page.locator('[data-live-progress-status]');
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', {configurable: true, value: 'hidden'});
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      assert.ok((await status.innerText()).includes('paused'));
+      const hiddenCount = requests.length;
+      await page.waitForTimeout(3300);
+      assert.equal(requests.length, hiddenCount, 'hidden page kept polling');
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', {configurable: true, value: 'visible'});
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.waitForFunction(() => document.getElementById('automation-live-result').dataset.liveState === 'running');
+      await page.waitForFunction(() => document.getElementById('automation-live-result').dataset.liveState === 'awaiting_event');
+      try {
+        await page.getByText('Live verification passed.', {exact: true}).waitFor();
+      } catch (error) {
+        throw new Error(error.message + '\nProgress diagnostics: ' + JSON.stringify({status: await status.textContent(), requests: requests.map(r => r.method()), responses, result: await page.locator('#automation-live-result').innerText(), errors}));
+      }
+      assert.equal(await page.locator('#automation-sample').inputValue(), 'PRIVATE unsaved invalid JSON');
+      assert.equal(await page.locator('#automation-live-result [data-live-outdated]').isVisible(), true);
+      assert.equal(page.url(), fixture.url);
+      assert.equal((await page.locator('#automation-live-result').innerText()).includes('PRIVATE'), false);
+      assert.equal(requests.filter(r => r.method() === 'POST').length, 1);
+      const posted = new URLSearchParams(requests.find(r => r.method() === 'POST').postData());
+      assert.deepEqual([...posted.keys()], ['csrf_token']);
+      const completedCount = requests.length;
+      await page.waitForTimeout(3300);
+      assert.equal(requests.length, completedCount, 'completed run kept polling');
+      await page.getByRole('button', {name: 'Check live results', exact: true}).click();
+      await page.waitForFunction(() => document.querySelector('[data-live-progress-status]').textContent.includes('checks finished'));
+      assert.equal(await page.locator('#automation-sample').inputValue(), 'PRIVATE unsaved invalid JSON');
+      assert.equal(requests.filter(r => r.method() === 'POST').length, 1, 'current report was checked again');
+      if (process.env.GREGALE_AUTOMATION_PROGRESS_SCREENSHOT) {
+        await page.locator('#automation-live-verification').screenshot({path: process.env.GREGALE_AUTOMATION_PROGRESS_SCREENSHOT});
+      }
+      await page.unroute(progressURL);
+      await page.route(progressURL, route => route.fulfill({status: 401, contentType: 'application/problem+json', body: '{}'}));
+      await page.getByRole('button', {name: 'Resume automatic updates', exact: true}).click();
+      await page.waitForFunction(() => document.querySelector('[data-live-progress-status]').textContent.includes('authentication'));
+      const deniedCount = requests.length;
+      await page.waitForTimeout(3300);
+      assert.equal(requests.length, deniedCount, 'authentication failure kept retrying');
+      await page.unroute(progressURL);
+      await page.route(progressURL, async route => {
+        await new Promise(resolve => setTimeout(resolve, 2300));
+        try { await route.abort(); } catch { /* The request timeout already aborted it. */ }
+      });
+      await page.getByRole('button', {name: 'Resume automatic updates', exact: true}).click();
+      await page.waitForFunction(() => document.querySelector('[data-live-progress-status]').textContent.includes('timed out'));
+      await page.unrouteAll({behavior: 'wait'});
+      await page.route(fixture.url, async route => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace(/data-max-requests="[^"]*"/, 'data-max-requests="3"').replace(/data-interval-ms="[^"]*"/, 'data-interval-ms="50"');
+        await route.fulfill({response, body});
+      });
+      await page.route(progressURL, route => route.fulfill({status: 200, contentType: 'text/html', body: pendingHTML}));
+      await page.goto(fixture.url);
+      const beforeBudget = requests.length;
+      await page.getByRole('button', {name: 'Resume automatic updates', exact: true}).click();
+      await page.waitForFunction(() => document.querySelector('[data-live-progress-status]').textContent.includes('request limit'));
+      assert.equal(requests.length - beforeBudget, 3, 'request budget was not enforced');
+      await page.waitForTimeout(200);
+      assert.equal(requests.length - beforeBudget, 3, 'exhausted polling budget kept retrying');
+      await page.unroute(progressURL);
+      await page.route(progressURL, route => route.fulfill({status: 200, contentType: 'text/html', body: '<p>Invalid result fragment</p>'}));
+      await page.getByRole('button', {name: 'Resume automatic updates', exact: true}).click();
+      await page.waitForFunction(() => document.querySelector('[data-live-progress-status]').textContent.includes('invalid result'));
+      assert.equal(await page.locator('#automation-live-result').getAttribute('data-live-run'), fixture.run_id);
+      await page.goto('about:blank');
+      const navigatedCount = requests.length;
+      await page.waitForTimeout(200);
+      assert.equal(requests.length, navigatedCount, 'navigation left a polling loop alive');
+      assert.equal(errors.length, 0);
+      return;
     }
     if (fixture.mode === 'live') {
       assert.equal((await page.goto(fixture.url + '?template=scheduled-report')).status(), 200);

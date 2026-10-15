@@ -6392,6 +6392,10 @@ const (
 	AutomationLiveHistoryLimit                 = 20
 	AutomationLiveReportMaxBytes         int64 = 128 << 10
 	AutomationLiveMaxAttempts                  = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
+	AutomationLiveProgressPollInterval         = 3 * time.Second
+	AutomationLiveProgressRequestTimeout       = 10 * time.Second
+	AutomationLiveProgressMaxRequests          = 100
+	AutomationLiveProgressFormMaxBytes   int64 = 4096
 	AutomationTestCaseNameMaxBytes             = 128
 	AutomationTestStepResultsMax               = AutomationSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected

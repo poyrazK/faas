@@ -4,6 +4,7 @@
 // adr: 1288
 // adr: 1289
 // adr: 1292
+// adr: 1293
 package apidserver_test
 
 import (
@@ -96,9 +97,24 @@ func TestAutomationConsoleBrowserGuidedLiveAssertionsJourney(t *testing.T) {
 	}
 }
 
+func TestAutomationConsoleBrowserAutomaticLiveProgressJourney(t *testing.T) {
+	if os.Getenv("GREGALE_AUTOMATION_BROWSER_ACCEPTANCE") != "1" {
+		t.Skip("set GREGALE_AUTOMATION_BROWSER_ACCEPTANCE=1 with Playwright and Chromium installed")
+	}
+	e, app, cookie := consoleFixture(t)
+	view, _ := consoleProgressFixture(t, e, app, cookie)
+	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations?name=progress-report&verification="+view.RunID,
+		"live-progress", map[string]string{"run_id": view.RunID})
+	runs, _, err := (*e.Store()).ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
+	if err != nil || len(runs) != 1 || runs[0].ResumeCount != 0 {
+		t.Fatal("automatic observation created or resumed execution", err)
+	}
+}
+
 func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string, extra ...map[string]string) {
 	t.Helper()
 	var liveChecks atomic.Int32
+	var progressReads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if mode == "live" && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/check-live") && liveChecks.Add(1) == 2 {
 			if err := r.ParseForm(); err != nil {
@@ -108,6 +124,22 @@ func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cook
 			}
 		}
 		(*e.H()).ServeHTTP(w, r)
+		if mode == "live-progress" && r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/automations/live-verifications/") {
+			// Advance recorded fixture state only, without executing guest handlers.
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			switch progressReads.Add(1) {
+			case 1:
+				if err := (*e.Store()).MarkWorkflowRunStatus(t.Context(), id, state.WorkflowRunStatusRunning, nil, nil); err != nil {
+					t.Error(err)
+				}
+			case 2:
+				if err := (*e.Store()).MarkWorkflowRunStatus(t.Context(), id, state.WorkflowRunStatusAwaitingEvent, nil, nil); err != nil {
+					t.Error(err)
+				}
+			case 3:
+				consoleFinishLiveFixture(t, e, id)
+			}
+		}
 		if mode == "webhook" && r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/hooks/") {
 			// Advance fixture fanout after verified ingress, without executing guests.
 			work, err := (*e.Store()).ClaimDuePublishedEvent(t.Context(), time.Now().UTC())

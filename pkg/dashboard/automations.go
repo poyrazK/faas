@@ -29,6 +29,7 @@ type AutomationConsoleData struct {
 	LiveEditorChanged                                        bool
 	LiveHistory                                              *api.ListAutomationLiveVerificationsResponse
 	LiveSelected                                             *api.AutomationLiveVerification
+	LiveProgress                                             *AutomationLiveProgress
 	TestEditorMode                                           string
 	TestCaseIndex, TestAssertionIndex                        int
 	TestLiveIndex                                            int
@@ -52,6 +53,11 @@ type AutomationConsoleData struct {
 	ScheduleConfigured                                       bool
 	Webhook                                                  *AutomationWebhookForm
 	Ingress                                                  *AutomationWebhookSetup
+}
+
+type AutomationLiveProgress struct {
+	URL                                string
+	IntervalMS, TimeoutMS, MaxRequests int
 }
 
 type AutomationTestEditor struct {
