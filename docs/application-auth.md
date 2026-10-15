@@ -83,11 +83,16 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
 | `--authz FILE` | Replace custom roles and policies (see Organizations and roles). |
 | `--events on\|off` | Publish user lifecycle events to your event bus (see Lifecycle events). |
+| `--passkeys on\|off`, `--passkey-rp-id DOMAIN` | Passkey sign-in (see Passkeys). |
+| `--brand-name`, `--brand-color`, `--brand-logo-url` | The hosted pages' name, accent colour and logo (see Hosted pages); `none` removes one. |
+| `--captcha turnstile\|hcaptcha\|off`, `--captcha-site-key`, `--captcha-secret-stdin` | A CAPTCHA on sign-up, sign-in and password reset (see CAPTCHA). |
+| `--activity-retention DAYS\|forever` | How long sign-in activity is kept (see Manage users). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
 values that are public anyway or harmless: URLs, enabled providers, password
-rules, whether MFA and email are on, and the signing key IDs.
+rules, whether MFA, passkeys, CAPTCHA and email are on, the branding, the
+activity retention and the signing key IDs.
 
 ### Sign-in providers
 
@@ -106,12 +111,52 @@ also points `gitlab`, `azure` or `workos` at a self-hosted server or tenant.
 Enabling replaces the provider's credentials; disabling removes them. The
 hosted sign-in page shows a button for each enabled provider.
 
+### Passkeys
+
+```sh
+gregale auth config shop-auth --passkeys on
+```
+
+Users sign in with a fingerprint, face or device PIN instead of a password. The
+hosted sign-in page gains **Sign in with a passkey**, and after a password
+sign-in or sign-up it offers to add one to users who have none. Passkeys are
+discoverable, so users don't type an email address. In your own pages, use
+`auth.signInWithPasskey()` and `auth.passkeys.register()`, `list()`, `rename()`
+and `remove()` from `@gregale/auth`.
+
+A passkey belongs to one domain. By default that is the Auth app's host, so
+passkeys work on the hosted pages. If the Auth app is on a custom domain under
+your site's domain (`auth.example.com` for `shop.example.com`), share the parent
+domain so both use the same passkeys:
+
+```sh
+gregale auth config shop-auth --passkey-rp-id example.com
+```
+
+Only HTTPS origins on that domain may use them: the Auth app, your site URL and
+your redirect URLs that are on it.
+
+### CAPTCHA
+
+```sh
+printf '%s' "$TURNSTILE_SECRET" | gregale auth config shop-auth --captcha turnstile --captcha-site-key "$TURNSTILE_SITE_KEY" --captcha-secret-stdin
+```
+
+GoTrue then requires a CAPTCHA token on sign-up, password and magic-link
+sign-in, password reset and passkey sign-in. The hosted pages render the
+provider's widget (Cloudflare Turnstile or hCaptcha) and allow its origin, and
+only its origin, in their content security policy. In your own pages, pass the
+widget's token as `captchaToken` to `signUp`, `signInWithPassword`,
+`signInWithMagicLink`, `resetPasswordForEmail` and `signInWithPasskey`.
+`--captcha off` removes the keys. Changing CAPTCHA always takes all three
+values.
+
 ### Other GoTrue settings
 
-Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*` and
-`GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as app secrets. Any other
-`GOTRUE_*` secret stops startup, because Gregale owns that setting. The hosted
-pages do not render a CAPTCHA, so enabling one blocks sign-up there.
+Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*`,
+`GOTRUE_PASSKEY_*` and `GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as
+app secrets. Any other `GOTRUE_*` secret stops startup, because Gregale owns
+that setting.
 
 ## Rotate signing keys
 
@@ -221,7 +266,18 @@ Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The
 pages handle sign-in (password, magic link, enabled OAuth providers), sign-up,
 password reset and invitations, then return to `redirect_to` with the session
 in the URL fragment. Only your site URL and paths under `--redirect-urls` are
-accepted as targets. Read the session with `@gregale/auth`:
+accepted as targets.
+
+Brand them with your name, accent colour and logo:
+
+```sh
+gregale auth config shop-auth --brand-name Shop --brand-color '#4f46e5' --brand-logo-url https://cdn.example.com/logo.svg
+```
+
+The name also appears in emails and passkey prompts. The logo loads from its
+HTTPS URL; the pages allow that URL's origin for images and nothing else.
+
+Read the session with `@gregale/auth`:
 
 ```ts
 import { createAuthClient } from '@gregale/auth'
@@ -342,7 +398,19 @@ part of an email address. From a terminal:
 printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
 ```
 
-GoTrue v2.197.0 does not record client IP addresses in this log.
+GoTrue v2.197.0 does not record client IP addresses in this log. **Export CSV**
+on the Activity tab downloads up to 10,000 entries matching the search; the file
+is built in your browser from the Auth app's responses.
+
+GoTrue never prunes this log, so it grows in your database. Keep it for a
+number of days instead:
+
+```sh
+gregale auth config shop-auth --activity-retention 90
+```
+
+The Auth app deletes older entries in batches after requests, at most every six
+hours, so pruning never wakes it or your database.
 
 `gregale auth admin-key list shop-auth` shows key IDs and
 `gregale auth admin-key revoke shop-auth ID` removes one. Both restart the Auth

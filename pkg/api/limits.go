@@ -10541,6 +10541,15 @@ const (
 	AuthEventLeaseSeconds      = 120
 	AuthEventMaxBackoffSeconds = 3600
 	AuthEventRetentionSeconds  = 3 * 24 * 3600
+	// AuthUINameMaxChars bounds the hosted pages' display name.
+	AuthUINameMaxChars = 60
+	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app
+	// prunes at most AuthAuditPruneBatches batches of AuthAuditPruneBatch
+	// entries per run, and runs at most every AuthAuditPruneIntervalSeconds.
+	AuthAuditRetentionMaxDays     = 3650
+	AuthAuditPruneBatch           = 5000
+	AuthAuditPruneBatches         = 20
+	AuthAuditPruneIntervalSeconds = 6 * 3600
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

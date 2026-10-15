@@ -372,6 +372,23 @@ type authPublicSettings struct {
 	Events struct {
 		Lifecycle bool `json:"lifecycle"`
 	} `json:"events"`
+	Passkeys struct {
+		Enabled bool     `json:"enabled"`
+		RPID    string   `json:"rp_id"`
+		Origins []string `json:"origins"`
+	} `json:"passkeys"`
+	Branding struct {
+		Name    string  `json:"name"`
+		Color   *string `json:"color"`
+		LogoURL *string `json:"logo_url"`
+	} `json:"branding"`
+	Captcha *struct {
+		Provider string `json:"provider"`
+		SiteKey  string `json:"site_key"`
+	} `json:"captcha"`
+	Activity struct {
+		RetentionDays *int `json:"retention_days"`
+	} `json:"activity"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

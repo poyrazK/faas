@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -182,6 +183,7 @@ func TestAuthAdminKeyListJSON(t *testing.T) {
 	})
 	out := captureAuthStdout(t)
 	jsonOutput = true
+	t.Cleanup(resetJSONOutput) // later tests expect text output
 	if code := cmdAuth([]string{"admin-key", "list", "shop-auth"}); code != 0 {
 		t.Fatalf("list = %d", code)
 	}
@@ -238,5 +240,39 @@ func TestAuthActivityReadsTheAdminAPIWithTheOwnerKey(t *testing.T) {
 	}
 	if code := cmdAuth([]string{"activity", "shop-auth", "--limit", "500"}); code == 0 {
 		t.Fatal("accepted a limit above 100")
+	}
+}
+
+func TestRestartAuthAppRetriesWhileARestartIsRunning(t *testing.T) {
+	resetJSONEnv(t)
+	attempts := 0
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "POST" || r.URL.Path != "/v1/apps/shop-auth/restart" {
+			return false
+		}
+		attempts++
+		if attempts < 3 {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			writeJSONTest(w, map[string]any{"status": 409, "code": "conflict", "title": "Restart already in progress"})
+			return true
+		}
+		writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+		return true
+	})
+	oldWindow, oldPause := authRestartRetryWindow, authRestartRetryPause
+	authRestartRetryWindow, authRestartRetryPause = time.Minute, time.Millisecond
+	t.Cleanup(func() { authRestartRetryWindow, authRestartRetryPause = oldWindow, oldPause })
+	client, err := authedClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	old := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = old })
+	restartAuthApp(t.Context(), client, "shop-auth")
+	if attempts != 3 || stderr.Len() != 0 {
+		t.Fatalf("attempts = %d, warnings = %q", attempts, stderr.String())
 	}
 }
