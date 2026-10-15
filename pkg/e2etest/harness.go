@@ -95,6 +95,9 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+	// VMMDMetricsURL is vmmd's /metrics endpoint, set only when the test
+	// starts the harness with VMMDMetrics.
+	VMMDMetricsURL string
 
 	// startedAt bounds which guest consoles belong to this harness: only files
 	// modified after it are dumped on failure (see DumpLogs).
@@ -290,6 +293,11 @@ failure_report_dir = %q
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
 		}
+		if which&VMMDMetrics != 0 {
+			addr := freeTCPAddr(t)
+			cfg += fmt.Sprintf("metrics_addr = %q\n", addr)
+			h.VMMDMetricsURL = "http://" + addr + "/metrics"
+		}
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
@@ -419,6 +427,10 @@ const (
 	// the per-test Unix socket. It lets CI exercise the durable drain without
 	// pretending a missing vmmd bridge is a successful customer response.
 	GatewaySynthStub
+	// VMMDMetrics gives vmmd a loopback /metrics listener (VMMDMetricsURL).
+	// It starts no daemon of its own. vmmd binds a fixed reserved port here,
+	// so only tests that read its counters opt in.
+	VMMDMetrics
 )
 
 // DeployWake is the daemon set the image deploy → snapshot → park → wake
