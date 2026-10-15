@@ -4172,15 +4172,20 @@ type IssueTrackerSyncTriage struct {
 	Revision       int64
 	AcknowledgedBy pgtype.UUID
 	ClaimedBy      pgtype.UUID
+	SnoozedUntil   pgtype.Timestamptz
+	SnoozedBy      pgtype.UUID
+	SnoozeReason   string
 }
 
 type IssueTrackerSyncTriageActivity struct {
-	ID         pgtype.UUID
-	IncidentID pgtype.UUID
-	ActorID    pgtype.UUID
-	Action     string
-	Revision   int64
-	CreatedAt  pgtype.Timestamptz
+	ID           pgtype.UUID
+	IncidentID   pgtype.UUID
+	ActorID      pgtype.UUID
+	Action       string
+	Revision     int64
+	CreatedAt    pgtype.Timestamptz
+	SnoozedUntil pgtype.Timestamptz
+	Reason       string
 }
 
 type Job struct {

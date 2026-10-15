@@ -10481,6 +10481,8 @@ const (
 const (
 	IssueTrackerSyncNotificationFailuresDefault = 3
 	IssueTrackerSyncNotificationFailuresMax     = 20
+	IssueTrackerSyncSnoozeMax                   = 7 * 24 * time.Hour
+	IssueTrackerSyncSnoozeReasonMaxBytes        = 512
 	IssueTrackerSyncTriageHistoryMax            = 20
 	IssueTrackerSyncNotificationsMax            = 50
 	IssueTrackerSyncHistoryMax                  = 50 // Recent receipts retained per linked ticket (ADR-1228).

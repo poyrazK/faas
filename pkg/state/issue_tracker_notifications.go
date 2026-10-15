@@ -11,6 +11,8 @@ import (
 )
 
 type IssueTrackerNotificationStore interface {
+	UpdateIssueTrackerTriage(context.Context, string, string, string, string, int64, IssueTrackerTriageAction) error
+	ListIssueTrackerSyncNotificationsView(context.Context, string, string, string, string, string, IssueCursor) (IssueTrackerNotificationPage, error)
 	GetIssueTrackerTriage(context.Context, string, string, string, string) (IssueTrackerTriage, error)
 	ActOnIssueTrackerTriage(context.Context, string, string, string, string, int64, string) error
 	CanReadIssueTrackerNotifications(context.Context, string, string, string, string) (bool, error)
@@ -31,7 +33,10 @@ type IssueTrackerNotificationPage struct {
 }
 type IssueTrackerSyncNotification struct {
 	ID, LinkID, IssueID, IssueTitle, Kind, Outcome, Reason, TeamID, TeamName string
-	CreatedAt                                                                time.Time
+	CreatedAt, SortAt                                                        time.Time
+	Snoozed, Resurfaced                                                      bool
+	SnoozedUntil                                                             *time.Time
+	SnoozedBy, SnoozedName, SnoozeReason                                     string
 	AcknowledgedBy, ClaimedBy, AcknowledgedName, ClaimedName                 string
 }
 
@@ -84,8 +89,8 @@ func trackerSyncNotificationTransition(prev trackerSyncIncident, policy IssueTra
 	return prev, kind
 }
 
-func trackerSyncNotificationCursorHash(app, owner, actor, team string) string {
-	h := sha256.Sum256([]byte("tracker_sync_notifications/" + app + "/" + owner + "/" + actor + "/" + team))
+func trackerSyncNotificationCursorHash(app, owner, actor, team, view string) string {
+	h := sha256.Sum256([]byte("tracker_sync_notifications/" + app + "/" + owner + "/" + actor + "/" + team + "/" + view))
 	return hex.EncodeToString(h[:])
 }
 
@@ -95,9 +100,20 @@ type IssueTrackerTriage struct {
 	Revision                                                             int64
 	Active                                                               bool
 	History                                                              []IssueTrackerTriageActivity
+	Snoozed, Resurfaced                                                  bool
+	SnoozedUntil                                                         *time.Time
+	SnoozedBy, SnoozedName, SnoozeReason                                 string
 }
 type IssueTrackerTriageActivity struct {
 	ActorID, ActorName, Action string
+	SnoozedUntil               *time.Time
+	Reason                     string
 	Revision                   int64
 	CreatedAt                  time.Time
+}
+
+type IssueTrackerTriageAction struct {
+	Action       string
+	SnoozedUntil *time.Time
+	Reason       string
 }

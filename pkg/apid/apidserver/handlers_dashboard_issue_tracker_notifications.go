@@ -63,7 +63,7 @@ func (s *server) dashboardTrackerNotificationsHandler(w http.ResponseWriter, r *
 		return
 	}
 	team := r.URL.Query().Get("team")
-	page, err := st.ListIssueTrackerSyncNotifications(r.Context(), app.ID, app.AccountID, acct.ID, team, cursor)
+	page, err := st.ListIssueTrackerSyncNotificationsView(r.Context(), app.ID, app.AccountID, acct.ID, team, r.URL.Query().Get("view"), cursor)
 	if err != nil {
 		writeIssueError(w, err)
 		return
@@ -86,12 +86,12 @@ func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *h
 	}
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
-	view := dashboard.IssueTrackerNotificationsView{AppSlug: app.Slug, CSRF: token, TeamFilter: team, CanManage: app.AccountID == acct.ID, Policy: policy, Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
+	view := dashboard.IssueTrackerNotificationsView{AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
 	for _, item := range page.Items {
 		view.Reasons[item.ID] = dashboard.IssueTrackerSyncReason(item.Reason)
 	}
 	if page.NextCursor != "" {
-		view.NextURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/issues/tracker-notifications?team=" + url.QueryEscape(team) + "&cursor=" + url.QueryEscape(page.NextCursor)
+		view.NextURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/issues/tracker-notifications?team=" + url.QueryEscape(team) + "&view=" + url.QueryEscape(view.InboxView) + "&cursor=" + url.QueryEscape(page.NextCursor)
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Tracker sync notifications", Body: "issue_tracker_notifications", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
 		renderProblem(w, s.log, err)

@@ -2465,6 +2465,150 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if v := inbox(member.ID, team.ID).Items[0]; v.ClaimedBy != member.ID || v.AcknowledgedBy != member.ID {
 		t.Fatal("inbox handling state", v)
 	}
+	// Snoozes share incident state, use database time, and resurface without a worker.
+	viewInbox := func(actor, view string) state.IssueTrackerNotificationPage {
+		t.Helper()
+		p, err := st.ListIssueTrackerSyncNotificationsView(t.Context(), app.ID, app.AccountID, actor, "", view, state.IssueCursor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	snoozeUntil := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	snooze := func(actor string, revision int64, until time.Time, reason string) error {
+		return st.UpdateIssueTrackerTriage(t.Context(), app.ID, app.AccountID, actor, notice, revision, state.IssueTrackerTriageAction{Action: "snooze", SnoozedUntil: &until, Reason: reason})
+	}
+	for _, tc := range []struct {
+		until  time.Time
+		reason string
+	}{
+		{time.Now().Add(-time.Hour), "past"},
+		{time.Now().Add(api.IssueTrackerSyncSnoozeMax + time.Hour), "too long"},
+		{snoozeUntil, strings.Repeat("é", api.IssueTrackerSyncSnoozeReasonMaxBytes)},
+		{snoozeUntil, "nul\x00reason"},
+		{snoozeUntil, string([]byte{0xff})},
+	} {
+		if err := snooze(member.ID, finalTriageRevision, tc.until, tc.reason); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatal("invalid snooze accepted", err)
+		}
+	}
+	if err := snooze(outsider.ID, finalTriageRevision, snoozeUntil, ""); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("unrelated recipient snoozed incident", err)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), `CREATE FUNCTION reject_tracker_snooze() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'history unavailable'; END $$; CREATE TRIGGER reject_tracker_snooze BEFORE INSERT ON issue_tracker_sync_triage_activity FOR EACH ROW EXECUTE FUNCTION reject_tracker_snooze()`); err != nil {
+		t.Fatal(err)
+	}
+	if snooze(member.ID, finalTriageRevision, snoozeUntil, "rollback") == nil {
+		t.Fatal("snooze committed without history")
+	}
+	if v := triageGet(member.ID); v.Snoozed || v.SnoozedUntil != nil || v.Revision != finalTriageRevision {
+		t.Fatal("partial snooze", v)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "DROP TRIGGER reject_tracker_snooze ON issue_tracker_sync_triage_activity; DROP FUNCTION reject_tracker_snooze()"); err != nil {
+		t.Fatal(err)
+	}
+	snoozePost := func(action string, revision int64, until, reason string, valid bool) *httptest.ResponseRecorder {
+		form := url.Values{"action": {action}, "expected_revision": {fmt.Sprint(revision)}, "snoozed_until": {until}, "reason": {reason}}
+		if valid {
+			form.Set("csrf_token", triageCSRF.Value)
+		}
+		req := httptest.NewRequest("POST", triageURL, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if valid {
+			req.AddCookie(triageCSRF)
+		}
+		saved := *e.Acct()
+		*e.Acct() = member
+		e.AddAdminSession(t, req)
+		*e.Acct() = saved
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	if out := snoozePost("snooze", finalTriageRevision, snoozeUntil.Format(time.RFC3339), "", false); out.Code != 400 {
+		t.Fatal("snooze CSRF bypass", out.Code)
+	}
+	if out := snoozePost("snooze", finalTriageRevision, "invalid", "", true); out.Code != 400 {
+		t.Fatal("invalid snooze date", out.Code)
+	}
+	if out := snoozePost("snooze", finalTriageRevision, "", "", true); out.Code != 400 {
+		t.Fatal("missing snooze date", out.Code)
+	}
+	if out := snoozePost("snooze", finalTriageRevision, snoozeUntil.Format(time.RFC3339), "  investigate deployment  ", true); out.Code != 303 {
+		t.Fatal("member snooze HTTP", out.Code, out.Body.String())
+	}
+	finalTriageRevision++
+	if v := triageGet(member.ID); !v.Snoozed || v.SnoozedUntil == nil || !v.SnoozedUntil.Equal(snoozeUntil) || v.SnoozedBy != member.ID || v.SnoozeReason != "investigate deployment" || v.History[0].Action != "snooze" || v.History[0].Reason != "investigate deployment" || v.History[0].SnoozedUntil == nil {
+		t.Fatal("snooze evidence", v)
+	}
+	if len(inbox(member.ID, team.ID).Items) != 0 || len(viewInbox(member.ID, "snoozed").Items) != 1 || len(viewInbox(member.ID, "all").Items) != 1 {
+		t.Fatal("snooze inbox views")
+	}
+	if out := getAs(member, pageURL+"?view=snoozed"); out.Code != 200 || !strings.Contains(out.Body.String(), "investigate deployment") {
+		t.Fatal("snoozed inbox page", out.Code, out.Body.String())
+	}
+	if out := getAs(member, triageURL); out.Code != 200 || !strings.Contains(out.Body.String(), `value="unsnooze"`) {
+		t.Fatal("snooze controls", out.Code, out.Body.String())
+	}
+	if out := snoozePost("unsnooze", finalTriageRevision-1, "", "", true); out.Code != 409 {
+		t.Fatal("stale unsnooze", out.Code)
+	}
+	if out := snoozePost("unsnooze", finalTriageRevision, "", "", true); out.Code != 303 {
+		t.Fatal("unsnooze HTTP", out.Code, out.Body.String())
+	}
+	finalTriageRevision++
+	if v := triageGet(member.ID); v.Snoozed || v.SnoozedUntil != nil || v.History[0].Action != "unsnooze" || len(inbox(member.ID, team.ID).Items) != 1 {
+		t.Fatal("manual unsnooze", v)
+	}
+	if err := triageAct(app.AccountID, finalTriageRevision, "unsnooze"); err != nil || triageGet(member.ID).Revision != finalTriageRevision {
+		t.Fatal("unsnooze not idempotent", err)
+	}
+	// Concurrent deferrals must not overwrite one another.
+	snoozes := make(chan error, 2)
+	for _, actor := range []string{member.ID, app.AccountID} {
+		go func(actor string) { snoozes <- snooze(actor, finalTriageRevision, snoozeUntil, "") }(actor)
+	}
+	snoozeWins := 0
+	for range 2 {
+		if <-snoozes == nil {
+			snoozeWins++
+		}
+	}
+	if snoozeWins != 1 {
+		t.Fatal("concurrent snoozes", snoozeWins)
+	}
+	finalTriageRevision++
+	if err := triageAct(app.AccountID, finalTriageRevision, "release"); err != nil {
+		t.Fatal(err)
+	}
+	finalTriageRevision++
+	if err := triageAct(member.ID, finalTriageRevision, "claim"); err != nil {
+		t.Fatal(err)
+	}
+	finalTriageRevision++
+	if !triageGet(member.ID).Snoozed {
+		t.Fatal("claim update lost snooze")
+	}
+	// Advance only the isolated fixture deadline; reads must resurface it without an expiry job.
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_sync_triage SET snoozed_until=clock_timestamp() WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v := triageGet(member.ID); v.Snoozed || !v.Resurfaced || v.Revision != finalTriageRevision {
+		t.Fatal("snooze did not expire", v)
+	}
+	if p := inbox(member.ID, team.ID); len(p.Items) != 1 || !p.Items[0].Resurfaced || !p.Items[0].SortAt.After(p.Items[0].CreatedAt) {
+		t.Fatal("expired incident did not resurface", p)
+	}
+	if len(viewInbox(member.ID, "snoozed").Items) != 0 {
+		t.Fatal("expired item remained in Snoozed view")
+	}
+	if out := getAs(member, triageURL); out.Code != 200 || !strings.Contains(out.Body.String(), "Returned from snooze") || strings.Contains(out.Body.String(), `value="unsnooze"`) {
+		t.Fatal("expiry display", out.Code, out.Body.String())
+	}
+	if err := snooze(member.ID, finalTriageRevision, snoozeUntil, "waiting for recovery"); err != nil {
+		t.Fatal(err)
+	}
+	finalTriageRevision++
 	if err = full.RemoveOrgMember(t.Context(), org.ID, member.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -2480,6 +2624,13 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	}
 	if err := triageAct(member.ID, finalTriageRevision, "release"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("removed member wrote triage", err)
+	}
+
+	if len(viewInbox(member.ID, "all").Items) != 0 {
+		t.Fatal("removed member retained snoozed notices")
+	}
+	if err := snooze(member.ID, finalTriageRevision, snoozeUntil, ""); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed member updated snooze", err)
 	}
 
 	inviteToken := []byte(strings.Repeat("n", 32))
@@ -2503,12 +2654,16 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if err := triageAct(member.ID, finalTriageRevision, "release"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("removed team member changed triage", err)
 	}
+
+	if len(viewInbox(member.ID, "all").Items) != 0 {
+		t.Fatal("removed team member retained snoozed notices")
+	}
 	complete("matched", "")
 	p := inbox(app.AccountID, team.ID)
 	if len(p.Items) != 2 || p.Items[0].Kind != "recovered" {
 		t.Fatal("recovery routing", p)
 	}
-	if v := triageGet(app.AccountID); v.Active || v.ClaimedBy != member.ID || len(v.History) != api.IssueTrackerSyncTriageHistoryMax {
+	if v := triageGet(app.AccountID); v.Active || v.Snoozed || v.Resurfaced || v.ClaimedBy != member.ID || len(v.History) != api.IssueTrackerSyncTriageHistoryMax {
 		t.Fatal("recovery lost triage history", v)
 	}
 	if triageAct(app.AccountID, finalTriageRevision, "release") == nil {
@@ -2525,8 +2680,12 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	}
 
 	freshNotice := inbox(app.AccountID, "").Items[0].ID
-	if fresh, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice); err != nil || !fresh.Active || fresh.Revision != 0 || fresh.ClaimedBy != "" {
+	if fresh, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice); err != nil || !fresh.Active || fresh.Revision != 0 || fresh.ClaimedBy != "" || fresh.Snoozed || fresh.SnoozedUntil != nil {
 		t.Fatal("new incident inherited handling", fresh, err)
+	}
+
+	if err := st.UpdateIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice, 0, state.IssueTrackerTriageAction{Action: "snooze", SnoozedUntil: &snoozeUntil}); err != nil {
+		t.Fatal(err)
 	}
 	policy.Enabled = false
 	policy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, policy)
@@ -2537,7 +2696,7 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	if err := st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice, 0, "claim"); err == nil {
 		t.Fatal("disabled notification policy allowed triage")
 	}
-	if fresh, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice); err != nil || fresh.Active {
+	if fresh, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, freshNotice); err != nil || fresh.Active || fresh.Snoozed {
 		t.Fatal("opt-out retained active triage", fresh, err)
 	}
 	complete("matched", "")
@@ -2602,6 +2761,10 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 	}
 	if _, err = st.ListIssueTrackerSyncNotifications(t.Context(), app.ID, app.AccountID, member.ID, "", cursor); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("cursor crossed actor", err)
+	}
+
+	if _, err := st.ListIssueTrackerSyncNotificationsView(t.Context(), app.ID, app.AccountID, app.AccountID, "", "all", cursor); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("cursor crossed inbox view", err)
 	}
 	// Outbox failure must roll back both completion and incident/notification state.
 	complete("error", "provider_unavailable")

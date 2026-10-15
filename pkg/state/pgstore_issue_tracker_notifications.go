@@ -146,6 +146,10 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 }
 
 func (s *PgStore) ListIssueTrackerSyncNotifications(ctx context.Context, app, owner, actor, team string, cur IssueCursor) (IssueTrackerNotificationPage, error) {
+	return s.ListIssueTrackerSyncNotificationsView(ctx, app, owner, actor, team, "active", cur)
+}
+
+func (s *PgStore) ListIssueTrackerSyncNotificationsView(ctx context.Context, app, owner, actor, team, view string, cur IssueCursor) (IssueTrackerNotificationPage, error) {
 	out := IssueTrackerNotificationPage{Items: []IssueTrackerSyncNotification{}}
 	if team != "" {
 		id, err := uuid.Parse(team)
@@ -154,21 +158,27 @@ func (s *PgStore) ListIssueTrackerSyncNotifications(ctx context.Context, app, ow
 		}
 		team = id.String()
 	}
-	hash := trackerSyncNotificationCursorHash(app, owner, actor, team)
+	if view == "" {
+		view = "active"
+	}
+	if view != "active" && view != "snoozed" && view != "all" {
+		return out, ErrInvalidArgument
+	}
+	hash := trackerSyncNotificationCursorHash(app, owner, actor, team, view)
 	if !cur.Time.IsZero() && cur.FilterHash != hash || cur.Sort != "" || cur.Tag != "" || cur.MinCustomers != 0 || cur.ImpactWindowEnd != nil {
 		return out, ErrInvalidArgument
 	}
-	rows, err := sqlc.New().IssueTrackerNotificationList(ctx, s.pool, sqlc.IssueTrackerNotificationListParams{AppID: issueUUID(app), OwnerAccountID: issueUUID(owner), ActorAccountID: issueUUID(actor), TeamFilter: issueUUID(team), CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1})
+	rows, err := sqlc.New().IssueTrackerNotificationList(ctx, s.pool, sqlc.IssueTrackerNotificationListParams{InboxView: view, AppID: issueUUID(app), OwnerAccountID: issueUUID(owner), ActorAccountID: issueUUID(actor), TeamFilter: issueUUID(team), CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1})
 	if err != nil {
 		return out, err
 	}
 	for i, r := range rows {
 		if i == api.IssuePageSize {
 			last := out.Items[len(out.Items)-1]
-			out.NextCursor = EncodeIssueCursor(IssueCursor{Time: last.CreatedAt, ID: last.ID, FilterHash: hash})
+			out.NextCursor = EncodeIssueCursor(IssueCursor{Time: last.SortAt, ID: last.ID, FilterHash: hash})
 			break
 		}
-		out.Items = append(out.Items, IssueTrackerSyncNotification{ID: issueID(r.ID), LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, Kind: r.Kind, Outcome: r.Outcome, Reason: r.Reason, TeamID: issueID(r.TeamID), TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time, AcknowledgedBy: issueID(r.AcknowledgedBy), ClaimedBy: issueID(r.ClaimedBy), AcknowledgedName: r.AcknowledgedName, ClaimedName: r.ClaimedName})
+		out.Items = append(out.Items, IssueTrackerSyncNotification{ID: issueID(r.ID), LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, Kind: r.Kind, Outcome: r.Outcome, Reason: r.Reason, TeamID: issueID(r.TeamID), TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time, SortAt: r.SortAt.Time, Snoozed: r.Snoozed, Resurfaced: r.Resurfaced, SnoozedUntil: trackerSnoozeTime(r.SnoozedUntil), SnoozedBy: issueID(r.SnoozedBy), SnoozedName: r.SnoozedName, SnoozeReason: r.SnoozeReason.String, AcknowledgedBy: issueID(r.AcknowledgedBy), ClaimedBy: issueID(r.ClaimedBy), AcknowledgedName: r.AcknowledgedName, ClaimedName: r.ClaimedName})
 	}
 	return out, nil
 }

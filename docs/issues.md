@@ -1570,3 +1570,26 @@ visible as recorded handling state, and grants no access; ask the app owner to
 release it. The handling page retains the latest 20 actions per incident while
 its notifications remain retained. Pruning the final notice removes that handling
 history too.
+
+### Snooze a tracker incident
+
+Open **Triage and handling history**, choose **Snooze until (UTC)**, optionally add
+a reason, and select **Snooze incident**. The deadline must be in the future and
+within seven days. Reasons allow up to 512 UTF-8 bytes. The page shows who snoozed
+it, the expiry, and the reason. You can update the snooze or **Unsnooze now**.
+
+Snoozes apply to every notice for the same incident. The **Regular inbox** hides
+currently snoozed incidents; choose **Snoozed** to find them or **All retained
+notices** to include them. When the deadline passes, the incident returns
+automatically near the top, labeled **Returned from snooze**. Refresh the inbox
+after expiry; pagination is live, so a previously opened later page may not include
+items that have returned ahead of it. Expiry works across restarts and requires no
+provider request.
+
+The app owner and eligible captured recipients can snooze or unsnooze an active
+incident, with normal membership, CSRF, MFA and revision checks. Snooze and manual
+unsnooze actions appear in handling history. Concurrent edits require a reload.
+Confirmed recovery or notification settings changes end the active snooze while
+preserving history; a new incident starts unsnoozed. Snoozing changes inbox
+visibility, and leaves issue resolution, claims, acknowledgment, tracker sync and
+app webhook delivery unchanged.

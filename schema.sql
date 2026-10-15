@@ -58915,15 +58915,22 @@ CREATE TABLE public.issue_tracker_sync_triage (
  link_id uuid NOT NULL REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  acknowledged_by uuid,
- claimed_by uuid
+ claimed_by uuid,
+ snoozed_until timestamptz,
+ snoozed_by uuid,
+ snooze_reason text NOT NULL DEFAULT '',
+ CONSTRAINT issue_tracker_triage_snooze_fields CHECK ((snoozed_until IS NULL)=(snoozed_by IS NULL) AND (snoozed_until IS NOT NULL OR snooze_reason='') AND octet_length(snooze_reason)<=512)
 );
 CREATE INDEX issue_tracker_sync_triage_link_idx ON public.issue_tracker_sync_triage(link_id);
 CREATE TABLE public.issue_tracker_sync_triage_activity (
  id uuid PRIMARY KEY,
  incident_id uuid NOT NULL REFERENCES public.issue_tracker_sync_triage(incident_id) ON DELETE CASCADE,
  actor_id uuid NOT NULL,
- action text NOT NULL CHECK(action IN ('acknowledge','claim','release')),
+ action text NOT NULL CHECK(action IN ('acknowledge','claim','release','snooze','unsnooze')),
  revision bigint NOT NULL CHECK(revision>0),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ snoozed_until timestamptz,
+ reason text NOT NULL DEFAULT '',
+ CONSTRAINT issue_tracker_triage_activity_snooze_fields CHECK ((action='snooze')=(snoozed_until IS NOT NULL) AND (action='snooze' OR reason='') AND octet_length(reason)<=512),
  UNIQUE(incident_id,revision)
 );

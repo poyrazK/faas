@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -38,5 +39,24 @@ func TestTrackerTriageControlsAndEscapedHistory(t *testing.T) {
 				t.Fatal(body)
 			}
 		})
+	}
+}
+
+func TestTrackerSnoozeShowsActorExpiryAndEscapedReason(t *testing.T) {
+	tmpl, err := template.ParseFS(tmplFS, "templates/issue_tracker_triage.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().UTC().Add(time.Hour)
+	for _, snoozed := range []bool{true, false} {
+		v := NewIssueTrackerTriageView("app", "csrf", state.IssueTrackerTriage{Active: true, Snoozed: snoozed, Resurfaced: !snoozed, SnoozedUntil: &until, SnoozedBy: "actor", SnoozedName: "<script>actor</script>", SnoozeReason: "<script>reason</script>", History: []state.IssueTrackerTriageActivity{{Action: "snooze", SnoozedUntil: &until, Reason: "<script>history</script>"}, {Action: "unsnooze"}}}, false)
+		var out bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&out, "issue_tracker_triage.html", Page{Data: v}); err != nil {
+			t.Fatal(err)
+		}
+		body := out.String()
+		if strings.Contains(body, "<script>") || strings.Contains(body, `value="unsnooze"`) != snoozed || !strings.Contains(body, "Snooze until (UTC)") || (!snoozed && !strings.Contains(body, "Returned from snooze")) {
+			t.Fatal(body)
+		}
 	}
 }

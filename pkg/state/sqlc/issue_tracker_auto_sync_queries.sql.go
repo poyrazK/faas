@@ -632,34 +632,47 @@ func (q *Queries) IssueTrackerNotificationInsert(ctx context.Context, db DBTX, a
 }
 
 const issueTrackerNotificationList = `-- name: IssueTrackerNotificationList :many
-SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
+WITH notices AS (SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
  i.id AS issue_id,i.title AS issue_title,
  COALESCE(tr.revision,0)::bigint AS triage_revision,tr.acknowledged_by,tr.claimed_by,
- COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name
+ COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name,
+ tr.snoozed_until,tr.snoozed_by,tr.snooze_reason,COALESCE(sleeper.email::text,'')::text AS snoozed_name,
+ COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 JOIN issue_tracker_links l ON l.id=n.link_id JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
 LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
 LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=n.incident_id
+LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
+LEFT JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id
+LEFT JOIN accounts sleeper ON sleeper.id=tr.snoozed_by
 LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by
 LEFT JOIN accounts claim ON claim.id=tr.claimed_by
-WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
-AND ($3::uuid IS NULL OR n.team_id=$3)
-AND (a.account_id=$4::uuid OR (
- $4::uuid=ANY(n.recipient_account_ids)
- AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
- AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
-AND ($5::timestamptz IS NULL OR (n.created_at,n.id)<($5,$6::uuid))
-ORDER BY n.created_at DESC,n.id DESC LIMIT $7
+WHERE a.id=$5 AND a.account_id=$6 AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND ($7::uuid IS NULL OR n.team_id=$7)
+AND (a.account_id=$8::uuid OR (
+ $8::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$8 AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$8))))
+), inbox AS (SELECT notices.id, notices.link_id, notices.kind, notices.outcome, notices.reason, notices.created_at, notices.team_id, notices.team_name, notices.issue_id, notices.issue_title, notices.triage_revision, notices.acknowledged_by, notices.claimed_by, notices.acknowledged_name, notices.claimed_name, notices.snoozed_until, notices.snoozed_by, notices.snooze_reason, notices.snoozed_name, notices.active,
+ COALESCE(active AND snoozed_until>statement_timestamp(),false)::boolean AS snoozed,
+ COALESCE(active AND snoozed_until<=statement_timestamp(),false)::boolean AS resurfaced,
+ (CASE WHEN active AND snoozed_until<=statement_timestamp() THEN GREATEST(created_at,snoozed_until) ELSE created_at END)::timestamptz AS sort_at
+ FROM notices)
+SELECT id, link_id, kind, outcome, reason, created_at, team_id, team_name, issue_id, issue_title, triage_revision, acknowledged_by, claimed_by, acknowledged_name, claimed_name, snoozed_until, snoozed_by, snooze_reason, snoozed_name, active, snoozed, resurfaced, sort_at FROM inbox
+WHERE ($1::text='all' OR ($1='snoozed' AND snoozed) OR ($1='active' AND NOT snoozed))
+AND ($2::timestamptz IS NULL OR (sort_at,id)<($2,$3::uuid))
+ORDER BY sort_at DESC,id DESC LIMIT $4
 `
 
 type IssueTrackerNotificationListParams struct {
+	InboxView      string
+	CursorTime     pgtype.Timestamptz
+	CursorID       pgtype.UUID
+	PageLimit      int32
 	AppID          pgtype.UUID
 	OwnerAccountID pgtype.UUID
 	TeamFilter     pgtype.UUID
 	ActorAccountID pgtype.UUID
-	CursorTime     pgtype.Timestamptz
-	CursorID       pgtype.UUID
-	PageLimit      int32
 }
 
 type IssueTrackerNotificationListRow struct {
@@ -678,17 +691,26 @@ type IssueTrackerNotificationListRow struct {
 	ClaimedBy        pgtype.UUID
 	AcknowledgedName string
 	ClaimedName      string
+	SnoozedUntil     pgtype.Timestamptz
+	SnoozedBy        pgtype.UUID
+	SnoozeReason     pgtype.Text
+	SnoozedName      string
+	Active           bool
+	Snoozed          bool
+	Resurfaced       bool
+	SortAt           pgtype.Timestamptz
 }
 
 func (q *Queries) IssueTrackerNotificationList(ctx context.Context, db DBTX, arg IssueTrackerNotificationListParams) ([]IssueTrackerNotificationListRow, error) {
 	rows, err := db.Query(ctx, issueTrackerNotificationList,
+		arg.InboxView,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
 		arg.AppID,
 		arg.OwnerAccountID,
 		arg.TeamFilter,
 		arg.ActorAccountID,
-		arg.CursorTime,
-		arg.CursorID,
-		arg.PageLimit,
 	)
 	if err != nil {
 		return nil, err
@@ -713,6 +735,14 @@ func (q *Queries) IssueTrackerNotificationList(ctx context.Context, db DBTX, arg
 			&i.ClaimedBy,
 			&i.AcknowledgedName,
 			&i.ClaimedName,
+			&i.SnoozedUntil,
+			&i.SnoozedBy,
+			&i.SnoozeReason,
+			&i.SnoozedName,
+			&i.Active,
+			&i.Snoozed,
+			&i.Resurfaced,
+			&i.SortAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1139,15 +1169,17 @@ func (q *Queries) IssueTrackerSyncHistoryPrune(ctx context.Context, db DBTX, arg
 }
 
 const issueTrackerTriageActivityAdd = `-- name: IssueTrackerTriageActivityAdd :exec
-INSERT INTO issue_tracker_sync_triage_activity(id,incident_id,actor_id,action,revision) VALUES($1,$2,$3,$4,$5)
+INSERT INTO issue_tracker_sync_triage_activity(id,incident_id,actor_id,action,revision,snoozed_until,reason) VALUES($1,$2,$3,$4,$5,$6,$7)
 `
 
 type IssueTrackerTriageActivityAddParams struct {
-	ID         pgtype.UUID
-	IncidentID pgtype.UUID
-	ActorID    pgtype.UUID
-	Action     string
-	Revision   int64
+	ID           pgtype.UUID
+	IncidentID   pgtype.UUID
+	ActorID      pgtype.UUID
+	Action       string
+	Revision     int64
+	SnoozedUntil pgtype.Timestamptz
+	Reason       string
 }
 
 func (q *Queries) IssueTrackerTriageActivityAdd(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityAddParams) error {
@@ -1157,12 +1189,14 @@ func (q *Queries) IssueTrackerTriageActivityAdd(ctx context.Context, db DBTX, ar
 		arg.ActorID,
 		arg.Action,
 		arg.Revision,
+		arg.SnoozedUntil,
+		arg.Reason,
 	)
 	return err
 }
 
 const issueTrackerTriageActivityList = `-- name: IssueTrackerTriageActivityList :many
-SELECT h.id, h.incident_id, h.actor_id, h.action, h.revision, h.created_at,COALESCE(a.email::text,'')::text AS actor_name FROM issue_tracker_sync_triage_activity h LEFT JOIN accounts a ON a.id=h.actor_id
+SELECT h.id, h.incident_id, h.actor_id, h.action, h.revision, h.created_at, h.snoozed_until, h.reason,COALESCE(a.email::text,'')::text AS actor_name FROM issue_tracker_sync_triage_activity h LEFT JOIN accounts a ON a.id=h.actor_id
 WHERE h.incident_id=$1 ORDER BY h.revision DESC LIMIT $2
 `
 
@@ -1172,13 +1206,15 @@ type IssueTrackerTriageActivityListParams struct {
 }
 
 type IssueTrackerTriageActivityListRow struct {
-	ID         pgtype.UUID
-	IncidentID pgtype.UUID
-	ActorID    pgtype.UUID
-	Action     string
-	Revision   int64
-	CreatedAt  pgtype.Timestamptz
-	ActorName  string
+	ID           pgtype.UUID
+	IncidentID   pgtype.UUID
+	ActorID      pgtype.UUID
+	Action       string
+	Revision     int64
+	CreatedAt    pgtype.Timestamptz
+	SnoozedUntil pgtype.Timestamptz
+	Reason       string
+	ActorName    string
 }
 
 func (q *Queries) IssueTrackerTriageActivityList(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityListParams) ([]IssueTrackerTriageActivityListRow, error) {
@@ -1197,6 +1233,8 @@ func (q *Queries) IssueTrackerTriageActivityList(ctx context.Context, db DBTX, a
 			&i.Action,
 			&i.Revision,
 			&i.CreatedAt,
+			&i.SnoozedUntil,
+			&i.Reason,
 			&i.ActorName,
 		); err != nil {
 			return nil, err
@@ -1225,8 +1263,9 @@ func (q *Queries) IssueTrackerTriageActivityPrune(ctx context.Context, db DBTX, 
 }
 
 const issueTrackerTriageGet = `-- name: IssueTrackerTriageGet :one
-SELECT tr.incident_id, tr.link_id, tr.revision, tr.acknowledged_by, tr.claimed_by, COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name
+SELECT tr.incident_id, tr.link_id, tr.revision, tr.acknowledged_by, tr.claimed_by, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason, COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name
 FROM issue_tracker_sync_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts claim ON claim.id=tr.claimed_by
+LEFT JOIN accounts sleeper ON sleeper.id=tr.snoozed_by
 WHERE tr.incident_id=$1
 `
 
@@ -1236,8 +1275,12 @@ type IssueTrackerTriageGetRow struct {
 	Revision         int64
 	AcknowledgedBy   pgtype.UUID
 	ClaimedBy        pgtype.UUID
+	SnoozedUntil     pgtype.Timestamptz
+	SnoozedBy        pgtype.UUID
+	SnoozeReason     string
 	AcknowledgedName string
 	ClaimedName      string
+	SnoozedName      string
 }
 
 func (q *Queries) IssueTrackerTriageGet(ctx context.Context, db DBTX, incidentID pgtype.UUID) (IssueTrackerTriageGetRow, error) {
@@ -1249,8 +1292,12 @@ func (q *Queries) IssueTrackerTriageGet(ctx context.Context, db DBTX, incidentID
 		&i.Revision,
 		&i.AcknowledgedBy,
 		&i.ClaimedBy,
+		&i.SnoozedUntil,
+		&i.SnoozedBy,
+		&i.SnoozeReason,
 		&i.AcknowledgedName,
 		&i.ClaimedName,
+		&i.SnoozedName,
 	)
 	return i, err
 }
@@ -1265,8 +1312,8 @@ func (q *Queries) IssueTrackerTriagePrune(ctx context.Context, db DBTX, linkID p
 }
 
 const issueTrackerTriagePut = `-- name: IssueTrackerTriagePut :exec
-INSERT INTO issue_tracker_sync_triage(incident_id,link_id,revision,acknowledged_by,claimed_by) VALUES($1,$2,$3,$4,$5)
-ON CONFLICT(incident_id) DO UPDATE SET revision=excluded.revision,acknowledged_by=excluded.acknowledged_by,claimed_by=excluded.claimed_by
+INSERT INTO issue_tracker_sync_triage(incident_id,link_id,revision,acknowledged_by,claimed_by,snoozed_until,snoozed_by,snooze_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT(incident_id) DO UPDATE SET revision=excluded.revision,acknowledged_by=excluded.acknowledged_by,claimed_by=excluded.claimed_by,snoozed_until=excluded.snoozed_until,snoozed_by=excluded.snoozed_by,snooze_reason=excluded.snooze_reason
 `
 
 type IssueTrackerTriagePutParams struct {
@@ -1275,6 +1322,9 @@ type IssueTrackerTriagePutParams struct {
 	Revision       int64
 	AcknowledgedBy pgtype.UUID
 	ClaimedBy      pgtype.UUID
+	SnoozedUntil   pgtype.Timestamptz
+	SnoozedBy      pgtype.UUID
+	SnoozeReason   string
 }
 
 func (q *Queries) IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueTrackerTriagePutParams) error {
@@ -1284,12 +1334,15 @@ func (q *Queries) IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueT
 		arg.Revision,
 		arg.AcknowledgedBy,
 		arg.ClaimedBy,
+		arg.SnoozedUntil,
+		arg.SnoozedBy,
+		arg.SnoozeReason,
 	)
 	return err
 }
 
 const issueTrackerTriageScope = `-- name: IssueTrackerTriageScope :one
-SELECT n.incident_id,n.link_id,
+SELECT n.incident_id,n.link_id,statement_timestamp()::timestamptz AS checked_at,
  COALESCE(c.incident_id=n.incident_id AND p.enabled AND p.revision=c.settings_revision,false)::boolean AS active
 FROM issue_tracker_sync_notifications n JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id
 LEFT JOIN issue_tracker_sync_incidents c ON c.link_id=n.link_id
@@ -1312,6 +1365,7 @@ type IssueTrackerTriageScopeParams struct {
 type IssueTrackerTriageScopeRow struct {
 	IncidentID pgtype.UUID
 	LinkID     pgtype.UUID
+	CheckedAt  pgtype.Timestamptz
 	Active     bool
 }
 
@@ -1323,6 +1377,11 @@ func (q *Queries) IssueTrackerTriageScope(ctx context.Context, db DBTX, arg Issu
 		arg.ActorAccountID,
 	)
 	var i IssueTrackerTriageScopeRow
-	err := row.Scan(&i.IncidentID, &i.LinkID, &i.Active)
+	err := row.Scan(
+		&i.IncidentID,
+		&i.LinkID,
+		&i.CheckedAt,
+		&i.Active,
+	)
 	return i, err
 }
