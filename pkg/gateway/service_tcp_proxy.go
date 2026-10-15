@@ -301,13 +301,16 @@ func (p *ServiceTCPProxy) releaseDeployment(ctx context.Context, callerAppID, ca
 
 // forward picks a replica, waking the target when none is routable, and
 // tries one alternate replica only when the first could not be dialed before
-// any client byte was read.
-// It also reports whether it had to wake the target.
+// any client byte was read. It also reports whether it had to wake the
+// target. A replica vmmd refused as frozen (ADR-1151) is withdrawn rather
+// than quarantined, and the retry skips it, so the target is woken and the
+// frozen replica thaws.
 func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller ServiceCaller, target ServiceTCPTarget, deploymentID string, port int) (string, string, bool, error) {
 	services := p.cfg.Services
 	woke, observed := false, false
+	frozenID := ""
 	for attempt := 0; attempt < 2; attempt++ {
-		endpoints, attemptWoke, reason, err := p.routable(ctx, target.AppID, deploymentID)
+		endpoints, attemptWoke, reason, err := p.routable(ctx, target.AppID, deploymentID, frozenID)
 		woke = woke || attemptWoke
 		if reason != "" {
 			return "", reason, woke, err
@@ -327,7 +330,11 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller Ser
 		hop.Port = port
 		err = p.cfg.Forward(ctx, conn, hop, target.IdleTimeout)
 		if errors.Is(err, ErrTCPGuestUnreachable) {
-			services.retireStaleEndpoint(target.AppID, endpoint.InstanceID, false)
+			frozen := instanceFrozenRefusal(err)
+			if frozen {
+				frozenID = endpoint.InstanceID
+			}
+			services.retireEndpoint(target.AppID, endpoint.InstanceID, frozen)
 			services.invalidateEndpoints(target.AppID)
 			continue
 		}
@@ -341,14 +348,20 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller Ser
 }
 
 // routable mirrors ServiceProxy.routableEndpoints without an HTTP writer; woke
-// reports that the target had to be restored.
-func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID string) (_ []ServiceEndpoint, woke bool, reason string, _ error) {
+// reports that the target had to be restored. frozenID, when set, is a
+// replica vmmd just refused as frozen: it is left out until the wake has
+// thawed it.
+func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID, frozenID string) (_ []ServiceEndpoint, woke bool, reason string, _ error) {
 	services := p.cfg.Services
 	endpoints, err := services.endpoints(ctx, appID)
 	if err != nil {
 		return nil, false, "registry_unavailable", err
 	}
-	if endpoints = serviceEndpointsForDeployment(endpoints, deploymentID); len(endpoints) > 0 {
+	endpoints = serviceEndpointsForDeployment(endpoints, deploymentID)
+	if frozenID != "" {
+		endpoints = withoutServiceEndpoint(endpoints, frozenID)
+	}
+	if len(endpoints) > 0 {
 		return endpoints, false, "", nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)

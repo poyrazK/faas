@@ -464,3 +464,48 @@ func TestServiceProxyCountsEdgeCallsThatWokeTheTarget(t *testing.T) {
 		t.Fatalf("edge wakes = %g, want 1 (only the call that restored the target)", got)
 	}
 }
+
+// ADR-1131/ADR-1133: a call whose leased endpoint has just parked is
+// re-routed, and the wake that re-route does still makes it a cold edge call.
+func TestServiceProxyCountsRerouteWakeAsColdEdgeCall(t *testing.T) {
+	callerID, targetID := uuid.NewString(), uuid.NewString()
+	m := NewMetrics()
+	provider := &parkingProvider{}
+	provider.set(ServiceEndpoint{InstanceID: "instance-parked", NodeID: "node-a", Port: 8080})
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: targetID}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: callerID}, nil
+		},
+		Wake: func(context.Context, string) error {
+			provider.set(ServiceEndpoint{InstanceID: "instance-woken", NodeID: "node-a", Port: 8081})
+			return nil
+		},
+		EvictEndpoint: func(_, instanceID string) { provider.remove(instanceID) },
+		Metrics:       m,
+		Forward: func(target Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if target.InstanceID == "instance-parked" {
+					markUndeliveredTarget(r.Context())
+					http.Error(w, "gone", http.StatusServiceUnavailable)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+		EndpointTTL: 5 * time.Second,
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://gateway/v1/internal/services/orders", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, callerID)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %q, want 200 from the woken instance", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(m.serviceDependencyEdgeWakes.WithLabelValues(callerID, targetID)); got != 1 {
+		t.Fatalf("edge wakes = %g, want 1 for the call whose re-route woke the target", got)
+	}
+}

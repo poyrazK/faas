@@ -29,7 +29,8 @@ lifecycle:
 Gregale sends one `POST` to that path on the restored app's loopback listener
 after repairing the guest clock and entropy. Return any 2xx status to allow
 readiness. A timeout or other status rejects that restored instance and falls
-back to a fresh cold boot. The hook runs only on restore, not on cold boot.
+back to a fresh cold boot. The hook runs on restore and when a
+[frozen instance](#frozen-instances) resumes, not on cold boot.
 The path must start with `/`; timeout defaults to 500 ms and can be at most
 2 seconds. This feature applies to request and service apps.
 
@@ -114,7 +115,10 @@ snapshot. Requests still answer `x-faas-wake: restored`. A frozen instance
 holds no concurrency and is not billed; the dashboard shows it as
 `◌ sleeping`. It parks after 10 minutes, or sooner when the node needs the
 memory or you deploy again. Only functions with a snapshot are frozen, so
-the first idle period after a deploy still parks.
+the first idle period after a deploy still parks. If your app declares an
+`after_restore` hook, it runs when the instance resumes, as after a restore;
+if it fails, the instance is discarded and the request restores from the
+snapshot instead.
 
 ## Opting out: keep N instances warm (Pro, Scale)
 

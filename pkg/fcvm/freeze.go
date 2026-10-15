@@ -283,12 +283,27 @@ func (m *Manager) unfreeze(ctx context.Context, inst *Instance) error {
 	return nil
 }
 
-// Thaw resumes a frozen instance in place and restarts its probes. When the
-// instance's image requires a healthcheck, the resume hook and healthcheck
-// run before Thaw returns, as in a warm-pool resume. Memory the host
-// reclaimed faults back in as the guest touches it. A live instance that is
-// not frozen is left alone; one that is not live fails as "not live".
+// ThawOptions selects the optional work a thaw runs before it returns.
+type ThawOptions struct {
+	// RunResumeHook runs the guest's resume hook, and with it the app's
+	// after_restore callback, as a snapshot restore does. A thaw is not a
+	// restore, but an app that declared after_restore reconnects its clients
+	// after the time it spent frozen. A failed callback fails the thaw.
+	RunResumeHook bool
+}
+
+// Thaw resumes a frozen instance in place without the optional work.
 func (m *Manager) Thaw(ctx context.Context, instance string) error {
+	return m.ThawWith(ctx, instance, ThawOptions{})
+}
+
+// ThawWith resumes a frozen instance in place and restarts its probes. When
+// the instance's image requires a healthcheck, the resume hook and
+// healthcheck run before ThawWith returns, as in a warm-pool resume; opts can
+// ask for the resume hook alone. Memory the host reclaimed faults back in as
+// the guest touches it. A live instance that is not frozen is left alone; one
+// that is not live fails as "not live".
+func (m *Manager) ThawWith(ctx context.Context, instance string, opts ThawOptions) error {
 	started := time.Now()
 	operationCtx, inst, flight, err := m.registerLiveInstanceFlight(ctx, instance)
 	if err != nil {
@@ -301,7 +316,7 @@ func (m *Manager) Thaw(ctx context.Context, instance string) error {
 	if err := m.checkLiveAdmission(operationCtx, inst); err != nil {
 		return err
 	}
-	if err := m.resumeAndProbe(operationCtx, "thaw", inst); err != nil {
+	if err := m.resumeAndProbe(operationCtx, "thaw", inst, opts.RunResumeHook); err != nil {
 		return err
 	}
 	m.freezeMetrics.observeThaw(time.Since(started))

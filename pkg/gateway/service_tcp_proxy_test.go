@@ -51,6 +51,7 @@ type tcpTestHarness struct {
 	dead     map[string]bool // instance IDs whose guest dial fails
 	caller   string          // app ID the "caller" source resolves to
 	preview  string          // PreviewOfSlug the caller authorizes as
+	frozen   map[string]bool // instance IDs vmmd refuses as frozen (ADR-1151)
 
 	mu   sync.Mutex
 	hops []Target
@@ -66,6 +67,7 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 		},
 		dead:   map[string]bool{},
 		caller: "api",
+		frozen: map[string]bool{},
 	}
 	services := NewServiceProxy(ServiceProxyConfig{
 		Provider: h.provider,
@@ -114,6 +116,9 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 			h.mu.Unlock()
 			if h.dead[target.InstanceID] {
 				return fmt.Errorf("%w: refused", ErrTCPGuestUnreachable)
+			}
+			if h.frozen[target.InstanceID] {
+				return fmt.Errorf("%w: %w", ErrTCPGuestUnreachable, instanceFrozenStatus())
 			}
 			return nil
 		},

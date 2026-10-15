@@ -71,15 +71,3 @@ func serviceEndpointEvictor(backend any) func(appID, instanceID string) {
 	}
 	return nil
 }
-
-// serviceEndpointWithdrawer returns the routing-cache withdrawal the public
-// edge applies to a frozen target (ADR-1151): the routes go, the instance ID
-// stays routable for its thaw. A backend without it yields nil.
-func serviceEndpointWithdrawer(backend any) func(appID, instanceID string) {
-	if withdrawer, ok := backend.(interface {
-		WithdrawInstance(appID, instanceID string)
-	}); ok {
-		return withdrawer.WithdrawInstance
-	}
-	return nil
-}

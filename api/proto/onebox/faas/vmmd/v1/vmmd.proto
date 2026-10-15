@@ -2636,16 +2636,22 @@ message FreezeInstanceResponse {
 // ThawInstanceRequest (ADR-1151) names the frozen instance to resume.
 // image_healthcheck_required asks vmmd to confirm the instance's stored boot
 // contract, as ResumeWarmInstance does; the thaw then runs the resume hook and
-// the image healthcheck before it returns.
+// the image healthcheck before it returns. run_after_restore asks vmmd to run
+// the resume hook, and with it the app's after_restore callback, before the
+// thaw returns; a failed callback fails the thaw.
 message ThawInstanceRequest {
   string instance = 1;
   bool image_healthcheck_required = 2;
+  bool run_after_restore = 3;
 }
 
 // ThawInstanceResponse (ADR-1151) acknowledges the in-place resume.
+// after_restore_ran confirms the resume hook ran; a vmmd that predates
+// run_after_restore leaves it false.
 message ThawInstanceResponse {
   string instance = 1;
   bool image_healthcheck_verified = 2;
+  bool after_restore_ran = 3;
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a

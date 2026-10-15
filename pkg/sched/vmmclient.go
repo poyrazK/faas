@@ -1195,15 +1195,19 @@ func (c *VMMClient) FreezeInstance(ctx context.Context, instance string, reclaim
 	}, nil
 }
 
-// ThawInstance wraps vmmd's ThawInstance RPC (ADR-1151). healthcheckVerified
-// reports that vmmd confirmed the image healthcheck the caller required; a
-// caller that required one must not route to a thaw vmmd did not verify.
-func (c *VMMClient) ThawInstance(ctx context.Context, instance string, imageHealthcheckRequired bool) (healthcheckVerified bool, err error) {
-	resp, err := c.cli.ThawInstance(ctx, &vmmdpb.ThawInstanceRequest{Instance: instance, ImageHealthcheckRequired: imageHealthcheckRequired})
+// ThawInstance wraps vmmd's ThawInstance RPC (ADR-1151). The result reports
+// the work vmmd confirmed; a caller must not route to a thaw that did not
+// confirm the work it asked for.
+func (c *VMMClient) ThawInstance(ctx context.Context, instance string, req ThawRequest) (ThawResult, error) {
+	resp, err := c.cli.ThawInstance(ctx, &vmmdpb.ThawInstanceRequest{
+		Instance:                 instance,
+		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
+		RunAfterRestore:          req.RunAfterRestore,
+	})
 	if err != nil {
-		return false, liftErr(err)
+		return ThawResult{}, liftErr(err)
 	}
-	return resp.GetImageHealthcheckVerified(), nil
+	return ThawResult{HealthcheckVerified: resp.GetImageHealthcheckVerified(), AfterRestoreRan: resp.GetAfterRestoreRan()}, nil
 }
 
 // FrameworkReady implements VMM. The wire RPC's NotFound return
