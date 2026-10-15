@@ -43,6 +43,7 @@ var memDispatched = map[string]bool{
 	"ComputeNodeUsedMBByNode":                                 true,
 	"CountWakeBootStarted24h":                                 true,
 	"CreateAppTask":                                           true,
+	"DeploymentClearSnapshotBackoff":                          true,
 	"CreateCheckedRollback":                                   true,
 	"CreateInstance":                                          true,
 	"CreateProjectEnvironmentPromotion":                       true,
@@ -193,6 +194,15 @@ func (s *Mem) ComputeNodeByID(p0 context.Context, p1 string) (state.ComputeNode,
 		return o.ComputeNodeByID(p0, p1)
 	}
 	return s.MemStore.ComputeNodeByID(p0, p1)
+}
+
+func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeploymentClearSnapshotBackoff(context.Context, string) error
+	}); ok {
+		return o.DeploymentClearSnapshotBackoff(p0, p1)
+	}
+	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {

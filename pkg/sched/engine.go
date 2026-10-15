@@ -418,8 +418,11 @@ type Engine struct {
 	ledger                 *NodeLedger
 	vmm                    RoutedVMM
 	notif                  Notifier
-	fcVer                  string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log                    *slog.Logger
+	// notifyInPublication sends a wake's instance_changed from its RUNNING
+	// publication (WithNotifyInPublication).
+	notifyInPublication bool
+	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
+	log                 *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit                         func(context.Context, string)
 	environmentQualificationServiceURL             func(context.Context, string) (string, error)
@@ -4060,10 +4063,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if bootInput.haveSnap && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		confirmedInputs = bootInput.snapshotInputs
 	}
+	bookkeeping := e.publicationBookkeeping(bootInput.insID, bootInput.appID, bootInput.wakeID, bootInput.initState, state.StateRunning, "state_transition")
 	fresh, publishErr := e.publishOwnedRuntimeWithStandards(ctx, out, state.RuntimeInstancePublication{
 		AccountID: bootInput.accountID, AppID: bootInput.appID, InstanceID: bootInput.insID,
 		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
+		Bookkeeping: bookkeeping,
 	})
 	tPublished := time.Now()
 	if errors.Is(publishErr, state.ErrConflict) {
@@ -4177,14 +4182,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 	}
 
-	e.recordCommittedInstanceTransition(ctx, fresh, bootInput.initState, state.StateRunning, bootInput.appID, "state_transition", "")
+	// A completed wake proves that the deployment can boot again: a recorded
+	// snapshot-miss backoff is cleared so a later miss starts a fresh
+	// sequence, without delaying the newly routable target.
+	e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, bootInput.appID, bootInput.depID, bookkeeping)
 	e.recordAppSecretDelivery(ctx, bootInput, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
-	// A completed wake proves that the deployment can boot again. Clear any
-	// expired snapshot-miss backoff so a later miss starts a fresh sequence;
-	// this is idempotent for deployments that never had a backoff row and does
-	// not need to delay the newly routable target.
-	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
 	postRPC = events.NewPostRPCTimings(rpcEndedAt, tPreCommit, tStampJoined, tLocked, tPublished, time.Now())
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
@@ -9710,10 +9713,7 @@ func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.In
 	// and counts, never rolls back the transition. The state row is
 	// the source of truth; this is observation.
 	subject := ins.ID
-	data, _ := json.Marshal(map[string]any{
-		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
-	})
-	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
+	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, instanceTransitionEventData(from, to, reason)); err != nil {
 		e.log.Warn("transition: append event", "instance", ins.ID, "from", from, "to", to, "kind", kind, "err", err)
 		if e.ops != nil {
 			e.ops.EventsWriteFailures().Inc()
@@ -9725,32 +9725,11 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 	if e.notif == nil {
 		return
 	}
-	// wakeID is the per-wake correlation handle. transitionWithKind
-	// (the audit-log caller) loads it from the row before emitting so
-	// every state-transition event carries the same wake_id the row
-	// currently has. Wake/Prime pass the value they just minted at
-	// Phase 2; snapshotAndPark passes ins.WakeID from the loaded
-	// instance. The JSON key is always present (even when empty for
-	// legacy callers) so SSE subscribers can use a fixed parse path.
-	// produced the row, while the wake / prime callers always do. Empty
-	// string keeps the JSON key present so the SSE subscriber can use
-	// a fixed parse path; dashboard queries can read wake_id back off
-	// the instances row when needed.
-	payloadFields := map[string]any{
-		"instance_id": instanceID,
-		"app_id":      appID,
-		"state":       string(st),
-		"wake_id":     wakeID,
-	}
-	// Job-task instances intentionally have no app row. Mark that
-	// shape explicitly so gateway subscribers can ignore the event
-	// instead of treating every successful job lifecycle as malformed
-	// customer-app input (issue #2763).
-	if appID == "" {
-		payloadFields["kind"] = "job"
-	}
-	payload, _ := json.Marshal(payloadFields)
-	if err := e.notif.Notify(ctx, db.NotifyInstanceChanged, string(payload)); err != nil {
+	// transitionWithKind (the audit-log caller) loads wakeID from the row
+	// before emitting so every state-transition event carries the wake_id the
+	// row currently has; Wake and Prime pass the value they minted.
+	payload := instanceChangedPayload(instanceID, appID, st, wakeID)
+	if err := e.notif.Notify(ctx, db.NotifyInstanceChanged, payload); err != nil {
 		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", wakeID, "err", err)
 	}
 }

@@ -638,6 +638,8 @@ type Querier interface {
 	// recreate sweep has restored the destination's snapshot set, OR by
 	// the wake flow on a successful cold boot. Resets the counter and
 	// clears the backoff_until so future wakes don't short-circuit.
+	// A deployment with nothing recorded is left alone: no row version and no
+	// update triggers for the common case.
 	DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, id pgtype.UUID) error
 	// Bump snapshot_miss_count + stamp Retry-After until. Called by the
 	// wake flow when the snapshot-fetch path fails (stale cache, missing
@@ -3927,7 +3929,14 @@ type Querier interface {
 	SaveManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverVerificationParams) (int64, error)
 	SaveManagedPostgresDrainProof(ctx context.Context, db DBTX, arg SaveManagedPostgresDrainProofParams) (int64, error)
 	SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX, arg SaveReadinessSubscriptionWatchesParams) (int64, error)
-	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) error
+	// Saves the config proof a publication commits with. A wake's bookkeeping
+	// rides in the same statement, so it costs no round trip: the transition
+	// event and the instance_changed notification (pg_notify delivers at
+	// commit) commit with the publication or not at all. The deployment's
+	// snapshot-miss backoff is only reported, never cleared here: the
+	// publication holds a share lock on the deployment row, and an update
+	// would deadlock concurrent publications of the same deployment.
+	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) (SaveRuntimeInstanceConfigProofRow, error)
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
 	ScheduleWorkflowRunFenced(ctx context.Context, db DBTX, arg ScheduleWorkflowRunFencedParams) (int64, error)

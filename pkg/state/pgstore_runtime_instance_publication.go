@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -60,10 +61,8 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	if err != nil {
 		return Instance{}, err
 	}
-	if err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, sqlc.SaveRuntimeInstanceConfigProofParams{
-		InstanceID: mustPgUUID(p.InstanceID), EnvironmentID: mustPgUUID(p.Fence.EnvironmentID), Scope: p.Fence.Scope,
-		SecretFingerprint: p.Fence.Fingerprint, ConfigFingerprint: p.ConfigFence.Fingerprint,
-	}); err != nil {
+	saved, err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, runtimeConfigProofParams(p))
+	if err != nil {
 		return Instance{}, err
 	}
 	if p.Inputs != nil && p.targetState() == string(StateRunning) {
@@ -79,7 +78,30 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, err
 	}
+	if p.Bookkeeping != nil {
+		p.Bookkeeping.SnapshotBackoffRecorded = saved.SnapshotBackoffRecorded
+	}
 	return instance, nil
+}
+
+// runtimeConfigProofParams saves the publication's config proof and, in the
+// same statement, its bookkeeping.
+func runtimeConfigProofParams(p RuntimeInstancePublication) sqlc.SaveRuntimeInstanceConfigProofParams {
+	params := sqlc.SaveRuntimeInstanceConfigProofParams{
+		InstanceID: mustPgUUID(p.InstanceID), EnvironmentID: mustPgUUID(p.Fence.EnvironmentID), Scope: p.Fence.Scope,
+		SecretFingerprint: p.Fence.Fingerprint, ConfigFingerprint: p.ConfigFence.Fingerprint,
+	}
+	if b := p.Bookkeeping; b != nil {
+		if b.EventKind != "" {
+			params.EventKind = pgtype.Text{String: b.EventKind, Valid: true}
+			params.EventData = b.EventData
+		}
+		if b.NotifyChannel != "" {
+			params.NotifyChannel = pgtype.Text{String: b.NotifyChannel, Valid: true}
+			params.NotifyPayload = pgtype.Text{String: b.NotifyPayload, Valid: true}
+		}
+	}
+	return params
 }
 
 func (s *PgStore) InstanceRuntimeConfigFence(ctx context.Context, accountID, appID, instanceID string) (RuntimeAppConfigFence, error) {

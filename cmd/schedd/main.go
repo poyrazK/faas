@@ -618,6 +618,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
+	// The notifier and the store share this pool, so a wake's
+	// instance_changed can commit with its RUNNING publication.
+	engine.WithNotifyInPublication()
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,

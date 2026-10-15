@@ -58,6 +58,11 @@ func (s *readCountingStore) ManagedPostgresAdmissionFenced(ctx context.Context, 
 	return s.MemStore.ManagedPostgresAdmissionFenced(ctx, appID)
 }
 
+func (s *readCountingStore) DeploymentClearSnapshotBackoff(ctx context.Context, deploymentID string) error {
+	s.count("DeploymentClearSnapshotBackoff")
+	return s.MemStore.DeploymentClearSnapshotBackoff(ctx, deploymentID)
+}
+
 // countReads swaps the fixture engine onto a counting view of its store.
 func countReads(f *frozenFixture) *readCountingStore {
 	counter := &readCountingStore{MemStore: f.store}

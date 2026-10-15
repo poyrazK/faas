@@ -204,10 +204,11 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		e.observeThaw("failed")
 		return WakeResult{}, false, nil
 	}
+	bookkeeping := e.publicationBookkeeping(frozen.ID, app.ID, frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
 	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: frozen.ID, NodeID: frozen.NodeID, WakeID: frozen.WakeID,
 		ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured,
-		Netns: frozen.Netns, HostIP: frozen.HostIP, GuestUID: frozen.GuestUID,
+		Netns: frozen.Netns, HostIP: frozen.HostIP, GuestUID: frozen.GuestUID, Bookkeeping: bookkeeping,
 	})
 	timing.published = time.Now()
 	if publishErr != nil {
@@ -220,8 +221,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		e.observeThaw("failed")
 		return WakeResult{}, false, nil
 	}
-	e.recordCommittedInstanceTransition(ctx, fresh, state.StateFrozen, state.StateRunning, app.ID, "frozen_thaw", "")
-	e.clearSnapshotBackoffAfterWake(ctx, dep.ID)
+	e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, app.ID, dep.ID, bookkeeping)
 	e.observeThaw("success")
 	region := ""
 	if candidate.haveNode {

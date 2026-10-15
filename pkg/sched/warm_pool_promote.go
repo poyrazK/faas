@@ -138,10 +138,11 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
+		bookkeeping := e.publicationBookkeeping(warm.ID, app.ID, warm.WakeID, state.StateWarm, state.StateRunning, "warm_pool_resume")
 		fresh, publishErr := e.publishOwnedWarmWithStandards(ctx, receipt, state.RuntimeInstancePublication{
 			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
 			ExpectedState: string(state.StateWarm), Fence: captured.SecretFence, ConfigFence: captured,
-			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
+			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID, Bookkeeping: bookkeeping,
 		})
 		if publishErr != nil {
 			e.ledger.Release(warm.ID)
@@ -158,8 +159,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
-		e.recordCommittedInstanceTransition(ctx, fresh, state.StateWarm, state.StateRunning, app.ID, "warm_pool_resume", "")
-		e.clearSnapshotBackoffAfterWake(ctx, dep.ID)
+		e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, app.ID, dep.ID, bookkeeping)
 		e.observeWarmResumeDuration(app.ID, warm.WakeID, time.Since(resumeStartedAt))
 		warmCount--
 		e.observeWarmResume("success")

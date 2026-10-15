@@ -100,7 +100,7 @@ func statementName(sql string) string {
 
 // tracedPgStore opens a migrated test database and returns a store whose
 // statements tracer records while armed.
-func tracedPgStore(t *testing.T) (*state.PgStore, *statementTracer) {
+func tracedPgStore(t *testing.T) (*state.PgStore, *pgxpool.Pool, *statementTracer) {
 	t.Helper()
 	base := pgtest.OpenMigrated(t)
 	cfg := base.Config().Copy()
@@ -120,11 +120,11 @@ func tracedPgStore(t *testing.T) (*state.PgStore, *statementTracer) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return state.NewPgStore(pool), tracer
+	return state.NewPgStore(pool), pool, tracer
 }
 
 func TestPostgresThawStatements(t *testing.T) {
-	store, tracer := tracedPgStore(t)
+	store, pool, tracer := tracedPgStore(t)
 	ctx := t.Context()
 	acct, err := store.CreateAccount(ctx, "thaw-statements-"+uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestPostgresThawStatements(t *testing.T) {
 		t.Fatal(err)
 	}
 	vmm := &frozenFakeVMM{fakeVMM: &fakeVMM{}}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithNotifyInPublication()
 	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: 1000, MaxConcurrency: app.MaxConcurrency, NodeID: node.ID}); err != nil {
@@ -190,6 +190,15 @@ func TestPostgresThawStatements(t *testing.T) {
 	// as unreachable.
 	if err := store.HeartbeatComputeNode(ctx, node.ID); err != nil {
 		t.Fatalf("heartbeat: %v", err)
+	}
+
+	listener, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Release()
+	if _, err := listener.Exec(ctx, "listen "+db.NotifyInstanceChanged); err != nil {
+		t.Fatal(err)
 	}
 
 	tracer.armed.Store(true)
@@ -222,5 +231,21 @@ func TestPostgresThawStatements(t *testing.T) {
 		if repeats[name] != 1 {
 			t.Errorf("%q ran %d times in one thaw, want once", name, repeats[name])
 		}
+	}
+	// The transition event and the notification ride in the publication's
+	// proof statement; no backoff is recorded, so none is cleared.
+	for _, name := range []string{"insert into events (actor,", "SELECT pg_notify($1, $2)", "DeploymentClearSnapshotBackoff"} {
+		if repeats[name] != 0 {
+			t.Errorf("%q ran %d times after the publication, want none", name, repeats[name])
+		}
+	}
+	wait, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	n, err := listener.Conn().WaitForNotification(wait)
+	if err != nil || n.Payload != instanceChangedPayload(ins.ID, app.ID, state.StateRunning, ins.WakeID) {
+		t.Fatalf("instance_changed = %+v, %v", n, err)
+	}
+	if events := runningTransitions(t, store, ins.ID, "frozen_thaw"); events != 1 {
+		t.Fatalf("frozen_thaw events = %d, want 1", events)
 	}
 }

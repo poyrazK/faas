@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
 
 	"github.com/google/uuid"
@@ -20,6 +21,29 @@ type RuntimeInstancePublication struct {
 	Inputs                                       *RuntimeConfigInputs
 	AdmissionReceipt, PromotionReceipt           *runtimeadmission.Receipt
 	RuntimeUpgradeColdBoot                       *RuntimeUpgradeColdBoot
+	// Bookkeeping, when set, commits a wake's bookkeeping with the
+	// publication instead of after it.
+	Bookkeeping *RuntimePublicationBookkeeping
+}
+
+// RuntimePublicationBookkeeping is what a wake records with its publication.
+// The transition event and the notification commit with the publication or
+// not at all, and cost no extra round trip. The deployment's snapshot-miss
+// backoff is only reported for the caller to clear after commit: the
+// publication holds a share lock on the deployment row, so clearing it inside
+// would deadlock concurrent publications of one deployment.
+type RuntimePublicationBookkeeping struct {
+	// EventKind and EventData are schedd's transition event about the
+	// instance. An empty kind records no event.
+	EventKind string
+	EventData []byte
+	// NotifyChannel and NotifyPayload go out with pg_notify when the
+	// publication commits. An empty channel leaves notifying to the caller;
+	// only a store on the caller's notification database can send it.
+	NotifyChannel, NotifyPayload string
+	// SnapshotBackoffRecorded is set by the store when the publication
+	// commits.
+	SnapshotBackoffRecorded bool
 }
 
 type RuntimeInstancePublicationStore interface {
@@ -49,6 +73,11 @@ func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
 		}
 	}
 	if _, err := netip.ParseAddr(p.HostIP); err != nil {
+		return ErrInvalidArgument
+	}
+	// Bookkeeping that the database would refuse would abort the publication
+	// of a VM that already booted.
+	if b := p.Bookkeeping; b != nil && (b.EventKind != "" && !json.Valid(b.EventData) || b.NotifyChannel == "" && b.NotifyPayload != "") {
 		return ErrInvalidArgument
 	}
 	return nil

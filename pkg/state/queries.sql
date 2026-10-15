@@ -1609,14 +1609,36 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
--- name: SaveRuntimeInstanceConfigProof :exec
-INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
-SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
-    sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
-FROM instances WHERE id=sqlc.arg(instance_id)::uuid
-ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
-    deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-    secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint;
+-- name: SaveRuntimeInstanceConfigProof :one
+-- Saves the config proof a publication commits with. A wake's bookkeeping
+-- rides in the same statement, so it costs no round trip: the transition
+-- event and the instance_changed notification (pg_notify delivers at
+-- commit) commit with the publication or not at all. The deployment's
+-- snapshot-miss backoff is only reported, never cleared here: the
+-- publication holds a share lock on the deployment row, and an update
+-- would deadlock concurrent publications of the same deployment.
+WITH proof AS (
+    INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
+    SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
+        sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
+    FROM instances WHERE id=sqlc.arg(instance_id)::uuid
+    ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
+        deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+    RETURNING deployment_id
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,sqlc.arg(instance_id)::uuid,sqlc.narg(event_data)::jsonb
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text)
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN proof ON proof.deployment_id=d.id
+        WHERE d.snapshot_miss_count<>0 OR d.snapshot_miss_last_at IS NOT NULL OR d.snapshot_miss_backoff_until IS NOT NULL)::boolean AS snapshot_backoff_recorded,
+    (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent;
 
 -- name: ReadRuntimeInstanceConfigProof :one
 SELECT proof.deployment_id::text AS deployment_id,COALESCE(proof.environment_id::text,'')::text AS environment_id,
@@ -4514,11 +4536,14 @@ WHERE id = $1;
 -- recreate sweep has restored the destination's snapshot set, OR by
 -- the wake flow on a successful cold boot. Resets the counter and
 -- clears the backoff_until so future wakes don't short-circuit.
+-- A deployment with nothing recorded is left alone: no row version and no
+-- update triggers for the common case.
 UPDATE deployments
 SET snapshot_miss_count         = 0,
     snapshot_miss_last_at       = NULL,
     snapshot_miss_backoff_until = NULL
-WHERE id = $1;
+WHERE id = $1
+  AND (snapshot_miss_count <> 0 OR snapshot_miss_last_at IS NOT NULL OR snapshot_miss_backoff_until IS NOT NULL);
 
 -- name: DeploymentSnapshotBackoffActive :one
 -- The wake-side gate. Returns the row while a backoff timestamp is
