@@ -2047,6 +2047,36 @@ or missing replay metadata produces no command. Passing groups, including those
 that tolerate individual failed runs under a pass-rate budget, have no failure
 summary. Rendering changes no verdict and does not execute replay.
 
+### Machine-readable failure summaries
+
+JSON receipts include `failure_summary` with schema `version: 1` for failed
+runs. JUnit carries the identical receipt in each testcase's `system-out`;
+existing testcase failure/skipped counts and human-readable messages remain
+unchanged. Nested failed receipts retain their summaries even when their parent
+group passes its configured pass-rate budget; the passing parent has no summary.
+
+The summary includes `run_id`, `step`, `phase`, `fault_phase`,
+`assertion`, `phase_metrics`, `fault_evidence`, `recovery_evidence`,
+`cleanup_status`, and `replay_available` where applicable. Assertion records
+identify `kind`, `name`, and optional `request`; numerical comparisons expose
+`operator`, `expected` and `observed`. Their units follow the named metric,
+for example `p95_ms`, `error_rate`, or `attempts_per_request`. Composite recovery
+and resource assertions retain their structured budget/result under `evidence`;
+unavailable numbers are omitted, rather than inferred by parsing error strings.
+
+Fault records preserve zero match counts and minimum requirements. Recovery
+records retain each named phase/request and its original evidence, including
+missing evidence as null. `cleanup_status` is `error_recorded` when cleanup
+errors exist along the selected receipt path, otherwise `not_verified`;
+absence of an error does not establish independent retirement verification.
+Replay availability describes supported saved metadata, not a new execution.
+The optional command retains explicit report/manifest path placeholders.
+
+Summaries are regenerated from raw receipts whenever serialized. Saved
+`failure_summary` objects are ignored on decode, so editing a derived summary
+cannot override the original assertions, verdict, replay configuration or HTML.
+The existing underlying receipt fields remain the source of truth.
+
 ### Recovery regressions between CI runs
 
 Set a recovery regression budget on a resilience scenario:

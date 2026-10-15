@@ -6,16 +6,27 @@ import (
 )
 
 type testFailureSummary struct {
-	phaseSelected bool
-	GroupError    string
-	RunID         string
-	Scope         string
-	Failure       string
-	Measurements  []string
-	Matches       []string
-	Recovery      []string
-	Cleanup       []string
-	Replay        string
+	phaseSelected    bool                         `json:"-"`
+	Version          int                          `json:"version"`
+	GroupError       string                       `json:"group_error,omitempty"`
+	RunID            string                       `json:"run_id,omitempty"`
+	Scope            string                       `json:"scope"`
+	Step             string                       `json:"step,omitempty"`
+	Phase            string                       `json:"phase,omitempty"`
+	Failure          string                       `json:"failure"`
+	Assertion        *testFailureAssertionSummary `json:"assertion,omitempty"`
+	PhaseMetrics     *testLoadMetrics             `json:"phase_metrics,omitempty"`
+	PhaseDurationMS  int64                        `json:"phase_duration_ms,omitempty"`
+	FaultPhase       string                       `json:"fault_phase,omitempty"`
+	FaultEvidence    []testFailureFaultRecord     `json:"fault_evidence,omitempty"`
+	RecoveryEvidence []testFailureRecoveryRecord  `json:"recovery_evidence,omitempty"`
+	CleanupStatus    string                       `json:"cleanup_status"`
+	ReplayAvailable  bool                         `json:"replay_available"`
+	Measurements     []string                     `json:"measurements,omitempty"`
+	Matches          []string                     `json:"matches,omitempty"`
+	Recovery         []string                     `json:"recovery,omitempty"`
+	Cleanup          []string                     `json:"cleanup_errors,omitempty"`
+	Replay           string                       `json:"replay_command,omitempty"`
 }
 
 // FailureSummary describes recorded failures without changing the verdict.
@@ -24,7 +35,7 @@ func (r testRunReceipt) FailureSummary() *testFailureSummary {
 		return nil
 	}
 	failed, cleanup := firstTestFailedReceipt(r)
-	summary := &testFailureSummary{RunID: failed.RunID, Scope: failed.Scenario, Failure: failed.Error, Cleanup: cleanup}
+	summary := &testFailureSummary{Version: 1, RunID: failed.RunID, Scope: failed.Scenario, Failure: failed.Error, Cleanup: cleanup}
 	if r.FaultMatrix != nil || r.Resilience != nil {
 		summary.GroupError = r.Error
 	}
@@ -34,6 +45,7 @@ func (r testRunReceipt) FailureSummary() *testFailureSummary {
 			continue
 		}
 		failedStep = true
+		summary.Step = step.Name
 		summary.Scope += " / " + step.Name
 		if step.Error != "" {
 			summary.Failure = step.Error
@@ -41,6 +53,7 @@ func (r testRunReceipt) FailureSummary() *testFailureSummary {
 		summarizeTestFailedLoad(summary, step.Load)
 		if !summary.phaseSelected && len(summary.Matches) == 0 {
 			summary.Matches = testFailureMatchSummary(step.Chaos)
+		summary.FaultEvidence = testFailureFaultRecords(step.Chaos)
 		}
 		break
 	}
@@ -49,11 +62,17 @@ func (r testRunReceipt) FailureSummary() *testFailureSummary {
 	}
 	if !failedStep && !summary.phaseSelected && len(summary.Matches) == 0 {
 		summary.Matches = testFailureMatchSummary(failed.Chaos)
+		summary.FaultEvidence = testFailureFaultRecords(failed.Chaos)
 	}
 	if summary.Failure == "" {
 		summary.Failure = "No assertion detail recorded; inspect the full receipt."
 	}
+	summary.CleanupStatus = "not_verified"
+	if len(summary.Cleanup) > 0 {
+		summary.CleanupStatus = "error_recorded"
+	}
 	summary.Replay = testFailureReplayCommand(failed)
+	summary.ReplayAvailable = summary.Replay != ""
 	return summary
 }
 
@@ -87,10 +106,16 @@ func summarizeTestFailedLoad(summary *testFailureSummary, load *testLoadEvidence
 	selected := -1
 	for i, row := range rows {
 		summary.Recovery = append(summary.Recovery, row.Recovery...)
+		summary.RecoveryEvidence = append(summary.RecoveryEvidence, testFailureRecoveryRecords(load.ChaosPhases[i])...)
 		if selected < 0 && len(row.Findings) > 0 {
 			selected = i
 			summary.Scope += " / " + row.Name
 			summary.Failure = row.Findings[0]
+			summary.Phase = row.Name
+			metrics := load.ChaosPhases[i].testLoadMetrics
+			summary.PhaseMetrics = &metrics
+			summary.PhaseDurationMS = load.ChaosPhases[i].ActualDurationMS
+			summary.Assertion = firstTestFailureAssertion(load.ChaosPhases[i])
 			summary.Measurements = append(summary.Measurements, fmt.Sprintf("%d requests; p95 %s ms; errors %s%%; request rate %s/s", row.Requests, testPhaseComparisonValue(row.P95MS), testPhaseComparisonValue(row.ErrorRatePercent), testPhaseComparisonValue(row.RequestsPerSecond)))
 			summary.Measurements = append(summary.Measurements, row.Attempts...)
 		}
@@ -105,6 +130,8 @@ func summarizeTestFailedLoad(summary *testFailureSummary, load *testLoadEvidence
 		phase = load.ChaosPhases[selected-1]
 	}
 	summary.Matches = testFailureMatchSummary(phase.Chaos)
+	summary.FaultPhase = phase.Name
+	summary.FaultEvidence = testFailureFaultRecords(phase.Chaos)
 }
 
 func testFailureMatchSummary(e *testChaosEvidence) []string {
