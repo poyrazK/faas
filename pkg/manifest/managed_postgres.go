@@ -21,8 +21,9 @@ const (
 	// databases move off it.
 	DatabaseNodeDraining = "draining"
 	// DatabaseNodeUnavailable marks a lost node: schedd fails its
-	// databases over or restores them elsewhere, and the generated
-	// configuration stops converging, scraping and routing to it.
+	// replicated databases over and parks the rest for a point-in-time
+	// restore, and the generated configuration stops converging,
+	// scraping and routing to it.
 	DatabaseNodeUnavailable = "unavailable"
 )
 

@@ -1,0 +1,217 @@
+package dbsched
+
+import (
+	"context"
+	"sync"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// Metrics are the database scheduler's metrics. The counters count this
+// replica's events. The catalog gauges come from the shared store, which
+// every replica's idle sweep observes, so alerts take max across
+// replicas. No series carries a database or account id; node ids are the
+// fleet's database nodes. A nil *Metrics records nothing.
+type Metrics struct {
+	failovers    *prometheus.CounterVec
+	standbyDrops *prometheus.CounterVec
+	moves        *prometheus.CounterVec
+	catalog      *catalogCollector
+}
+
+// Failover triggers: the operator marked the node lost, or the standby
+// monitor found a running or a parked database's node silent.
+const (
+	failoverLostNode = "lost_node"
+	failoverRunning  = "running"
+	failoverParked   = "parked"
+)
+
+// Standby drop reasons: it stopped keeping up, its node is going away, or
+// an attach died before it became synchronous.
+const (
+	dropLagging    = "lagging"
+	dropNodeGone   = "node_gone"
+	dropStaleClaim = "stale_claim"
+)
+
+// NewMetrics registers the scheduler's metrics on reg, named prefix +
+// "_database_…" (schedd passes its ops prefix, "schedd").
+func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
+	m := &Metrics{
+		failovers: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_failovers_total",
+			Help: "Failovers of replicated databases to their standbys, by trigger (lost_node, running, parked) and result (ok, failed).",
+		}, []string{"trigger", "result"}),
+		standbyDrops: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_standby_drops_total",
+			Help: "Standbys given up while their primary ran, by reason (lagging, node_gone, stale_claim). The primary commits without a standby until one attaches again.",
+		}, []string{"reason"}),
+		moves: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_moves_total",
+			Help: "Database moves between nodes by result (ok, failed).",
+		}, []string{"result"}),
+		catalog: newCatalogCollector(prefix),
+	}
+	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.catalog)
+	return m
+}
+
+func (m *Metrics) failedOver(trigger string, err error) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if err != nil {
+		result = "failed"
+	}
+	m.failovers.WithLabelValues(trigger, result).Inc()
+}
+
+func (m *Metrics) standbyDropped(reason string) {
+	if m != nil {
+		m.standbyDrops.WithLabelValues(reason).Inc()
+	}
+}
+
+func (m *Metrics) moved(err error) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if err != nil {
+		result = "failed"
+	}
+	m.moves.WithLabelValues(result).Inc()
+}
+
+// catalog is one observation of the shared store.
+type catalog struct {
+	vms map[State]int
+	// standbys counts replicated databases by state (running, parked)
+	// and standby status (synced, unsynced, none).
+	standbys map[[2]string]int
+	nodes    []nodeCatalog
+}
+
+type nodeCatalog struct {
+	node Node
+	load NodeLoad
+}
+
+// standbyStatus is a replicated database's standby: synced (it may be
+// promoted), unsynced, or none placed.
+func standbyStatus(vm VM) string {
+	switch {
+	case vm.StandbyNode == "":
+		return "none"
+	case vm.StandbySynced:
+		return "synced"
+	default:
+		return "unsynced"
+	}
+}
+
+// allStates are every database state, so each is reported, zero or not.
+var allStates = []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateMoving, StateDeleting, StateFailed}
+
+// Observe refreshes the catalog gauges from the store. The idle sweep calls
+// it; without metrics it does nothing.
+func (s *Scheduler) Observe(ctx context.Context) error {
+	if s.cfg.Metrics == nil {
+		return nil
+	}
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return err
+	}
+	loads, err := s.store.Loads(ctx)
+	if err != nil {
+		return err
+	}
+	vms, err := s.store.List(ctx, allStates...)
+	if err != nil {
+		return err
+	}
+	c := catalog{vms: map[State]int{}, standbys: map[[2]string]int{}}
+	for _, vm := range vms {
+		c.vms[vm.State]++
+		if vm.Replicated && (vm.State == StateRunning || vm.State == StateParked) {
+			c.standbys[[2]string{string(vm.State), standbyStatus(vm)}]++
+		}
+	}
+	for _, n := range nodes {
+		c.nodes = append(c.nodes, nodeCatalog{node: n, load: loads[n.ID]})
+	}
+	s.cfg.Metrics.catalog.set(c)
+	return nil
+}
+
+// catalogCollector reports the last observation whole, so a node removed
+// from the configuration leaves no stale series.
+type catalogCollector struct {
+	vms, standbys                     *prometheus.Desc
+	memory, ceiling, volume, capacity *prometheus.Desc
+	lifecycle                         *prometheus.Desc
+	mu                                sync.Mutex
+	last                              *catalog
+}
+
+func newCatalogCollector(prefix string) *catalogCollector {
+	node := []string{"node"}
+	return &catalogCollector{
+		vms: prometheus.NewDesc(prefix+"_database_vms",
+			"Native databases by state.", []string{"state"}, nil),
+		standbys: prometheus.NewDesc(prefix+"_database_standbys",
+			"Replicated (production-class) databases by state (running, parked) and standby status: synced (promotable), unsynced, or none placed.", []string{"state", "status"}, nil),
+		memory: prometheus.NewDesc(prefix+"_database_node_memory_mb",
+			"Memory admitted on a database node: active database VMs and running standbys, with per-VM overhead.", node, nil),
+		ceiling: prometheus.NewDesc(prefix+"_database_node_memory_ceiling_mb",
+			"A database node's admission ceiling.", node, nil),
+		volume: prometheus.NewDesc(prefix+"_database_node_volume_bytes",
+			"Volume committed on a database node: its databases, standbys and incoming moves.", node, nil),
+		capacity: prometheus.NewDesc(prefix+"_database_node_volume_capacity_bytes",
+			"A database node's volume capacity.", node, nil),
+		lifecycle: prometheus.NewDesc(prefix+"_database_node_lifecycle",
+			"1 for a database node's lifecycle (active, draining, unavailable).", []string{"node", "lifecycle"}, nil),
+	}
+}
+
+func (c *catalogCollector) set(next catalog) {
+	c.mu.Lock()
+	c.last = &next
+	c.mu.Unlock()
+}
+
+func (c *catalogCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, d := range []*prometheus.Desc{c.vms, c.standbys, c.memory, c.ceiling, c.volume, c.capacity, c.lifecycle} {
+		ch <- d
+	}
+}
+
+func (c *catalogCollector) Collect(ch chan<- prometheus.Metric) {
+	c.mu.Lock()
+	last := c.last
+	c.mu.Unlock()
+	if last == nil {
+		return // not observed yet
+	}
+	gauge := func(d *prometheus.Desc, v float64, labels ...string) {
+		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, labels...)
+	}
+	for _, state := range allStates {
+		gauge(c.vms, float64(last.vms[state]), string(state))
+	}
+	for _, state := range []State{StateRunning, StateParked} {
+		for _, status := range []string{"synced", "unsynced", "none"} {
+			gauge(c.standbys, float64(last.standbys[[2]string{string(state), status}]), string(state), status)
+		}
+	}
+	for _, n := range last.nodes {
+		gauge(c.memory, float64(n.load.ActiveMB), n.node.ID)
+		gauge(c.ceiling, float64(n.node.AdmissionCeilingMB), n.node.ID)
+		gauge(c.volume, float64(n.load.VolumeBytes), n.node.ID)
+		gauge(c.capacity, float64(n.node.VolumeCapacityBytes), n.node.ID)
+		gauge(c.lifecycle, 1, n.node.ID, n.node.Lifecycle)
+	}
+}

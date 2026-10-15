@@ -123,7 +123,7 @@ func databaseNodeVerifier(cfg *DatabaseSchedulerConfig) wire.NodeVerifier {
 // loadVMMTLS builds the client TLS for database-node vmmd. It receives
 // databaseNodeVerifier(cfg): database nodes are not in compute_nodes, so
 // the compute registry verifier would refuse their vmmd certificates.
-func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, pool *pgxpool.Pool, loadVMMTLS func(wire.NodeVerifier) (*tls.Config, error), handler *scheddgrpc.Server, log *slog.Logger) (func(), error) {
+func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, pool *pgxpool.Pool, loadVMMTLS func(wire.NodeVerifier) (*tls.Config, error), handler *scheddgrpc.Server, ops *wire.OpsMetrics, log *slog.Logger) (func(), error) {
 	if cfg == nil {
 		return func() {}, nil
 	}
@@ -145,9 +145,13 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 		}
 	}
 	vmm := dbsched.NewGRPCVMM(vmmTLS)
+	var metrics *dbsched.Metrics
+	if ops != nil {
+		metrics = dbsched.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
 	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout, SharedArchive: cfg.SharedArchive,
 		WakeQueueWait: cfg.WakeQueueWait, EvictIdleAfter: cfg.EvictIdleAfter,
-		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter}, log)
+		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter, Metrics: metrics}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
 		return nil, fmt.Errorf("schedd: recover databases: %w", err)

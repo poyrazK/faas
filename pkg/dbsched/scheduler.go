@@ -198,6 +198,9 @@ type Config struct {
 	// this long (default 30 s; negative leaves failover to the operator's
 	// lost-node mark).
 	AutoFailoverAfter time.Duration
+	// Metrics, when set, records failovers, standby drops and moves, and
+	// the idle sweep observes the catalog into it.
+	Metrics *Metrics
 }
 
 // Scheduler is schedd's database scheduler. Operations on one database are
@@ -953,7 +956,7 @@ func (s *Scheduler) SettleLostNodes(ctx context.Context) (int, error) {
 			if !ok {
 				lostNode = Node{ID: vm.NodeID}
 			}
-			if err := s.failover(ctx, vm.DatabaseID, lostNode); err != nil {
+			if err := s.failover(ctx, vm.DatabaseID, lostNode, failoverLostNode); err != nil {
 				s.log.Warn("dbsched: fail over a lost node's database", "database_id", vm.DatabaseID, "err", err)
 				continue
 			}
@@ -1037,6 +1040,9 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 
 // RunIdleLoop parks idle databases every interval until ctx ends.
 func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
+	if err := s.Observe(ctx); err != nil {
+		s.log.Warn("dbsched: catalog observation failed", "err", err)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1062,6 +1068,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 			}
 			if _, err := s.SettleMoves(ctx); err != nil {
 				s.log.Warn("dbsched: move settle sweep failed", "err", err)
+			}
+			if err := s.Observe(ctx); err != nil {
+				s.log.Warn("dbsched: catalog observation failed", "err", err)
 			}
 		}
 	}

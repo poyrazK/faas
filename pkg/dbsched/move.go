@@ -53,7 +53,9 @@ func (s *Scheduler) Move(ctx context.Context, id, target string) (VM, error) {
 		return vm, err
 	}
 	started := s.now()
-	if err := s.runMove(ctx, moving); err != nil {
+	err = s.runMove(ctx, moving)
+	s.cfg.Metrics.moved(err)
+	if err != nil {
 		s.log.Warn("dbsched: move failed", "database_id", id, "from", moving.NodeID, "to", moving.MoveNode, "err", err)
 		if wake {
 			_, _ = s.wakeLocked(context.WithoutCancel(ctx), id)

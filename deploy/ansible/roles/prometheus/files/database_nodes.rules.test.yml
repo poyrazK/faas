@@ -168,3 +168,118 @@ tests:
               summary: Database wakes on db-1 take 9.722s at p95
               description: The 95th percentile from an authenticated client to a running database on db-1 has exceeded 5 seconds for 15 minutes. Usual causes are boot slots or the RAM ceiling queueing wakes, no spare VMs, or a slow volume.
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a running replicated database without a synchronized standby warns after 30 minutes
+    interval: 1m
+    input_series:
+      # Two replicas report the same catalog.
+      - series: schedd_database_standbys{job="schedd",instance="a",state="running",status="unsynced"}
+        values: 1+0x40
+      - series: schedd_database_standbys{job="schedd",instance="b",state="running",status="unsynced"}
+        values: 1+0x40
+      # Parked databases may park unsynchronized; they are not counted.
+      - series: schedd_database_standbys{job="schedd",instance="a",state="parked",status="none"}
+        values: 3+0x40
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: FaasDatabaseStandbyMissing
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: FaasDatabaseStandbyMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 1 running production-class databases have no synchronized standby
+              description: "For 30 minutes at least one running replicated database has had no promotable standby: its standby keeps failing to attach, or no other node has room for one. Until one attaches, losing its node means a restore from the archive instead of a failover."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: failovers and failed moves warn while recent
+    interval: 1m
+    input_series:
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="running",result="ok"}
+        values: 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+      - series: schedd_database_failovers_total{job="schedd",instance="b",trigger="lost_node",result="failed"}
+        values: 0+0x30
+      - series: schedd_database_moves_total{job="schedd",instance="a",result="failed"}
+        values: 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: Production-class databases failed over to their standbys
+              description: schedd promoted at least one standby in the last 15 minutes (trigger lost_node, running or parked). The old primary's node needs investigation, and each failed-over database runs without a standby until a new one attaches.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 25m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FaasDatabaseFailoverFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasDatabaseMoveFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: A database move between nodes failed
+              description: At least one move failed in the last hour. The database stays on its node, woken again if it was running, with last_error move_failed; evacuation retries it on a later sweep.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a failed failover warns
+    interval: 1m
+    input_series:
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="parked",result="failed"}
+        values: 0 0 2 2 2 2 2 2 2 2
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasDatabaseFailoverFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: A database failover failed
+              description: schedd tried to promote a standby in the last 15 minutes and failed; the database stays on its silent node and schedd retries. Read schedd's dbsched failover errors.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a node with over 90% of its volume committed warns
+    interval: 1m
+    input_series:
+      - series: schedd_database_node_volume_bytes{job="schedd",instance="a",node="db-1"}
+        values: 950+0x40
+      - series: schedd_database_node_volume_capacity_bytes{job="schedd",instance="a",node="db-1"}
+        values: 1000+0x40
+      - series: schedd_database_node_volume_bytes{job="schedd",instance="a",node="db-2"}
+        values: 500+0x40
+      - series: schedd_database_node_volume_capacity_bytes{job="schedd",instance="a",node="db-2"}
+        values: 1000+0x40
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: FaasDatabaseNodeVolumeNearFull
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: FaasDatabaseNodeVolumeNearFull
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 has committed 95% of its volume capacity
+              description: Databases, standbys and incoming moves on db-1 have reserved over 90% of its volume_capacity_bytes. New databases, storage growth and standbys go elsewhere or fail with no capacity.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md

@@ -143,6 +143,9 @@ type TransitionOptions struct {
 type Store interface {
 	UpsertNode(ctx context.Context, node Node) error
 	Nodes(ctx context.Context) ([]Node, error)
+	// Loads reports each node's committed volume and admitted memory, as
+	// placement and wake admission count them.
+	Loads(ctx context.Context) (map[string]NodeLoad, error)
 	Get(ctx context.Context, id string) (VM, error)
 	List(ctx context.Context, states ...State) ([]VM, error)
 	// Place inserts vm as provisioning on the active node with the most
@@ -330,6 +333,22 @@ func isActive(s State) bool {
 // admission ceiling: guest memory plus the per-VM overhead.
 func billableMB(memMiB int) int64 {
 	return int64(api.BillableRAMMB(memMiB))
+}
+
+// NodeLoad is a node's committed volume (its databases, standbys and
+// incoming moves) and admitted memory (active VMs and running standbys,
+// with per-VM overhead).
+type NodeLoad struct {
+	VolumeBytes int64
+	ActiveMB    int64
+}
+
+func loads(usage map[string]nodeUsage) map[string]NodeLoad {
+	out := make(map[string]NodeLoad, len(usage))
+	for id, u := range usage {
+		out[id] = NodeLoad{VolumeBytes: u.volumeBytes, ActiveMB: u.activeMB}
+	}
+	return out
 }
 
 // nodeUsage is the committed volume, active memory and booting VMs on

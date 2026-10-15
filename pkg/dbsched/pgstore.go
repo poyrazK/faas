@@ -72,6 +72,14 @@ func (s *PgStore) Nodes(ctx context.Context) ([]Node, error) {
 	return out, nil
 }
 
+func (s *PgStore) Loads(ctx context.Context) (map[string]NodeLoad, error) {
+	usage, err := s.usage(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	return loads(usage), nil
+}
+
 func vmFromRow(r sqlc.DatabaseVm) VM {
 	vm := VM{
 		DatabaseID: uuid.UUID(r.DatabaseID.Bytes).String(), NodeID: r.NodeID, Major: int(r.PostgresMajor),

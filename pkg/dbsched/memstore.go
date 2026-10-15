@@ -46,6 +46,12 @@ func (m *MemStore) Nodes(context.Context) ([]Node, error) {
 	return out, nil
 }
 
+func (m *MemStore) Loads(context.Context) (map[string]NodeLoad, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return loads(m.usageLocked()), nil
+}
+
 func (m *MemStore) Get(_ context.Context, id string) (VM, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

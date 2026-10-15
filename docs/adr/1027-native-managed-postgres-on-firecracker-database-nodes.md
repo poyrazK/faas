@@ -463,8 +463,9 @@ database hosts renders exactly as before.
 `unavailable`) and `managed_postgres.evacuate_draining` (which needs
 `shared_archive`) render into schedd's `[database_scheduler]`. schedd
 upserts node lifecycles at startup, and rendering the file restarts it.
-A lost (`unavailable`) node stays in the scheduler, which fails over or
-restores its databases. The generator drops it from everything else: the
+A lost (`unavailable`) node stays in the scheduler, which fails its
+replicated databases over and parks the rest (`node_lost`) for a
+point-in-time restore. The generator drops it from everything else: the
 `database_nodes` group (a lost node is not converged), the scrape targets
 (its down alerts resolve once it is marked), the other nodes' cancel
 peers and the app route's upstreams. If every node is lost, the route
@@ -508,6 +509,20 @@ address) instead, and the Prometheus role scrapes each target as
     above 5 s).
   - The archive alerts are warn, like `PgBackupStale`: nothing is lost
     until the node is.
+- schedd's database scheduler exports `schedd_database_*`. On every idle
+  sweep, each replica observes the catalog from the shared store: states,
+  replicated databases' standby status, and each node's admitted memory
+  and committed volume. Node load comes from the store's own placement
+  accounting (`Store.Loads`, the same sums as admission). Each replica
+  also counts its own failovers (by trigger and result), standby drops
+  (by reason) and moves.
+  - Alerts, all warn: `FaasDatabaseStandbyMissing` (a running
+    production-class database without a synchronized standby for 30
+    min), `FaasDatabaseFailedOver`, `FaasDatabaseFailoverFailed`,
+    `FaasDatabaseNodeVolumeNearFull` (over 90% committed) and
+    `FaasDatabaseMoveFailed`.
+  - Failed databases are a gauge only: an abandoned failed provisioning
+    would hold an alert open.
 - No series carries a database or account id.
 
 ### Durability: WAL archiving, base backups, point-in-time restore

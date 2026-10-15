@@ -62,7 +62,7 @@ postgres_majors = [16, 17]
 }
 
 func TestEnableDatabaseSchedulerDisabledByDefault(t *testing.T) {
-	stop, err := enableDatabaseScheduler(context.Background(), nil, nil, nil, nil, slog.Default())
+	stop, err := enableDatabaseScheduler(context.Background(), nil, nil, nil, nil, nil, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}

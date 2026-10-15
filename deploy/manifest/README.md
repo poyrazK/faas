@@ -100,7 +100,8 @@ control plane, which restarts schedd:
   (which needs `shared_archive`), schedd moves its databases off one at a
   time.
 - `unavailable`: the node is lost. schedd fails its production-class
-  databases over and restores the rest elsewhere from the bucket. The
+  databases over and parks the rest (`node_lost`). A point-in-time
+  restore recovers those onto another node from the bucket. The
   generator also drops it from the `database_nodes` group, the scrape
   targets, the other nodes' cancel peers and the app route. Converge the
   compute and database nodes too. Its pgproxyd instance id stays reserved.

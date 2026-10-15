@@ -372,7 +372,7 @@ func (s *Scheduler) failoverParked(ctx context.Context, parkedOn map[string][]VM
 			}
 			s.log.Warn("dbsched: parked database's node unreachable; failing over to its synchronized standby", "database_id", vm.DatabaseID,
 				"node_id", nodeID, "unreachable_for", silent)
-			if err := s.failover(ctx, vm.DatabaseID, byID[nodeID]); err != nil {
+			if err := s.failover(ctx, vm.DatabaseID, byID[nodeID], failoverParked); err != nil {
 				s.log.Warn("dbsched: automatic failover failed", "database_id", vm.DatabaseID, "err", err)
 			}
 		}
@@ -408,7 +408,11 @@ func (s *Scheduler) checkStandby(ctx context.Context, vm VM, primary, standby No
 	switch {
 	case standbyGone || (status.Mode == dbguest.ReplicationSync && !status.Synchronous):
 		s.unsyncedSince.Delete(id)
-		return s.dropStandby(ctx, vm, primary, standby, standbyGone)
+		reason := dropLagging
+		if standbyGone {
+			reason = dropNodeGone
+		}
+		return s.dropStandby(ctx, vm, primary, standby, standbyGone, reason)
 	case status.Synchronous && !vm.StandbySynced:
 		s.unsyncedSince.Delete(id)
 		s.recordSynced(ctx, vm)
@@ -419,7 +423,7 @@ func (s *Scheduler) checkStandby(ctx context.Context, vm VM, primary, standby No
 		first, _ := s.unsyncedSince.LoadOrStore(id, s.now())
 		if s.now().Sub(first.(time.Time)) >= s.cfg.StandbyStaleClaim {
 			s.unsyncedSince.Delete(id)
-			return s.dropStandby(ctx, vm, primary, standby, false)
+			return s.dropStandby(ctx, vm, primary, standby, false, dropStaleClaim)
 		}
 	default:
 		s.unsyncedSince.Delete(id)
@@ -431,7 +435,7 @@ func (s *Scheduler) checkStandby(ctx context.Context, vm VM, primary, standby No
 // says the standby may not be promoted, then the primary stops waiting for
 // it, and the standby stops for the next attach. A standby whose node is
 // going away loses its slot too: its replacement copies the primary anew.
-func (s *Scheduler) dropStandby(ctx context.Context, vm VM, primary, standby Node, replace bool) bool {
+func (s *Scheduler) dropStandby(ctx context.Context, vm VM, primary, standby Node, replace bool, reason string) bool {
 	id := vm.DatabaseID
 	unlock := s.lock(id)
 	defer unlock()
@@ -459,7 +463,8 @@ func (s *Scheduler) dropStandby(ctx context.Context, vm VM, primary, standby Nod
 		s.log.Warn("dbsched: release a dropped standby", "database_id", id, "err", err)
 	}
 	s.attachTried.Delete(id)
-	s.log.Warn("dbsched: standby dropped; the primary runs asynchronous until it attaches again", "database_id", id, "standby_node", cur.StandbyNode, "node_gone", replace)
+	s.cfg.Metrics.standbyDropped(reason)
+	s.log.Warn("dbsched: standby dropped; the primary runs asynchronous until it attaches again", "database_id", id, "standby_node", cur.StandbyNode, "reason", reason)
 	return true
 }
 
@@ -543,7 +548,7 @@ func (s *Scheduler) RunStandbyLoop(ctx context.Context) {
 // volume is promoted on its next boot. The old primary is stopped first
 // if its node still answers, so it cannot take writes the standby will
 // never see.
-func (s *Scheduler) failover(ctx context.Context, id string, lost Node) error {
+func (s *Scheduler) failover(ctx context.Context, id string, lost Node, trigger string) (err error) {
 	unlock := s.lock(id)
 	defer unlock()
 	vm, err := s.store.Get(ctx, id)
@@ -551,8 +556,9 @@ func (s *Scheduler) failover(ctx context.Context, id string, lost Node) error {
 		return err
 	}
 	if vm.NodeID != lost.ID || !canFailover(vm) {
-		return ErrConflict
+		return ErrConflict // already failed over, or nothing to promote
 	}
+	defer func() { s.cfg.Metrics.failedOver(trigger, err) }()
 	standby, err := s.node(ctx, vm.StandbyNode)
 	if err != nil || standby.Lifecycle == NodeUnavailable {
 		return fmt.Errorf("%w: the standby's node is unavailable too", ErrNodeUnavailable)
@@ -612,7 +618,7 @@ func (s *Scheduler) autoFailover(ctx context.Context, vm VM, primary, standby No
 	}
 	s.log.Warn("dbsched: primary unreachable; failing over to its synchronized standby", "database_id", vm.DatabaseID,
 		"node_id", primary.ID, "unreachable_for", s.now().Sub(first.(time.Time)))
-	if err := s.failover(ctx, vm.DatabaseID, primary); err != nil {
+	if err := s.failover(ctx, vm.DatabaseID, primary, failoverRunning); err != nil {
 		s.log.Warn("dbsched: automatic failover failed", "database_id", vm.DatabaseID, "err", err)
 	}
 }

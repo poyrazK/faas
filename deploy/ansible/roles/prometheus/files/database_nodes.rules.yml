@@ -97,3 +97,67 @@ groups:
           summary: "Database wakes on {{ $labels.node }} take {{ $value | humanizeDuration }} at p95"
           description: "The 95th percentile from an authenticated client to a running database on {{ $labels.node }} has exceeded 5 seconds for 15 minutes. Usual causes are boot slots or the RAM ceiling queueing wakes, no spare VMs, or a slow volume."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+  # schedd's database scheduler. Every replica reports the whole catalog
+  # (max) and counts only its own events (sum).
+  - name: faas_database_scheduler
+    interval: 30s
+    rules:
+      # A production-class database without a synchronized standby commits
+      # alone: it cannot fail over. Seeding a large standby takes minutes.
+      - alert: FaasDatabaseStandbyMissing
+        expr: max(schedd_database_standbys{state="running",status=~"unsynced|none"}) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "{{ $value }} running production-class databases have no synchronized standby"
+          description: "For 30 minutes at least one running replicated database has had no promotable standby: its standby keeps failing to attach, or no other node has room for one. Until one attaches, losing its node means a restore from the archive instead of a failover."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseFailedOver
+        expr: sum(increase(schedd_database_failovers_total{result="ok"}[15m])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "Production-class databases failed over to their standbys"
+          description: "schedd promoted at least one standby in the last 15 minutes (trigger lost_node, running or parked). The old primary's node needs investigation, and each failed-over database runs without a standby until a new one attaches."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseFailoverFailed
+        expr: sum(increase(schedd_database_failovers_total{result="failed"}[15m])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "A database failover failed"
+          description: "schedd tried to promote a standby in the last 15 minutes and failed; the database stays on its silent node and schedd retries. Read schedd's dbsched failover errors."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseNodeVolumeNearFull
+        expr: max by (node) (schedd_database_node_volume_bytes / schedd_database_node_volume_capacity_bytes) > 0.9
+        for: 30m
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "Database node {{ $labels.node }} has committed {{ $value | humanizePercentage }} of its volume capacity"
+          description: "Databases, standbys and incoming moves on {{ $labels.node }} have reserved over 90% of its volume_capacity_bytes. New databases, storage growth and standbys go elsewhere or fail with no capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseMoveFailed
+        expr: sum(increase(schedd_database_moves_total{result="failed"}[1h])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "A database move between nodes failed"
+          description: "At least one move failed in the last hour. The database stays on its node, woken again if it was running, with last_error move_failed; evacuation retries it on a later sweep."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"

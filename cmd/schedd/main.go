@@ -1626,7 +1626,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(v, nil)
 	}
-	stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, log)
+	stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, ops, log)
 	if err != nil {
 		return err
 	}

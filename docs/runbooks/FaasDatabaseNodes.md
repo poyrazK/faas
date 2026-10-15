@@ -49,9 +49,11 @@ way. Every other database waits for the operator. Set the host's
 `database.lifecycle: unavailable` in the manifest, run `make
 manifest-ansible`, and converge the control plane. Rendering schedd's
 `[database_scheduler]` restarts schedd. schedd then fails over what it
-can and parks the rest with `node_lost`. With `shared_archive`, they
-restore onto another node from the bucket. Each loses at most what its
-archive had not shipped (see the stale alert below). Then converge the
+can and parks the rest with `node_lost`. A parked one stays on the lost
+node until it is recovered by a point-in-time restore. With
+`shared_archive`, that restore runs on another node from the bucket, up
+to the end of the archive. Each loses at most what its archive had not
+shipped (see the stale alert below). Then converge the
 compute and database nodes, which drops the lost node from the app route
 and the cancel peers. Prometheus stops scraping it, so this alert
 resolves.
@@ -118,3 +120,62 @@ VM takes about 400 ms.
   `database_vmmd_spares`.
 - A slow volume shows as high `node_disk_io_time_seconds_total` on the
   node.
+
+## schedd's database scheduler
+
+schedd reports the catalog and its own events. Every replica reports the
+whole catalog, so take `max`. Each replica counts only its own events, so
+take `sum`.
+
+| Metric | Meaning |
+| --- | --- |
+| `schedd_database_vms{state}` | Databases by state. |
+| `schedd_database_standbys{state,status}` | Replicated databases, running or parked, whose standby is `synced` (promotable), `unsynced` or `none`. |
+| `schedd_database_node_memory_mb{node}` / `_memory_ceiling_mb` | Admitted memory against the node's admission ceiling. |
+| `schedd_database_node_volume_bytes{node}` / `_volume_capacity_bytes` | Committed volume (databases, standbys, incoming moves) against capacity. |
+| `schedd_database_node_lifecycle{node,lifecycle}` | 1 for the node's lifecycle. |
+| `schedd_database_failovers_total{trigger,result}` | Failovers by `lost_node`, `running` or `parked`. |
+| `schedd_database_standby_drops_total{reason}` | Standbys given up (`lagging`, `node_gone`, `stale_claim`). |
+| `schedd_database_moves_total{result}` | Moves between nodes. |
+
+### FaasDatabaseStandbyMissing (warn)
+
+A running production-class database has had no synchronized standby for
+30 minutes, so it cannot fail over. `schedd_database_standby_drops_total`
+shows whether standbys keep being dropped. If they are `lagging`, the
+standby's node or the link between the nodes is too slow. If the status is
+`none`, no other active node offering the database's major has room. Add
+capacity, or end a node's drain.
+
+### FaasDatabaseFailedOver (warn)
+
+schedd promoted a standby: the operator marked a node lost (`lost_node`),
+or a running or parked database's node stopped answering for
+`auto_failover_after`. The database now runs on its standby's node, with
+`last_error = failed_over`, and the monitor attaches a new standby.
+Investigate the old node before it returns. When it comes back, the orphan
+sweep removes the old primary's volume. If the node is gone for good, mark
+it `unavailable`.
+
+### FaasDatabaseFailoverFailed (warn)
+
+A promotion failed, so the database stays on its silent node and schedd
+retries. `journalctl -u faas-schedd | grep "fail over\|failover"` names
+the error. A standby whose own node is also silent is never promoted.
+If the original node does not return, mark it `unavailable` (see
+FaasDatabaseNodeDaemonDown for what happens then).
+
+### FaasDatabaseNodeVolumeNearFull (warn)
+
+More than 90% of a node's `volume_capacity_bytes` is committed. Placement,
+storage growth and standbys go to other nodes, and fail when none has
+room. Add a node, or drain this one with `evacuate_draining`.
+
+### FaasDatabaseMoveFailed (warn)
+
+A move between nodes failed. The database stays on its node (woken again if
+it was running) with `last_error = move_failed`. The copy on the target is
+discarded. Evacuation retries the move on its next sweep. schedd's
+`dbsched: move failed` log names the failed step: copy, archive handoff or
+switch.
+
