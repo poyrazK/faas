@@ -119,7 +119,8 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) authorAction(w http.ResponseWriter, r *http.Request, scope Scope, data dashboard.AutomationConsoleData) {
 	switch r.PathValue("action") {
-	case "test-editor", "apply-test-case", "select-test-case", "add-test-case", "duplicate-test-case", "remove-test-case", "select-test-assertion", "add-test-assertion", "remove-test-assertion":
+	case "test-editor", "apply-test-case", "select-test-case", "add-test-case", "duplicate-test-case", "remove-test-case", "select-test-assertion", "add-test-assertion", "remove-test-assertion",
+		"select-live-assertion", "add-live-assertion", "remove-live-assertion", "disable-live-test":
 		data.Message = "Test case edits applied locally. Save test data to keep them."
 		s.render(w, r, scope, data, http.StatusOK)
 	case "start-live", "check-live":

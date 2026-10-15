@@ -23,6 +23,12 @@ func testCases(data dashboard.AutomationConsoleData) ([]api.AutomationPublishChe
 		if len(c.Expectations) > api.AutomationPublishCheckMaxExpectations {
 			return nil, fmt.Errorf("too many assertions")
 		}
+		if c.Live != nil && len(c.Live.Expectations) > api.AutomationLiveMaxExpectations {
+			return nil, fmt.Errorf("too many live assertions")
+		}
+	}
+	if liveEditorBounds(cases) != "" {
+		return nil, fmt.Errorf("live expectations exceed their size limit")
 	}
 	return cases, err
 }
@@ -66,7 +72,7 @@ func setupTestEditor(data *dashboard.AutomationConsoleData) {
 	}
 	c := cases[data.TestCaseIndex]
 	view.HasCase, view.Name, view.Simulation = true, c.Name, pretty(api.TestInputsFromSimulation(c.Simulation))
-	view.LiveJSON = pretty(c.Live)
+	setupLiveEditor(data, c.Live, view.Targets)
 	view.CanAddAssertion = len(c.Expectations) < api.AutomationPublishCheckMaxExpectations
 	for i, e := range c.Expectations {
 		label := e.Step
@@ -121,6 +127,9 @@ func prepareTestEditor(r *http.Request, data *dashboard.AutomationConsoleData) s
 			return "Reload the selected test case."
 		}
 		data.TestCaseIndex = index
+		if message := selectPostedLiveAssertion(r, data, cases[index].Live); message != "" {
+			return message
+		}
 		if len(cases[index].Expectations) > 0 && r.PathValue("action") != "remove-test-case" {
 			assertion, err := testIndex(r.PostFormValue("test_assertion_index"), len(cases[index].Expectations))
 			if err != nil {
@@ -132,9 +141,7 @@ func prepareTestEditor(r *http.Request, data *dashboard.AutomationConsoleData) s
 	setupTestEditor(data)
 	view := data.TestEditor
 	view.Name, view.Simulation = r.PostFormValue("test_case_name"), r.PostFormValue("test_case_simulation")
-	if _, posted := r.PostForm["test_live"]; posted {
-		view.LiveJSON = r.PostFormValue("test_live")
-	}
+	readLiveEditor(r, view.Live)
 	view.Step, view.State, view.ItemIndex = r.PostFormValue("test_step"), r.PostFormValue("test_state"), r.PostFormValue("test_item_index")
 	view.Output, view.AttemptCount, view.AssertOutput = r.PostFormValue("test_output"), r.PostFormValue("test_attempt_count"), r.PostFormValue("test_assert_output") == "yes"
 	if len(cases) > 0 && r.PathValue("action") != "remove-test-case" {
@@ -142,13 +149,17 @@ func prepareTestEditor(r *http.Request, data *dashboard.AutomationConsoleData) s
 			return message
 		}
 	}
-	caseIndex, assertionIndex := data.TestCaseIndex, data.TestAssertionIndex
+	caseIndex, assertionIndex, liveIndex := data.TestCaseIndex, data.TestAssertionIndex, data.TestLiveIndex
 	if message := manageTestCases(r, data, &cases); message != "" {
+		return message
+	}
+	if message := liveEditorBounds(cases); message != "" {
+		data.TestCaseIndex, data.TestAssertionIndex, data.TestLiveIndex = caseIndex, assertionIndex, liveIndex
 		return message
 	}
 	raw := prettyScenarios(cases)
 	if int64(len(raw)) > api.AutomationPublishCheckMaxBytes {
-		data.TestCaseIndex, data.TestAssertionIndex = caseIndex, assertionIndex
+		data.TestCaseIndex, data.TestAssertionIndex, data.TestLiveIndex = caseIndex, assertionIndex, liveIndex
 		return "The test cases exceed the saved test data size limit."
 	}
 	data.Scenarios, data.TestEditor = raw, nil
@@ -180,12 +191,8 @@ func patchTestCase(r *http.Request, data *dashboard.AutomationConsoleData, cases
 		return "Enter valid input and mock JSON for this case."
 	}
 	c.Name, c.Simulation = name, inputs.Simulation(api.WorkflowSpec{})
-	if _, posted := r.PostForm["test_live"]; posted {
-		var live *api.AutomationLiveTest
-		if decode(view.LiveJSON, api.AutomationLiveSpecMaxBytes, &live) != nil {
-			return "Enter valid live expectation JSON, or null to disable live verification for this case."
-		}
-		c.Live = live
+	if message := patchLiveTest(r, data, c); message != "" {
+		return message
 	}
 	if len(c.Expectations) == 0 {
 		return ""
@@ -248,16 +255,18 @@ func manageTestCases(r *http.Request, data *dashboard.AutomationConsoleData, cas
 		if err != nil {
 			return "Choose an existing test case."
 		}
-		data.TestCaseIndex, data.TestAssertionIndex = index, 0
+		data.TestCaseIndex, data.TestAssertionIndex, data.TestLiveIndex = index, 0, 0
 	case "add-test-case", "duplicate-test-case":
 		return addTestCase(r, data, cases)
 	case "remove-test-case":
 		if len(*cases) > 0 {
 			*cases = slices.Delete(*cases, data.TestCaseIndex, data.TestCaseIndex+1)
-			data.TestCaseIndex, data.TestAssertionIndex = 0, 0
+			data.TestCaseIndex, data.TestAssertionIndex, data.TestLiveIndex = 0, 0, 0
 		}
 	case "select-test-assertion", "add-test-assertion", "remove-test-assertion":
 		return manageTestAssertions(r, data, *cases)
+	case "select-live-assertion", "add-live-assertion", "remove-live-assertion", "disable-live-test":
+		return manageLiveAssertions(r, data, *cases)
 	}
 	return ""
 }
@@ -289,7 +298,7 @@ func addTestCase(r *http.Request, data *dashboard.AutomationConsoleData, cases *
 		}
 	}
 	*cases = append(*cases, c)
-	data.TestCaseIndex, data.TestAssertionIndex = len(*cases)-1, 0
+	data.TestCaseIndex, data.TestAssertionIndex, data.TestLiveIndex = len(*cases)-1, 0, 0
 	return ""
 }
 

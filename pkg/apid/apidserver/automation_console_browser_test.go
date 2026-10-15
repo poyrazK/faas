@@ -3,6 +3,7 @@
 // adr: 1287
 // adr: 1288
 // adr: 1289
+// adr: 1292
 package apidserver_test
 
 import (
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Opt-in browser qualification uses the real HTTP/session/form stack; ordinary
@@ -80,6 +82,18 @@ func TestAutomationConsoleBrowserLiveVerificationJourney(t *testing.T) {
 	}
 	e, app, cookie := consoleFixture(t)
 	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "live")
+}
+
+func TestAutomationConsoleBrowserGuidedLiveAssertionsJourney(t *testing.T) {
+	if os.Getenv("GREGALE_AUTOMATION_BROWSER_ACCEPTANCE") != "1" {
+		t.Skip("set GREGALE_AUTOMATION_BROWSER_ACCEPTANCE=1 with Playwright and Chromium installed")
+	}
+	e, app, cookie := consoleFixture(t)
+	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "live-editor")
+	runs, _, err := (*e.Store()).ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
+	if err != nil || len(runs) != 0 {
+		t.Fatal("editing live assertions started a real run", err)
+	}
 }
 
 func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string, extra ...map[string]string) {

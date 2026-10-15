@@ -31,6 +31,7 @@ type AutomationConsoleData struct {
 	LiveSelected                                             *api.AutomationLiveVerification
 	TestEditorMode                                           string
 	TestCaseIndex, TestAssertionIndex                        int
+	TestLiveIndex                                            int
 	TestEditor                                               *AutomationTestEditor
 	Health                                                   *api.AutomationHealthResponse
 	Runs                                                     []AutomationConsoleRun
@@ -54,13 +55,23 @@ type AutomationConsoleData struct {
 }
 
 type AutomationTestEditor struct {
-	LiveJSON                               string
+	Live                                   *AutomationLiveEditor
 	Cases, Assertions                      []AutomationTestChoice
 	Targets                                []string
 	Name, Simulation, Step, State          string
 	ItemIndex, Output, AttemptCount, Error string
 	AssertOutput, HasCase, HasAssertion    bool
 	CanAddCase, CanAddAssertion            bool
+}
+
+type AutomationLiveEditor struct {
+	Assertions                          []AutomationTestChoice
+	Targets                             []string
+	RunStatus, Step, State              string
+	ItemIndex, Output, AttemptCount     string
+	Enabled, HasAssertion, AssertOutput bool
+	CanAddAssertion                     bool
+	MaxAttempts, MaxItemIndex           int
 }
 
 type AutomationTestChoice struct {

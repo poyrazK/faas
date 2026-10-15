@@ -107,8 +107,25 @@ live default deployment. Configure synthetic case input and appropriate test
 integration credentials before opting into real actions. This first version is
 app-scoped; apps requiring platform-tenant identity are blocked.
 
-In **Guided test cases**, open **Live expectations for this case**. Keep `null` to
-disable live verification, or enter a separate spec such as:
+In **Guided test cases**, use **Live expectations for this case** and choose
+**Add live assertion**. Select a workflow step and choose its expected real state,
+output, or attempt count. Loop actions also take an item index. Use **Open live
+assertion** to edit another assertion, or **Remove live assertion** to remove it.
+The **Expected live run state** defaults to succeeded and can explicitly expect
+failed or dead. New assertions have no checks until you choose one.
+
+These controls remain separate from the mock assertions. An output of `null`
+asserts null; unchecking output omits that check. Blank attempt counts omit the
+check; zero asserts no attempts. Counts include resumed attempts, up to 425.
+Invalid fields retain the selected assertion and submitted values for correction.
+Editing, duplicating or navigating cases does not start execution.
+
+Apply case changes and **Save test data** to persist the live checks. **Disable
+live verification for this case** removes its live expectations locally; save test
+data to persist that choice. It does not cancel a previously admitted run.
+
+For the complete object, apply changes before switching to **Advanced test JSON**
+and edit the case's `live` property. For example:
 
 ```json
 {
@@ -120,8 +137,9 @@ disable live verification, or enter a separate spec such as:
 }
 ```
 
-Apply case changes and **Save test data**. In advanced case JSON this object is
-stored as `live`. Live step states are `succeeded`, `failed`, `dead`, or `skipped`;
+Use `live: null` or omit it to disable live checks in advanced JSON. Switching back
+to guided cases preserves this object and loads fresh controls. Live step states
+are `succeeded`, `failed`, `dead`, or `skipped`;
 `mocked` is invalid. Expected run state defaults to `succeeded` and may explicitly
 be `failed` or `dead`. Cancellation always fails verification. The durable step
 attempt count includes attempts from resumed execution. Loop assertions use
