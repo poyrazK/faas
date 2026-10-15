@@ -1439,8 +1439,11 @@ intervals at a constant per-second rate, or hourly counts:
 - When the operator marks a node unavailable, schedd's 30-second sweep
   parks the records of its active databases (`node_lost`), which closes
   their compute intervals; otherwise an always-on database would bill
-  compute forever. Their wakes fail until the node returns. They keep
-  their last history sample until deleted.
+  compute forever. Their wakes fail until the node returns. With a shared
+  archive, any live node's dbbackupd sizes their bucket copy, so the
+  history meter follows `PruneLostArchives`' trimming. Without one,
+  nothing else reaches their archive, and they keep their last sample
+  until deleted.
 - The ledger keeps closed rows 90 days.
 - Metal: `TestMetalDriverEndToEnd` reads all five meters after a
   provisioned, queried database, and again after its deletion.

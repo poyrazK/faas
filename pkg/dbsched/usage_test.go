@@ -85,3 +85,46 @@ func TestSchedulerMetersADatabase(t *testing.T) {
 		t.Fatalf("empty window = %v", err)
 	}
 }
+
+// A lost node's databases are sized through a live node when the archive
+// is shared, so the bucket prune of their history shows on the meter;
+// without a shared archive they keep their last sample.
+func TestSampleArchivesOfALostNodeThroughALiveOne(t *testing.T) {
+	ctx := context.Background()
+	s, store, vmm := newMoveScheduler(t)
+	start := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+	clock := start
+	now := func() time.Time { return clock }
+	store.now, s.now = now, now
+	vm := provisionOn(t, s, "db-a")
+	vmm.archiveBytes = map[string]int64{vm.DatabaseID: 5000}
+	if n, err := s.SampleArchives(ctx); err != nil || n != 1 {
+		t.Fatalf("sample = %d, %v", n, err)
+	}
+
+	clock = clock.Add(10 * time.Minute)
+	seedNodes(t, store, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 100 << 30, Lifecycle: NodeUnavailable})
+	vmm.archiveBytes[vm.DatabaseID] = 2000 // the bucket copy, pruned
+	vmm.onNode = nil
+	if n, err := s.SampleArchives(ctx); err != nil || n != 1 {
+		t.Fatalf("sample with db-a lost = %d, %v", n, err)
+	}
+	if got := calls(vmm, "size@"); len(got) != 1 || got[0] != "size@db-b" {
+		t.Fatalf("sized through %v; want db-b only", got)
+	}
+	clock = clock.Add(10 * time.Minute)
+	u, err := s.Usage(ctx, vm.DatabaseID, start, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(5000*600 + 2000*600); u.HistoryByteSeconds != want {
+		t.Fatalf("history = %d byte-seconds, want %d", u.HistoryByteSeconds, want)
+	}
+
+	// Without a shared archive no other node reaches it.
+	s.cfg.SharedArchive = false
+	vmm.onNode = nil
+	if n, err := s.SampleArchives(ctx); err != nil || n != 0 || len(calls(vmm, "size@")) != 0 {
+		t.Fatalf("sample without a shared archive = %d, %v (calls %v)", n, err, calls(vmm, "size@"))
+	}
+}

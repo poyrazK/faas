@@ -136,10 +136,13 @@ func (s *Scheduler) RecordEgress(ctx context.Context, id string, bytes int64) er
 	return s.store.AddEgress(ctx, id, bytes, s.now())
 }
 
-// SampleArchives records each database's archive size on its node as the
-// restore-history meter. Databases on unavailable nodes keep their last
-// sample until deleted (PruneLostArchives trims their bucket copy). It
-// reports how many databases it sampled.
+// SampleArchives records each database's archive size as the
+// restore-history meter: its node's dbbackupd sizes the whole archive, on
+// the node and in the bucket. With a shared archive, a lost node's
+// databases are sized by any live node, so PruneLostArchives' trimming of
+// their bucket copy shows; without one, nothing else reaches their
+// archive and they keep their last sample until deleted. It reports how
+// many databases it sampled.
 func (s *Scheduler) SampleArchives(ctx context.Context) (int, error) {
 	nodes, err := s.store.Nodes(ctx)
 	if err != nil {
@@ -149,14 +152,26 @@ func (s *Scheduler) SampleArchives(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	byID := make(map[string]Node, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
 	byNode := map[string][]string{}
+	var lost []string
 	for _, vm := range vms {
+		n, known := byID[vm.NodeID]
+		if !known || n.Lifecycle == NodeUnavailable {
+			if s.cfg.SharedArchive {
+				lost = append(lost, vm.DatabaseID)
+			}
+			continue
+		}
 		byNode[vm.NodeID] = append(byNode[vm.NodeID], vm.DatabaseID)
 	}
 	sampled := 0
 	at := s.now()
 	for _, n := range nodes {
-		if n.Lifecycle == NodeUnavailable || len(byNode[n.ID]) == 0 {
+		if len(byNode[n.ID]) == 0 {
 			continue
 		}
 		sizes, err := s.vmm.ArchiveBytes(ctx, n, byNode[n.ID])
@@ -164,13 +179,33 @@ func (s *Scheduler) SampleArchives(ctx context.Context) (int, error) {
 			s.log.Warn("dbsched: size archives", "node_id", n.ID, "err", err)
 			continue
 		}
-		for id, bytes := range sizes {
-			if err := s.store.SampleUsage(ctx, id, MeterHistory, bytes, at); err != nil {
-				s.log.Warn("dbsched: record archive size", "database_id", id, "err", err)
-				continue
-			}
-			sampled++
+		sampled += s.recordArchiveSizes(ctx, sizes, at)
+	}
+	if len(lost) == 0 {
+		return sampled, nil
+	}
+	for _, n := range nodes {
+		if n.Lifecycle == NodeUnavailable {
+			continue
 		}
+		sizes, err := s.vmm.ArchiveBytes(ctx, n, lost)
+		if err != nil {
+			s.log.Warn("dbsched: size a lost node's archives", "node_id", n.ID, "err", err)
+			continue
+		}
+		return sampled + s.recordArchiveSizes(ctx, sizes, at), nil
 	}
 	return sampled, nil
+}
+
+func (s *Scheduler) recordArchiveSizes(ctx context.Context, sizes map[string]int64, at time.Time) int {
+	sampled := 0
+	for id, bytes := range sizes {
+		if err := s.store.SampleUsage(ctx, id, MeterHistory, bytes, at); err != nil {
+			s.log.Warn("dbsched: record archive size", "database_id", id, "err", err)
+			continue
+		}
+		sampled++
+	}
+	return sampled
 }
