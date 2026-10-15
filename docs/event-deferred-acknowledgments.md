@@ -291,8 +291,8 @@ not a hosted notification service. The CLI accepts:
   this is a frequency, not a failed-delivery percentage.
 - `--processing-window-sustain DURATION`: breach and recovery confirmation,
   at least one minute, default one minute.
-- `--processing-metrics-recording-since RFC3339`: required assertion that all
-  acknowledgment writers have recorded continuously since this timestamp.
+- `--processing-metrics-recording-since RFC3339`: optional manual assertion of
+  continuous recording; by default the watch requires verified writer coverage.
 
 Zero thresholds disable their conditions. These flags require `--watch`.
 The corresponding Go SDK options are `ProcessingRenewalRejectionFraction`,
@@ -301,20 +301,24 @@ The corresponding Go SDK options are `ProcessingRenewalRejectionFraction`,
 The existing callback, alert JSON, durable outbox, checkpoint and acknowledgement
 mechanisms apply to these conditions.
 
-The recording-since timestamp is an **operator assertion**, not automatic rollout
-verification. Confirm that the bucket migration and every relevant apid/scheduler
-writer are upgraded before choosing it. Do not infer it from a first bucket or
-absence of events. No window crossing this boundary is eligible. After rollback,
-restore, data loss or another recording gap, stop the watch and begin a new one
-with a newly confirmed boundary and a fresh checkpoint. A prior assertion cannot
-prove that recording remained continuous through a later deployment change.
+Automatic mode requires `recording_coverage.verified` for the entire effective
+window. Missing inventory, missing or incompatible writers, stale heartbeats,
+restarts and conflicting sessions make coverage unknown. The window end follows
+the last completed minute acknowledged by every writer, so it can lag the current
+minute. Rates use this effective interval.
+
+An explicit recording-since timestamp remains an **operator assertion**. Confirm
+that every relevant writer records continuously before choosing it. Do not infer
+it from a first bucket or absence of events. After rollback, restore, data loss or
+another recording gap, begin a new watch with a newly confirmed boundary and a
+fresh checkpoint. Manual mode bypasses automatic inventory verification.
 
 The watch checks scope, exact effective window bounds, minute width, retention,
 coverage label, saturation, bounded counts, denominator consistency and reported
 rates. Its `MaxAge` applies to the database observation clock. Insufficient renewal
 samples, unsupported/missing summaries, stale/repeated/out-of-order observations,
 invalid evidence and missing window coverage produce `unknown`, not healthy or
-recovered. Expiry zero is eligible only under the explicit coverage assertion;
+recovered. Expiry zero is eligible only with verified coverage or a manual assertion;
 renewal zero samples cannot resolve a renewal incident.
 
 Both opening and recovery need at least two distinct consecutive completed-minute
@@ -331,6 +335,44 @@ sustained eligible values strictly below the threshold. Lost evidence emits
 `confirmation_lost`, not `resolved`; renewed proof can open a new incident.
 Checkpoints preserve `metric_recording_since`, thresholds, minimum request samples,
 sustain and recovery policy, but do not preserve live confirmation. Resume requires
-matching options and fresh windows, and rejects a changed recording boundary.
+matching options and fresh windows, and rejects a changed recording boundary or a switch between automatic and manual modes.
 These conditions use checkpoint version 2; older clients reject the unknown
 metrics rather than silently reinterpret them. Existing conditions are unchanged.
+
+## Declaring acknowledgment writer coverage
+
+Configure the same exhaustive roster on every apid and schedd, with a distinct,
+stable slot for each deployed process. For example, an apid TOML file can contain:
+
+```toml
+event_acknowledgment_writer_slot = "api-1"
+event_acknowledgment_writer_roster = '[{"role":"apid","slot":"api-1"},{"role":"schedd","slot":"scheduler-1"}]'
+```
+
+The schedd uses the identical roster and slot `scheduler-1`. Environment overrides
+are `FAAS_EVENT_ACK_WRITER_SLOT` and `FAAS_EVENT_ACK_WRITER_ROSTER`. Rosters require
+both roles, at most 128 unique role/slot pairs and 16 KiB of JSON. Slots contain
+1–128 ASCII letters, digits, underscores, periods, colons or hyphens.
+
+The deployment must ensure this inventory includes every acknowledgment writer
+and exclusively assigns its slots. This protocol cannot discover or fence an
+unlisted legacy process that never registers. An expected older writer without
+heartbeats appears missing. With no configured roster, processes still register
+observations but coverage never verifies.
+
+Each process starts a fresh session and heartbeats every 10 seconds with a
+30-second lease. Every live session must support the recording capability and
+agree on the canonical roster. Duplicate sessions, roster changes and lease gaps
+invalidate continuity; a restart establishes a new conservative boundary. Health
+reports counts, an opaque inventory revision and coverage timestamps, without
+exposing slots or session identifiers. Coverage reads and metric counts share a
+repeatable-read snapshot. Public evidence stops at the least recent heartbeat. Heartbeats do not fence
+in-flight metric transactions; delayed commits can still update a recorded minute.
+
+The live scan is bounded to 256 sessions and fails closed on overflow. Historical
+session observations are retained for 48 hours, with bounded cleanup on heartbeats.
+Heartbeat failures are logged and retried without stopping delivery. These records
+attest configured writer capability and liveness, not delivery success or database
+data integrity. After a data-loss restore, restart every writer to establish a new
+coverage boundary before trusting automatic windows. A silent data rollback cannot
+be detected from writer liveness alone.

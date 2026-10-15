@@ -569,6 +569,7 @@ export type { EventAcknowledgmentHistoryQuery } from './EventAcknowledgmentHisto
 export type { EventAcknowledgmentOutcome } from './EventAcknowledgmentOutcome.js';
 export type { EventAcknowledgmentPolicy } from './EventAcknowledgmentPolicy.js';
 export type { EventAcknowledgmentPolicyRequest } from './EventAcknowledgmentPolicyRequest.js';
+export type { EventAcknowledgmentRecordingCoverage } from './EventAcknowledgmentRecordingCoverage.js';
 export type { EventAcknowledgmentRequest } from './EventAcknowledgmentRequest.js';
 export type { EventAcknowledgmentStatus } from './EventAcknowledgmentStatus.js';
 export type { EventAcknowledgmentWindowHealth } from './EventAcknowledgmentWindowHealth.js';

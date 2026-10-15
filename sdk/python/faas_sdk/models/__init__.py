@@ -1123,6 +1123,7 @@ from .event_acknowledgment_outcome import EventAcknowledgmentOutcome
 from .event_acknowledgment_outcome_kind import EventAcknowledgmentOutcomeKind
 from .event_acknowledgment_policy import EventAcknowledgmentPolicy
 from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyRequest
+from .event_acknowledgment_recording_coverage import EventAcknowledgmentRecordingCoverage
 from .event_acknowledgment_request import EventAcknowledgmentRequest
 from .event_acknowledgment_status import EventAcknowledgmentStatus
 from .event_acknowledgment_status_processing_state import EventAcknowledgmentStatusProcessingState
@@ -5789,6 +5790,7 @@ __all__ = (
     "EventAcknowledgmentOutcomeKind",
     "EventAcknowledgmentPolicy",
     "EventAcknowledgmentPolicyRequest",
+    "EventAcknowledgmentRecordingCoverage",
     "EventAcknowledgmentRequest",
     "EventAcknowledgmentStatus",
     "EventAcknowledgmentStatusProcessingState",

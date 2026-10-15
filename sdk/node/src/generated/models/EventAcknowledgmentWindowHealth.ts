@@ -2,16 +2,18 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventAcknowledgmentRecordingCoverage } from './EventAcknowledgmentRecordingCoverage.js';
 /**
- * Recorded renewal and expiry operations in full UTC minute buckets; no pre-upgrade history or full rollout completeness is inferred.
+ * Recorded renewal and expiry operations in full UTC minute buckets with optional verification of deployment-declared writer continuity.
  */
 export type EventAcknowledgmentWindowHealth = {
   /**
    * Inclusive boundary of full minutes wholly inside the requested processing window.
    */
   window_start: string;
+  recording_coverage?: EventAcknowledgmentRecordingCoverage;
   /**
-   * Exclusive boundary excluding the currently open UTC minute.
+   * Exclusive completed-minute boundary capped by the verified writer heartbeat watermark when available.
    */
   window_end: string;
   /**
@@ -23,7 +25,7 @@ export type EventAcknowledgmentWindowHealth = {
    */
   retention_seconds: number;
   /**
-   * Only instrumented writers contribute; missing pre-upgrade or mixed-version activity is not reconstructed and zero is not proof of historical completeness.
+   * Only instrumented writers contribute; inspect recording_coverage for declared-inventory continuity and no pre-upgrade activity is reconstructed.
    */
   coverage: 'recorded_full_minute_buckets';
   /**

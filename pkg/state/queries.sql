@@ -20271,3 +20271,24 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AN
 
 -- name: EventAckMetricQuotaLock :exec
 SELECT account_id FROM account_async_quota WHERE account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: EventAckWriterCoverageEnsure :exec
+INSERT INTO event_acknowledgment_recording_coverage(singleton,inventory_revision,updated_at) VALUES(true,'',clock_timestamp()) ON CONFLICT DO NOTHING;
+-- name: EventAckWriterCoverageLock :one
+SELECT * FROM event_acknowledgment_recording_coverage WHERE singleton=true FOR UPDATE;
+-- name: EventAckWriterCoverageGet :one
+SELECT * FROM event_acknowledgment_recording_coverage WHERE singleton=true;
+-- name: EventAckWriterCoverageSet :exec
+UPDATE event_acknowledgment_recording_coverage SET inventory_revision=sqlc.arg(inventory_revision)::text,continuous_since=sqlc.narg(continuous_since)::timestamptz,verified_through=sqlc.narg(verified_through)::timestamptz,updated_at=clock_timestamp() WHERE singleton=true;
+-- name: EventAckWriterBeat :execrows
+WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS now_at)
+INSERT INTO event_acknowledgment_writers AS w(session_id,role,slot,capability_version,inventory,inventory_revision,started_at,seen_at,continuous_since,expires_at)
+SELECT sqlc.arg(session_id)::uuid,sqlc.arg(role)::text,sqlc.arg(slot)::text,sqlc.arg(capability_version)::integer,sqlc.arg(inventory)::jsonb,sqlc.arg(inventory_revision)::text,c.now_at,c.now_at,c.now_at,c.now_at+sqlc.arg(lease_seconds)::integer*interval '1 second' FROM clock c
+ON CONFLICT(session_id) DO UPDATE SET capability_version=excluded.capability_version,inventory=excluded.inventory,inventory_revision=excluded.inventory_revision,
+ seen_at=excluded.seen_at,expires_at=excluded.expires_at,
+ continuous_since=CASE WHEN w.expires_at<=excluded.seen_at OR w.capability_version<>excluded.capability_version OR w.inventory_revision<>excluded.inventory_revision THEN excluded.seen_at ELSE w.continuous_since END
+WHERE w.role=excluded.role AND w.slot=excluded.slot;
+-- name: EventAckWritersLive :many
+SELECT * FROM event_acknowledgment_writers WHERE expires_at>sqlc.arg(now_at)::timestamptz ORDER BY session_id LIMIT sqlc.arg(row_limit)::integer;
+-- name: EventAckWritersPrune :exec
+DELETE FROM event_acknowledgment_writers WHERE session_id IN(SELECT session_id FROM event_acknowledgment_writers WHERE seen_at<clock_timestamp()-sqlc.arg(retention_seconds)::integer*interval '1 second' ORDER BY seen_at LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE SKIP LOCKED);

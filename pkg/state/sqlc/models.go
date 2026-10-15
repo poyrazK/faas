@@ -2877,6 +2877,27 @@ type EventAcknowledgmentOutcome struct {
 	RetainUntil      pgtype.Timestamptz
 }
 
+type EventAcknowledgmentRecordingCoverage struct {
+	Singleton         bool
+	InventoryRevision string
+	ContinuousSince   pgtype.Timestamptz
+	VerifiedThrough   pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
+type EventAcknowledgmentWriter struct {
+	SessionID         pgtype.UUID
+	Role              string
+	Slot              string
+	CapabilityVersion int32
+	Inventory         []byte
+	InventoryRevision string
+	StartedAt         pgtype.Timestamptz
+	SeenAt            pgtype.Timestamptz
+	ContinuousSince   pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+}
+
 type EventDeliveryAcknowledgment struct {
 	InvocationID     pgtype.UUID
 	Attempt          int32

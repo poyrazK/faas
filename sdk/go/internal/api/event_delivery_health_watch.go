@@ -14,7 +14,7 @@ import (
 // EventDeliveryHealthWatchOptions selects opt-in conditions. Zero disables a
 // threshold. Circuit/capacity durations measure consecutive local fresh reads.
 type EventDeliveryHealthWatchOptions struct {
-	// RecordingSince is an operator assertion of continuous recording by all writers.
+	// Nil RecordingSince uses verified server inventory; a timestamp is an operator override.
 	ProcessingMetricsRecordingSince                               *time.Time
 	ProcessingRenewalRejectionFraction, ProcessingLeaseExpiryRate float64
 	ProcessingRenewalMinimumSamples                               int64

@@ -72418,17 +72418,34 @@ components:
       properties:
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
 
+    EventAcknowledgmentRecordingCoverage:
+      type: object
+      additionalProperties: false
+      description: Capability and heartbeat verification against the exhaustive deployment-declared writer roster; not automatic discovery of unlisted processes or proof of metric data integrity.
+      required: [verified, reason, observed_at, expected_writers, active_writers, capability_version, heartbeat_lease_seconds]
+      properties:
+        verified: { type: boolean, description: All declared slots have one live compatible session and a continuous heartbeat watermark. }
+        reason: { type: string, description: Bounded coverage diagnostic such as verified or missing_writer or inventory_unconfigured or warming_up. }
+        observed_at: { type: string, format: date-time, description: Database clock used to assess writer leases in the metric read snapshot. }
+        continuous_since: { type: string, format: date-time, description: Conservative continuity boundary reset by observed membership changes or heartbeat gaps. }
+        verified_through: { type: string, format: date-time, description: Least recent live writer heartbeat; no later minute is considered verified. }
+        inventory_revision: { type: string, pattern: '^[0-9a-f]{64}$', description: Opaque hash of the common canonical declared inventory without exposing slots or sessions. }
+        expected_writers: { type: integer, minimum: 0, maximum: 128, description: Declared members when a usable inventory is available. }
+        active_writers: { type: integer, minimum: 0, maximum: 257, description: Bounded live session count; 257 denotes evidence exceeding the scan limit. }
+        capability_version: { type: integer, const: 1, description: Required deferred metric recording capability protocol. }
+        heartbeat_lease_seconds: { type: integer, const: 30, description: Writer heartbeat lease horizon assessed using database time. }
     EventAcknowledgmentWindowHealth:
       type: object
       additionalProperties: false
-      description: Recorded renewal and expiry operations in full UTC minute buckets; no pre-upgrade history or full rollout completeness is inferred.
+      description: Recorded renewal and expiry operations in full UTC minute buckets with optional verification of deployment-declared writer continuity.
       required: [window_start, window_end, bucket_seconds, retention_seconds, coverage, renewal_successes, renewal_rejections, renewal_attempts, lease_expiries, saturated]
       properties:
         window_start: { type: string, format: date-time, description: Inclusive boundary of full minutes wholly inside the requested processing window. }
-        window_end: { type: string, format: date-time, description: Exclusive boundary excluding the currently open UTC minute. }
+        recording_coverage: { $ref: '#/components/schemas/EventAcknowledgmentRecordingCoverage' }
+        window_end: { type: string, format: date-time, description: Exclusive completed-minute boundary capped by the verified writer heartbeat watermark when available. }
         bucket_seconds: { type: integer, const: 60, description: Fixed width of each durable operation bucket. }
         retention_seconds: { type: integer, const: 172800, description: Metric retention measured from bucket start independently of invocation pruning. }
-        coverage: { type: string, enum: [recorded_full_minute_buckets], description: Only instrumented writers contribute; missing pre-upgrade or mixed-version activity is not reconstructed and zero is not proof of historical completeness. }
+        coverage: { type: string, enum: [recorded_full_minute_buckets], description: Only instrumented writers contribute; inspect recording_coverage for declared-inventory continuity and no pre-upgrade activity is reconstructed. }
         renewal_successes: { type: integer, format: int64, minimum: 0, description: Explicit successful renewals recorded in selected complete buckets. }
         renewal_rejections: { type: integer, format: int64, minimum: 0, description: Current-token renewal conflicts recorded after token and attempt verification. }
         renewal_attempts: { type: integer, format: int64, minimum: 0, description: Sum of recorded successful and rejected renewals used as the fraction denominator. }

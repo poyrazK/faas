@@ -168,18 +168,53 @@ func (c *Client) ListEventAcknowledgmentHistoryPage(ctx context.Context, app, su
 // Full-minute counts cover recorded operations since upgraded writers began recording.
 // Fractions describe recorded renewal operations, not unique deliveries.
 type EventAcknowledgmentWindowHealth struct {
-	WindowStart              time.Time `json:"window_start"`
-	WindowEnd                time.Time `json:"window_end"`
-	BucketSeconds            int       `json:"bucket_seconds"`
-	RetentionSeconds         int       `json:"retention_seconds"`
-	Coverage                 string    `json:"coverage"`
-	RenewalSuccesses         int64     `json:"renewal_successes"`
-	RenewalRejections        int64     `json:"renewal_rejections"`
-	RenewalAttempts          int64     `json:"renewal_attempts"`
-	LeaseExpiries            int64     `json:"lease_expiries"`
-	Saturated                bool      `json:"saturated"`
-	RenewalRejectionFraction *float64  `json:"renewal_rejection_fraction,omitempty"`
-	LeaseExpiryRatePerSecond *float64  `json:"lease_expiry_rate_per_second,omitempty"`
+	RecordingCoverage        *EventAcknowledgmentRecordingCoverage `json:"recording_coverage,omitempty"`
+	WindowStart              time.Time                             `json:"window_start"`
+	WindowEnd                time.Time                             `json:"window_end"`
+	BucketSeconds            int                                   `json:"bucket_seconds"`
+	RetentionSeconds         int                                   `json:"retention_seconds"`
+	Coverage                 string                                `json:"coverage"`
+	RenewalSuccesses         int64                                 `json:"renewal_successes"`
+	RenewalRejections        int64                                 `json:"renewal_rejections"`
+	RenewalAttempts          int64                                 `json:"renewal_attempts"`
+	LeaseExpiries            int64                                 `json:"lease_expiries"`
+	Saturated                bool                                  `json:"saturated"`
+	RenewalRejectionFraction *float64                              `json:"renewal_rejection_fraction,omitempty"`
+	LeaseExpiryRatePerSecond *float64                              `json:"lease_expiry_rate_per_second,omitempty"`
+}
+
+// Verification covers the exhaustive deployment-declared writer inventory only.
+type EventAcknowledgmentRecordingCoverage struct {
+	Verified              bool       `json:"verified"`
+	Reason                string     `json:"reason"`
+	ObservedAt            time.Time  `json:"observed_at"`
+	ContinuousSince       *time.Time `json:"continuous_since,omitempty"`
+	VerifiedThrough       *time.Time `json:"verified_through,omitempty"`
+	InventoryRevision     string     `json:"inventory_revision,omitempty"`
+	ExpectedWriters       int        `json:"expected_writers"`
+	ActiveWriters         int        `json:"active_writers"`
+	CapabilityVersion     int        `json:"capability_version"`
+	HeartbeatLeaseSeconds int        `json:"heartbeat_lease_seconds"`
+}
+
+// A verified heartbeat watermark delays the window end until all writers have observed it.
+func EventAcknowledgmentWindowBounds(observed time.Time, window time.Duration, coverage *EventAcknowledgmentRecordingCoverage) (time.Time, time.Time) {
+	end := observed.UTC().Truncate(EventAcknowledgmentMetricBucket)
+	requested := observed.Add(-window).UTC()
+	start := requested.Truncate(EventAcknowledgmentMetricBucket)
+	if start.Before(requested) {
+		start = start.Add(EventAcknowledgmentMetricBucket)
+	}
+	if coverage != nil && coverage.Verified && coverage.VerifiedThrough != nil {
+		through := coverage.VerifiedThrough.UTC().Truncate(EventAcknowledgmentMetricBucket)
+		if through.Before(end) {
+			end = through
+		}
+	}
+	if start.After(end) {
+		end = start
+	}
+	return start, end
 }
 
 const EventProcessingNearExpiry = 30 * time.Second

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -23,15 +25,7 @@ func acknowledgmentMetricKind(kind string) bool {
 	return kind == "renewed" || kind == "renewal_rejected" || kind == "expired"
 }
 func acknowledgmentMetricWindow(now time.Time, window time.Duration) api.EventAcknowledgmentWindowHealth {
-	end := now.UTC().Truncate(api.EventAcknowledgmentMetricBucket)
-	requested := now.Add(-window).UTC()
-	start := requested.Truncate(api.EventAcknowledgmentMetricBucket)
-	if start.Before(requested) {
-		start = start.Add(api.EventAcknowledgmentMetricBucket)
-	}
-	if start.After(end) {
-		start = end
-	}
+	start, end := api.EventAcknowledgmentWindowBounds(now, window, nil)
 	return api.EventAcknowledgmentWindowHealth{WindowStart: start, WindowEnd: end, BucketSeconds: int(api.EventAcknowledgmentMetricBucket / time.Second), RetentionSeconds: int(api.EventAcknowledgmentMetricRetention / time.Second), Coverage: "recorded_full_minute_buckets"}
 }
 func finishAcknowledgmentMetricHealth(out *api.EventAcknowledgmentWindowHealth) {
@@ -48,8 +42,19 @@ func finishAcknowledgmentMetricHealth(out *api.EventAcknowledgmentWindowHealth) 
 	out.LeaseExpiryRatePerSecond = &rate
 }
 func (s *PgStore) setAcknowledgmentMetricHealth(ctx context.Context, account, app, sub string, window time.Duration, health *api.EventConsumerProcessingHealth) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	coverage, err := s.acknowledgmentRecordingCoverage(ctx, tx)
+	if err != nil {
+		return err
+	}
 	out := acknowledgmentMetricWindow(health.ObservedAt, window)
-	row, err := sqlc.New().EventAckMetricHealth(ctx, s.pool, sqlc.EventAckMetricHealthParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), WindowStart: pgtypeFromTime(out.WindowStart), WindowEnd: pgtypeFromTime(out.WindowEnd)})
+	out.RecordingCoverage = &coverage
+	out.WindowStart, out.WindowEnd = api.EventAcknowledgmentWindowBounds(health.ObservedAt, window, &coverage)
+	row, err := sqlc.New().EventAckMetricHealth(ctx, tx, sqlc.EventAckMetricHealthParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), WindowStart: pgtypeFromTime(out.WindowStart), WindowEnd: pgtypeFromTime(out.WindowEnd)})
 	if err != nil {
 		return err
 	}
@@ -59,7 +64,7 @@ func (s *PgStore) setAcknowledgmentMetricHealth(ctx context.Context, account, ap
 	out.Saturated = row.Saturated
 	finishAcknowledgmentMetricHealth(&out)
 	health.RenewalWindow = &out
-	return nil
+	return tx.Commit(ctx)
 }
 func (m *MemStore) recordAcknowledgmentMetricLocked(inv Invocation, kind string, now time.Time) {
 	if !acknowledgmentMetricKind(kind) {
@@ -99,7 +104,10 @@ func (m *MemStore) pruneAcknowledgmentMetricsLocked(now time.Time, limit int) {
 	}
 }
 func (m *MemStore) setAcknowledgmentMetricHealthLocked(account, app, sub string, window time.Duration, health *api.EventConsumerProcessingHealth) {
+	coverage := bindAcknowledgmentCoverage(assessAcknowledgmentWriters(m.liveAcknowledgmentWritersLocked(health.ObservedAt), health.ObservedAt), m.eventAcknowledgmentCoverageHead, false)
 	out := acknowledgmentMetricWindow(health.ObservedAt, window)
+	out.RecordingCoverage = &coverage
+	out.WindowStart, out.WindowEnd = api.EventAcknowledgmentWindowBounds(health.ObservedAt, window, &coverage)
 	for key, row := range m.eventAcknowledgmentMetrics {
 		if !sameMemUUID(key.account, account) || !sameMemUUID(key.app, app) || !sameMemUUID(key.subscription, sub) || key.bucket.Before(out.WindowStart) || !key.bucket.Before(out.WindowEnd) || !row.retainUntil.After(health.ObservedAt) {
 			continue

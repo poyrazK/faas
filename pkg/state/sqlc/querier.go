@@ -726,6 +726,13 @@ type Querier interface {
 	EventAckPhase(ctx context.Context, db DBTX, arg EventAckPhaseParams) error
 	EventAckPolicyGet(ctx context.Context, db DBTX, arg EventAckPolicyGetParams) (int32, error)
 	EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPolicySetParams) (int64, error)
+	EventAckWriterBeat(ctx context.Context, db DBTX, arg EventAckWriterBeatParams) (int64, error)
+	EventAckWriterCoverageEnsure(ctx context.Context, db DBTX) error
+	EventAckWriterCoverageGet(ctx context.Context, db DBTX) (EventAcknowledgmentRecordingCoverage, error)
+	EventAckWriterCoverageLock(ctx context.Context, db DBTX) (EventAcknowledgmentRecordingCoverage, error)
+	EventAckWriterCoverageSet(ctx context.Context, db DBTX, arg EventAckWriterCoverageSetParams) error
+	EventAckWritersLive(ctx context.Context, db DBTX, arg EventAckWritersLiveParams) ([]EventAcknowledgmentWriter, error)
+	EventAckWritersPrune(ctx context.Context, db DBTX, arg EventAckWritersPruneParams) error
 	EventAgeOrderedBinding(ctx context.Context, db DBTX, subscriptionID pgtype.UUID) (bool, error)
 	EventAgeReplayTarget(ctx context.Context, db DBTX, arg EventAgeReplayTargetParams) (EventAgeReplayTargetRow, error)
 	EventAgeScopedReplayTarget(ctx context.Context, db DBTX, arg EventAgeScopedReplayTargetParams) (EventAgeScopedReplayTargetRow, error)

@@ -14446,6 +14446,154 @@ func (q *Queries) EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPo
 	return result.RowsAffected(), nil
 }
 
+const eventAckWriterBeat = `-- name: EventAckWriterBeat :execrows
+WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS now_at)
+INSERT INTO event_acknowledgment_writers AS w(session_id,role,slot,capability_version,inventory,inventory_revision,started_at,seen_at,continuous_since,expires_at)
+SELECT $1::uuid,$2::text,$3::text,$4::integer,$5::jsonb,$6::text,c.now_at,c.now_at,c.now_at,c.now_at+$7::integer*interval '1 second' FROM clock c
+ON CONFLICT(session_id) DO UPDATE SET capability_version=excluded.capability_version,inventory=excluded.inventory,inventory_revision=excluded.inventory_revision,
+ seen_at=excluded.seen_at,expires_at=excluded.expires_at,
+ continuous_since=CASE WHEN w.expires_at<=excluded.seen_at OR w.capability_version<>excluded.capability_version OR w.inventory_revision<>excluded.inventory_revision THEN excluded.seen_at ELSE w.continuous_since END
+WHERE w.role=excluded.role AND w.slot=excluded.slot
+`
+
+type EventAckWriterBeatParams struct {
+	SessionID         pgtype.UUID
+	Role              string
+	Slot              string
+	CapabilityVersion int32
+	Inventory         []byte
+	InventoryRevision string
+	LeaseSeconds      int32
+}
+
+func (q *Queries) EventAckWriterBeat(ctx context.Context, db DBTX, arg EventAckWriterBeatParams) (int64, error) {
+	result, err := db.Exec(ctx, eventAckWriterBeat,
+		arg.SessionID,
+		arg.Role,
+		arg.Slot,
+		arg.CapabilityVersion,
+		arg.Inventory,
+		arg.InventoryRevision,
+		arg.LeaseSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventAckWriterCoverageEnsure = `-- name: EventAckWriterCoverageEnsure :exec
+INSERT INTO event_acknowledgment_recording_coverage(singleton,inventory_revision,updated_at) VALUES(true,'',clock_timestamp()) ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) EventAckWriterCoverageEnsure(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, eventAckWriterCoverageEnsure)
+	return err
+}
+
+const eventAckWriterCoverageGet = `-- name: EventAckWriterCoverageGet :one
+SELECT singleton, inventory_revision, continuous_since, verified_through, updated_at FROM event_acknowledgment_recording_coverage WHERE singleton=true
+`
+
+func (q *Queries) EventAckWriterCoverageGet(ctx context.Context, db DBTX) (EventAcknowledgmentRecordingCoverage, error) {
+	row := db.QueryRow(ctx, eventAckWriterCoverageGet)
+	var i EventAcknowledgmentRecordingCoverage
+	err := row.Scan(
+		&i.Singleton,
+		&i.InventoryRevision,
+		&i.ContinuousSince,
+		&i.VerifiedThrough,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const eventAckWriterCoverageLock = `-- name: EventAckWriterCoverageLock :one
+SELECT singleton, inventory_revision, continuous_since, verified_through, updated_at FROM event_acknowledgment_recording_coverage WHERE singleton=true FOR UPDATE
+`
+
+func (q *Queries) EventAckWriterCoverageLock(ctx context.Context, db DBTX) (EventAcknowledgmentRecordingCoverage, error) {
+	row := db.QueryRow(ctx, eventAckWriterCoverageLock)
+	var i EventAcknowledgmentRecordingCoverage
+	err := row.Scan(
+		&i.Singleton,
+		&i.InventoryRevision,
+		&i.ContinuousSince,
+		&i.VerifiedThrough,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const eventAckWriterCoverageSet = `-- name: EventAckWriterCoverageSet :exec
+UPDATE event_acknowledgment_recording_coverage SET inventory_revision=$1::text,continuous_since=$2::timestamptz,verified_through=$3::timestamptz,updated_at=clock_timestamp() WHERE singleton=true
+`
+
+type EventAckWriterCoverageSetParams struct {
+	InventoryRevision string
+	ContinuousSince   pgtype.Timestamptz
+	VerifiedThrough   pgtype.Timestamptz
+}
+
+func (q *Queries) EventAckWriterCoverageSet(ctx context.Context, db DBTX, arg EventAckWriterCoverageSetParams) error {
+	_, err := db.Exec(ctx, eventAckWriterCoverageSet, arg.InventoryRevision, arg.ContinuousSince, arg.VerifiedThrough)
+	return err
+}
+
+const eventAckWritersLive = `-- name: EventAckWritersLive :many
+SELECT session_id, role, slot, capability_version, inventory, inventory_revision, started_at, seen_at, continuous_since, expires_at FROM event_acknowledgment_writers WHERE expires_at>$1::timestamptz ORDER BY session_id LIMIT $2::integer
+`
+
+type EventAckWritersLiveParams struct {
+	NowAt    pgtype.Timestamptz
+	RowLimit int32
+}
+
+func (q *Queries) EventAckWritersLive(ctx context.Context, db DBTX, arg EventAckWritersLiveParams) ([]EventAcknowledgmentWriter, error) {
+	rows, err := db.Query(ctx, eventAckWritersLive, arg.NowAt, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventAcknowledgmentWriter{}
+	for rows.Next() {
+		var i EventAcknowledgmentWriter
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.Role,
+			&i.Slot,
+			&i.CapabilityVersion,
+			&i.Inventory,
+			&i.InventoryRevision,
+			&i.StartedAt,
+			&i.SeenAt,
+			&i.ContinuousSince,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventAckWritersPrune = `-- name: EventAckWritersPrune :exec
+DELETE FROM event_acknowledgment_writers WHERE session_id IN(SELECT session_id FROM event_acknowledgment_writers WHERE seen_at<clock_timestamp()-$1::integer*interval '1 second' ORDER BY seen_at LIMIT $2::integer FOR UPDATE SKIP LOCKED)
+`
+
+type EventAckWritersPruneParams struct {
+	RetentionSeconds int32
+	BatchLimit       int32
+}
+
+func (q *Queries) EventAckWritersPrune(ctx context.Context, db DBTX, arg EventAckWritersPruneParams) error {
+	_, err := db.Exec(ctx, eventAckWritersPrune, arg.RetentionSeconds, arg.BatchLimit)
+	return err
+}
+
 const eventConsumerProcessingHealth = `-- name: EventConsumerProcessingHealth :one
 WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS observed_at), scoped AS (
  SELECT i.state,i.lease_expires_at,i.completed_at,a.phase,a.lease_seconds,

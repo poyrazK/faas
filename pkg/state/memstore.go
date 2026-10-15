@@ -138,9 +138,11 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	eventAcknowledgmentMetrics  map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
-	eventAcknowledgments        map[string]eventAcknowledgment
-	eventAcknowledgmentOutcomes map[eventAcknowledgmentOutcomeKey]api.EventAcknowledgmentOutcome
+	eventAcknowledgmentWriters      map[string]eventAcknowledgmentWriter
+	eventAcknowledgmentCoverageHead eventAcknowledgmentCoverageHead
+	eventAcknowledgmentMetrics      map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
+	eventAcknowledgments            map[string]eventAcknowledgment
+	eventAcknowledgmentOutcomes     map[eventAcknowledgmentOutcomeKey]api.EventAcknowledgmentOutcome
 
 	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
 	initialCompletionNext                map[string]time.Time

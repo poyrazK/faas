@@ -77,8 +77,8 @@ class EventConsumerProcessingHealth:
     oldest_processing_offered_at: datetime.datetime | Unset = UNSET
     """Oldest token issue time among live handed-off claims; includes initial dispatch time."""
     renewal_window: EventAcknowledgmentWindowHealth | Unset = UNSET
-    """Recorded renewal and expiry operations in full UTC minute buckets; no pre-upgrade history or full rollout
-    completeness is inferred."""
+    """Recorded renewal and expiry operations in full UTC minute buckets with optional verification of deployment-
+    declared writer continuity."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)

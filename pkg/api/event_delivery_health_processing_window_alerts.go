@@ -46,8 +46,8 @@ func validateProcessingWindowWatch(o EventDeliveryHealthWatchOptions) error {
 	if o.ProcessingRenewalRejectionFraction == 0 && o.ProcessingRenewalMinimumSamples != 0 {
 		return ErrValidation("renewal sample settings require a renewal rejection threshold")
 	}
-	if o.ProcessingRenewalRejectionFraction > 1 || o.ProcessingLeaseExpiryRate > float64(EventDeliveryHealthWatchCountMax) || samples < 1 || samples > EventDeliveryHealthWatchCountMax || sustain < EventProcessingWindowAlertSustain || sustain > EventDeliveryHealthWatchThresholdMax || !validProcessingRecordingSince(o.ProcessingMetricsRecordingSince) || o.ProcessingMetricsRecordingSince.After(time.Now()) {
-		return ErrValidation("processing rate alerts require bounded thresholds, samples, sustain of at least one minute and a past recording-since assertion for all writers")
+	if o.ProcessingRenewalRejectionFraction > 1 || o.ProcessingLeaseExpiryRate > float64(EventDeliveryHealthWatchCountMax) || samples < 1 || samples > EventDeliveryHealthWatchCountMax || sustain < EventProcessingWindowAlertSustain || sustain > EventDeliveryHealthWatchThresholdMax || (o.ProcessingMetricsRecordingSince != nil && (!validProcessingRecordingSince(o.ProcessingMetricsRecordingSince) || o.ProcessingMetricsRecordingSince.After(time.Now()))) {
+		return ErrValidation("processing rate alerts require bounded thresholds, samples, sustain of at least one minute and verified server coverage or a past recording-since override")
 	}
 	return nil
 }
@@ -55,7 +55,7 @@ func validProcessingWindowCondition(c EventDeliveryHealthCondition) bool {
 	if !processingWindowMetric(c.Metric) {
 		return c.MetricRecordingSince == nil
 	}
-	if !validProcessingRecordingSince(c.MetricRecordingSince) || (!c.ObservedAt.IsZero() && c.MetricRecordingSince.After(c.ObservedAt)) || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventProcessingWindowAlertSustain.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
+	if (c.MetricRecordingSince != nil && (!validProcessingRecordingSince(c.MetricRecordingSince) || (!c.ObservedAt.IsZero() && c.MetricRecordingSince.After(c.ObservedAt)))) || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventProcessingWindowAlertSustain.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
 		return false
 	}
 	if c.Metric == "processing_renewal_rejection_fraction" {
@@ -77,22 +77,14 @@ func newProcessingWindowConditions(o EventDeliveryHealthWatchOptions) []*deliver
 		if v.threshold <= 0 {
 			continue
 		}
-		since := o.ProcessingMetricsRecordingSince.UTC()
-		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, Threshold: v.threshold, MinimumSamples: v.minimum, SustainSeconds: sustain.Seconds(), RecoveryThreshold: v.threshold, RecoverySustainSeconds: sustain.Seconds(), MetricRecordingSince: &since, State: "unknown"}})
+		var since *time.Time
+		if o.ProcessingMetricsRecordingSince != nil {
+			at := o.ProcessingMetricsRecordingSince.UTC()
+			since = &at
+		}
+		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, Threshold: v.threshold, MinimumSamples: v.minimum, SustainSeconds: sustain.Seconds(), RecoveryThreshold: v.threshold, RecoverySustainSeconds: sustain.Seconds(), MetricRecordingSince: since, State: "unknown"}})
 	}
 	return out
-}
-func processingWindowBounds(observed time.Time, window time.Duration) (time.Time, time.Time) {
-	end := observed.UTC().Truncate(EventAcknowledgmentMetricBucket)
-	requested := observed.Add(-window).UTC()
-	start := requested.Truncate(EventAcknowledgmentMetricBucket)
-	if start.Before(requested) {
-		start = start.Add(EventAcknowledgmentMetricBucket)
-	}
-	if start.After(end) {
-		start = end
-	}
-	return start, end
 }
 func processingWindowClose(a, b float64) bool {
 	return finiteSLOValue(a) && math.Abs(a-b) <= 1e-12*(1+math.Abs(b))
@@ -107,8 +99,8 @@ func processingWindowValue(h EventConsumerDeliveryHealth, c *deliveryHealthCondi
 	}
 	w := p.RenewalWindow
 	window, _ := EventConsumerHealthWindow(o.Window)
-	start, end := processingWindowBounds(p.ObservedAt, window)
-	valid := strings.EqualFold(p.AppID, h.Routing.AppID) && strings.EqualFold(p.SubscriptionID, h.Routing.SubscriptionID) && p.Coverage == "retained_deferred_invocations" && w.Coverage == "recorded_full_minute_buckets" && !w.Saturated && w.BucketSeconds == int(EventAcknowledgmentMetricBucket/time.Second) && w.RetentionSeconds == int(EventAcknowledgmentMetricRetention/time.Second) && w.WindowStart.Equal(start) && w.WindowEnd.Equal(end) && start.Before(end) && c.MetricRecordingSince != nil && !start.Before(*c.MetricRecordingSince)
+	start, end := EventAcknowledgmentWindowBounds(p.ObservedAt, window, w.RecordingCoverage)
+	valid := strings.EqualFold(p.AppID, h.Routing.AppID) && strings.EqualFold(p.SubscriptionID, h.Routing.SubscriptionID) && p.Coverage == "retained_deferred_invocations" && w.Coverage == "recorded_full_minute_buckets" && !w.Saturated && w.BucketSeconds == int(EventAcknowledgmentMetricBucket/time.Second) && w.RetentionSeconds == int(EventAcknowledgmentMetricRetention/time.Second) && w.WindowStart.Equal(start) && w.WindowEnd.Equal(end) && start.Before(end) && processingRecordingWindowEligible(w, start, end, c.MetricRecordingSince)
 	minutes := int64(end.Sub(start) / EventAcknowledgmentMetricBucket)
 	if !valid || minutes < 1 || minutes > int64(EventConsumerHealthMaxWindow/EventAcknowledgmentMetricBucket) {
 		return 0, false, p.ObservedAt, end
@@ -132,6 +124,10 @@ func processingWindowValue(h EventConsumerDeliveryHealth, c *deliveryHealthCondi
 }
 func updateProcessingWindowCondition(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, h EventConsumerDeliveryHealth, o EventDeliveryHealthWatchOptions, binding bool, now time.Time) {
 	value, valid, observed, end := processingWindowValue(h, c, o)
+	if c.MetricRecordingSince == nil && h.Processing != nil && h.Processing.RenewalWindow != nil {
+		coverage := h.Processing.RenewalWindow.RecordingCoverage
+		valid = valid && coverage != nil && !coverage.ObservedAt.After(now) && now.Sub(coverage.ObservedAt) <= o.MaxAge
+	}
 	failure := deliveryHealthConfirmationFailure(value, binding && valid, observed, now, o.MaxAge, c.observedAt)
 	if (!c.localLast.IsZero() && now.Sub(c.localLast) > o.MaxAge) || (!c.windowEnd.IsZero() && end.After(c.windowEnd.Add(EventAcknowledgmentMetricBucket))) {
 		loseDeliveryHealthConfirmation(out, c, now, "sample_gap")
@@ -196,4 +192,12 @@ func updateProcessingWindowCondition(out *EventDeliveryHealthWatchResult, c *del
 		appendDeliveryHealthAlert(out, c, now, "resolved", "threshold_cleared")
 	}
 	c.State, c.IncidentID, c.resuming = "clear", "", false
+}
+
+func processingRecordingWindowEligible(w *EventAcknowledgmentWindowHealth, start, end time.Time, manual *time.Time) bool {
+	if manual != nil {
+		return !start.Before(*manual)
+	}
+	c := w.RecordingCoverage
+	return c != nil && c.Verified && c.Reason == "verified" && !c.ObservedAt.IsZero() && c.ContinuousSince != nil && c.VerifiedThrough != nil && len(c.InventoryRevision) == 64 && strings.Trim(c.InventoryRevision, "0123456789abcdef") == "" && c.ExpectedWriters >= 2 && c.ExpectedWriters <= EventAcknowledgmentWriterRosterMax && c.ActiveWriters == c.ExpectedWriters && c.CapabilityVersion == EventAcknowledgmentWriterCapabilityVersion && c.HeartbeatLeaseSeconds == int(EventAcknowledgmentWriterLease/time.Second) && !c.ContinuousSince.IsZero() && !c.VerifiedThrough.IsZero() && c.VerifiedThrough.Add(EventAcknowledgmentWriterLease).After(c.ObservedAt) && !c.VerifiedThrough.After(c.ObservedAt) && !c.ContinuousSince.After(*c.VerifiedThrough) && !start.Before(*c.ContinuousSince) && !end.After(*c.VerifiedThrough)
 }

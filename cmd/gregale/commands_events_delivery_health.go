@@ -98,7 +98,7 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	fs.Float64Var(&f.options.ProcessingLeaseExpiryRate, "lease-expiry-rate-threshold", 0, "recorded expiry transitions per second; zero disables")
 	fs.Int64Var(&f.options.ProcessingRenewalMinimumSamples, "renewal-min-samples", 0, "minimum recorded renewals per window (default 10 when enabled)")
 	fs.DurationVar(&f.options.ProcessingWindowSustain, "processing-window-sustain", 0, "breach and recovery sustain, at least 1m (default 1m)")
-	fs.Func("processing-metrics-recording-since", "RFC3339 assertion of continuous recording by all writers; required for rate alerts", func(raw string) error {
+	fs.Func("processing-metrics-recording-since", "RFC3339 manual coverage override; omitted uses verified server writer inventory", func(raw string) error {
 		at, err := time.Parse(time.RFC3339Nano, raw)
 		if err != nil {
 			return fmt.Errorf("recording-since must be RFC3339: %w", err)
@@ -327,4 +327,20 @@ func printEventAcknowledgmentWindowHealth(p *api.EventAcknowledgmentWindowHealth
 		expiryRate = fmt.Sprintf("%.6f/s", *p.LeaseExpiryRatePerSecond)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recorded renewal window %s to %s | successes %d | rejections %d / %d attempts (%s) | lease expiries %d (%s) | saturated %t | coverage %s\n", p.WindowStart.Format(time.RFC3339), p.WindowEnd.Format(time.RFC3339), p.RenewalSuccesses, p.RenewalRejections, p.RenewalAttempts, rejection, p.LeaseExpiries, expiryRate, p.Saturated, oneLine(p.Coverage))
+	printEventRecordingCoverage(p.RecordingCoverage)
+}
+
+func printEventRecordingCoverage(c *api.EventAcknowledgmentRecordingCoverage) {
+	if c == nil {
+		_, _ = fmt.Fprintln(osStdout, "Writer recording coverage: unavailable")
+		return
+	}
+	since, through := "unavailable", "unavailable"
+	if c.ContinuousSince != nil {
+		since = c.ContinuousSince.Format(time.RFC3339)
+	}
+	if c.VerifiedThrough != nil {
+		through = c.VerifiedThrough.Format(time.RFC3339)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Writer recording coverage: verified %t | reason %s | live %d / expected %d | continuous since %s | verified through %s\n", c.Verified, oneLine(c.Reason), c.ActiveWriters, c.ExpectedWriters, since, through)
 }

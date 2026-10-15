@@ -11158,3 +11158,12 @@ const EventAcknowledgmentMetricCountMax int64 = 1<<31 - 1
 const EventProcessingWindowAlertMinimumSamples int64 = 10
 const EventProcessingWindowAlertSustain = time.Minute
 const EventProcessingWindowAlertMinimumWindows = 2
+
+const EventAcknowledgmentWriterHeartbeat = 10 * time.Second
+const EventAcknowledgmentWriterLease = 30 * time.Second
+const EventAcknowledgmentWriterRetention = 48 * time.Hour
+const EventAcknowledgmentWriterRosterMax = 128
+const EventAcknowledgmentWriterLiveMax = 256
+const EventAcknowledgmentWriterSlotMaxBytes = 128
+const EventAcknowledgmentWriterRosterMaxBytes = 16 << 10
+const EventAcknowledgmentWriterCapabilityVersion = 1
