@@ -410,6 +410,7 @@ func TestMetalQualifyProvider(t *testing.T) {
 	}
 	st := newMetalStack(t, workdir, base)
 	st.p.WithConnector(connectThroughProxy(st.proxyAddr))
+	st.p.cfg.DataAPI = true
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	id := uuid.NewString()
@@ -426,8 +427,8 @@ func TestMetalQualifyProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider = %v", err)
 	}
-	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.ComputePolicy == nil ||
-		report.StorageGrowth == nil {
+	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.DataAPICredentials == nil ||
+		report.ComputePolicy == nil || report.StorageGrowth == nil {
 		t.Fatalf("report lacks prober evidence: %+v", report)
 	}
 	t.Logf("qualified in %v: %d checks; scale-to-zero wake %d ms", time.Since(started).Round(time.Millisecond), len(report.Checks), report.ScaleToZero.WakeLatencyMS)

@@ -250,8 +250,8 @@ client pool, so on Neon runtime credentials use its pooled endpoint
   match server defaults). Others are refused with a pointer to the direct
   endpoint. Cancel requests are not supported on either endpoint.
 - The native driver returns both endpoints; credential delivery gives
-  runtime and read-only credentials the pooled one and migrations the
-  direct one, as on Neon. `PooledConnections` is now true.
+  runtime, read-only and Data API credentials the pooled one and
+  migrations the direct one, as on Neon. `PooledConnections` is now true.
 - **Tests.** Against PostgreSQL: 30 pgx clients × 20 transactions over at
   most 3 servers, transactions never moved between servers, rollback on
   abandon, errors in extended batches, COPY in and out, multi-statement
@@ -613,16 +613,53 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   - Rotation is a new identity key, hence a new role. No password is ever
     stored. Compromising the key compromises every derived password, so it
     is sealed like the other provider secrets.
+  - Every role carries the marker comment
+    `gregale:credential:v1:<scope>:<access>`. The scope is shared by all
+    roles of one database. The Data API starter's migrations find their
+    `data_api` login from their migration login's marker, as on Neon.
+- **Data API credentials (ADR-650).** A backend with `data_api_enabled`
+  issues `data_api` logins and advertises them. The login is
+  `gregale_api_<hash>`:
+  - It holds DML on schema `api` and nothing else. `api` belongs to the
+    schema owner and is created on first issue; a foreign owner is
+    refused. Default privileges extend the DML to future api tables and
+    sequences.
+  - Its one setting is `statement_timeout=15000` (the Data API timeout);
+    the starter refuses a login with others. It has no memberships.
+  - The batch's closing assertion fails the issue (`ErrConflict`) if the
+    role could create objects, reach rows outside `api`, own anything or
+    run a SECURITY DEFINER function in `api` or `public`.
+  - Its binding gets the pooled endpoint. The Data API sets its JWT
+    claims per transaction, so the claims never reach another client's
+    transaction on a shared server connection.
+
+  Neon's SQL contract check (`VerifyDataAPICredentialProbe`) now lives in
+  `managedpostgres`, and both backends' qualification uses it.
+
+  Evidence:
+  - PostgreSQL 16: the role model test checks the marker, the single
+    setting, no memberships and the refusal when public rows are readable.
+    `TestQualifyProviderPasses` passes all 28 checks.
+  - Metal: `TestMetalQualifyProvider` passes the same 28 checks through
+    pgproxyd on database VMs (15.5 s).
+  - Metal: `TestMetalDataAPIThroughThePooler` follows the starter's order
+    (migrations create `api`, then the login is issued). Two pooled
+    clients ran 100 transactions in 351 ms. Neither saw the other's claims
+    at transaction start, RLS held, and pooled sessions run with the 15 s
+    timeout.
+  - A transaction-local claim leaves the setting `''`, not NULL, on that
+    server session. `''::jsonb` fails, so clients must set claims on every
+    request, as PostgREST does. On Neon's pooler it is the same.
 - **Qualification.** The driver implements all four probers that
   `QualifyProvider` requires of this capability set.
   - Probe connections go through pgproxyd with issued credentials, as an
     app's would.
   - `ProbeScaleToZero` parks the database through schedd and measures the
     wake on the next connection.
-  - `ProbeCredentialPrivileges` and `ProbeReadOnlyCredentials` follow the
-    shared evidence flow: runtime confinement, row-level security,
-    migrations as the schema owner, revocation ending sessions and logins,
-    and data surviving rotation.
+  - `ProbeCredentialPrivileges`, `ProbeReadOnlyCredentials` and
+    `ProbeDataAPICredentials` follow the shared evidence flow: runtime
+    confinement, row-level security, migrations as the schema owner,
+    revocation ending sessions and logins, and data surviving rotation.
   - `ProbeComputePolicy` switches the database to always-on and back.
   - Fixtures are dropped as the superuser through `DatabaseAdmin`.
   - `PrepareRestore`, `VerifyRestore` and `CleanupRestore` write a marker
@@ -630,7 +667,8 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     overwrite it after the point; the restore must hold the first marker.
     `VerifyRestoreCredentialIsolation` points the source's login at the
     restore and requires pgproxyd to reject it.
-  - `TestQualifyProviderPasses` runs all 25 checks against PostgreSQL 16;
+  - `TestQualifyProviderPasses` runs all checks (28 with the Data API
+    on) against PostgreSQL 16;
     `TestMetalQualifyProvider` runs them against real database VMs, and
     `TestMetalQualifyProviderWithRestore` adds the restore checks.
 

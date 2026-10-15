@@ -26,6 +26,7 @@ var (
 	_ managedpostgres.ScaleToZeroProber                = (*Provider)(nil)
 	_ managedpostgres.CredentialPrivilegeProber        = (*Provider)(nil)
 	_ managedpostgres.ReadOnlyCredentialProber         = (*Provider)(nil)
+	_ managedpostgres.DataAPICredentialProber          = (*Provider)(nil)
 	_ managedpostgres.ComputePolicyProber              = (*Provider)(nil)
 	_ managedpostgres.ComputeResizeProber              = (*Provider)(nil)
 	_ managedpostgres.RestoreDataProber                = (*Provider)(nil)
@@ -67,15 +68,19 @@ func permissionDenied(ctx context.Context, conn *pgx.Conn, query string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "42501"
 }
 
-// dropFixtures removes probe tables as the superuser, whatever state the
-// probe left the roles in.
+// dropFixtures removes probe tables from schema public as the superuser,
+// whatever state the probe left the roles in.
 func (p *Provider) dropFixtures(ctx context.Context, id string, tables ...string) error {
+	return p.dropSchemaFixtures(ctx, id, "public", tables...)
+}
+
+func (p *Provider) dropSchemaFixtures(ctx context.Context, id, schema string, tables ...string) error {
 	names := make([]string, 0, len(tables))
 	for _, t := range tables {
-		if !identifierPattern.MatchString(t) {
+		if !identifierPattern.MatchString(t) || !identifierPattern.MatchString(schema) {
 			return managedpostgres.ErrInvalid
 		}
-		names = append(names, "public."+t)
+		names = append(names, schema+"."+t)
 	}
 	return p.admin(ctx, id, fmt.Sprintf("\\connect %s\nDROP TABLE IF EXISTS %s;\n", p.cfg.Database, strings.Join(names, ", ")))
 }
@@ -321,6 +326,88 @@ func (p *Provider) ProbeReadOnlyCredentials(ctx context.Context, id string) (evi
 	evidence.Revoked = true
 	var count int
 	if err := newReader.QueryRow(ctx, "SELECT count(*) FROM public."+fixture).Scan(&count); err != nil || count != 1 {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	evidence.RotationPreservesData = true
+	return evidence, nil
+}
+
+// ProbeDataAPICredentials proves the data_api binding (ADR-650): it
+// reaches only RLS-governed rows of schema api, its password is
+// recoverable by re-issue, revocation ends its sessions and logins, and a
+// replacement keeps the data.
+func (p *Provider) ProbeDataAPICredentials(ctx context.Context, id string) (evidence managedpostgres.DataAPICredentialEvidence, err error) {
+	key := probeKey("qualification-data-api-")
+	fixture := fixtureName("gregale_api_")
+	writerRequest := managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key + "-writer", IdempotencyKey: key + "-writer", Access: managedpostgres.CredentialMigration}
+	request := managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key, IdempotencyKey: key, Access: managedpostgres.CredentialDataAPI}
+	replacement := request
+	replacement.IdentityKey += "-replacement"
+	replacement.IdempotencyKey += "-replacement"
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		cleanupErr := errors.Join(p.dropSchemaFixtures(cleanup, id, dataAPISchema, fixture), p.dropFixtures(cleanup, id, fixture))
+		for _, r := range []managedpostgres.CredentialRequest{request, replacement, writerRequest} {
+			if revokeErr := p.RevokeCredentials(cleanup, r); revokeErr != nil {
+				cleanupErr = revokeErr
+			}
+		}
+		if err == nil && cleanupErr != nil {
+			err = managedpostgres.ErrUnavailable
+		}
+	}()
+	writer, err := p.IssueCredentials(ctx, writerRequest)
+	if err != nil {
+		return evidence, err
+	}
+	migration, err := p.connect(ctx, writer)
+	if err != nil {
+		return evidence, err
+	}
+	defer func() { _ = migration.Close(ctx) }()
+	material, err := p.IssueCredentials(ctx, request)
+	if err != nil {
+		return evidence, err
+	}
+	retried, err := p.IssueCredentials(ctx, request)
+	if err != nil || retried.Username != material.Username || retried.Password != material.Password || retried.ProviderIdentityID != material.ProviderIdentityID {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	evidence.PasswordRecovered = true
+	conn, err := p.connect(ctx, material)
+	if err != nil {
+		return evidence, err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if err := managedpostgres.VerifyDataAPICredentialProbe(ctx, conn, migration, schemaOwner, fixture); err != nil {
+		return evidence, err
+	}
+	evidence.SchemaIsolated, evidence.RLSEnforced = true, true
+	newMaterial, err := p.IssueCredentials(ctx, replacement)
+	if err != nil || newMaterial.Username == material.Username {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	newConn, err := p.connect(ctx, newMaterial)
+	if err != nil {
+		return evidence, err
+	}
+	defer func() { _ = newConn.Close(ctx) }()
+	if err := p.RevokeCredentials(ctx, request); err != nil {
+		return evidence, err
+	}
+	if _, err := conn.Exec(ctx, "SELECT 1"); err == nil {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	if !p.loginRejected(ctx, material) {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	evidence.Revoked = true
+	if _, err := newConn.Exec(ctx, `SELECT set_config('request.jwt.claims','{"sub":"alice"}',false)`); err != nil {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	var count int
+	if err := newConn.QueryRow(ctx, "SELECT count(*) FROM "+dataAPISchema+"."+fixture).Scan(&count); err != nil || count != 1 {
 		return evidence, managedpostgres.ErrUnavailable
 	}
 	evidence.RotationPreservesData = true

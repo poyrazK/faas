@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -21,9 +22,22 @@ const schemaOwner = "gregale_schema_owner"
 
 var (
 	identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
-	rolePattern       = regexp.MustCompile(`^gregale_(rt|ro|mig)_[0-9a-f]{40}$`)
+	rolePattern       = regexp.MustCompile(`^gregale_(rt|ro|mig|api)_[0-9a-f]{40}$`)
 	verifierPattern   = regexp.MustCompile(`^SCRAM-SHA-256\$[0-9]+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$`)
+	scopePattern      = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
+
+// dataAPISchema is the one schema Data API logins reach (ADR-650).
+const dataAPISchema = "api"
+
+// credentialScope names a database's credentials in their role markers,
+// "gregale:credential:v1:<scope>:<access>", the same on every role of the
+// database. The Data API starter's migrations find the data_api login of
+// their own migration login's scope through it.
+func credentialScope(resourceID, database string) string {
+	sum := sha256.Sum256([]byte("firecracker-scope-v1\x00" + resourceID + "\x00" + database))
+	return hex.EncodeToString(sum[:20])
+}
 
 // credentialRoleName derives a stable role per database, identity and
 // access, so issuing again for the same binding generation rotates the
@@ -35,6 +49,8 @@ func credentialRoleName(resourceID, identityKey string, access managedpostgres.C
 		prefix = "gregale_ro_"
 	case managedpostgres.CredentialMigration:
 		prefix = "gregale_mig_"
+	case managedpostgres.CredentialDataAPI:
+		prefix = "gregale_api_"
 	}
 	sum := sha256.Sum256([]byte("firecracker-v1\x00" + resourceID + "\x00" + identityKey + "\x00" + string(access)))
 	return prefix + hex.EncodeToString(sum[:20])
@@ -66,11 +82,12 @@ COMMIT;
 }
 
 // credentialSQL creates or re-keys a login role with a SCRAM verifier (the
-// password itself never enters the VM) and grants its access level.
-// Runtime and read-only roles must end without any way to create objects;
-// the closing assertion fails the batch (SQLSTATE P0001) otherwise.
-func credentialSQL(database, role string, access managedpostgres.CredentialAccess, verifier string) (string, error) {
-	if !identifierPattern.MatchString(database) || !rolePattern.MatchString(role) || !verifierPattern.MatchString(verifier) {
+// password itself never enters the VM), marks it with the database's
+// credential scope and grants its access level. Runtime, read-only and
+// Data API roles must end without any way to create objects; the closing
+// assertion fails the batch (SQLSTATE P0001) otherwise.
+func credentialSQL(database, role, scope string, access managedpostgres.CredentialAccess, verifier string) (string, error) {
+	if !identifierPattern.MatchString(database) || !rolePattern.MatchString(role) || !scopePattern.MatchString(scope) || !verifierPattern.MatchString(verifier) {
 		return "", fmt.Errorf("firecracker: invalid credential parameters")
 	}
 	var b strings.Builder
@@ -83,11 +100,17 @@ DO $gregale$ BEGIN
     CREATE ROLE %[1]s LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '%[2]s';
   END IF;
 END $gregale$;
-COMMIT;
-\connect %[3]s
+COMMENT ON ROLE %[1]s IS 'gregale:credential:v1:%[4]s:%[5]s';
+`, role, verifier, database, scope, access)
+	if access == managedpostgres.CredentialDataAPI {
+		// Its only setting: the Data API starter refuses a login with others.
+		fmt.Fprintf(&b, "ALTER ROLE %s RESET ALL;\nALTER ROLE %[1]s SET statement_timeout = %d;\n", role, api.DataAPIQueryTimeoutMS)
+	}
+	fmt.Fprintf(&b, `COMMIT;
+\connect %[2]s
 BEGIN;
-GRANT CONNECT ON DATABASE %[3]s TO %[1]s;
-`, role, verifier, database)
+GRANT CONNECT ON DATABASE %[2]s TO %[1]s;
+`, role, database)
 	switch access {
 	case managedpostgres.CredentialMigration:
 		fmt.Fprintf(&b, "GRANT %[2]s TO %[1]s;\nALTER ROLE %[1]s SET role TO %[2]s;\n", role, schemaOwner)
@@ -105,8 +128,40 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %[1]s;
 ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %[1]s;
 ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %[1]s;
 `, role, schemaOwner)
+	case managedpostgres.CredentialDataAPI:
+		fmt.Fprintf(&b, `DO $gregale$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = '%[3]s') THEN
+    CREATE SCHEMA %[3]s AUTHORIZATION %[2]s;
+  ELSIF (SELECT nspowner FROM pg_namespace WHERE nspname = '%[3]s') <> (SELECT oid FROM pg_roles WHERE rolname = '%[2]s') THEN
+    RAISE EXCEPTION 'schema %[3]s has another owner';
+  END IF;
+END $gregale$;
+REVOKE ALL ON SCHEMA %[3]s FROM PUBLIC;
+GRANT USAGE ON SCHEMA %[3]s TO %[1]s;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %[3]s TO %[1]s;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %[3]s TO %[1]s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA %[3]s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %[1]s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA %[3]s GRANT USAGE, SELECT ON SEQUENCES TO %[1]s;
+`, role, schemaOwner, dataAPISchema)
 	default:
 		return "", managedpostgres.ErrUnsupported
+	}
+	if access == managedpostgres.CredentialDataAPI {
+		// Data API logins reach the api schema's rows and nothing else:
+		// no memberships, no object creation, no rows outside api, no
+		// owned objects and no SECURITY DEFINER function to run.
+		fmt.Fprintf(&b, `DO $gregale$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = '%[1]s')
+     OR has_database_privilege('%[1]s', current_database(), 'CREATE,TEMPORARY')
+     OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND has_schema_privilege('%[1]s', n.oid, 'CREATE'))
+     OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname NOT IN ('%[2]s', 'information_schema') AND n.nspname !~ '^pg_'
+                AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege('%[1]s', c.oid, 'SELECT,INSERT,UPDATE,DELETE'))
+     OR EXISTS (SELECT 1 FROM pg_shdepend WHERE refclassid = 'pg_authid'::regclass AND refobjid = (SELECT oid FROM pg_roles WHERE rolname = '%[1]s') AND deptype = 'o')
+     OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname IN ('%[2]s', 'public') AND p.prosecdef AND has_function_privilege('%[1]s', p.oid, 'EXECUTE')) THEN
+    RAISE EXCEPTION 'data api role reaches beyond schema %[2]s';
+  END IF;
+END $gregale$;
+`, role, dataAPISchema)
 	}
 	if access != managedpostgres.CredentialMigration {
 		fmt.Fprintf(&b, `DO $gregale$ BEGIN

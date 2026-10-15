@@ -229,6 +229,43 @@ func TestCredentialBatchesEnforceTheRoleModel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Data API logins (ADR-650): only schema api's rows, under RLS, found
+	// by the Data API starter through their migration login's scope marker.
+	p.cfg.DataAPI = true
+	apiMaterial := issue("binding-api", managedpostgres.CredentialDataAPI)
+	apiConn := mustConnect(apiMaterial)
+	var settings []string
+	var members int
+	var apiMarker, migMarker string
+	if err := mig.QueryRow(ctx, `SELECT r.rolconfig, (SELECT count(*) FROM pg_auth_members m WHERE m.member = r.oid), shobj_description(r.oid, 'pg_authid'),
+ shobj_description((SELECT oid FROM pg_roles WHERE rolname = session_user), 'pg_authid') FROM pg_roles r WHERE r.rolname = $1`, apiMaterial.Username).Scan(&settings, &members, &apiMarker, &migMarker); err != nil {
+		t.Fatal(err)
+	}
+	scope := credentialScope(resourceID, dbName)
+	if len(settings) != 1 || settings[0] != "statement_timeout=15000" || members != 0 ||
+		apiMarker != "gregale:credential:v1:"+scope+":data_api" || migMarker != "gregale:credential:v1:"+scope+":migration" {
+		t.Fatalf("data api role: settings %v, memberships %d, marker %q, migration marker %q", settings, members, apiMarker, migMarker)
+	}
+	if err := managedpostgres.VerifyDataAPICredentialProbe(ctx, apiConn, mig, schemaOwner, "api_contract"); err != nil {
+		t.Fatalf("data api SQL contract: %v", err)
+	}
+	if _, err := apiConn.Exec(ctx, "SELECT count(*) FROM items"); pgState(err) != "42501" {
+		t.Errorf("data api reading public.items = %v, want 42501", err)
+	}
+	// Re-issuing keeps exactly the one setting.
+	issue("binding-api", managedpostgres.CredentialDataAPI)
+	if err := mig.QueryRow(ctx, "SELECT rolconfig FROM pg_roles WHERE rolname = $1", apiMaterial.Username).Scan(&settings); err != nil || len(settings) != 1 {
+		t.Fatalf("settings after re-issue = %v, %v", settings, err)
+	}
+	// The closing assertion refuses a Data API role that reaches public rows.
+	grant("GRANT SELECT ON public.items TO PUBLIC")
+	_, err = p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: resourceID, IdentityKey: "binding-api-bad", Access: managedpostgres.CredentialDataAPI})
+	if !errors.Is(err, managedpostgres.ErrConflict) {
+		t.Fatalf("data api issue with public rows readable = %v, want ErrConflict", err)
+	}
+	roles = append(roles, credentialRoleName(resourceID, "binding-api-bad", managedpostgres.CredentialDataAPI))
+	grant("REVOKE SELECT ON public.items FROM PUBLIC")
+
 	grant("GRANT CREATE ON SCHEMA public TO PUBLIC")
 	_, err = p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: resourceID, IdentityKey: "binding-bad", Access: managedpostgres.CredentialReadWrite})
 	if !errors.Is(err, managedpostgres.ErrConflict) {
@@ -265,6 +302,7 @@ func TestQualifyProviderPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.CredentialKey = testCredentialKey
+	cfg.DataAPI = true
 	sched, verifiers := newFakeScheduler(), newFakeVerifiers()
 	sched.adminRun = psqlAdmin(t, dsn)
 	p, err := New(cfg, sched, verifiers)
@@ -291,7 +329,7 @@ func TestQualifyProviderPasses(t *testing.T) {
 		// initSQL revokes CONNECT on the maintenance databases cluster-wide;
 		// give it back so later tests on the same server are unaffected.
 		_, _ = super.Exec(ctx, "GRANT CONNECT ON DATABASE postgres, template1 TO PUBLIC")
-		rows, err := super.Query(ctx, `SELECT rolname FROM pg_roles WHERE rolname ~ '^gregale_(rt|ro|mig)_'`)
+		rows, err := super.Query(ctx, `SELECT rolname FROM pg_roles WHERE rolname ~ '^gregale_(rt|ro|mig|api)_'`)
 		if err == nil {
 			var roles []string
 			for rows.Next() {
@@ -318,7 +356,7 @@ func TestQualifyProviderPasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider = %v", err)
 	}
-	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.ComputePolicy == nil ||
+	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.DataAPICredentials == nil || report.ComputePolicy == nil ||
 		report.StorageGrowth == nil || report.StorageGrowth.Validate() != nil {
 		t.Fatalf("report lacks prober evidence: %+v", report)
 	}

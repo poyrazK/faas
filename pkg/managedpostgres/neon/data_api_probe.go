@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -61,7 +60,7 @@ func (p *Provider) ProbeDataAPICredentials(ctx context.Context, id string) (evid
 		return evidence, err
 	}
 	defer func() { _ = conn.Close(ctx) }()
-	if err := verifyDataAPIProbe(ctx, conn, migration, p.credentialRole(writerRequest).schemaOwner, fixture); err != nil {
+	if err := managedpostgres.VerifyDataAPICredentialProbe(ctx, conn, migration, p.credentialRole(writerRequest).schemaOwner, fixture); err != nil {
 		return evidence, err
 	}
 	evidence.SchemaIsolated, evidence.RLSEnforced = true, true
@@ -93,49 +92,4 @@ func (p *Provider) ProbeDataAPICredentials(ctx context.Context, id string) (evid
 	}
 	evidence.RotationPreservesData = true
 	return evidence, nil
-}
-
-func verifyDataAPIProbe(ctx context.Context, conn, migration *pgx.Conn, owner, fixture string) error {
-	table := "api." + roleIdentifier(fixture)
-	for _, query := range []string{
-		"CREATE TABLE public." + roleIdentifier(fixture) + " (secret text)",
-		"CREATE TABLE " + table + " (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, subject text NOT NULL, body text NOT NULL)",
-		"ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY",
-		"CREATE POLICY own_notes ON " + table + " USING(subject=current_setting('request.jwt.claims',true)::jsonb->>'sub') WITH CHECK(subject=current_setting('request.jwt.claims',true)::jsonb->>'sub')",
-	} {
-		if _, err := migration.Exec(ctx, query); err != nil {
-			return managedpostgres.ErrUnavailable
-		}
-	}
-	for _, query := range []string{
-		"SELECT * FROM public." + roleIdentifier(fixture),
-		"CREATE TABLE api." + roleIdentifier(fixture+"_forbidden") + " (id integer)",
-		"CREATE TEMP TABLE " + roleIdentifier(fixture+"_forbidden") + " (id integer)",
-		"SET ROLE " + roleIdentifier(owner),
-		"TRUNCATE " + table,
-	} {
-		if !sqlPermissionDenied(ctx, conn, query) {
-			return managedpostgres.ErrUnavailable
-		}
-	}
-	for _, query := range []string{
-		`SELECT set_config('request.jwt.claims','{"sub":"alice"}',false)`,
-		"INSERT INTO " + table + " (subject,body) VALUES ('alice','hello')",
-		"UPDATE " + table + " SET body='updated' WHERE subject='alice'",
-	} {
-		if _, err := conn.Exec(ctx, query); err != nil {
-			return managedpostgres.ErrUnavailable
-		}
-	}
-	if !sqlPermissionDenied(ctx, conn, "INSERT INTO "+table+" (subject,body) VALUES ('bob','forbidden')") {
-		return managedpostgres.ErrUnavailable
-	}
-	if _, err := conn.Exec(ctx, `SELECT set_config('request.jwt.claims','{"sub":"bob"}',false)`); err != nil {
-		return managedpostgres.ErrUnavailable
-	}
-	var count int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != 0 {
-		return managedpostgres.ErrUnavailable
-	}
-	return nil
 }

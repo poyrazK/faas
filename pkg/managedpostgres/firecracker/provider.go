@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +86,10 @@ type Config struct {
 	// Issuing the same identity again yields the same login, which the
 	// provider contract requires, while no password is ever stored.
 	CredentialKey []byte
+	// DataAPI issues data_api logins (the backend's data_api_enabled,
+	// ADR-650): DML on schema api only, under the Data API's statement
+	// timeout.
+	DataAPI bool
 }
 
 // MinCredentialKeyBytes is the shortest accepted credential key.
@@ -106,7 +111,7 @@ const (
 func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 	s := backend.Settings
 	cfg := Config{
-		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."),
+		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."), DataAPI: backend.DataAPIEnabled,
 		// Every major database nodes build bases for by default (the
 		// database_vmmd role's pins); postgres_majors narrows it.
 		Port: 5432, TLSMode: "verify-full", Database: "gregale", Majors: []int{14, 15, 16, 17, 18}, MaxStorageBytes: 100 << 30,
@@ -212,11 +217,15 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			classes = append(classes, class)
 		}
 	}
+	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.cfg.DataAPI {
+		access = append(access, managedpostgres.CredentialDataAPI)
+	}
 	return managedpostgres.Capabilities{
 		PostgresMajors:          append([]int(nil), p.cfg.Majors...),
 		ServiceClasses:          classes,
 		Availability:            []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:        []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		CredentialAccess:        access,
 		ScaleToZero:             true,
 		ScaleToZeroUpdate:       true,
 		PooledConnections:       true,
@@ -439,13 +448,16 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 	if req.ProviderResourceID == "" || req.IdentityKey == "" {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
 	}
+	if !slices.Contains(p.Capabilities().CredentialAccess, req.Access) {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
+	}
 	role := credentialRoleName(req.ProviderResourceID, req.IdentityKey, req.Access)
 	password, salt := p.derive(req)
 	verifier, err := pgscram.NewVerifierWithSalt(password, salt, pgscram.DefaultIterations)
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	batch, err := credentialSQL(p.cfg.Database, role, req.Access, verifier.String())
+	batch, err := credentialSQL(p.cfg.Database, role, credentialScope(req.ProviderResourceID, p.cfg.Database), req.Access, verifier.String())
 	if err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}

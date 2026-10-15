@@ -394,6 +394,17 @@ func TestCapabilitiesAreValidAndHonest(t *testing.T) {
 	if err := caps.Supports(devSpec()); err != nil {
 		t.Fatalf("dev spec unsupported: %v", err)
 	}
+	if slices.Contains(caps.CredentialAccess, managedpostgres.CredentialDataAPI) {
+		t.Fatal("data_api advertised without data_api_enabled")
+	}
+	enabled, err := ParseConfig(managedpostgres.BackendConfig{Region: "eu-central", Settings: map[string]string{settingHostSuffix: "db.test"}, DataAPIEnabled: true})
+	if err != nil || !enabled.DataAPI {
+		t.Fatalf("data_api_enabled not read: %+v, %v", enabled, err)
+	}
+	p.cfg.DataAPI = true
+	if caps := p.Capabilities(); !slices.Contains(caps.CredentialAccess, managedpostgres.CredentialDataAPI) || caps.Validate() != nil {
+		t.Fatalf("data_api capabilities = %+v", caps.CredentialAccess)
+	}
 	withPITR := devSpec()
 	withPITR.RestoreWindowSeconds = 86400
 	if err := caps.Supports(withPITR); !errors.Is(err, managedpostgres.ErrUnsupported) {
@@ -547,7 +558,11 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: devSpec()}); err != nil {
 		t.Fatal(err)
 	}
-	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration} {
+	if _, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "api-1", Access: managedpostgres.CredentialDataAPI}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("data_api without data_api_enabled = %v, want ErrUnsupported", err)
+	}
+	p.cfg.DataAPI = true
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration, managedpostgres.CredentialDataAPI} {
 		req := managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "binding-1", Access: access}
 		material, err := p.IssueCredentials(ctx, req)
 		if err != nil {
@@ -569,6 +584,9 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 		batch := sched.lastAdmin()
 		if strings.Contains(batch, material.Password) {
 			t.Fatalf("%s: the password reached the VM", access)
+		}
+		if marker := "gregale:credential:v1:" + credentialScope(testDatabaseID, "gregale") + ":" + string(access); !strings.Contains(batch, marker) {
+			t.Fatalf("%s: role not marked %s", access, marker)
 		}
 		v, ok := verifiers.get(testDatabaseID, material.Username)
 		if !ok || !passwordMatches(t, v, material.Password) {
@@ -602,8 +620,8 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 			t.Errorf("%+v: err = %v", req, err)
 		}
 	}
-	if _, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "k", Access: managedpostgres.CredentialDataAPI}); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Fatalf("data API access = %v", err)
+	if _, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "k", Access: "owner"}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("unknown access = %v", err)
 	}
 }
 
@@ -761,22 +779,25 @@ func TestSQLBatchesRefuseUnvalidatedInput(t *testing.T) {
 	if _, err := initSQL("postgres"); err == nil {
 		t.Error("initSQL accepted the maintenance database")
 	}
-	bad := []struct{ database, role, verifier string }{
-		{"gregale", "postgres", v.String()},
-		{"gregale", role + "'", v.String()},
-		{"gregale", role, "md5abc"},
-		{"gregale", role, v.String() + "'; DROP ROLE x; --"},
-		{"Bad", role, v.String()},
+	scope := credentialScope(testDatabaseID, "gregale")
+	bad := []struct{ database, role, scope, verifier string }{
+		{"gregale", "postgres", scope, v.String()},
+		{"gregale", role + "'", scope, v.String()},
+		{"gregale", role, scope, "md5abc"},
+		{"gregale", role, scope, v.String() + "'; DROP ROLE x; --"},
+		{"Bad", role, scope, v.String()},
+		{"gregale", role, scope + "'", v.String()},
+		{"gregale", role, "", v.String()},
 	}
 	for _, tc := range bad {
-		if _, err := credentialSQL(tc.database, tc.role, managedpostgres.CredentialReadWrite, tc.verifier); err == nil {
-			t.Errorf("credentialSQL(%q, %q, %q) accepted", tc.database, tc.role, tc.verifier)
+		if _, err := credentialSQL(tc.database, tc.role, tc.scope, managedpostgres.CredentialReadWrite, tc.verifier); err == nil {
+			t.Errorf("credentialSQL(%q, %q, %q, %q) accepted", tc.database, tc.role, tc.scope, tc.verifier)
 		}
 	}
 	if _, err := revokeSQL("postgres"); err == nil {
 		t.Error("revokeSQL accepted a non-gregale role")
 	}
-	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration} {
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration, managedpostgres.CredentialDataAPI} {
 		name := credentialRoleName(testDatabaseID, "k", access)
 		if !rolePattern.MatchString(name) {
 			t.Errorf("%s role %q fails its own pattern", access, name)

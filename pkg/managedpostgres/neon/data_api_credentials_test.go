@@ -44,7 +44,7 @@ func TestSQLDataAPICredentialsRestrictSchemaAndEnforceRLS(t *testing.T) {
 	}
 	owner := f.connect(t, f.migration.name)
 	probe := f.connect(t, role.name)
-	if err := verifyDataAPIProbe(ctx, probe, owner, role.schemaOwner, "live_contract"); err != nil {
+	if err := managedpostgres.VerifyDataAPICredentialProbe(ctx, probe, owner, role.schemaOwner, "live_contract"); err != nil {
 		t.Fatalf("qualification SQL contract: %v", err)
 	}
 	_ = probe.Close(ctx)
