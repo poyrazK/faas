@@ -22,6 +22,9 @@ import (
 // manifestDatabasePort is pgproxyd's listener on every database node.
 const manifestDatabasePort = 5432
 
+// manifestControlPlanePostgresPort is the control plane's PostgreSQL.
+const manifestControlPlanePostgresPort = 5432
+
 // manifestDatabaseRoutePort is gatewayd-internal's app-route forwarder,
 // bound beside its service proxy on the tenant bridge.
 const manifestDatabaseRoutePort = 10083
@@ -38,10 +41,22 @@ type manifestDatabases struct {
 	config      *manifest.ManagedPostgres
 	nodes       []manifestDatabase
 	overlayCIDR string
+	// controlPlane is the control plane's address, where pgproxyd reads
+	// role verifiers from PostgreSQL as faas_pgproxyd.
+	controlPlane string
 }
 
 func renderManifestDatabases(m *manifest.Manifest) (manifestDatabases, error) {
 	out := manifestDatabases{config: m.ManagedPostgres, overlayCIDR: m.Overlay.CIDR}
+	for _, h := range m.Fleet.Hosts {
+		if h.Role == roleControlPlane && out.controlPlane == "" {
+			address, _, err := manifest.ParseHostPort(h.Address)
+			if err != nil {
+				return manifestDatabases{}, fmt.Errorf("control plane %s: %w", h.Name, err)
+			}
+			out.controlPlane = address
+		}
+	}
 	for i, h := range m.Fleet.DatabaseHosts() {
 		address, port, err := manifest.ParseHostPort(h.Address)
 		if err != nil {
@@ -119,6 +134,10 @@ func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) str
 	}
 	fmt.Fprintf(&b, "pgproxyd_host_suffix: %q\n", d.config.HostSuffix)
 	fmt.Fprintf(&b, "pgproxyd_schedd_target: %q\n", scheddTarget)
+	// The faas_pgproxyd password stays in Vault; database_node.yml creates
+	// the role with the same variable, so the two cannot drift.
+	fmt.Fprintf(&b, "pgproxyd_db_url: \"postgres://faas_pgproxyd:{{ faas_pgproxyd_postgres_password | urlencode | replace('/', '%%2F') }}@%s/faas?sslmode=disable\"\n",
+		net.JoinHostPort(d.controlPlane, strconv.Itoa(manifestControlPlanePostgresPort)))
 	fmt.Fprintf(&b, "pgproxyd_instance_id: %d\n", self.instanceID)
 	if len(d.nodes) == 1 {
 		b.WriteString("pgproxyd_cancel_peers: {}\n")

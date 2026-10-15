@@ -458,8 +458,13 @@ A database node has no shared role identity in the private hosts map:
 schedd binds its vmmd certificate to `<name>.faas`. A fleet without
 database hosts renders exactly as before.
 
+pgproxyd's DSN is derived too: `postgres://faas_pgproxyd:…@<control
+plane>:5432/faas`, with the password taken from the Vault variable
+`faas_pgproxyd_postgres_password`, which `database_node.yml` also uses
+to create the role, so the two cannot drift.
+
 Still manual: pgproxyd's public `*.<suffix>` certificate (files), the
-`faas_pgproxyd` password and DSN, and each node's PKI bundle.
+`faas_pgproxyd_postgres_password` Vault value, and each node's PKI bundle.
 
 ### Durability: WAL archiving, base backups, point-in-time restore
 

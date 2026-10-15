@@ -85,6 +85,7 @@ func TestRenderManifestAnsibleFiles_DatabaseNodes(t *testing.T) {
 		`pgproxyd_schedd_target: "tcp://schedd.faas:7100"`,
 		"pgproxyd_instance_id: 2\n",
 		"pgproxyd_cancel_peers:\n  1: \"10.42.0.5:5432\"\n",
+		`pgproxyd_db_url: "postgres://faas_pgproxyd:{{ faas_pgproxyd_postgres_password | urlencode | replace('/', '%2F') }}@10.42.0.1:5432/faas?sslmode=disable"`,
 		"faas_private_hosts:",
 	} {
 		if !strings.Contains(db2, want) {

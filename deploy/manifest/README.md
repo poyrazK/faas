@@ -87,9 +87,10 @@ vmmd and pgproxyd settings, including pgproxyd's cancel instance id and
 peers. The control plane gets schedd's `[database_scheduler]` (written to
 `/etc/faas/schedd-database.toml`) and pgproxyd's access to the verifier
 table. With `app_route`, compute nodes get the route to every pgproxyd.
-Still per deployment: pgproxyd's `*.<host_suffix>` certificate, the
-`faas_pgproxyd` password and DSN, and each node's PKI bundle (see
-`deploy/ansible/database_node.yml`).
+pgproxyd's control-plane DSN is derived from the Vault variable
+`faas_pgproxyd_postgres_password`. Still per deployment: pgproxyd's
+`*.<host_suffix>` certificate, that password, and each node's PKI bundle
+(see `deploy/ansible/database_node.yml`).
 
 `public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
 customer custom domains. It renders `faas_custom_domain_*` for the control
