@@ -48344,6 +48344,126 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-suites:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Saved automation whose shared verification suites are accessed.
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveSuites
+      summary: List recent shared suite identities without executing or checking workflows.
+      responses:
+        '200':
+          description: listAutomationLiveSuites returns safe retained suite metadata and server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveSuitesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation owning the retained shared suite record.
+    - name: suite_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected suite UUID. Retry the same immutable selection and ID to attach progress.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveSuite
+      summary: Read current retained suite results in a consistent database snapshot.
+      responses:
+        '200':
+          description: getAutomationLiveSuite returns safe retained suite metadata and server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+      - workflows
+      operationId: saveAutomationLiveSuite
+      summary: Save a frozen suite selection and monotonically attach existing run IDs; never execute workflows.
+      responses:
+        '200':
+          description: saveAutomationLiveSuite returns safe retained suite metadata and server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        description: The frozen selection and existing run links to retain. No execution or verdict fields are accepted.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveAutomationLiveSuiteRequest'
   /v1/apps/{slug}/automations/{name}/live-verifications:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -69333,6 +69453,247 @@ components:
           maxItems: 128
           items:
             $ref: '#/components/schemas/AutomationTestStepResult'
+    SaveAutomationLiveSuiteRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - cases
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        expected_published_version:
+          type: integer
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteMember'
+      description: At most 16 KiB. Freeze an ordered saved-case selection and attach existing verification run IDs.
+        No assertions, verdicts, keys or payloads are accepted. Saving never executes or checks a run. Existing run
+        links cannot be replaced or removed.
+    AutomationLiveSuiteMember:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+      description: One saved live case and its optional existing verification run identity.
+    AutomationLiveSuiteSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - version
+      - published_version
+      - deployment_id
+      - created_at
+      - updated_at
+      - case_count
+      - linked_runs
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        version:
+          type: integer
+          minimum: 1
+        published_version:
+          type: integer
+          minimum: 1
+        deployment_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        case_count:
+          type: integer
+          minimum: 1
+          maximum: 32
+        linked_runs:
+          type: integer
+          minimum: 0
+          maximum: 32
+      description: Retained suite identity and linked-run counts. Listing is not an assertion verdict.
+    AutomationLiveSuiteCase:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - outcome
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum:
+          - not_started
+          - passed
+          - failed
+          - pending
+          - outdated
+          - unavailable
+        verification:
+          $ref: '#/components/schemas/AutomationLiveVerification'
+      description: A server-derived case observation; unavailable records keep their original run identity.
+    AutomationLiveSuiteCounts:
+      type: object
+      additionalProperties: false
+      required:
+      - selected
+      - passed
+      - failed
+      - pending
+      - not_started
+      - unavailable
+      - outdated
+      properties:
+        selected:
+          type: integer
+          minimum: 0
+          maximum: 32
+        passed:
+          type: integer
+          minimum: 0
+          maximum: 32
+        failed:
+          type: integer
+          minimum: 0
+          maximum: 32
+        pending:
+          type: integer
+          minimum: 0
+          maximum: 32
+        not_started:
+          type: integer
+          minimum: 0
+          maximum: 32
+        unavailable:
+          type: integer
+          minimum: 0
+          maximum: 32
+        outdated:
+          type: integer
+          minimum: 0
+          maximum: 32
+      description: Current suite case counts, including unstarted and unverifiable members.
+    AutomationLiveSuite:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - version
+      - published_version
+      - deployment_id
+      - created_at
+      - updated_at
+      - case_count
+      - linked_runs
+      - outcome
+      - outdated
+      - observed_at
+      - summary
+      - cases
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        version:
+          type: integer
+          minimum: 1
+        published_version:
+          type: integer
+          minimum: 1
+        deployment_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        case_count:
+          type: integer
+          minimum: 1
+          maximum: 32
+        linked_runs:
+          type: integer
+          minimum: 0
+          maximum: 32
+        outcome:
+          type: string
+          enum:
+          - passed
+          - failed
+          - pending
+          - incomplete
+          - outdated
+          - unavailable
+        outdated:
+          type: boolean
+        observed_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/AutomationLiveSuiteCounts'
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteCase'
+      description: Server-derived observation of retained verification records. GET is read-only and never checks assertions
+        or admits work. Missing records remain unavailable with their known IDs. Passed requires every linked case to
+        have a current passing report and an unchanged saved version, published revision and deployment. Not a publication
+        receipt.
+    ListAutomationLiveSuitesResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - suites
+      properties:
+        suites:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+      description: Twenty most recently created suites. One hundred recent suites are retained per automation; clearing
+        saved test data clears shared suite history.
     AutomationLiveVerification:
       description: Safe provenance and status for one explicitly authorized live verification run.
       type: object

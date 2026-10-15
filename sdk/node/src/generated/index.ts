@@ -201,6 +201,11 @@ export type { AutomationHealthRun } from './models/AutomationHealthRun.js';
 export type { AutomationHealthStepFailure } from './models/AutomationHealthStepFailure.js';
 export type { AutomationLiveExpectation } from './models/AutomationLiveExpectation.js';
 export type { AutomationLiveReport } from './models/AutomationLiveReport.js';
+export type { AutomationLiveSuite } from './models/AutomationLiveSuite.js';
+export type { AutomationLiveSuiteCase } from './models/AutomationLiveSuiteCase.js';
+export type { AutomationLiveSuiteCounts } from './models/AutomationLiveSuiteCounts.js';
+export type { AutomationLiveSuiteMember } from './models/AutomationLiveSuiteMember.js';
+export type { AutomationLiveSuiteSummary } from './models/AutomationLiveSuiteSummary.js';
 export type { AutomationLiveTest } from './models/AutomationLiveTest.js';
 export type { AutomationLiveVerification } from './models/AutomationLiveVerification.js';
 export type { AutomationPublishCheckScenario } from './models/AutomationPublishCheckScenario.js';
@@ -838,6 +843,7 @@ export type { LinkPlatformTenantConsumerRequest } from './models/LinkPlatformTen
 export type { LinkPlatformTenantSurfaceRequest } from './models/LinkPlatformTenantSurfaceRequest.js';
 export type { ListAuditEventsResponse } from './models/ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './models/ListAuditLogResponse.js';
+export type { ListAutomationLiveSuitesResponse } from './models/ListAutomationLiveSuitesResponse.js';
 export type { ListAutomationLiveVerificationsResponse } from './models/ListAutomationLiveVerificationsResponse.js';
 export type { ListAutomationRevisionsResponse } from './models/ListAutomationRevisionsResponse.js';
 export type { ListAutomationsResponse } from './models/ListAutomationsResponse.js';
@@ -2059,6 +2065,7 @@ export type { RuntimePolicyStatusResponse } from './models/RuntimePolicyStatusRe
 export type { RuntimeReleaseResponse } from './models/RuntimeReleaseResponse.js';
 export type { RuntimeUpgradePreviewResponse } from './models/RuntimeUpgradePreviewResponse.js';
 export type { SaveAutomationDraftRequest } from './models/SaveAutomationDraftRequest.js';
+export type { SaveAutomationLiveSuiteRequest } from './models/SaveAutomationLiveSuiteRequest.js';
 export type { SaveAutomationTestSuiteRequest } from './models/SaveAutomationTestSuiteRequest.js';
 export type { SavedRouteRequirements } from './models/SavedRouteRequirements.js';
 export type { SaveProfileDeploymentPolicyRequest } from './models/SaveProfileDeploymentPolicyRequest.js';

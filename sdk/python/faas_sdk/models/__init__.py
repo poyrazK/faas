@@ -384,6 +384,13 @@ from .automation_health_step_failure import AutomationHealthStepFailure
 from .automation_live_expectation import AutomationLiveExpectation
 from .automation_live_expectation_state import AutomationLiveExpectationState
 from .automation_live_report import AutomationLiveReport
+from .automation_live_suite import AutomationLiveSuite
+from .automation_live_suite_case import AutomationLiveSuiteCase
+from .automation_live_suite_case_outcome import AutomationLiveSuiteCaseOutcome
+from .automation_live_suite_counts import AutomationLiveSuiteCounts
+from .automation_live_suite_member import AutomationLiveSuiteMember
+from .automation_live_suite_outcome import AutomationLiveSuiteOutcome
+from .automation_live_suite_summary import AutomationLiveSuiteSummary
 from .automation_live_test import AutomationLiveTest
 from .automation_live_test_expected_run_status import AutomationLiveTestExpectedRunStatus
 from .automation_live_verification import AutomationLiveVerification
@@ -1727,6 +1734,7 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_live_suites_response import ListAutomationLiveSuitesResponse
 from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
@@ -3946,6 +3954,7 @@ from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
+from .save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
 from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
@@ -4972,6 +4981,13 @@ __all__ = (
     "AutomationLiveExpectation",
     "AutomationLiveExpectationState",
     "AutomationLiveReport",
+    "AutomationLiveSuite",
+    "AutomationLiveSuiteCase",
+    "AutomationLiveSuiteCaseOutcome",
+    "AutomationLiveSuiteCounts",
+    "AutomationLiveSuiteMember",
+    "AutomationLiveSuiteOutcome",
+    "AutomationLiveSuiteSummary",
     "AutomationLiveTest",
     "AutomationLiveTestExpectedRunStatus",
     "AutomationLiveVerification",
@@ -6269,6 +6285,7 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationLiveSuitesResponse",
     "ListAutomationLiveVerificationsResponse",
     "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
@@ -8274,6 +8291,7 @@ __all__ = (
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
+    "SaveAutomationLiveSuiteRequest",
     "SaveAutomationTestSuiteRequest",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",

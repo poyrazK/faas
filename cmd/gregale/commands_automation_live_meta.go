@@ -34,6 +34,7 @@ func automationLiveSuiteCLIFlags() []cliFlag {
 		{Name: "idempotency-key", Value: "KEY", Short: "stable suite key for a new suite"},
 		{Name: "journal", Value: "PATH", Short: "new private progress file; required for a new suite"},
 		{Name: "resume", Value: "PATH", Short: "continue the original selection from this suite journal"},
+		{Name: "share", Bool: true, Short: "save a new suite in shared dashboard history; persisted for resume"},
 		{Name: "confirm-real-actions", Bool: true, Req: true, Short: "confirm execution of remaining selected cases"},
 		{Name: "timeout", Value: "DURATION", Short: "total invocation deadline (default 5m, up to 1h)"},
 		{Name: "poll-interval", Value: "DURATION", Short: "poll interval (default 3s, 1s to 1m)"},

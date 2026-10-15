@@ -474,6 +474,7 @@ type MemStore struct {
 	workflowRuns                map[string]WorkflowRun
 	workflowRunCreateKeys       map[workflowRunCreateKey]workflowRunCreateKeyEntry
 	automationLiveVerifications map[string]automationLiveRecord
+	automationLiveSuites        map[string]automationLiveSuiteRecord
 	workflowSchedules           map[string]WorkflowScheduleCursor
 	workflowTenantSchedules     map[string]WorkflowScheduleCursor
 	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence

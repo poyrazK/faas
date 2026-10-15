@@ -1,0 +1,14 @@
+{{define "automation-live-suites"}}
+<section id="automation-live-suites"><h2>Shared live verification suites</h2>
+<p>Share a CLI suite with <code>--share</code> to keep its selection and run links here. Results reflect retained verification records when this page is read. Opening or refreshing a suite does not start or check execution.</p>
+{{if .Data.LiveSuiteError}}<p class="notice" role="status">{{.Data.LiveSuiteError}}</p>{{end}}
+{{with .Data.LiveSuites}}{{if .Suites}}<ul>{{range .Suites}}<li><a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.ID}}">{{.CreatedAt.UTC.Format "2006-01-02 15:04:05 UTC"}} · {{.LinkedRuns}}/{{.CaseCount}} runs linked</a> · revision {{.PublishedVersion}}</li>{{end}}</ul>{{else}}<p>No shared suites retained for this automation.</p>{{end}}{{end}}
+{{with .Data.LiveSuite}}<article class="card" id="automation-live-suite-result"><h3>Suite result: {{.Outcome}}</h3>
+<p>Suite <code>{{.ID}}</code>. Saved version {{.Version}}, published revision {{.PublishedVersion}}, deployment <code>{{.DeploymentID}}</code>.</p>
+<p>Observed {{.ObservedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}. {{if .Outdated}}The saved automation, published revision or deployment has changed. These results describe the original target.{{else}}These are current observations, not a publication receipt.{{end}}</p>
+<p>{{.Summary.Passed}} passed · {{.Summary.Failed}} failed · {{.Summary.Pending}} waiting · {{.Summary.NotStarted}} unstarted · {{.Summary.Outdated}} outdated · {{.Summary.Unavailable}} unavailable</p>
+<table><thead><tr><th>Case</th><th>Result</th><th>Verification</th></tr></thead><tbody>{{range .Cases}}<tr><td>{{.Name}}</td><td>{{.Outcome}}</td><td>{{if .RunID}}<a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;verification={{.RunID}}"><code>{{.RunID}}</code></a>{{else}}No run linked{{end}}</td></tr>{{end}}</tbody></table>
+<p><a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.ID}}">Refresh suite results</a>. Continue remaining cases through the original CLI journal with explicit real-action confirmation.</p>
+</article>{{end}}
+</section>
+{{end}}

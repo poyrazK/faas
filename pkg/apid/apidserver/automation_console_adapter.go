@@ -80,6 +80,7 @@ func setAutomationConsolePaths(r *http.Request, slug string, operation automatio
 	r.SetPathValue("id", operation.RunID)
 	r.SetPathValue("step", operation.Step)
 	r.SetPathValue("run_id", operation.RunID)
+	r.SetPathValue("suite_id", operation.RunID)
 	if operation.EndpointID != "" {
 		r.SetPathValue("id", operation.EndpointID)
 	}
@@ -104,6 +105,10 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodPut, named, h.server.saveAutomationDraft
 	case "live-list":
 		return http.MethodGet, named + "/live-verifications", h.server.listAutomationLiveVerifications
+	case "live-suite-list":
+		return http.MethodGet, named + "/live-suites", h.server.listAutomationLiveSuites
+	case "live-suite-get":
+		return http.MethodGet, named + "/live-suites/" + url.PathEscape(op.RunID), h.server.getAutomationLiveSuite
 	case "live-start":
 		return http.MethodPost, named + "/live-verifications", h.server.startAutomationLiveVerification
 	case "live-get":

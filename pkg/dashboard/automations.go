@@ -29,6 +29,9 @@ type AutomationConsoleData struct {
 	LiveEditorChanged                                        bool
 	LiveHistory                                              *api.ListAutomationLiveVerificationsResponse
 	LiveSelected                                             *api.AutomationLiveVerification
+	LiveSuiteID, LiveSuiteError                              string
+	LiveSuites                                               *api.ListAutomationLiveSuitesResponse
+	LiveSuite                                                *api.AutomationLiveSuite
 	LiveProgress                                             *AutomationLiveProgress
 	TestEditorMode                                           string
 	TestCaseIndex, TestAssertionIndex                        int

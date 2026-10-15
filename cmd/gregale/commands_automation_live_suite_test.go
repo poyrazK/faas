@@ -25,16 +25,19 @@ const liveSuiteAPIPath = "/v1/apps/billing/automations/report/live-verifications
 type liveSuiteAdmission struct{ key, body, name string }
 
 type liveSuiteFixture struct {
-	t       *testing.T
-	mu      sync.Mutex
-	mode    string
-	path    string
-	calls   []string
-	starts  []liveSuiteAdmission
-	runs    map[string]api.AutomationLiveVerification
-	keys    map[string]string
-	onStart func()
-	onRead  func()
+	t             *testing.T
+	mu            sync.Mutex
+	mode          string
+	path          string
+	calls         []string
+	starts        []liveSuiteAdmission
+	runs          map[string]api.AutomationLiveVerification
+	keys          map[string]string
+	onStart       func()
+	onRead        func()
+	sharedSaves   int
+	sharedID      string
+	sharedRequest api.SaveAutomationLiveSuiteRequest
 }
 
 func newLiveSuiteFixture(t *testing.T, mode string) *liveSuiteFixture {
@@ -57,6 +60,32 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var response any
 	switch {
+	case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/v1/apps/billing/automations/report/live-suites/"):
+		f.sharedSaves++
+		var request api.SaveAutomationLiveSuiteRequest
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&request) != nil || request.ExpectedVersion != 7 || request.ExpectedPublishedVersion != 4 || request.ExpectedDeploymentID != liveCLIDeployment {
+			f.t.Error("shared history changed the frozen target or sent non-metadata fields")
+		}
+		if f.mode == "share-fails-before" || f.mode == "share-fails-after" && len(f.keys) > 0 {
+			w.WriteHeader(503)
+			_, _ = w.Write([]byte(`{"detail":"PRIVATE sharing failure"}`))
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/v1/apps/billing/automations/report/live-suites/")
+		if f.sharedID != "" && f.sharedID != id {
+			f.t.Error("resume changed shared suite identity")
+		}
+		f.sharedID, f.sharedRequest = id, request
+		view := api.AutomationLiveSuite{AutomationLiveSuiteSummary: api.AutomationLiveSuiteSummary{ID: id, Name: "report", Version: 7, PublishedVersion: 4, DeploymentID: liveCLIDeployment}}
+		for _, member := range request.Cases {
+			view.Cases = append(view.Cases, api.AutomationLiveSuiteCase{Name: member.Name, RunID: member.RunID})
+		}
+		if f.mode == "share-wrong-target" {
+			view.Version++
+		}
+		response = view
 	case r.Method == "GET" && r.URL.Path == "/v1/apps/billing":
 		id := liveSuiteAppID
 		if f.mode == "app-changed" {

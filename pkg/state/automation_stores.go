@@ -337,6 +337,9 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 		}
 	}
 	if mutation.Action == "tests" && len(mutation.TestSuite) == 0 {
+		if err := q.DeleteAutomationLiveSuites(ctx, tx, sqlc.DeleteAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+			return Automation{}, err
+		}
 		if err := q.DeleteAutomationLiveVerifications(ctx, tx, sqlc.DeleteAutomationLiveVerificationsParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
 			return Automation{}, err
 		}

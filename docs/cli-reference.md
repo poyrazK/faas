@@ -5642,7 +5642,7 @@ Start, observe and check saved cases against real execution
 
 Run selected live cases sequentially with resumable private progress
 
-`gregale automations live suite [--app <SLUG>] [--name <NAME>] [--case <NAME>] [--expected-version <N>] [--expected-published-version <N>] [--expected-deployment-id <UUID>] [--idempotency-key <KEY>] [--journal <PATH>] [--resume <PATH>] --confirm-real-actions [--timeout <DURATION>] [--poll-interval <DURATION>]`
+`gregale automations live suite [--app <SLUG>] [--name <NAME>] [--case <NAME>] [--expected-version <N>] [--expected-published-version <N>] [--expected-deployment-id <UUID>] [--idempotency-key <KEY>] [--journal <PATH>] [--resume <PATH>] [--share] --confirm-real-actions [--timeout <DURATION>] [--poll-interval <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5655,6 +5655,7 @@ Run selected live cases sequentially with resumable private progress
 | `--idempotency-key <KEY>` | stable suite key for a new suite |  |
 | `--journal <PATH>` | new private progress file; required for a new suite |  |
 | `--resume <PATH>` | continue the original selection from this suite journal |  |
+| `--share` | save a new suite in shared dashboard history; persisted for resume |  |
 | `--confirm-real-actions` | confirm execution of remaining selected cases | required |
 | `--timeout <DURATION>` | total invocation deadline (default 5m, up to 1h) |  |
 | `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |

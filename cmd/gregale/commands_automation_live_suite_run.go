@@ -105,6 +105,9 @@ func executeAutomationLiveSuite(ctx context.Context, c *api.Client, o automation
 	if message, code := checkAutomationLiveSuiteTarget(ctx, c, j.Plan); code != 0 {
 		return renderAutomationLiveSuite(o.path, *j, "blocked", message, code)
 	}
+	if err := syncAutomationLiveSuite(ctx, c, *j); err != nil {
+		return renderAutomationLiveSuite(o.path, *j, "blocked", "Could not retain shared suite history. No further cases were admitted; keep the journal and resume explicitly.", liveSuiteErrorCode(ctx, err))
+	}
 	for index := range j.Cases {
 		if ctx.Err() != nil {
 			return renderAutomationLiveSuite(o.path, *j, "stopped", "Suite observation stopped before the next case.", liveSuiteErrorCode(ctx, ctx.Err()))
@@ -180,7 +183,10 @@ func admitOrReadAutomationLiveSuiteCase(ctx context.Context, c *api.Client, path
 	}
 	// Keep the accepted run in the returned report even if disk persistence fails.
 	entry.RunID, entry.Verification, entry.Outcome = view.RunID, &view, "pending"
-	return view, saveAutomationLiveSuite(path, j, false)
+	if err := saveAutomationLiveSuite(path, j, false); err != nil {
+		return view, err
+	}
+	return view, syncAutomationLiveSuite(ctx, c, *j)
 }
 
 func validAutomationLiveSuiteView(p automationLiveSuitePlan, entry automationLiveSuiteCase, view api.AutomationLiveVerification) bool {
@@ -269,10 +275,14 @@ func renderAutomationLiveSuite(path string, j automationLiveSuiteJournal, outcom
 		ObservedAt       time.Time                       `json:"observed_at"`
 		PublishedVersion int64                           `json:"published_version"`
 		DeploymentID     string                          `json:"deployment_id"`
+		SharedSuiteID    string                          `json:"shared_suite_id,omitempty"`
 		Summary          map[string]int                  `json:"summary"`
 		Cases            []automationLiveSuiteCaseResult `json:"cases"`
 		Resume           string                          `json:"resume"`
 	}{SchemaVersion: 1, App: j.Plan.App, Name: j.Plan.Name, Outcome: outcome, ExitCode: code, Message: message, ObservedAt: time.Now().UTC(), PublishedVersion: j.Plan.Target.ExpectedPublishedVersion, DeploymentID: j.Plan.Target.ExpectedDeploymentID, Summary: map[string]int{"selected": len(j.Cases), "passed": 0, "failed": 0, "pending": 0, "not_started": 0, "unresolved": 0}, Cases: []automationLiveSuiteCaseResult{}, Resume: recoveryCLI() + " automations live suite --resume " + recoveryArgument(path) + " --confirm-real-actions"}
+	if j.Plan.Shared {
+		result.SharedSuiteID = sharedAutomationLiveSuiteID(j)
+	}
 	for _, entry := range j.Cases {
 		result.Cases = append(result.Cases, automationLiveSuiteCaseResult{entry.Name, entry.RunID, entry.Outcome, entry.Verification, entry.ObservedAt})
 		category := entry.Outcome
@@ -293,6 +303,11 @@ func renderAutomationLiveSuite(path string, j automationLiveSuiteJournal, outcom
 				break
 			}
 			_, err = fmt.Fprintf(osStdout, "  %s: %s %s\n", entry.Name, entry.Outcome, entry.RunID)
+		}
+		if err == nil {
+			if result.SharedSuiteID != "" {
+				_, err = fmt.Fprintf(osStdout, "Shared suite: %s\n", result.SharedSuiteID)
+			}
 		}
 		if err == nil {
 			_, err = fmt.Fprintf(osStdout, "Resume suite: %s\n", result.Resume)

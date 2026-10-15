@@ -57,3 +57,59 @@ def test_live_start_requires_explicit_key_and_target_fences():
         },
     }
     assert AutomationLiveVerification.from_dict(report).to_dict() == report
+
+
+def test_shared_suite_metadata_routes_and_missing_run_identity():
+    from uuid import UUID
+
+    from faas_sdk.api.workflows.get_automation_live_suite import _get_kwargs as get_kwargs
+    from faas_sdk.api.workflows.list_automation_live_suites import _get_kwargs as list_kwargs
+    from faas_sdk.api.workflows.save_automation_live_suite import _get_kwargs as save_kwargs
+    from faas_sdk.models.automation_live_suite import AutomationLiveSuite
+    from faas_sdk.models.save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
+
+    suite_id = UUID("00000000-0000-4000-8000-000000000010")
+    run_id = "00000000-0000-4000-8000-000000000011"
+    deployment_id = "00000000-0000-4000-8000-000000000002"
+    body = {
+        "expected_version": 7,
+        "expected_published_version": 4,
+        "expected_deployment_id": deployment_id,
+        "cases": [{"name": "first", "run_id": run_id}, {"name": "second"}],
+    }
+    request = SaveAutomationLiveSuiteRequest.from_dict(body)
+    assert request.to_dict() == body
+    kwargs = save_kwargs("billing", "case/report", suite_id, body=request)
+    root = "/v1/apps/billing/automations/case%2Freport/live-suites"
+    assert kwargs["method"] == "put" and kwargs["json"] == body
+    assert kwargs["url"] == root + "/" + str(suite_id)
+    assert get_kwargs("billing", "case/report", suite_id)["url"] == kwargs["url"]
+    assert list_kwargs("billing", "case/report")["url"] == root
+    view = {
+        "id": str(suite_id),
+        "name": "case/report",
+        "version": 7,
+        "published_version": 4,
+        "deployment_id": deployment_id,
+        "created_at": "2026-10-15T10:00:00+00:00",
+        "updated_at": "2026-10-15T10:00:00+00:00",
+        "case_count": 2,
+        "linked_runs": 1,
+        "outcome": "unavailable",
+        "outdated": False,
+        "observed_at": "2026-10-15T10:00:00+00:00",
+        "summary": {
+            "selected": 2,
+            "passed": 0,
+            "failed": 0,
+            "pending": 0,
+            "not_started": 1,
+            "unavailable": 1,
+            "outdated": 0,
+        },
+        "cases": [
+            {"name": "first", "run_id": run_id, "outcome": "unavailable"},
+            {"name": "second", "outcome": "not_started"},
+        ],
+    }
+    assert AutomationLiveSuite.from_dict(view).to_dict() == view

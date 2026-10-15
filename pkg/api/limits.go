@@ -6403,6 +6403,9 @@ const (
 	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
 	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
 	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
+	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
+	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
+	AutomationLiveSuiteRetainedLimit               = 100
 	AutomationTestCaseNameMaxBytes                 = 128
 	AutomationTestStepResultsMax                   = AutomationSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected

@@ -27,6 +27,7 @@ type automationLiveSuitePlan struct {
 	Target       api.StartAutomationLiveVerificationRequest `json:"target"`
 	Cases        []string                                   `json:"cases"`
 	CreatedAt    time.Time                                  `json:"created_at"`
+	Shared       bool                                       `json:"shared,omitempty"`
 }
 
 type automationLiveSuiteCase struct {
@@ -93,6 +94,7 @@ func parseAutomationLiveSuite(args []string) (automationLiveSuiteOptions, error)
 	fs.StringVar(&o.plan.Target.ExpectedDeploymentID, "expected-deployment-id", "", "live default deployment UUID")
 	fs.StringVar(&o.path, "journal", "", "new private journal file")
 	fs.StringVar(&o.resume, "resume", "", "existing suite journal to continue")
+	fs.BoolVar(&o.plan.Shared, "share", false, "retain this new suite and its run links in shared dashboard history")
 	fs.BoolVar(&o.plan.Target.ConfirmRealActions, "confirm-real-actions", false, "confirm execution of remaining selected cases")
 	fs.DurationVar(&o.timeout, "timeout", api.AutomationLiveCLIWaitDefault, "total invocation deadline (up to 1h)")
 	fs.DurationVar(&o.interval, "poll-interval", api.AutomationLiveProgressPollInterval, "poll interval (1s to 1m)")

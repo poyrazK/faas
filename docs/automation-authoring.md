@@ -329,6 +329,54 @@ overall timeout uses 124 and interruption uses 130. Setup failures use ordinary
 CLI diagnostics. Reports omit keys, payloads and raw errors; observations do not
 provide publication receipts or an atomic server snapshot of every run.
 
+### Share suite results with your team
+
+Add `--share` when creating a new CLI suite to retain its selection and run links
+in the app dashboard:
+
+```sh
+gregale automations live suite --app billing --name paid-invoice \
+  --case happy --case expected-failure \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --idempotency-key deploy-42-suite --journal suite-progress.json \
+  --share --confirm-real-actions --json > suite-result.json
+```
+
+Open the automation and find **Shared live verification suites**. Select a suite
+to inspect its frozen target, observation time and ordered case results, then
+open an individual verification for details or an explicit result check.
+**Refresh suite results** reads current retained records. It does not start cases
+or evaluate assertions. A terminal run without a current assertion report appears
+unavailable until checked. Changed targets are marked outdated. Expired records
+keep their known run IDs and appear unavailable rather than passing.
+
+The journal remembers sharing automatically. Resume with the original
+`--resume suite-progress.json --confirm-real-actions` command; do not add new
+selection flags or `--share`. The private journal remains necessary for execution
+recovery. Shared history contains no admission keys, sample inputs, output values
+or frozen assertions. JSON CI results include the stable `shared_suite_id`.
+
+The CLI saves the shared selection before admission and links each accepted run
+after recording it privately. A sharing failure stops later admissions. An
+already admitted run may continue; keep the journal and resume explicitly after
+resolving the failure. Existing local-only suites do not contact these endpoints.
+
+Shared history retains 100 recent suites per automation and lists the newest 20.
+Older retained suites remain accessible by their suite ID. Workflow verification
+records have their own retention; a suite does not extend their lifetime. Clearing
+saved test data or deleting the automation also removes shared suite history.
+
+Clients can save metadata with
+`PUT /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}`, read it with GET
+of the same path, or list the collection. Choose a stable UUID and send
+`expected_version`, `expected_published_version`, `expected_deployment_id` and
+ordered `cases: [{name, run_id?}]`. Requests are capped at 16 KiB and 32 distinct
+cases. Run IDs must reference existing verifications for the same frozen case and
+target. Selection and existing run links cannot be replaced; older partial saves
+preserve links already recorded. Saves never execute workflows or accept verdicts.
+The metadata APIs are available in the Go, Node and Python clients.
+
 ### Configure and preview a scheduled report
 
 Choose **scheduled-report**, enter its schedule and an IANA timezone, and replace

@@ -147,6 +147,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 	s.setup(r, scope, &data)
 	setupTestEditor(&data)
 	s.inspectLive(r, scope, &data)
+	s.inspectLiveSuites(r, scope, &data)
 	if failure := s.inspectIngress(r, scope, &data); failure != nil {
 		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this automation."
 	}

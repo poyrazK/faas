@@ -92,6 +92,20 @@ func (q *Queries) AutomationLiveStep(ctx context.Context, db DBTX, arg Automatio
 	return items, nil
 }
 
+const deleteAutomationLiveSuites = `-- name: DeleteAutomationLiveSuites :exec
+DELETE FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2
+`
+
+type DeleteAutomationLiveSuitesParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) DeleteAutomationLiveSuites(ctx context.Context, db DBTX, arg DeleteAutomationLiveSuitesParams) error {
+	_, err := db.Exec(ctx, deleteAutomationLiveSuites, arg.AppID, arg.Name)
+	return err
+}
+
 const deleteAutomationLiveVerifications = `-- name: DeleteAutomationLiveVerifications :exec
 DELETE FROM workflow_automation_live_verifications WHERE app_id=$1 AND name=$2
 `
@@ -129,6 +143,33 @@ func (q *Queries) GetAutomationForLiveVerification(ctx context.Context, db DBTX,
 		&i.UpdatedAt,
 		&i.TestSuite,
 		&i.TestReport,
+	)
+	return i, err
+}
+
+const getAutomationLiveSuite = `-- name: GetAutomationLiveSuite :one
+SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 AND id=$3
+`
+
+type GetAutomationLiveSuiteParams struct {
+	AppID pgtype.UUID
+	Name  string
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetAutomationLiveSuite(ctx context.Context, db DBTX, arg GetAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
+	row := db.QueryRow(ctx, getAutomationLiveSuite, arg.AppID, arg.Name, arg.ID)
+	var i WorkflowAutomationLiveSuite
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Name,
+		&i.AutomationVersion,
+		&i.PublishedVersion,
+		&i.DeploymentID,
+		&i.Cases,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -195,6 +236,46 @@ func (q *Queries) GetAutomationLiveVerificationByKey(ctx context.Context, db DBT
 	return i, err
 }
 
+const insertAutomationLiveSuite = `-- name: InsertAutomationLiveSuite :one
+INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases)
+VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at
+`
+
+type InsertAutomationLiveSuiteParams struct {
+	ID                pgtype.UUID
+	AppID             pgtype.UUID
+	Name              string
+	AutomationVersion int64
+	PublishedVersion  int64
+	DeploymentID      pgtype.UUID
+	Cases             []byte
+}
+
+func (q *Queries) InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
+	row := db.QueryRow(ctx, insertAutomationLiveSuite,
+		arg.ID,
+		arg.AppID,
+		arg.Name,
+		arg.AutomationVersion,
+		arg.PublishedVersion,
+		arg.DeploymentID,
+		arg.Cases,
+	)
+	var i WorkflowAutomationLiveSuite
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Name,
+		&i.AutomationVersion,
+		&i.PublishedVersion,
+		&i.DeploymentID,
+		&i.Cases,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertAutomationLiveVerification = `-- name: InsertAutomationLiveVerification :one
 INSERT INTO workflow_automation_live_verifications
 (run_id,app_id,name,case_name,automation_version,published_version,deployment_id,inputs_hash,live_test,idempotency_key,request_fingerprint)
@@ -246,6 +327,46 @@ func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAutomationLiveSuites = `-- name: ListAutomationLiveSuites :many
+SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER BY created_at DESC,id DESC LIMIT $3
+`
+
+type ListAutomationLiveSuitesParams struct {
+	AppID pgtype.UUID
+	Name  string
+	Limit int32
+}
+
+func (q *Queries) ListAutomationLiveSuites(ctx context.Context, db DBTX, arg ListAutomationLiveSuitesParams) ([]WorkflowAutomationLiveSuite, error) {
+	rows, err := db.Query(ctx, listAutomationLiveSuites, arg.AppID, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowAutomationLiveSuite{}
+	for rows.Next() {
+		var i WorkflowAutomationLiveSuite
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Name,
+			&i.AutomationVersion,
+			&i.PublishedVersion,
+			&i.DeploymentID,
+			&i.Cases,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAutomationLiveVerifications = `-- name: ListAutomationLiveVerifications :many
@@ -316,6 +437,23 @@ func (q *Queries) LockAutomationLiveRunState(ctx context.Context, db DBTX, id pg
 	return i, err
 }
 
+const pruneAutomationLiveSuites = `-- name: PruneAutomationLiveSuites :exec
+DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=$1::uuid AND suite.name=$2::text AND suite.id IN (
+ SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text ORDER BY history.created_at DESC,history.id DESC OFFSET $3::integer
+)
+`
+
+type PruneAutomationLiveSuitesParams struct {
+	AppID    pgtype.UUID
+	Name     string
+	Retained int32
+}
+
+func (q *Queries) PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg PruneAutomationLiveSuitesParams) error {
+	_, err := db.Exec(ctx, pruneAutomationLiveSuites, arg.AppID, arg.Name, arg.Retained)
+	return err
+}
+
 const saveAutomationLiveReport = `-- name: SaveAutomationLiveReport :execrows
 UPDATE workflow_automation_live_verifications SET report=$4
 WHERE app_id=$1 AND name=$2 AND run_id=$3
@@ -339,4 +477,37 @@ func (q *Queries) SaveAutomationLiveReport(ctx context.Context, db DBTX, arg Sav
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateAutomationLiveSuite = `-- name: UpdateAutomationLiveSuite :one
+UPDATE workflow_automation_live_suites SET cases=$4,updated_at=now() WHERE app_id=$1 AND name=$2 AND id=$3 RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at
+`
+
+type UpdateAutomationLiveSuiteParams struct {
+	AppID pgtype.UUID
+	Name  string
+	ID    pgtype.UUID
+	Cases []byte
+}
+
+func (q *Queries) UpdateAutomationLiveSuite(ctx context.Context, db DBTX, arg UpdateAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error) {
+	row := db.QueryRow(ctx, updateAutomationLiveSuite,
+		arg.AppID,
+		arg.Name,
+		arg.ID,
+		arg.Cases,
+	)
+	var i WorkflowAutomationLiveSuite
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Name,
+		&i.AutomationVersion,
+		&i.PublishedVersion,
+		&i.DeploymentID,
+		&i.Cases,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

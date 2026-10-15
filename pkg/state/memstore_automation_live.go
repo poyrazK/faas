@@ -189,6 +189,11 @@ func (m *MemStore) CheckAutomationLiveVerification(ctx context.Context, appID, n
 }
 
 func (m *MemStore) clearAutomationLiveLocked(appID, name string) {
+	for id, suite := range m.automationLiveSuites {
+		if suite.AppID == appID && suite.Name == name {
+			delete(m.automationLiveSuites, id)
+		}
+	}
 	for id, live := range m.automationLiveVerifications {
 		if live.AppID == appID && live.Name == name {
 			delete(m.automationLiveVerifications, id)
