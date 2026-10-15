@@ -7,7 +7,7 @@ import (
 )
 
 func applyTestCampaignStatusRecovery(report *testCampaignStatusReport,plan testCampaignPolicyPlan,checkpoint testCampaignCheckpoint,
-	bundle string,policy testCampaignPolicy,scenarios map[string]testScenario) error {
+	bundle string,policy testCampaignPolicy,scenarios map[string]testScenario,resolvers ...*testCampaignBundleResolver) error {
 	var reconciliation testCampaignReconciliation
 	var continuation testCampaignPolicyPlan
 	var seal testCampaignRecoverySeal
@@ -15,12 +15,18 @@ func applyTestCampaignStatusRecovery(report *testCampaignStatusReport,plan testC
 	if err := readTestCampaignJSON(filepath.Join(bundle,"continuation-plan.json"),&continuation); err != nil { return err }
 	if err := readTestCampaignJSON(filepath.Join(report.Directory,testCampaignRecoverySealName),&seal); err != nil { return err }
 	link := continuation.Recovery
+	parentMatches := false
+	if link != nil {
+		resolved,err := resolveTestCampaignDirectory(link.ParentDirectory,resolvers...)
+		parentMatches = err == nil && filepath.Clean(resolved) == filepath.Clean(report.Directory)
+		if len(resolvers)==1 && resolvers[0]!=nil && len(resolvers[0].Index.Nodes)>0 && link.ParentDirectory==resolvers[0].Index.Nodes[0].Key && filepath.Clean(report.Directory)==filepath.Join(resolvers[0].Index.Root,"work") { parentMatches=true }
+	}
 	if link == nil || seal.SchemaVersion != 1 || seal.ParentPlanSHA256 != report.PlanSHA256 ||
 		seal.CheckpointSHA256 != testCampaignJSONHash(checkpoint) || seal.ContinuationSHA256 != testCampaignJSONHash(continuation) ||
 		seal.ReconciliationSHA256 != testCampaignJSONHash(reconciliation) || seal.Blocked == reconciliation.Ready ||
 		link.Blocked != seal.Blocked || link.Side != checkpoint.Side || link.Revision != checkpoint.Revision || link.ParentPlanSHA256 != report.PlanSHA256 ||
 		link.CheckpointSHA256 != seal.CheckpointSHA256 || link.ReconciliationSHA256 != seal.ReconciliationSHA256 ||
-		filepath.Clean(link.ParentDirectory) != filepath.Clean(report.Directory) ||
+		!parentMatches ||
 		reconciliation.ParentPlanSHA256 != report.PlanSHA256 || reconciliation.CheckpointSHA256 != seal.CheckpointSHA256 ||
 		reconciliation.Side != checkpoint.Side || reconciliation.Revision != checkpoint.Revision ||
 		continuation.Execution == nil || continuation.Execution.PolicySHA256 != plan.Execution.PolicySHA256 ||

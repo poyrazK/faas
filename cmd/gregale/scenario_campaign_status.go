@@ -104,7 +104,7 @@ func testCampaignCheckpointLineageMatches(checkpoint testCampaignCheckpoint,plan
 	return checkpoint.LineageVersion == 1 && testCampaignJSONHash(checkpoint.Recovery) == testCampaignJSONHash(plan.Recovery)
 }
 
-func testCampaignStatusTrace(plan testCampaignPolicyPlan) ([]testCampaignStatusLineage,bool,[]testCampaignStatusIssue) {
+func testCampaignStatusTrace(plan testCampaignPolicyPlan,resolvers ...*testCampaignBundleResolver) ([]testCampaignStatusLineage,bool,[]testCampaignStatusIssue) {
 	rows := []testCampaignStatusLineage{}
 	issues := []testCampaignStatusIssue{}
 	link,childHash := plan.Recovery,testCampaignJSONHash(plan)
@@ -112,7 +112,13 @@ func testCampaignStatusTrace(plan testCampaignPolicyPlan) ([]testCampaignStatusL
 	for link != nil {
 		row := testCampaignStatusLineage{Allocation:link.Allocation,Reserved:link.Reserved,Remaining:link.Remaining,Directory:link.ParentDirectory,PlanSHA256:link.ParentPlanSHA256,
 			CheckpointSHA256:link.CheckpointSHA256,Side:link.Side,Revision:link.Revision}
-		key := filepath.Clean(link.ParentDirectory)
+		resolved,resolveErr := resolveTestCampaignDirectory(link.ParentDirectory,resolvers...)
+		if resolveErr != nil {
+			issues = append(issues,testCampaignStatusIssue{Code:"lineage_reference",Message:"A portable parent reference cannot be resolved.",Action:"Supply the matching --handoff import index."})
+			return rows,false,issues
+		}
+		key := filepath.Clean(resolved)
+		row.Directory = key
 		if len(rows) >= 32 || seen[key] {
 			issues = append(issues,testCampaignStatusIssue{Code:"lineage_limit",Message:"Recovery chain is cyclic or exceeds 32 parents.",Action:"Inspect the saved parent plans and restore a consistent recovery chain."})
 			return rows,false,issues
@@ -157,7 +163,7 @@ func appendTestCampaignStatusEvidence(existing,candidate []testRunReceipt) ([]te
 }
 
 func buildTestCampaignStatus(plan testCampaignPolicyPlan,checkpoint *testCampaignCheckpoint,directory,side string,
-	policy testCampaignPolicy,scenarios map[string]testScenario,before,after []testRunReceipt) (testCampaignStatusReport,error) {
+	policy testCampaignPolicy,scenarios map[string]testScenario,before,after []testRunReceipt,resolvers ...*testCampaignBundleResolver) (testCampaignStatusReport,error) {
 	report := testCampaignStatusReport{SchemaVersion:1,Informational:true,ReadOnly:true,ObservedAt:time.Now().UTC(),
 		PlanSHA256:testCampaignJSONHash(plan),Directory:directory,Side:side,SnapshotStable:true,Counts:newTestCampaignStatusCounts(),
 		EnvironmentGaps:[]testCampaignStatusEnvironment{},CoverageGaps:[]testCampaignStatusCoverage{},Batches:[]testCampaignStatusBatch{},
@@ -188,11 +194,12 @@ func buildTestCampaignStatus(plan testCampaignPolicyPlan,checkpoint *testCampaig
 		if err != nil && !os.IsNotExist(err) { return report,err }
 		report.Sealed = err == nil
 	}
-	report.Lineage,report.LineageComplete,report.Issues = testCampaignStatusTrace(plan)
+	report.Lineage,report.LineageComplete,report.Issues = testCampaignStatusTrace(plan,resolvers...)
 	if plan.Recovery != nil && plan.Recovery.Blocked {
 		report.Issues = append(report.Issues,testCampaignStatusIssue{Code:"recovery_blocked",Message:"This continuation was published with unresolved recovery evidence.",Action:"Resolve the parent reconciliation diagnostics and refresh its blocked bundle."})
 	}
 	if report.Sealed { report.Issues = append(report.Issues,testCampaignStatusIssue{Code:"campaign_sealed",Message:"The original scheduler is frozen by a reconciliation seal.",Action:"Use its continuation or supply --recovery-bundle to inspect adopted evidence."}) }
+	if directory != "" { if _,err := os.Lstat(filepath.Join(directory,testCampaignHandoffName)); err == nil { report.Halted = true; report.Issues = append(report.Issues,testCampaignStatusIssue{Code:"campaign_handed_off",Message:"The source campaign was frozen for handoff.",Action:"Use the recipient import and its claimed ownership."}) } }
 	if report.Halted { report.Issues = append(report.Issues,testCampaignStatusIssue{Code:"campaign_halted",Message:"The checkpoint halted scheduling.",Action:"Reconcile execution and cleanup evidence before creating a continuation."}) }
 	before,err := appendTestCampaignStatusEvidence(nil,before)
 	if err != nil { return report,err }

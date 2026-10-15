@@ -23,6 +23,7 @@ func testCampaignPrivateDirectory(path string) error {
 
 func cmdTestCampaignReconcile(args []string) int {
 	fs := newFlagSet("test policy reconcile",flag.ContinueOnError)
+	handoff := fs.String("handoff","","portable import index for parent resolution and ownership")
 	planPath := fs.String("plan","","original saved campaign plan")
 	policyPath := fs.String("policy","","original campaign policy")
 	manifestPath := fs.String("manifest","gregale-test.yaml","original scenario manifest")
@@ -38,6 +39,10 @@ func cmdTestCampaignReconcile(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *policyPath == "" || *directory == "" || *output == "" {
 		return printErr("Invalid reconciliation options",errors.New("--plan, --policy, --directory and a new --output-directory are required"))
 	}
+	resolver,handoffErr := loadTestCampaignBundleResolver(*handoff)
+	if handoffErr != nil { return printErr("Invalid handoff import",handoffErr) }
+	if err := resolver.requireActive(); err != nil { return printErr("Handoff is not active",err) }
+	if err := enforceTestCampaignPlanHandoff(*planPath,resolver); err != nil { return printErr("Invalid imported plan",err) }
 	var plan testCampaignPolicyPlan
 	if err := readTestCampaignJSON(*planPath,&plan); err != nil { return printErr("Invalid campaign plan",err) }
 	policy,err := readTestCampaignPolicy(*policyPath)
@@ -45,10 +50,14 @@ func cmdTestCampaignReconcile(args []string) int {
 	manifest,_,err := readTestManifestDocument(*manifestPath,func(_ string,s testScenario) []string { return testHTTPDataFields(s) })
 	if err != nil { return printErr("Invalid campaign manifest",err) }
 	if err := validateTestCampaignRunnable(plan,manifest.Scenarios,policy); err != nil { return printErr("Campaign binding changed",err) }
-	if err := validateTestCampaignRecoverySeal(plan); err != nil { return printErr("Invalid parent recovery seal",err) }
+	if err := validateTestCampaignRecoverySeal(plan,resolver); err != nil { return printErr("Invalid parent recovery seal",err) }
 	*directory,err = filepath.Abs(*directory)
 	if err != nil { return printErr("Invalid campaign directory",err) }
 	if err := testCampaignPrivateDirectory(*directory); err != nil { return printErr("Invalid campaign directory",err) }
+	if err := checkTestCampaignBundleWork(*directory,resolver,true); err != nil { return printErr("Invalid campaign ownership",err) }
+	releaseHandoff,claimErr := acquireTestCampaignHandoff(resolver)
+	if claimErr != nil { return printErr("Handoff claim unavailable",claimErr) }
+	defer releaseHandoff()
 	lockPath := filepath.Join(*directory,"runner.lock")
 	lock,err := os.OpenFile(lockPath,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0o600)
 	if err != nil { return printErr("Campaign directory is locked",err) }
@@ -61,6 +70,7 @@ func cmdTestCampaignReconcile(args []string) int {
 		(checkpoint.Side != "current" && checkpoint.Side != "baseline") || revisionErr != nil || (len(revision) != 20 && len(revision) != 32) {
 		return printErr("Checkpoint binding changed",errors.New("checkpoint does not identify this plan and a revision side"))
 	}
+	if err := registerTestCampaignHandoffWork(resolver,testCampaignJSONHash(plan),*directory,checkpoint.Side,checkpoint.Revision); err != nil { return printErr("Invalid handoff work directory",err) }
 	if plan.Recovery != nil && (plan.Recovery.Side != checkpoint.Side || plan.Recovery.Revision != checkpoint.Revision) {
 		return printErr("Recovery revision changed",errors.New("checkpoint does not match its recovery lineage"))
 	}

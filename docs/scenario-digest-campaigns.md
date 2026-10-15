@@ -1021,3 +1021,92 @@ describes only the verified evidence subset and does not imply all planned
 batches completed. Status returns 0 for an informational report, including
 recorded failures/blockers, and 1 for invalid inputs, mismatched artifacts or
 export errors.
+
+
+### Portable campaign handoff bundles
+
+A campaign bundle packages the saved plan, canonical policy, original receipt
+inputs, checkpointed reports, known recovery parents and an optional published
+reconciliation bundle. It preserves original artifact bytes and SHA-256 identities.
+Parent references resolve through a portable node index; old absolute directory
+strings remain immutable identity labels and are never used as filesystem paths
+when an import resolver is active.
+
+```sh
+gregale test policy bundle export --plan campaign-plan.json --policy campaign-policy.yaml --manifest gregale-test.yaml --from current.json --baseline baseline.json --directory /tmp/gregale-current-campaign --output campaign-handoff.json
+gregale test policy bundle inspect --from campaign-handoff.json
+gregale test policy bundle import --from campaign-handoff.json --directory /tmp/gregale-inspection
+```
+
+Omit original report flags absent from the plan. A sealed source also requires
+its matching `--recovery-bundle`. Export the current continuation work directory
+after a continuation has claimed ownership; an older ancestor cannot represent
+its current progress.
+
+Export takes the source directory lock and writes `campaign-handoff.json` there
+before publishing importable bundle bytes. This freezes its scheduler and
+reconciliation. If publication fails, the source remains frozen; an identical
+frozen export can be republished to a new destination after removing any partial
+output file. Checkpoints and report bytes remain unchanged. Exporting an activated
+recipient also revokes its old claim so it cannot start later continuations.
+
+The format allows only enumerated metadata and evidence files, with 64 MiB total
+decoded artifacts, at most 4096 files and 33 history nodes. Import verifies
+artifact hashes, the bundle identity, paths, policy/plan/checkpoint bindings,
+completed report availability and recovery graph/seal links before publication.
+It rejects traversal, duplicate paths, missing evidence and changed artifacts.
+Known legacy history boundaries remain marked incomplete.
+
+Application manifests, source trees, credentials/configuration files and log
+contents are excluded. Nonempty secret/credential configuration, configured
+plaintext secret values, credential-bearing URLs, and raw request/response,
+stdout/stderr, header or diagnostic captures cause export to fail. Generate
+shareable evidence without these payload captures before handing it off.
+The exporter preserves hash-bound evidence and does not silently rewrite it.
+Recognized redaction placeholders are allowed. Continue to treat report labels
+and application-supplied error text as data selected by the sender.
+
+An orphan log transfers as an uncertainty marker without its contents.
+Import creates a placeholder in the working directory so its reserved cost
+cannot be mistaken for unstarted work. Missing/uncertain receipts still require
+the existing reconciliation workflow; a bundle does not grant coverage or
+refund potentially spent work.
+
+Imports are inspection-only by default. The result prints the index, plan,
+policy and working directory paths. To activate a recipient, all workers must
+use the same private shared claim directory with atomic exclusive file creation:
+
+```sh
+gregale test policy bundle import --from campaign-handoff.json --directory /tmp/gregale-recipient --activate --claim-directory /shared/gregale-handoff-claims
+```
+
+One claim owns one recipient root for that bundle ID. Activation binds the import
+to its location and host identity. The shared claim lock serializes execution,
+reconciliation and subsequent export; the ownership ledger binds each plan to one
+work directory. Duplicate activation, concurrent ownership, a different revision
+side, or resetting a plan into another directory is rejected. Separate claim
+directories do not coordinate workers. Retain claims after completion; removing
+a claim or stale lock requires confirming its owner is no longer active.
+
+`artifacts/` is immutable. `work/` contains the copied source checkpoint and
+receipts plus ownership metadata. Provide the matching external source checkout,
+manifest and authentication separately. Absolute application source paths remain
+constraints of that manifest; relative source layouts are easier to reproduce.
+
+```sh
+gregale test policy status --handoff /tmp/gregale-recipient/bundle-index.json --plan /tmp/gregale-recipient/artifacts/plan.json --policy /tmp/gregale-recipient/artifacts/policy.yaml --manifest gregale-test.yaml --directory /tmp/gregale-recipient/work --html handoff-status.html
+gregale test policy run --handoff /tmp/gregale-recipient/bundle-index.json --plan /tmp/gregale-recipient/artifacts/plan.json --policy /tmp/gregale-recipient/artifacts/policy.yaml --manifest gregale-test.yaml --directory /tmp/gregale-recipient/work --side current --revision FULL_CURRENT_COMMIT
+```
+
+Add original `--from` / `--baseline` paths under `artifacts/` when their hashes
+are bound by the plan. For an already sealed source, use the plan and report
+inputs under `artifacts/recovery/` with a fresh runtime directory. Pass
+`--handoff` to status, run, reconcile and later bundle export so parent resolution
+and ownership remain attached. Imported immutable directories cannot be used as
+mutable runtime directories.
+
+Normal native revision/configuration checks, checkpoint verification, cleanup
+failures, reconciliation blockers and budget limits remain enforced. A claim
+does not automatically execute work or resolve uncertainty. New native
+continuations also bind their first working directory in the parent campaign,
+which prevents exporting an obsolete ancestor while that continuation owns work.

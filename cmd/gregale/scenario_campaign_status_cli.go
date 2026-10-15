@@ -62,6 +62,7 @@ func protectTestCampaignStatusOutputs(outputs,inputs,directories []string) error
 
 func cmdTestCampaignStatus(args []string) int {
 	fs := newFlagSet("test policy status",flag.ContinueOnError)
+	handoff := fs.String("handoff","","portable import index for offline parent resolution")
 	planPath := fs.String("plan","","saved cost-aware campaign plan")
 	policyPath := fs.String("policy","","policy used by the plan")
 	manifestPath := fs.String("manifest","gregale-test.yaml","manifest used by the plan")
@@ -80,6 +81,8 @@ func cmdTestCampaignStatus(args []string) int {
 		(*side != "" && *side != "baseline" && *side != "current") || (*bundle != "" && *directory == "") {
 		return printErr("Invalid status options",errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle needs --directory"))
 	}
+	resolver,handoffErr := loadTestCampaignBundleResolver(*handoff)
+	if handoffErr != nil { return printErr("Invalid handoff import",handoffErr) }
 	if *directory != "" {
 		absolute,err := filepath.Abs(*directory)
 		if err != nil { return printErr("Invalid campaign directory",err) }
@@ -92,6 +95,7 @@ func cmdTestCampaignStatus(args []string) int {
 	}
 	inputs := []string{*planPath,*policyPath,*manifestPath,*from,*baseline}
 	directories := []string{*directory,*bundle}
+	if resolver != nil { directories=append(directories,resolver.Index.Root); inputs=append(inputs,resolver.IndexPath) }
 	if err := protectTestCampaignStatusOutputs([]string{*jsonPath,*htmlPath},inputs,directories); err != nil { return printErr("Invalid status output",err) }
 	var plan testCampaignPolicyPlan
 	if err := readTestCampaignJSON(*planPath,&plan); err != nil { return printErr("Invalid status plan",err) }
@@ -127,11 +131,11 @@ func cmdTestCampaignStatus(args []string) int {
 			if *side != "" && *side != checkpoint.Side { return printErr("Status side differs",errors.New("scope must match the checkpoint side")) }
 		}
 	}
-	report,err := buildTestCampaignStatus(plan,checkpoint,*directory,*side,policy,manifest.Scenarios,before,after)
+	report,err := buildTestCampaignStatus(plan,checkpoint,*directory,*side,policy,manifest.Scenarios,before,after,resolver)
 	if err != nil { return printErr("Could not inspect campaign status",err) }
 	if *bundle != "" {
 		if checkpoint == nil { return printErr("Recovery checkpoint missing",errors.New("a recovery bundle requires its original checkpoint")) }
-		if err := applyTestCampaignStatusRecovery(&report,plan,*checkpoint,*bundle,policy,manifest.Scenarios); err != nil {
+		if err := applyTestCampaignStatusRecovery(&report,plan,*checkpoint,*bundle,policy,manifest.Scenarios,resolver); err != nil {
 			return printErr("Invalid status recovery bundle",err)
 		}
 	}

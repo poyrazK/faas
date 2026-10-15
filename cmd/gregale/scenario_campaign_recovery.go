@@ -87,16 +87,22 @@ type testCampaignCleanupReader interface {
 	GetDevSession(context.Context,string,string) (api.DevSessionResponse,error)
 }
 
-func validateTestCampaignRecoverySeal(plan testCampaignPolicyPlan) error {
+func validateTestCampaignRecoverySeal(plan testCampaignPolicyPlan,resolvers ...*testCampaignBundleResolver) error {
 	link := plan.Recovery
 	if link == nil { return nil }
 	if link.Blocked { return errors.New("continuation is blocked by unresolved recovery evidence") }
+	parentDirectory,err := resolveTestCampaignDirectory(link.ParentDirectory,resolvers...)
+	if err != nil { return err }
+	var resolver *testCampaignBundleResolver
+	if len(resolvers)==1 { resolver=resolvers[0] }
+	if err := checkTestCampaignBundleWork(parentDirectory,resolver,false); err != nil { return err }
+	if err := resolver.requireActive(); err != nil { return err }
 	var seal testCampaignRecoverySeal
-	if err := readTestCampaignJSON(filepath.Join(link.ParentDirectory,testCampaignRecoverySealName),&seal); err != nil {
+	if err := readTestCampaignJSON(filepath.Join(parentDirectory,testCampaignRecoverySealName),&seal); err != nil {
 		return errors.New("parent reconciliation seal is unavailable; continuation cannot execute")
 	}
 	var checkpoint testCampaignCheckpoint
-	if err := readTestCampaignJSON(filepath.Join(link.ParentDirectory,"checkpoint.json"),&checkpoint); err != nil {
+	if err := readTestCampaignJSON(filepath.Join(parentDirectory,"checkpoint.json"),&checkpoint); err != nil {
 		return errors.New("parent checkpoint is unavailable")
 	}
 	if seal.SchemaVersion != 1 || seal.Blocked || seal.ContinuationSHA256 != testCampaignJSONHash(plan) ||

@@ -39,6 +39,7 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 	if _,err := os.Lstat(filepath.Join(directory,testCampaignRecoverySealName)); !os.IsNotExist(err) {
 		return errors.New("campaign has been reconciled; use its sealed continuation plan")
 	}
+	if _,err := os.Lstat(filepath.Join(directory,testCampaignHandoffName)); !os.IsNotExist(err) { return errors.New("campaign ownership was handed off") }
 	path := filepath.Join(directory,"checkpoint.json")
 	allowed := make(map[string]testCampaignCostBatch)
 	for _, batch := range plan.Batches { if batch.Side == checkpoint.Side { allowed[batch.ID] = batch } }
@@ -64,6 +65,7 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 				stopped = errors.New("uncheckpointed batch output exists; refusing to overwrite or repeat it")
 				break
 			}
+			if _,err:=os.Lstat(filepath.Join(directory,"batch-"+batch.ID+".log"));!os.IsNotExist(err){stopped=errors.New("uncheckpointed batch log exists; reconcile it before repeating execution");break}
 			checkpoint.Batches[batch.ID] = testCampaignCheckpointBatch{Status:"running"}
 			if err := writeTestCampaignJSON(path,checkpoint); err != nil { stopped = err; break }
 			active++
@@ -102,6 +104,7 @@ func runTestCampaignBatches(ctx context.Context, plan testCampaignPolicyPlan, sc
 
 func cmdTestCampaignRun(args []string) int {
 	fs := newFlagSet("test policy run",flag.ContinueOnError)
+	handoff := fs.String("handoff","","portable import index for parent resolution and ownership")
 	planPath := fs.String("plan","","saved cost-aware plan JSON")
 	policyPath := fs.String("policy","","same campaign policy used to plan")
 	manifestPath := fs.String("manifest","gregale-test.yaml","same scenario manifest used to plan")
@@ -121,6 +124,10 @@ func cmdTestCampaignRun(args []string) int {
 		*concurrency < 1 || *concurrency > 4 {
 		return printErr("Invalid campaign run options",errors.New("--plan, --policy, --directory, --side and full --revision are required; concurrency must be 1..4"))
 	}
+	resolver,handoffErr := loadTestCampaignBundleResolver(*handoff)
+	if handoffErr != nil { return printErr("Invalid handoff import",handoffErr) }
+	if err := resolver.requireActive(); err != nil { return printErr("Handoff is not active",err) }
+	if err := enforceTestCampaignPlanHandoff(*planPath,resolver); err != nil { return printErr("Invalid imported plan",err) }
 	var plan testCampaignPolicyPlan
 	if err := readTestCampaignJSON(*planPath,&plan); err != nil { return printErr("Invalid campaign plan",err) }
 	policy, err := readTestCampaignPolicy(*policyPath)
@@ -131,7 +138,7 @@ func cmdTestCampaignRun(args []string) int {
 	if plan.Recovery != nil && (plan.Recovery.Side != *side || plan.Recovery.Revision != *revision) {
 		return printErr("Recovery revision changed",errors.New("side and revision must match the reconciled campaign"))
 	}
-	if err := validateTestCampaignRecoverySeal(plan); err != nil { return printErr("Invalid recovery seal",err) }
+	if err := validateTestCampaignRecoverySeal(plan,resolver); err != nil { return printErr("Invalid recovery seal",err) }
 	var before,after []testRunReceipt
 	for _, input := range []struct{path,expected string; receipts *[]testRunReceipt}{
 		{*from,plan.Execution.CurrentSHA256,&after},{*baseline,plan.Execution.BaselineSHA256,&before},
@@ -154,6 +161,12 @@ func cmdTestCampaignRun(args []string) int {
 	if _,err := os.Lstat(filepath.Join(*directory,testCampaignRecoverySealName)); !os.IsNotExist(err) {
 		return printErr("Campaign is reconciled",errors.New("use its sealed continuation plan"))
 	}
+	if err := checkTestCampaignBundleWork(*directory,resolver,true); err != nil { return printErr("Invalid campaign ownership",err) }
+	releaseHandoff,claimErr := acquireTestCampaignHandoff(resolver)
+	if claimErr != nil { return printErr("Handoff claim unavailable",claimErr) }
+	defer releaseHandoff()
+	if err := registerTestCampaignHandoffWork(resolver,testCampaignJSONHash(plan),*directory,*side,*revision); err != nil { return printErr("Invalid handoff work directory",err) }
+	if err:=registerTestCampaignContinuationOwner(plan,*directory,resolver);err!=nil{return printErr("Invalid continuation ownership",err)}
 	lockPath := filepath.Join(*directory,"runner.lock")
 	lock, err := os.OpenFile(lockPath,os.O_CREATE|os.O_EXCL|os.O_WRONLY,0o600)
 	if err != nil { return printErr("Campaign directory is locked",err) }
@@ -172,10 +185,12 @@ func cmdTestCampaignRun(args []string) int {
 		if err != nil || len(entries) != 1 { return printErr("Campaign directory is not empty",errors.New("use a new directory or a matching checkpoint")) }
 		if err := writeTestCampaignJSON(checkpointPath,checkpoint); err != nil { return printErr("Could not save checkpoint",err) }
 	}
+	if err := bindTestCampaignBundleWork(*directory,resolver); err != nil { return printErr("Could not bind imported campaign",err) }
 	ctx,cancel := signal.NotifyContext(context.Background(),testTerminationSignals()...)
 	defer cancel()
 	guard := func(batch testCampaignCostBatch) error {
-		if err := validateTestCampaignRecoverySeal(plan); err != nil { return err }
+		if err := checkTestCampaignBundleWork(*directory,resolver,true); err != nil { return err }
+		if err := validateTestCampaignRecoverySeal(plan,resolver); err != nil { return err }
 		currentPolicy, err := readTestCampaignPolicy(*policyPath)
 		if err != nil { return err }
 		currentManifest,_,err := readTestManifestDocument(*manifestPath,func(_ string,s testScenario) []string { return testHTTPDataFields(s) })

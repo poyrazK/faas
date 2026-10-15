@@ -95,3 +95,26 @@ rewritten; status stops at an unrecorded ancestry boundary. Bound tracing to 32
 parents and validate every parent checkpoint/seal link. Export escaped standalone
 HTML and versioned JSON outside execution/evidence directories. A status snapshot
 is not an execution, cleanup or policy enforcement gate.
+
+
+## Portable campaign handoff (2026-10-15)
+
+Transfer enumerated metadata and shareable receipt artifacts with byte-preserving
+hashes and a bounded, versioned inventory. Use an external node resolver for
+immutable parent directory labels so relocation never rewrites the original
+plan/checkpoint/seal identities. Exclude source trees, application manifests,
+logs and credential files; reject recognized credentials/configured secrets and
+raw payload/diagnostic captures. Orphan log existence transfers as uncertainty
+metadata, retaining full cost reservations without transferring log contents.
+
+Freeze the source before publishing the bundle. Imports are inspection-only
+unless an explicit shared exclusive claim activates one host/location-bound
+recipient. Serialize claim operations, bind each plan to one work directory, and
+revoke the previous recipient on a subsequent handoff. Immutable imported
+evidence is separate from mutable runtime checkpoints. Native continuations bind
+their first work directory in the parent before execution; exporting an ancestor
+after continuation ownership is established is rejected.
+
+Bundle integrity and portability do not waive native source/configuration checks,
+budget ceilings, incomplete evidence or cleanup/reconciliation failures. Shared
+claims coordinate only workers using the same claim store.
