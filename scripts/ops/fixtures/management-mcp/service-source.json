@@ -1,0 +1,58 @@
+{
+  "nonproduction": true,
+  "account_id": "REPLACE_ACCOUNT_ID",
+  "target": {
+    "app": "acceptance-service",
+    "app_id": "REPLACE_APP_ID",
+    "scope": "default"
+  },
+  "steps": [
+    {
+      "id": "plan",
+      "tool": "gregale_plan_source_deploy",
+      "arguments": {
+        "app": "acceptance-service",
+        "reason": "Native nonproduction acceptance",
+        "repo": "REPLACE_OWNER/REPLACE_REPO",
+        "ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "rollout_mode": "service"
+      },
+      "expect": {
+        "rollout_mode": "service",
+        "source.commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "id": "apply",
+      "tool": "gregale_apply_workload_rollout",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "deployment.app_id": "REPLACE_APP_ID"
+      },
+      "replay": [
+        "deployment.id",
+        "deployment.build_id"
+      ]
+    },
+    {
+      "id": "observe",
+      "tool": "gregale_get_rollout",
+      "arguments": {
+        "app": "acceptance-service",
+        "deployment_id": {
+          "ref": "apply.deployment.id"
+        }
+      },
+      "poll": true,
+      "timeout_seconds": 900,
+      "expect": {
+        "deployment.status": "live",
+        "pending": false
+      }
+    }
+  ]
+}

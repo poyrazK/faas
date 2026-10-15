@@ -156,89 +156,92 @@ var routeExclude = map[string]bool{
 	// entries for these same routes — both lists must move
 	// together (operator-only surface, admin scope +
 	// FAAS_ADMIN_EMAILS allowlist).
-	"POST /v1/admin/instances/{id}/force-park":                   true, // PR #1099 P2a
-	"POST /v1/admin/apps/{slug}/force-cold-boot":                 true, // PR #1099 P2b
-	"POST /v1/admin/instances/{id}/force-restart":                true, // PR #1105 P2d
-	"POST /v1/admin/builds/sweep-stuck":                          true, // PR #1099 P2c
-	"GET /v1/admin/ops/jobs/runs":                                true, // operator-only active job-run projection
-	"GET /v1/admin/ops/jobs/runs/{id}":                           true, // operator-only job-run inspection
-	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                   true, // operator-only job-run cancellation
-	"GET /v1/admin/ops/deployments":                              true, // operator-only deployment incident projection
-	"GET /v1/admin/ops/deployments/{id}":                         true, // operator-only deployment inspection
-	"POST /v1/admin/ops/deployments/{id}/cancel":                 true, // operator-only deployment cancellation
-	"POST /v1/admin/ops/deployments/{id}/retry":                  true, // operator-only deployment retry
-	"GET /v1/admin/ops/github/recovery":                          true, // operator-only githubd queue projection
-	"POST /v1/admin/ops/github/deliveries/{id}/retry":            true, // operator-only githubd delivery recovery
-	"POST /v1/admin/ops/github/check-updates/{id}/retry":         true, // operator-only githubd Check Run recovery
-	"POST /v1/admin/ops/accounts/{id}/suspend":                   true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":                   true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":           true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":                      true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":                true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":                   true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/retire":                     true, // operator-only terminal node lifecycle control
-	"POST /v1/compute-nodes/{name}/drain":                        true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
-	"GET /v1/compute-nodes/{name}/drain":                         true, // Workstream B: drain progress endpoint (ADR-137)
-	"GET /v1/admin/operator-intents/{id}":                        true, // PR #1099 P2.3
-	"GET /v1/events":                                             true, // SSE (cookie+Bearer, not s.auth)
-	"GET /login":                                                 true, // dashboard magic-link GET (HTML form, browser-only)
-	"POST /logout":                                               true, // dashboard logout (HTML form, browser-only)
-	"GET /auth/verify":                                           true, // magic-link consume (legacy; PR #1 closed; kept for compat)
-	"GET /oauth/callback":                                        true, // GitHub App install callback
-	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
-	"POST /v1/gitlab/connect":                                    true, // GitLab.com OAuth session + CSRF form
-	"GET /v1/gitlab/callback":                                    true, // GitLab.com OAuth browser callback
-	"GET /v1/gitlab/connection":                                  true, // GitLab.com session-only dashboard status
-	"DELETE /v1/gitlab/connection":                               true, // GitLab.com session-only disconnect
-	"POST /v1/gitlab/disconnect":                                 true, // GitLab.com session + CSRF form
-	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
-	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
-	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
-	"POST /dashboard/dev-bridges/{id}/revoke":                    true, // ADR-379 cookie + CSRF form
-	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
-	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // GitHub activity recovery form; session-cookie + CSRF-only
-	"GET /dashboard/apps/{slug}/data-api":                        true, // ADR-968 session-auth owner HTML workspace
-	"GET /dashboard/apps/{slug}/auth":                            true, // ADR-1190 session-auth owner page; the browser calls the Auth app
-	"GET /dashboard/apps/{slug}/data-api/types/{id}":             true, // ADR-968 session-auth type download
-	"POST /dashboard/apps/{slug}/data-api/refresh":               true, // ADR-968 session + CSRF contract refresh adapter
-	"POST /dashboard/apps/{slug}/data-api/{operation}":           true, // ADR-968 session + CSRF schema/type task adapter
-	"GET /dashboard":                                             true, // HTML dashboard
-	"GET /dashboard/":                                            true, // HTML dashboard
-	"POST /dashboard/account/delete":                             true, // HTML form
-	"POST /dashboard/account/keys/{id}/delete":                   true, // HTML form (issue #248)
-	"POST /dashboard/account/plan":                               true, // HTML form (issue #248)
-	"POST /dashboard/account/restore":                            true, // HTML form
-	"GET /dashboard/mfa":                                         true, // TOTP challenge page for mfa_pending sessions
-	"POST /dashboard/mfa":                                        true, // HTML form, TOTP challenge
-	"GET /dashboard/account/export":                              true, // session-auth twin of /v1/account/export
-	"GET /dashboard/account/dpa":                                 true, // session-auth twin of DPA
-	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)
-	"POST /dashboard/upgrade":                                    true, // HTML form (hosted-checkout hand-off)
-	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
-	"POST /dashboard/apps/{slug}/crons/{id}/policy":              true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/apps/{slug}/env":                            true, // HTML form, env editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/env/{key}/delete":               true, // HTML form, env editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets":                        true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets/{key}/delete":           true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secret-references":              true, // HTML reference form; JSON API is documented separately
-	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": true, // HTML reference removal; JSON API is documented separately
-	"POST /dashboard/apps/{slug}/instances/{action}":             true, // HTML form, app lifecycle controls (issue #1397 G6)
-	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
-	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":           true, // HTML form, edge-rule enforce/log switch (ADR-960)
-	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/recipes":             true, // HTML form, protection recipe (ADR-986)
-	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
-	"POST /dashboard/jobs/{name}/policy":                         true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":        true, // HTML form, failed job partition replay (ADR-385)
-	"POST /dashboard/apps/{slug}/rollback":                       true, // HTML form, app rollback (issue #248)
-	"POST /dashboard/apps/{slug}/deployments/{id}/retry":         true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
-	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":    true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
+	"POST /v1/admin/instances/{id}/force-park":                      true, // PR #1099 P2a
+	"POST /v1/admin/apps/{slug}/force-cold-boot":                    true, // PR #1099 P2b
+	"POST /v1/admin/instances/{id}/force-restart":                   true, // PR #1105 P2d
+	"POST /v1/admin/builds/sweep-stuck":                             true, // PR #1099 P2c
+	"GET /v1/admin/ops/jobs/runs":                                   true, // operator-only active job-run projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                              true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                      true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                                 true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                            true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":                    true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":                     true, // operator-only deployment retry
+	"GET /v1/admin/ops/github/recovery":                             true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":               true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":            true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":                      true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
+	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                        true, // operator-only terminal node lifecycle control
+	"POST /v1/compute-nodes/{name}/drain":                           true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
+	"GET /v1/compute-nodes/{name}/drain":                            true, // Workstream B: drain progress endpoint (ADR-137)
+	"GET /v1/admin/operator-intents/{id}":                           true, // PR #1099 P2.3
+	"GET /v1/events":                                                true, // SSE (cookie+Bearer, not s.auth)
+	"GET /login":                                                    true, // dashboard magic-link GET (HTML form, browser-only)
+	"POST /logout":                                                  true, // dashboard logout (HTML form, browser-only)
+	"GET /auth/verify":                                              true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"GET /oauth/callback":                                           true, // GitHub App install callback
+	"GET /oauth/code-callback":                                      true, // GitHub App user-to-server OAuth callback (PR-C)
+	"POST /v1/gitlab/connect":                                       true, // GitLab.com OAuth session + CSRF form
+	"GET /v1/gitlab/callback":                                       true, // GitLab.com OAuth browser callback
+	"GET /v1/gitlab/connection":                                     true, // GitLab.com session-only dashboard status
+	"DELETE /v1/gitlab/connection":                                  true, // GitLab.com session-only disconnect
+	"POST /v1/gitlab/disconnect":                                    true, // GitLab.com session + CSRF form
+	"POST /dashboard/install/connect":                               true, // GitHub App "Connect GitHub" button (PR-C)
+	"GET /dashboard/dev-bridges":                                    true, // ADR-379 HTML session inventory
+	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
+	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
+	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
+	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/auth":                               true, // ADR-1190 session-auth owner page; the browser calls the Auth app
+	"POST /dashboard/apps/{slug}/auth/settings":                     true, // ADR-1190 session + CSRF typed Auth settings form
+	"POST /dashboard/apps/{slug}/auth/providers":                    true, // ADR-1190 session + CSRF OAuth provider form
+	"POST /dashboard/apps/{slug}/auth/providers/{provider}/disable": true, // ADR-1190 session + CSRF provider removal form
+	"GET /dashboard/apps/{slug}/data-api/types/{id}":                true, // ADR-968 session-auth type download
+	"POST /dashboard/apps/{slug}/data-api/refresh":                  true, // ADR-968 session + CSRF contract refresh adapter
+	"POST /dashboard/apps/{slug}/data-api/{operation}":              true, // ADR-968 session + CSRF schema/type task adapter
+	"GET /dashboard":                                                true, // HTML dashboard
+	"GET /dashboard/":                                               true, // HTML dashboard
+	"POST /dashboard/account/delete":                                true, // HTML form
+	"POST /dashboard/account/keys/{id}/delete":                      true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                                  true, // HTML form (issue #248)
+	"POST /dashboard/account/restore":                               true, // HTML form
+	"GET /dashboard/mfa":                                            true, // TOTP challenge page for mfa_pending sessions
+	"POST /dashboard/mfa":                                           true, // HTML form, TOTP challenge
+	"GET /dashboard/account/export":                                 true, // session-auth twin of /v1/account/export
+	"GET /dashboard/account/dpa":                                    true, // session-auth twin of DPA
+	"POST /dashboard/raise-overage-cap":                             true, // HTML form (issue #561)
+	"POST /dashboard/upgrade":                                       true, // HTML form (hosted-checkout hand-off)
+	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":               true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":                 true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/apps/{slug}/env":                               true, // HTML form, env editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/env/{key}/delete":                  true, // HTML form, env editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets":                           true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets/{key}/delete":              true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":              true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secret-references":                 true, // HTML reference form; JSON API is documented separately
+	"POST /dashboard/apps/{slug}/secret-references/{key}/delete":    true, // HTML reference removal; JSON API is documented separately
+	"POST /dashboard/apps/{slug}/instances/{action}":                true, // HTML form, app lifecycle controls (issue #1397 G6)
+	"POST /dashboard/apps/{slug}/edge-rules":                        true, // HTML form, edge-rule create (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/trace":                  true, // HTML form, read-only edge-rule request trace
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":            true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":              true, // HTML form, edge-rule enforce/log switch (ADR-960)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":            true, // HTML form, edge-rule delete (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/security-headers":       true, // HTML form, security-headers preset (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/recipes":                true, // HTML form, protection recipe (ADR-986)
+	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay":    true, // HTML form, queue DLQ replay (issue #1397 G7)
+	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":           true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
+	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
+	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -392,6 +395,7 @@ var dtoExclude = map[string]bool{
 	"ObjectNotificationTarget":          true,
 	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
 	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeRequest":                true, // Optional purpose on the private browser/device-code mint
 	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
 	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
 	"CliAuthExchangeResponse":           true, // POST /v1/cli-auth/exchange
@@ -1213,6 +1217,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_validate_params.go"), // kind=validate parameter schemas
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),             // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", cliauthFile),
+		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
+		filepath.Join(root, "pkg", "api", "source_review.go"),
+		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
+		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),

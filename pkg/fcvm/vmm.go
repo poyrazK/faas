@@ -466,6 +466,8 @@ var guestInitPlatformMessages = []string{
 	"workload identity proxy ", "event publish proxy ", "outbound relay ",
 	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
 	"sidecar ", "healthcheck: ", "WatchOOM",
+	// Boot characterization and port normalization (H10-56).
+	"characterization ", "portnorm ",
 	// Job exit/cancel delivery over vsock: "INFO job-exit shipped ... attempt=1"
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).

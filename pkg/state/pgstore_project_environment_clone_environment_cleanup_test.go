@@ -21,7 +21,7 @@ import (
 const cloneEnvironmentCleanupMigration = "20261011232006408_clone_environment_metadata_cleanups.sql"
 
 func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "domain", "scope", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {
+	for _, fault := range []string{"none", "write", "domain", "route_budget", "scope", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {
 		t.Run(fault, func(t *testing.T) {
 			phase := "materialized"
 			if fault == "deployed" {
@@ -47,6 +47,8 @@ func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
 				_, err = pool.Exec(t.Context(), `CREATE FUNCTION reject_environment_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected receipt failure' USING ERRCODE='40001'; END $$; CREATE TRIGGER reject_environment_cleanup BEFORE INSERT ON project_environment_clone_environment_cleanups FOR EACH ROW EXECUTE FUNCTION reject_environment_cleanup();`)
 			case "domain":
 				_, err = pool.Exec(t.Context(), "INSERT INTO custom_domains(domain,app_id,environment_id) VALUES('borrowed.example.com',$1,$2)", appID, envID)
+			case "route_budget":
+				_, err = pool.Exec(t.Context(), "INSERT INTO app_environment_route_budgets(account_id,app_id,scope,project_id,environment_id,inherit,enabled,revision,routes) VALUES($1,$2,$3,$4,$5,false,false,1,'[]')", l.Operation.AccountID, appID, l.Operation.TargetEnvironment, l.Operation.ProjectID, envID)
 			case "scope":
 				_, err = pool.Exec(t.Context(), "INSERT INTO github_deploy_branches(project_id,branch,scope) VALUES($1,'borrowed',$2)", l.Operation.ProjectID, l.Operation.TargetEnvironment)
 			case "foreign_deployment":
@@ -248,6 +250,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 	expected := []string{
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
+		"app_environment_route_budgets.environment_id",
+		"app_environment_route_budgets.scope",
 		"app_environment_secret_ref_suppressions.environment_id",
 		"app_environment_secret_ref_suppressions.scope",
 		"app_environment_secret_refs.environment_id",

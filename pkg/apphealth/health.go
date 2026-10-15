@@ -28,6 +28,7 @@ const (
 // read from becoming a healthy empty slice. Readiness timestamps describe
 // transitions, not heartbeat samples, so they do not expire like metrics.
 type Evidence struct {
+	Scope            string
 	App              state.App
 	Live             []state.Deployment
 	Latest           *state.Deployment
@@ -44,7 +45,7 @@ type Evidence struct {
 
 func Evaluate(e Evidence) api.AppHealthResponse {
 	out := api.AppHealthResponse{
-		AppID: e.App.ID, Scope: "default", Phase: "unknown",
+		AppID: e.App.ID, Scope: evidenceScope(e.Scope), Phase: "unknown",
 		EvaluatedAt:          e.Now.UTC().Format(time.RFC3339Nano),
 		ValidForSeconds:      int(api.AppHealthEvidenceMaxAge.Seconds()),
 		ServingDeploymentIDs: []string{}, Checks: []api.AppHealthCheck{},
@@ -55,7 +56,7 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 		add(&out, "workload", Unknown, "HTTP serving health does not assess worker or job execution.", "configuration", "")
 		return finish(out)
 	}
-	serving := servingDeployments(e.Live)
+	serving := servingDeploymentsInScope(e.Live, e.Scope)
 	for _, d := range serving {
 		out.ServingDeploymentIDs = append(out.ServingDeploymentIDs, d.ID)
 	}
@@ -74,10 +75,17 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 	return finish(out)
 }
 
-func servingDeployments(all []state.Deployment) []state.Deployment {
+func evidenceScope(scope string) string {
+	if scope == "" {
+		return api.DefaultEnvScope
+	}
+	return scope
+}
+
+func servingDeploymentsInScope(all []state.Deployment, scope string) []state.Deployment {
 	var out []state.Deployment
 	for _, d := range all {
-		if (d.Scope == "" || d.Scope == "default") && d.Status == state.DeployLive && d.TrafficPercent > 0 {
+		if evidenceScope(d.Scope) == evidenceScope(scope) && d.Status == state.DeployLive && d.TrafficPercent > 0 {
 			out = append(out, d)
 		}
 	}
@@ -95,13 +103,13 @@ func assessDeployments(out *api.AppHealthResponse, e Evidence, live []state.Depl
 			if e.DeploymentsKnown && len(live) == 0 {
 				severity = Fail
 			}
-			add(out, "latest_deployment", severity, "The latest default-scope deployment failed. Any older serving release is assessed separately.", "deployments", e.Latest.ID)
+			add(out, "latest_deployment", severity, "The latest deployment in the selected scope failed. Any older serving release is assessed separately.", "deployments", e.Latest.ID)
 		} else if e.Latest.Status.IsCancelEligible() {
 			out.Phase = "deploying"
-			add(out, "latest_deployment", NotApplicable, "A default-scope deployment is in progress; it has not replaced serving health evidence.", "deployments", e.Latest.ID)
+			add(out, "latest_deployment", NotApplicable, "A deployment in the selected scope is in progress; it has not replaced serving health evidence.", "deployments", e.Latest.ID)
 		}
 	} else if !e.HistoryComplete {
-		add(out, "latest_deployment", Unknown, "The latest default-scope deployment could not be confirmed from the bounded history read.", "deployments", "")
+		add(out, "latest_deployment", Unknown, "The latest deployment in the selected scope could not be confirmed from the bounded history read.", "deployments", "")
 	}
 	if !e.DeploymentsKnown {
 		return
@@ -110,10 +118,10 @@ func assessDeployments(out *api.AppHealthResponse, e Evidence, live []state.Depl
 		if out.Phase != "deploying" {
 			out.Phase = "not_deployed"
 		}
-		add(out, "deployment", Unknown, "No traffic-bearing default-scope release is available to assess.", "deployments", "")
+		add(out, "deployment", Unknown, "No traffic-bearing release in the selected scope is available to assess.", "deployments", "")
 		return
 	}
-	add(out, "deployment", Pass, "Traffic-bearing default-scope releases are present.", "", "")
+	add(out, "deployment", Pass, "Traffic-bearing releases in the selected scope are present.", "", "")
 }
 
 func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deployment) {

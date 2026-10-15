@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -54,5 +55,53 @@ func TestEdgeRuleHitCounterFlushesAndRetains(t *testing.T) {
 	again, _ := store.EdgeRuleHitStatsForApp(context.Background(), "app-1", time.Time{})
 	if len(again) != 2 || again[0].Matched+again[1].Matched != 4 {
 		t.Fatalf("an empty flush changed totals: %+v", again)
+	}
+}
+
+// ADR-831 amendment 5: detections have their own per-rule budget, reset each
+// flush, and reach the store with their outcome and WAF detail.
+func TestEdgeRuleHitCounterDetectionEvents(t *testing.T) {
+	c := newEdgeRuleHitCounter()
+	// Match sampling never spends the detection budget.
+	c.RecordEdgeRuleHit("waf-rule", "app", false)
+	for range edgeRuleEventsPerRule + 5 {
+		c.SampleEdgeRuleEvent("waf-rule")
+	}
+	admitted := 0
+	for range edgeRuleDetectionEventsPerRule + 5 {
+		if c.SampleEdgeRuleDetection("waf-rule") {
+			admitted++
+		}
+	}
+	if admitted != edgeRuleDetectionEventsPerRule {
+		t.Fatalf("admitted %d detections, want %d", admitted, edgeRuleDetectionEventsPerRule)
+	}
+	if !c.SampleEdgeRuleDetection("other-rule") {
+		t.Fatal("another rule's detection was refused")
+	}
+	c.RecordEdgeRuleEvent(gateway.EdgeRuleEvent{RuleID: "waf-rule", AppID: "app", Outcome: gateway.EdgeRuleEventBlocked,
+		WAFRuleIDs: []int{942100}, WAFCategories: []string{"sqli"}, WAFScore: 5})
+	c.RecordEdgeRuleEvent(gateway.EdgeRuleEvent{RuleID: "r", AppID: "app", Logged: true})
+	events, _ := c.drainEvents()
+	if len(events) != 2 || events[0].Outcome != state.EdgeRuleEventBlocked || events[0].WAFScore != 5 ||
+		events[0].WAFRuleIDs[0] != 942100 || events[1].Outcome != state.EdgeRuleHitLogged {
+		t.Fatalf("drained = %+v", events)
+	}
+	if !c.SampleEdgeRuleDetection("waf-rule") {
+		t.Fatal("detection budget not reset by the flush")
+	}
+}
+
+// The gateway and the store name detection outcomes independently; the
+// stored CHECK accepts only the store's names.
+func TestDetectionOutcomesMatchStore(t *testing.T) {
+	for gw, st := range map[string]string{
+		gateway.EdgeRuleEventDetected: state.EdgeRuleEventDetected,
+		gateway.EdgeRuleEventWarned:   state.EdgeRuleEventWarned,
+		gateway.EdgeRuleEventBlocked:  state.EdgeRuleEventBlocked,
+	} {
+		if gw != st {
+			t.Errorf("gateway outcome %q != store outcome %q", gw, st)
+		}
 	}
 }

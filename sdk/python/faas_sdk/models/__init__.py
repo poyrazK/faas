@@ -173,7 +173,6 @@ from .app_health_requests import AppHealthRequests
 from .app_health_requests_coverage import AppHealthRequestsCoverage
 from .app_health_response import AppHealthResponse
 from .app_health_response_phase import AppHealthResponsePhase
-from .app_health_response_scope import AppHealthResponseScope
 from .app_health_response_status import AppHealthResponseStatus
 from .app_log_drain_analytics_bucket import AppLogDrainAnalyticsBucket
 from .app_log_drain_analytics_response import AppLogDrainAnalyticsResponse
@@ -232,6 +231,7 @@ from .app_publish_event_request import AppPublishEventRequest
 from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
+from .app_release_review import AppReleaseReview
 from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
@@ -514,6 +514,9 @@ from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
 from .binding_verification import BindingVerification
 from .binding_verification_check import BindingVerificationCheck
 from .binding_verification_object_storage_mode import BindingVerificationObjectStorageMode
+from .browser_promotion_approval_exchange import BrowserPromotionApprovalExchange
+from .browser_promotion_approval_request import BrowserPromotionApprovalRequest
+from .browser_promotion_approval_response import BrowserPromotionApprovalResponse
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -655,6 +658,7 @@ from .create_deployment_overrides import CreateDeploymentOverrides
 from .create_deployment_overrides_env import CreateDeploymentOverridesEnv
 from .create_deployment_overrides_env_secrets import CreateDeploymentOverridesEnvSecrets
 from .create_deployment_request import CreateDeploymentRequest
+from .create_deployment_request_native_rollout import CreateDeploymentRequestNativeRollout
 from .create_deployment_request_tag_type_1 import CreateDeploymentRequestTagType1
 from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequestTagType2Type1
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
@@ -1166,6 +1170,8 @@ from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
+from .environment_route_budgets import EnvironmentRouteBudgets
+from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
@@ -1612,10 +1618,12 @@ from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
+from .get_app_operational_summary_scope import GetAppOperationalSummaryScope
 from .get_app_pre_auth_observations_range import GetAppPreAuthObservationsRange
 from .get_app_request_analytics_group_by import GetAppRequestAnalyticsGroupBy
 from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalyticsTimeseriesGroupBy
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
+from .get_app_routes_scope import GetAppRoutesScope
 from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
@@ -1628,6 +1636,7 @@ from .get_deployment_stages_response_200_history_item_name import GetDeploymentS
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
+from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
@@ -1647,6 +1656,7 @@ from .get_route_health_investigation_signal import GetRouteHealthInvestigationSi
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
+from .get_worker_rollout_observation_scope import GetWorkerRolloutObservationScope
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
 )
@@ -4118,6 +4128,8 @@ from .scoped_app_secret_response_last_runtime_reload_projection import (
 )
 from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecretResponseLastRuntimeReloadSignal
 from .scoped_app_secret_response_secret_class import ScopedAppSecretResponseSecretClass
+from .scoped_route_budget_report import ScopedRouteBudgetReport
+from .scoped_route_budget_report_budget_source import ScopedRouteBudgetReportBudgetSource
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -4186,6 +4198,8 @@ from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
+from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
+from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
@@ -4240,7 +4254,10 @@ from .simulate_automation_response import SimulateAutomationResponse
 from .slo_duration import SLODuration
 from .source_ref_deploy_request import SourceRefDeployRequest
 from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
+from .source_ref_deploy_request_native_rollout import SourceRefDeployRequestNativeRollout
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
+from .source_review_request import SourceReviewRequest
+from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
@@ -4490,6 +4507,8 @@ from .work_policy_list_response import WorkPolicyListResponse
 from .work_policy_response import WorkPolicyResponse
 from .work_policy_response_max_running_per_key import WorkPolicyResponseMaxRunningPerKey
 from .work_policy_response_pending_updates import WorkPolicyResponsePendingUpdates
+from .worker_rollout_observation import WorkerRolloutObservation
+from .worker_rollout_observation_basis import WorkerRolloutObservationBasis
 from .worker_scaling import WorkerScaling
 from .worker_scaling_metric import WorkerScalingMetric
 from .workflow_callback_response import WorkflowCallbackResponse
@@ -4898,7 +4917,6 @@ __all__ = (
     "AppHealthRequestsCoverage",
     "AppHealthResponse",
     "AppHealthResponsePhase",
-    "AppHealthResponseScope",
     "AppHealthResponseStatus",
     "ApplicationStandardAdoption",
     "ApplicationStandardAssignment",
@@ -5048,6 +5066,7 @@ __all__ = (
     "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
+    "AppReleaseReview",
     "AppResponse",
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
@@ -5233,6 +5252,9 @@ __all__ = (
     "BindingVerification",
     "BindingVerificationCheck",
     "BindingVerificationObjectStorageMode",
+    "BrowserPromotionApprovalExchange",
+    "BrowserPromotionApprovalRequest",
+    "BrowserPromotionApprovalResponse",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -5371,6 +5393,7 @@ __all__ = (
     "CreateDeploymentOverridesEnv",
     "CreateDeploymentOverridesEnvSecrets",
     "CreateDeploymentRequest",
+    "CreateDeploymentRequestNativeRollout",
     "CreateDeploymentRequestTagType1",
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
@@ -5863,6 +5886,8 @@ __all__ = (
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
+    "EnvironmentRouteBudgets",
+    "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
@@ -6285,10 +6310,12 @@ __all__ = (
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
+    "GetAppOperationalSummaryScope",
     "GetAppPreAuthObservationsRange",
     "GetAppRequestAnalyticsGroupBy",
     "GetAppRequestAnalyticsTimeseriesGroupBy",
     "GetAppRequestAnalyticsTimeseriesMethod",
+    "GetAppRoutesScope",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
     "GetBuildSbomResponse200",
@@ -6301,6 +6328,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
+    "GetEnvironmentRouteBudgetsScope",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
     "GetEventBacklogOrigin",
@@ -6320,6 +6348,7 @@ __all__ = (
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
     "GetRuntimePolicyStatusEdgeRulesScope",
+    "GetWorkerRolloutObservationScope",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
@@ -8563,6 +8592,8 @@ __all__ = (
     "ScopedAppSecretResponseLastRuntimeReloadProjection",
     "ScopedAppSecretResponseLastRuntimeReloadSignal",
     "ScopedAppSecretResponseSecretClass",
+    "ScopedRouteBudgetReport",
+    "ScopedRouteBudgetReportBudgetSource",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",
@@ -8629,6 +8660,8 @@ __all__ = (
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
     "SetDeploymentAliasRequest",
+    "SetEnvironmentRouteBudgetsRequest",
+    "SetEnvironmentRouteBudgetsScope",
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
@@ -8679,7 +8712,10 @@ __all__ = (
     "SLODuration",
     "SourceRefDeployRequest",
     "SourceRefDeployRequestFormat",
+    "SourceRefDeployRequestNativeRollout",
     "SourceRefDeployRequestTag",
+    "SourceReviewRequest",
+    "SourceReviewResponse",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StartDurableEntityQuotaMigrationBody",
@@ -8901,6 +8937,8 @@ __all__ = (
     "WebhookAutomationReceiptResponseStatus",
     "WorkDecision",
     "WorkDecisionAction",
+    "WorkerRolloutObservation",
+    "WorkerRolloutObservationBasis",
     "WorkerScaling",
     "WorkerScalingMetric",
     "WorkflowCallbackResponse",

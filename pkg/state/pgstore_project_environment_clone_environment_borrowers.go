@@ -83,6 +83,7 @@ func cloneWorkloadCleanupSHA(row sqlc.ProjectEnvironmentCloneWorkloadCleanup) st
 
 func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowersRow) map[string]int64 {
 	return map[string]int64{
+		"app_environment_route_budgets":           row.AppEnvironmentRouteBudgets,
 		"app_environment_secret_ref_suppressions": row.AppEnvironmentSecretRefSuppressions,
 		"app_environment_secret_refs":             row.AppEnvironmentSecretRefs,
 		"app_environment_workload_intents":        row.AppEnvironmentWorkloadIntents,

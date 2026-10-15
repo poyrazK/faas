@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -37,26 +38,28 @@ func TestComposeDockerBuildContext(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	compose := state.Project{ScanSource: state.ProjectScanSourceCompose}
+	compose := reposcan.Workload{DetectedBy: reposcan.Detection{Detector: reposcan.DetectorCompose}}
 	app := func(root, dockerfile, image string) state.App {
 		a := state.App{RootDir: root}
 		a.Manifest.BuildDockerfile, a.Manifest.ProjectImage = dockerfile, image
 		return a
 	}
 	for _, tc := range []struct {
-		name    string
-		project state.Project
-		app     state.App
-		want    bool
+		name     string
+		workload reposcan.Workload
+		app      state.App
+		want     bool
 	}{
 		{"compose service directory", compose, app("web", "", ""), true},
 		{"compose explicit dockerfile", compose, app("api", "Dockerfile.prod", ""), true},
 		{"compose root context", compose, app("", "", ""), false},
 		{"compose without Dockerfile keeps repository", compose, app("worker", "", ""), false},
 		{"compose image service", compose, app("web", "", "nginx:1.27"), false},
-		{"workspace Dockerfile keeps repository (ADR-144)", state.Project{ScanSource: state.ProjectScanSourceWorkspace}, app("web", "", ""), false},
+		// A Dockerfile found beside the Compose file, not declared in it,
+		// keeps the repository even in a compose-sourced project.
+		{"undeclared Dockerfile keeps repository (ADR-144)", reposcan.Workload{DetectedBy: reposcan.Detection{Detector: "other"}}, app("web", "", ""), false},
 	} {
-		if got := apidserver.ComposeDockerBuildContext(scanDir, tc.project, tc.app); got != tc.want {
+		if got := apidserver.ComposeDockerBuildContext(scanDir, tc.workload, tc.app); got != tc.want {
 			t.Errorf("%s: composeDockerBuildContext = %v, want %v", tc.name, got, tc.want)
 		}
 	}

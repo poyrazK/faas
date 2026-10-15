@@ -494,6 +494,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 | 1140 | [Pull leases for worker queue consumers](1140-worker-queue-pull-leases.md) | accepted | `POST /v1/apps/{slug}/queues/{queue}/leases[:ack\|:nack\|:extend]` with fenced receipts and the `queues:consume` scope or a `gregale:queues` workload token, long-poll `wait_seconds` and up to 100 messages per lease, for workers without an HTTP listener; a worker holding leases ranks busy at scale-in |
+| 1141 | [Workload-identity trust provisioning](1141-workload-identity-trust-provisioning.md) | accepted | `gregalectl workload-identity init\|rotate\|status` writes the cluster RSA key, key id and JWKS; `faas_workload_identity_source_dir` installs the key on compute nodes (vmmd drop-in) and the JWKS for apid (`workload_jwks_path`, the fallback for Flags and Operations); `vmmd_workload_identity_tokens_total` and `FaasWorkloadIdentityNotConfigured` |
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
 | 1151 | [Existing consumer execution coverage reconciliation](1151-existing-consumer-execution-reconciliation.md) | accepted | Durable forward-only collection requests; conservative lineage blockers and future-window SLO eligibility |
 | 1152 | [Authoritative legacy event execution lineage repair](1152-authoritative-event-execution-lineage-repair.md) | accepted | Bounded restart-safe receipt scans associate provable roots without reconstructing historical outcomes |
@@ -539,6 +540,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
+| 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -1010,6 +1012,49 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+
+- [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
+- [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)
+
+- [ADR-1239: Native browser authorization and durable management MCP connections](1239-management-mcp-browser-login-and-durability.md)
+- [ADR-1240: Management MCP environment consent and real-client CI](1240-management-mcp-environments-and-client-ci.md)
+- [ADR-1241: Reviewed named-environment staging and scoped health](1241-management-mcp-named-staging-and-scoped-health.md)
+- [ADR-1242: Human browser approval for management MCP promotions](1242-management-mcp-browser-promotion-approval.md)
+- [ADR-1243: Reviewed Git source staging through management MCP](1243-management-mcp-reviewed-git-source.md)
+
+- [ADR-1244: Native service and worker rollouts through management MCP](1244-management-mcp-native-workload-rollouts.md)
+
+- [ADR-1245: Environment-attributed management MCP observations](1245-management-mcp-scoped-telemetry.md)
+
+- [ADR-1246: Reviewed native source rollouts through management MCP](1246-management-mcp-native-source-rollouts.md)
+
+- [ADR-1247: Retained GitHub source rollback through management MCP](1247-management-mcp-retained-source-rollback.md)
+
+- [ADR-1248: Current environment route-budget observations](1248-management-mcp-scoped-route-budgets.md)
+
+- [ADR-1249: Bounded passive management MCP rollout watch](1249-management-mcp-rollout-watch.md)
+
+- [ADR-1250: Consent-scoped management MCP resources and prompts](1250-management-mcp-context-resources-prompts.md)
+
+- [ADR-1251: Read-only management MCP preflight](1251-management-mcp-preflight.md)
+
+- [ADR-1252: Independent advisory environment route budgets](1252-environment-route-budgets.md)
+
+- [ADR-1253: Bounded management MCP rollout progress](1253-management-mcp-rollout-progress.md)
+
+- [ADR-1254: Consent-scoped management MCP resource subscriptions](1254-management-mcp-resource-subscriptions.md)
+
+- [ADR-1255: Consent-scoped management MCP argument completion](1255-management-mcp-argument-completion.md)
+
+- [ADR-1256: Bounded management MCP request admission](1256-management-mcp-request-admission.md)
+
+- [ADR-1257: Private aggregate management MCP telemetry](1257-management-mcp-operational-telemetry.md)
+
+- [ADR-1258: Graceful management MCP drain and journal cleanup](1258-management-mcp-graceful-drain.md)
+
+- [ADR-1259: Owner-protected management MCP connection controls](1259-management-mcp-local-connection-controls.md)
+
+- [ADR-1260: Authorization-bounded management MCP request leases](1260-management-mcp-authorization-request-leases.md)
 
 - [ADR-1115: Issue occurrence split preview](1115-issue-occurrence-split-preview.md)
 

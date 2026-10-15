@@ -249,7 +249,7 @@
           <select name="rule"><option value="">all rules</option>{{range .Data.Rules}}<option value="{{.ID}}" {{if eq .ID $.Data.Events.Rule}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{.Kind}} {{.MatchHost}}{{.MatchPath}}{{end}}</option>{{end}}</select>
         </label>
         <label>Outcome
-          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option></select>
+          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option><option value="detected" {{if eq .Data.Events.Outcome "detected"}}selected{{end}}>WAF detected (sampled)</option><option value="warned" {{if eq .Data.Events.Outcome "warned"}}selected{{end}}>WAF warned</option><option value="blocked" {{if eq .Data.Events.Outcome "blocked"}}selected{{end}}>WAF blocked</option></select>
         </label>
         <label>Since
           <select name="since"><option value="1h" {{if eq .Data.Events.Since "1h"}}selected{{end}}>1h</option><option value="24h" {{if eq .Data.Events.Since "24h"}}selected{{end}}>24h</option><option value="72h" {{if eq .Data.Events.Since "72h"}}selected{{end}}>72h</option><option value="7d" {{if eq .Data.Events.Since "7d"}}selected{{end}}>7d</option></select>
@@ -266,7 +266,7 @@
               <tr>
                 <td class="nowrap">{{.OccurredAt}}</td>
                 <td>{{.RuleLabel}}<br><small class="muted"><code>{{.RuleID}}</code></small></td>
-                <td>{{.Outcome}}</td>
+                <td>{{.Outcome}}{{if .WAF}}<br><small class="muted">{{.WAF}}</small>{{end}}</td>
                 <td><code>{{.Method}} {{.HostPath}}</code>{{if .RequestID}}<br><small class="muted"><code>{{.RequestID}}</code></small>{{end}}</td>
                 <td>{{if .ClientIP}}<code>{{.ClientIP}}</code>{{else}}<span class="muted">unknown</span>{{end}}{{if .Country}} · {{.Country}}{{end}}</td>
                 <td><small>{{.UserAgent}}</small></td>

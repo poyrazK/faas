@@ -65321,6 +65321,7 @@ WITH scoped_apps AS (
  SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$2::text
 )
 SELECT
+ (SELECT count(*) FROM app_environment_route_budgets p WHERE p.environment_id=$1::uuid) AS app_environment_route_budgets,
  (SELECT count(*) FROM app_environment_secret_ref_suppressions p WHERE p.environment_id=$1::uuid) AS app_environment_secret_ref_suppressions,
  (SELECT count(*) FROM app_environment_secret_refs p WHERE p.environment_id=$1::uuid) AS app_environment_secret_refs,
  (SELECT count(*) FROM app_environment_workload_intents p WHERE p.environment_id=$1::uuid) AS app_environment_workload_intents,
@@ -65354,6 +65355,7 @@ type ReadCloneEnvironmentMetadataBorrowersParams struct {
 }
 
 type ReadCloneEnvironmentMetadataBorrowersRow struct {
+	AppEnvironmentRouteBudgets           int64
 	AppEnvironmentSecretRefSuppressions  int64
 	AppEnvironmentSecretRefs             int64
 	AppEnvironmentWorkloadIntents        int64
@@ -65390,6 +65392,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 	)
 	var i ReadCloneEnvironmentMetadataBorrowersRow
 	err := row.Scan(
+		&i.AppEnvironmentRouteBudgets,
 		&i.AppEnvironmentSecretRefSuppressions,
 		&i.AppEnvironmentSecretRefs,
 		&i.AppEnvironmentWorkloadIntents,
@@ -80364,18 +80367,24 @@ func (q *Queries) ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, ar
 }
 
 const serviceRolloutRecipientReady = `-- name: ServiceRolloutRecipientReady :one
-SELECT (count(*) >= CASE WHEN $1::text = 'promote' THEN coalesce((SELECT (a.manifest->'service_replicas'->>'desired')::integer FROM apps a WHERE a.id = $2), 1) ELSE 1 END)::boolean
-FROM (SELECT i.id FROM instances i WHERE i.deployment_id = $3::uuid AND i.mode = 'service' AND i.state = 'running' FOR SHARE) ready
+SELECT (count(*) >= CASE WHEN $1::text = 'promote' THEN coalesce((
+    SELECT (coalesce(s.settings::jsonb->'manifest',a.manifest)->'service_replicas'->>'desired')::integer
+    FROM deployments d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+    WHERE d.id=$2::uuid AND a.id=$3
+), 1) ELSE 1 END)::boolean
+FROM (SELECT i.id FROM instances i WHERE i.deployment_id = $2::uuid AND i.mode = 'service' AND i.state = 'running' FOR SHARE) ready
 `
 
 type ServiceRolloutRecipientReadyParams struct {
 	Action       string
-	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
 }
 
 func (q *Queries) ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error) {
-	row := db.QueryRow(ctx, serviceRolloutRecipientReady, arg.Action, arg.AppID, arg.DeploymentID)
+	row := db.QueryRow(ctx, serviceRolloutRecipientReady, arg.Action, arg.DeploymentID, arg.AppID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

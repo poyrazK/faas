@@ -6,7 +6,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 
 | Command | What it does |
 |---|---|
-| [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
+| [`mcp`](#mcp) | Connect agents to Gregale, or scaffold and deploy MCP servers |
 | [`menu`](#menu) | Choose a common task and open its guided command |
 | [`start`](#start) | Get your first app live with a few guided prompts |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
@@ -40,7 +40,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances |
-| [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
+| [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|logs\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
@@ -120,9 +120,63 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 
 ## mcp
 
-Scaffold, deploy and verify stateless MCP servers
+Connect agents to Gregale, or scaffold and deploy MCP servers
 
 `gregale mcp [<subcommand>]`
+
+### mcp serve
+
+Expose Gregale management tools over stdio or OAuth HTTP
+
+`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
+| `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
+| `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
+| `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
+| `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
+| `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
+| `--state-file <PATH>` | private encrypted remote state file |  |
+| `--admin-socket <PATH>` | optional owner-protected Unix socket for listing and revoking HTTP grants |  |
+| `--metrics-listen <ADDR>` | optional literal loopback IP:port for private management MCP Prometheus metrics |  |
+| `--state-key-file <PATH>` | independent private 32-byte state encryption key file |  |
+| `--oauth-redirect-uri <URI>` | allowed OAuth callback; repeat; omit loopback HTTP port for ephemeral ports |  |
+
+Examples:
+
+```sh
+gregale mcp serve --transport stdio
+gregale --profile staging mcp serve --timeout 15s
+```
+
+### mcp connections
+
+Inspect or revoke agent grants through a local operator socket
+
+#### mcp connections list
+
+List bounded connection metadata without credentials
+
+`gregale mcp connections list --socket <PATH> [--limit <N>] [--offset <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--socket <PATH>` | owner-protected management control socket | required |
+| `--limit <N>` | page size from 1 to 100 (default 20) |  |
+| `--offset <N>` | non-negative page offset |  |
+
+#### mcp connections revoke
+
+Revoke one exact bridge grant and stop its observations
+
+`gregale mcp connections revoke --socket <PATH> --grant-id <ID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--socket <PATH>` | owner-protected management control socket | required |
+| `--grant-id <ID>` | exact active bridge grant ID to revoke | required |
 
 ### mcp init
 
@@ -2307,7 +2361,7 @@ Add an alert rule
 | `--event-subscription-id <UUID>` | Subscription UUID for event consumer metrics |  |
 | `--edge-rule-id <ID>` | edge rule for edge_rule_hits / edge_rule_log_hits (empty = all rules) |  |
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
-| `--webhook-url <URL>` | https webhook URL | required |
+| `--webhook-url <URL>` | http(s) webhook URL (https recommended: deliveries are signed, not encrypted) | required |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin (this or --webhook-secret is required) |  |
@@ -7177,7 +7231,7 @@ List deployments or manage stable named URLs for immutable revisions
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page |  |
-| `--wide` | include annotation columns (by / pr / tag / reason) |  |
+| `--wide` | include the revision (vN) and annotation columns (by / pr / tag / reason) |  |
 
 Examples:
 
@@ -7350,7 +7404,7 @@ Set the per-deployment cold-wake floor
 
 ## deploys
 
-Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)
+Deployment drill-downs (deploys show|status|logs|cancel|reorder|clear|clear-obsolete|retry)
 
 `gregale deploys [<subcommand>] <id|vN> [--app <SLUG>]`
 
@@ -7399,6 +7453,23 @@ Examples:
 ```sh
 gregale deploys status 00000000000000000000000000000001
 gregale deploys status v42 --app my-api --json
+```
+
+### deploys logs
+
+Print one deployment&#39;s build and deploy log
+
+`gregale deploys logs [--app <SLUG>] [--limit <N>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--limit <N>` | most recent log lines to print (1-5000) |  |
+
+Examples:
+
+```sh
+gregale deploys logs v42 --app my-api
 ```
 
 ### deploys cancel
@@ -9352,7 +9423,7 @@ Per-rule match counts (matched for enforced rules, logged for log-mode rules)
 
 ### edge-rules events
 
-Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)
+Sampled requests rules matched and kind=waf detections, newest first (up to 10 of each per rule per minute; kept 7 days)
 
 `gregale edge-rules events --app <slug> [--rule <ID>] [--outcome <OUTCOME>] [--since <DURATION>] [--limit <N>] [--cursor <CURSOR>]`
 
@@ -9360,7 +9431,7 @@ Sampled requests rules matched, newest first (up to 10 per rule per minute; kept
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--rule <ID>` | only this rule id |  |
-| `--outcome <OUTCOME>` | outcome filter | one of `matched` · `logged` |
+| `--outcome <OUTCOME>` | outcome filter; detected, warned and blocked are kind=waf detections | one of `matched` · `logged` · `detected` · `warned` · `blocked` |
 | `--since <DURATION>` | how far back, e.g. 1h, 24h, 7d (clamped to the plan window) |  |
 | `--limit <N>` | events per page (1..200) |  |
 | `--cursor <CURSOR>` | continue from a previous page&#39;s next cursor |  |
@@ -9369,6 +9440,7 @@ Examples:
 
 ```sh
 gregale edge-rules events --app my-api --outcome logged --since 7d
+gregale edge-rules events --app my-api --outcome blocked
 ```
 
 ### edge-rules rollback
@@ -11962,7 +12034,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (linked app or interactive picker)
 
-`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
+`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <METHOD /path>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -11984,7 +12056,7 @@ Query runtime logs and HTTP request events (linked app or interactive picker)
 | `--since <15m|3d|RFC3339>` | lookback duration or RFC3339 timestamp |  |
 | `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
 | `--status <100..599>` | only show HTTP requests with this status |  |
-| `--route <PATH>` | only show HTTP requests for this route |  |
+| `--route <METHOD /path>` | only show HTTP requests for this route label |  |
 | `--request <ID>` | show one HTTP request by public request id or row id |  |
 | `--trace <TRACE_ID>` | show HTTP access logs correlated with a W3C trace id |  |
 | `--limit <N>` | HTTP request page size (1..200) |  |
@@ -12919,6 +12991,132 @@ gregale auth create shop-auth --database shop-db --site-url https://shop.example
 Show the issuer, JWKS URL and readiness of an Auth app
 
 `gregale auth status <name>`
+
+### auth config
+
+Show the running Auth settings, or change them and restart the app
+
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--site-url <URL>` | application URL users return to after sign-in |  |
+| `--redirect-urls <URLS>` | comma-separated additional allowed redirect URLs; replaces the list (none clears it) |  |
+| `--signup <on|off>` | whether anyone may sign up | one of `on` · `off` |
+| `--autoconfirm <on|off>` | sign users in without email confirmation (development only) | one of `on` · `off` |
+| `--password-min-length <N>` | minimum password length (6-72) |  |
+| `--password-require <CLASSES>` | character classes every password needs: lower,upper,digit,symbol, or none |  |
+| `--leaked-password-check <on|off>` | refuse passwords found in known breaches (Have I Been Pwned) | one of `on` · `off` |
+| `--mfa <on|off>` | let users enrol an authenticator app (TOTP); enrolled users keep verifying when off | one of `on` · `off` |
+| `--email-provider <PROVIDER>` | HTTPS email provider, or none to remove it | one of `resend` · `postmark` · `none` |
+| `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
+| `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
+| `--authz <FILE>` | JSON file declaring custom roles and policies (applied on restart) |  |
+| `--scope <SCOPE>` | environment scope |  |
+
+Examples:
+
+```sh
+gregale auth config shop-auth
+gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on
+```
+
+### auth providers
+
+Manage OAuth sign-in providers such as Google or GitHub
+
+#### auth providers list
+
+List the enabled providers
+
+`gregale auth providers list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth providers enable
+
+Enable a provider, replacing its credentials
+
+`gregale auth providers enable --client-id <ID> [--client-secret-stdin] [--url <URL>] [--scope <SCOPE>] <name> <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--client-id <ID>` | OAuth client ID from the provider | required |
+| `--client-secret-stdin` | read the OAuth client secret from stdin (prompted on a terminal) |  |
+| `--url <URL>` | provider server URL (Keycloak, or a self-hosted GitLab, Azure tenant or WorkOS) |  |
+| `--scope <SCOPE>` | environment scope |  |
+
+Examples:
+
+```sh
+gregale auth providers enable shop-auth google --client-id ID --client-secret-stdin
+```
+
+#### auth providers disable
+
+Disable a provider and remove its credentials
+
+`gregale auth providers disable [--scope <SCOPE>] <name> <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+### auth keys
+
+Rotate the ES256 keys that sign the Auth app&#39;s tokens
+
+#### auth keys list
+
+List signing keys and their state
+
+`gregale auth keys list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys rotate
+
+Add a key, wait until it is published, then make it sign
+
+`gregale auth keys rotate [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys create
+
+Add a standby key that verifies but does not sign yet
+
+`gregale auth keys create [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys activate
+
+Make a published key sign; the previous key keeps verifying
+
+`gregale auth keys activate [--scope <SCOPE>] <name> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### auth keys revoke
+
+Remove a key that no longer signs; its tokens stop verifying
+
+`gregale auth keys revoke [--scope <SCOPE>] <name> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
 
 ### auth admin-key
 
@@ -15221,7 +15419,7 @@ Add a webhook
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--target-url <URL>` | HTTPS target URL | required |
+| `--target-url <URL>` | http(s) target URL (https recommended: deliveries are signed, not encrypted) | required |
 | `--event <EVENT>` | event to deliver (repeat) |  |
 | `--retry-policy <POLICY>` | default\|aggressive\|none |  |
 | `--delivery-format <FORMAT>` | json\|cloudevents |  |
@@ -15245,7 +15443,7 @@ Update one webhook
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--target-url <URL>` | new HTTPS target URL |  |
+| `--target-url <URL>` | new http(s) target URL |  |
 | `--retry-policy <POLICY>` | new retry policy | one of `default` · `aggressive` · `none` |
 | `--delivery-format <FORMAT>` | new delivery format | one of `json` · `cloudevents` |
 | `--enable` | enable the webhook |  |

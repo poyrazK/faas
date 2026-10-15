@@ -1,12 +1,47 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <title>{{.Title}} — Gregale</title>
-<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}</style></head>
+<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}</style></head>
 <body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
-<main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Users and organizations</h1>
-<p>Application Auth users of <code>{{.Data.Slug}}</code>, not your Gregale team.</p>
+<main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Application Auth</h1>
+<p>Settings, users and organizations of the Auth app <code>{{.Data.Slug}}</code>; these are your application's users, not your Gregale team.</p>
 {{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
 {{if .Data.AuthOrigin}}
+<section id="settings" aria-labelledby="settings-heading"><h2 id="settings-heading">Settings</h2>
+{{if .Data.Error}}<p class="danger" role="alert">{{.Data.Error}}</p>{{end}}
+{{if eq .Data.Changed "unchanged"}}<p role="status">Nothing changed.</p>{{else if .Data.Changed}}<p role="status">Saved. {{.Data.Slug}} restarts to apply the change; the values below are read from the running app.</p>{{end}}
+<p id="settings-status" role="status" aria-live="polite">Reading the running app's settings…</p>
+<form id="settings-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/settings" hidden>
+<input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+<label>Site URL (users return here after signing in)<input name="site_url" type="url" size="50" required></label>
+<label>Other allowed redirect URLs, one per line<textarea name="redirect_urls" rows="3" cols="50"></textarea></label>
+<label>Sign-up<select name="signup"><option value="on">Anyone can sign up</option><option value="off">Only invited or administrator-created users</option></select></label>
+<label>Email confirmation<select name="autoconfirm"><option value="off">Required before signing in</option><option value="on">Skipped (development only)</option></select></label>
+<label>Minimum password length<input name="password_min_length" type="number" min="6" max="72" required></label>
+<fieldset id="password-classes"><legend>Passwords must include</legend><label><input type="checkbox" value="lower"> lowercase</label><label><input type="checkbox" value="upper"> uppercase</label><label><input type="checkbox" value="digit"> digit</label><label><input type="checkbox" value="symbol"> symbol</label></fieldset>
+<input type="hidden" name="password_require">
+<label>Refuse passwords found in known breaches (Have I Been Pwned)<select name="leaked_password_check"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Authenticator-app (TOTP) MFA<select name="mfa"><option value="on">Users may enrol</option><option value="off">No new enrolments; enrolled users keep using it</option></select></label>
+<button type="submit">Save and restart</button>
+</form>
+<h3>Sign-in providers</h3>
+<p id="providers-status" class="muted"></p>
+<ul id="providers"></ul>
+<form id="provider-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/providers" hidden>
+<input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+<label>Provider<select name="provider">{{range .Data.Providers}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Client ID<input name="client_id" required autocomplete="off" spellcheck="false" maxlength="512"></label>
+<label>Client secret<input name="client_secret" type="password" required autocomplete="off" maxlength="4096"></label>
+<label>Server URL (Keycloak; optional for a self-hosted GitLab, an Azure tenant or WorkOS)<input name="url" type="url"></label>
+<button type="submit">Enable provider</button>
+<p class="muted">Register <code>{{.Data.AuthOrigin}}/auth/v1/callback</code> as the callback URL with the provider.</p>
+</form>
+<h3>Email and signing keys</h3>
+<p id="email-status"></p>
+<p id="keys-status"></p>
+<p class="muted">Change email delivery with <code>gregale auth config {{.Data.Slug}} --email-provider …</code> and rotate signing keys with <code>gregale auth keys rotate {{.Data.Slug}}</code>.</p>
+</section>
+<h2>Users and organizations</h2>
 <section id="key-section"><h2>Admin key</h2>
 <form id="key-form"><label for="admin-key">Admin key</label><input id="admin-key" type="password" autocomplete="off" spellcheck="false" required pattern="gaak_[A-Za-z0-9_\-]{43}" size="52"><button type="submit">Open</button></form>
 <p id="key-error" class="danger" role="alert"></p>
@@ -234,6 +269,56 @@
   $('next').addEventListener('click', () => { page += 1; load() })
   $('query').placeholder = 'Email or name'
   if (key) open()
+
+  // Settings are read from the running app's public /settings/v1, because
+  // app secrets are write-only. Saving sends only the fields that changed.
+  const form = $('settings-form')
+  const control = name => form.elements.namedItem(name)
+  const classes = [...document.querySelectorAll('#password-classes input')]
+  const requireValue = () => classes.filter(box => box.checked).map(box => box.value).join(',') || 'none'
+  async function loadSettings() {
+    let settings
+    try {
+      const response = await fetch(origin + '/settings/v1', { mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' })
+      if (!response.ok) throw new Error(String(response.status))
+      settings = await response.json()
+    } catch {
+      $('settings-status').textContent = 'Cannot read the running app\'s settings. It may be restarting; reload this page in a moment.'
+      return
+    }
+    const values = {
+      site_url: settings.site_url, redirect_urls: settings.redirect_urls.join('\n'), signup: settings.signup.enabled ? 'on' : 'off',
+      autoconfirm: settings.signup.autoconfirm ? 'on' : 'off', password_min_length: String(settings.password.min_length),
+      leaked_password_check: settings.password.leaked_password_check ? 'on' : 'off', mfa: settings.mfa.totp ? 'on' : 'off',
+    }
+    for (const box of classes) box.checked = settings.password.required.includes(box.value)
+    values.password_require = requireValue()
+    for (const [name, value] of Object.entries(values)) { control(name).value = value; control(name).dataset.initial = value }
+    const custom = settings.password.required.includes('custom')
+    $('settings-status').textContent = custom ? 'Passwords also need characters from a custom set; saving password classes replaces it.' : ''
+    form.hidden = false
+    $('provider-form').hidden = false
+    const known = [...$('provider-form').elements.namedItem('provider').options].map(option => option.value)
+    const enabled = settings.providers.filter(name => known.includes(name))
+    $('providers-status').textContent = enabled.length ? 'Email and password sign-in, plus:' : 'Only email and password sign-in is enabled.'
+    $('providers').replaceChildren(...enabled.map(name => {
+      const item = el('li', name + ' ')
+      const disable = el('form', null, { method: 'post', action: '/dashboard/apps/' + encodeURIComponent(root.dataset.slug) + '/auth/providers/' + encodeURIComponent(name) + '/disable' })
+      disable.append(el('input', null, { type: 'hidden', name: 'csrf_token', value: control('csrf_token').value }), el('button', 'Disable', { type: 'submit' }))
+      item.append(disable)
+      return item
+    }))
+    $('email-status').textContent = settings.email.configured ? 'Email delivery is configured.' : 'Email delivery is not configured: confirmation, magic-link, recovery and invitation emails fail.'
+    const verifying = settings.keys.verifying.length
+    $('keys-status').textContent = 'Key ' + settings.keys.signing + ' signs tokens' + (verifying ? '; ' + verifying + ' previous or standby key(s) only verify.' : '.')
+  }
+  form.addEventListener('submit', event => {
+    control('password_require').value = requireValue()
+    const changed = [...form.elements].filter(field => field.name && field.dataset.initial !== undefined && field.value !== field.dataset.initial)
+    if (!changed.length) { event.preventDefault(); $('settings-status').textContent = 'Nothing changed.'; return }
+    for (const field of form.elements) if (field.dataset.initial !== undefined && !changed.includes(field)) field.disabled = true
+  })
+  loadSettings()
 })()
 </script>
 {{end}}</main></body></html>
