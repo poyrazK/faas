@@ -917,9 +917,17 @@ an abort only has to discard the copy.
   new node and the old node's volume and archive copy gone. A restore to
   a point after a write on the new node held all 50,001 rows: the archive
   continues across the move.
-- **Known gaps.** The history meter samples each node's local archive, so
-  a moved database's pre-move history, now only in the bucket, stops being
-  metered. Moves have no operator RPC yet; only evacuation drives them.
+- **History after a move.** A moved database's pre-move history is only in
+  the bucket. dbbackupd's `size` therefore counts the whole archive: every
+  WAL file and base backup in the bucket (`Remote.Sizes`) or still only on
+  the node (not uploaded yet), each once. Holds are not counted. A failed
+  over database is counted the same way. Without a remote it is the
+  node's archive. A bucket that cannot be listed leaves the database
+  unsampled, keeping its last rate, rather than sampling it short. The
+  per-database archive quota still counts only the node's copy, because it
+  guards the node's disk.
+- **Known gap.** Moves have no operator RPC yet; only evacuation drives
+  them.
 - The database-node method allowlist had missed four RPCs added after it
   (`ListDatabaseVolumes`, `GrowDatabaseVolume`, `PruneDatabaseArchive`,
   `DatabaseArchiveBytes`); a test now derives it from the service
@@ -1410,7 +1418,7 @@ intervals at a constant per-second rate, or hourly counts:
 | --- | --- | --- |
 | `active_seconds`, `compute_unit_seconds` | `compute`: vCPUs | opened on entering waking, closed on leaving waking/running/parking, in the same transaction as the state change |
 | `storage_byte_seconds` | `storage`: provisioned volume bytes | opened at placement, closed at deletion |
-| `history_byte_seconds` | `history`: archive bytes | sampled from each node's dbbackupd (`DatabaseArchiveBytes`, admin `size`) by the 10-minute maintenance sweep; a new size closes the interval and opens another |
+| `history_byte_seconds` | `history`: archive bytes | sampled from each node's dbbackupd (`DatabaseArchiveBytes`, admin `size`: the whole archive, bucket and node, each file once) by the 10-minute maintenance sweep; a new size closes the interval and opens another |
 | `egress_bytes` | `egress`: bytes per hour | pgproxyd counts bytes sent to clients and reports them on its 30 s touches and at session end (`TouchDatabase.egress_bytes`), at most once |
 | `compute_unit_seconds` (standby) | `standby_compute`: the standby's vCPUs | opened when a production database's standby VM is claimed, closed when it stops, is promoted or the database is deleted |
 | `storage_byte_seconds` (standby) | `standby_storage`: volume bytes | open while the database has a standby node, at the volume's current size; closed when replication turns off, on failover and at deletion |

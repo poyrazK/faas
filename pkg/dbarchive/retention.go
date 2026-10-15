@@ -292,17 +292,38 @@ func (s *TieredStore) Drop(ctx context.Context, databaseID string) error {
 // LocalBytes is the size of the database's archive on this node: its WAL
 // and base backups. A database with no local archive has zero.
 func (s *LocalStore) LocalBytes(databaseID string) (int64, error) {
-	if !ValidDatabaseID(databaseID) {
-		return 0, fmt.Errorf("dbarchive: invalid database id %q", databaseID)
+	sizes, err := s.localSizes(databaseID)
+	if err != nil {
+		return 0, err
 	}
 	var total int64
+	for _, size := range sizes {
+		total += size
+	}
+	return total, nil
+}
+
+// ArchiveBytes is the database's whole archive; without a remote, the
+// one on this node.
+func (s *LocalStore) ArchiveBytes(_ context.Context, databaseID string) (int64, error) {
+	return s.LocalBytes(databaseID)
+}
+
+// localSizes sizes the database's archive files on this node by their
+// path under the database ("wal/<name>", "base/<name>"), as the bucket
+// names them too.
+func (s *LocalStore) localSizes(databaseID string) (map[string]int64, error) {
+	if !ValidDatabaseID(databaseID) {
+		return nil, fmt.Errorf("dbarchive: invalid database id %q", databaseID)
+	}
+	sizes := map[string]int64{}
 	for _, sub := range []string{"wal", "base"} {
 		entries, err := os.ReadDir(filepath.Join(s.dir, databaseID, sub))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, e := range entries {
 			if strings.HasPrefix(e.Name(), ".") {
@@ -312,8 +333,40 @@ func (s *LocalStore) LocalBytes(databaseID string) (int64, error) {
 			if err != nil {
 				continue // pruned meanwhile
 			}
-			total += info.Size()
+			sizes[sub+"/"+e.Name()] = info.Size()
 		}
+	}
+	return sizes, nil
+}
+
+// ArchiveBytes is the size of the database's whole archive: every WAL
+// file and base backup, in the bucket or still only on this node, each
+// counted once. The restore-history meter samples it. After a move or a
+// failover the database's earlier history is only in the bucket, so the
+// local archive alone would undercount it until the window rolled over.
+func (s *TieredStore) ArchiveBytes(ctx context.Context, databaseID string) (int64, error) {
+	local, err := s.localSizes(databaseID)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	if s.Remote != nil {
+		root := strings.TrimSuffix(s.Prefix, "/") + "/" + databaseID + "/"
+		remote, err := s.Remote.Sizes(ctx, root)
+		if err != nil {
+			return 0, err
+		}
+		for key, size := range remote {
+			rel := strings.TrimPrefix(key, root)
+			if !strings.HasPrefix(rel, "wal/") && !strings.HasPrefix(rel, "base/") {
+				continue // holds
+			}
+			total += size
+			delete(local, rel)
+		}
+	}
+	for _, size := range local {
+		total += size // not uploaded yet
 	}
 	return total, nil
 }

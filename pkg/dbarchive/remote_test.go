@@ -69,6 +69,21 @@ func (m *memRemote) List(_ context.Context, prefix string) ([]string, error) {
 	return keys, nil
 }
 
+func (m *memRemote) Sizes(_ context.Context, prefix string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail != nil {
+		return nil, m.fail
+	}
+	sizes := map[string]int64{}
+	for k, v := range m.objects {
+		if strings.HasPrefix(k, prefix) {
+			sizes[k] = int64(len(v))
+		}
+	}
+	return sizes, nil
+}
+
 func (m *memRemote) has(key string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

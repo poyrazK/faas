@@ -27,6 +27,7 @@ type RetentionStore interface {
 	Drop(ctx context.Context, databaseID string) error
 	PruneBucket(ctx context.Context, databaseID string, windowSeconds int64) (PruneResult, error)
 	LocalBytes(databaseID string) (int64, error)
+	ArchiveBytes(ctx context.Context, databaseID string) (int64, error)
 	PutHold(ctx context.Context, databaseID, name string, point time.Time) (Hold, error)
 	GetHold(ctx context.Context, databaseID, name string) (Hold, error)
 	DeleteHold(ctx context.Context, databaseID, name string) error
@@ -168,7 +169,7 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 		return
 	}
 	if req.Op == OpSize {
-		size, err := s.Retention.LocalBytes(header.DatabaseID)
+		size, err := s.Retention.ArchiveBytes(ctx, header.DatabaseID)
 		_ = WriteLine(conn, Response{Error: codeFor(err), Size: size})
 		return
 	}
@@ -269,7 +270,7 @@ func PruneArchive(ctx context.Context, socketPath, databaseID string, windowSeco
 }
 
 // ArchiveBytes asks dbbackupd at socketPath for the size of a database's
-// archive on its node.
+// whole archive: on its node and in the bucket, each file once.
 func ArchiveBytes(ctx context.Context, socketPath, databaseID string) (int64, error) {
 	resp, err := admin(ctx, socketPath, databaseID, Request{Op: OpSize})
 	return resp.Size, err

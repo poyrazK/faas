@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -81,8 +82,21 @@ func (r *FileRemote) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func (r *FileRemote) List(_ context.Context, prefix string) ([]string, error) {
-	var keys []string
+func (r *FileRemote) List(ctx context.Context, prefix string) ([]string, error) {
+	sizes, err := r.Sizes(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(sizes))
+	for key := range sizes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+func (r *FileRemote) Sizes(_ context.Context, prefix string) (map[string]int64, error) {
+	sizes := map[string]int64{}
 	err := filepath.WalkDir(r.Dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -97,10 +111,19 @@ func (r *FileRemote) List(_ context.Context, prefix string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if key := filepath.ToSlash(rel); strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
+		key := filepath.ToSlash(rel)
+		if !strings.HasPrefix(key, prefix) {
+			return nil
 		}
+		info, err := d.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // deleted meanwhile
+		}
+		if err != nil {
+			return err
+		}
+		sizes[key] = info.Size()
 		return nil
 	})
-	return keys, err
+	return sizes, err
 }

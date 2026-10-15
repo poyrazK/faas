@@ -27,6 +27,8 @@ type Remote interface {
 	Delete(ctx context.Context, key string) error
 	// List returns every key under prefix.
 	List(ctx context.Context, prefix string) ([]string, error)
+	// Sizes returns every key under prefix with its size.
+	Sizes(ctx context.Context, prefix string) (map[string]int64, error)
 }
 
 // WALKey is the remote key of a WAL file.
@@ -121,6 +123,21 @@ func (r *S3Remote) List(ctx context.Context, prefix string) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+func (r *S3Remote) Sizes(ctx context.Context, prefix string) (map[string]int64, error) {
+	sizes := map[string]int64{}
+	pages := s3.NewListObjectsV2Paginator(r.client, &s3.ListObjectsV2Input{Bucket: aws.String(r.bucket), Prefix: aws.String(prefix)})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("dbarchive: list %s: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			sizes[aws.ToString(obj.Key)] = aws.ToInt64(obj.Size)
+		}
+	}
+	return sizes, nil
 }
 
 // TieredStore keeps the archive on the node and off it: writes land
