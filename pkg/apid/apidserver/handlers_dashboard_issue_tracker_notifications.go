@@ -110,6 +110,9 @@ func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *h
 		}
 	}
 	view := dashboard.IssueTrackerNotificationsView{EscalationPolicy: escalation, Teams: teams.Items, EscalationDelayMin: api.IssueTrackerEscalationDelayMinMinutes, EscalationDelayMax: api.IssueTrackerEscalationDelayMaxMinutes, EscalationSaved: r.URL.Query().Get("saved") == "escalation", AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, ReminderPolicy: reminderPolicy, ReminderIntervalMin: api.IssueTrackerReminderIntervalMinMinutes, ReminderIntervalMax: api.IssueTrackerReminderIntervalMaxMinutes, RemindersMax: api.IssueTrackerRemindersMax, ReminderSaved: r.URL.Query().Get("saved") == "reminders", Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
+	if !s.dashboardIssueSlackView(w, r, app, &view) {
+		return
+	}
 	for _, item := range page.Items {
 		view.Reasons[item.ID] = dashboard.IssueTrackerSyncReason(item.Reason)
 	}
@@ -144,6 +147,9 @@ func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWri
 	}
 	if err := r.ParseForm(); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid notification settings"))
+		return
+	}
+	if s.dashboardTrackerSlackAction(w, r, acct, app) {
 		return
 	}
 	if r.PostForm.Get("settings_kind") == "escalation" {

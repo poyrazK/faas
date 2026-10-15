@@ -6,6 +6,10 @@ import (
 )
 
 type IssueTrackerNotificationsView struct {
+	SlackTeams                                             []IssueSlackTeamSettings
+	SlackDeliveries                                        []state.IssueSlackDelivery
+	SlackSaved                                             bool
+	SlackTokenMax                                          int
 	AppSlug, CSRF, NextURL, TeamFilter, InboxView          string
 	CanManage, Saved, ReminderSaved, EscalationSaved       bool
 	FailureThresholdMax                                    int
@@ -17,4 +21,9 @@ type IssueTrackerNotificationsView struct {
 	ReminderIntervalMin, ReminderIntervalMax, RemindersMax int
 	Items                                                  []state.IssueTrackerSyncNotification
 	Reasons                                                map[string]string
+}
+
+type IssueSlackTeamSettings struct {
+	TeamID, TeamName string
+	Destination      state.IssueSlackDestination
 }

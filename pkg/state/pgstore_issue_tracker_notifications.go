@@ -161,6 +161,9 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 		if kind != "recovered" {
 			next.IssueID, next.TeamID, next.Recipients = route.IssueID, route.TeamID, route.Recipients
 		}
+		if err = q.IssueSlackEnqueue(ctx, tx, sqlc.IssueSlackEnqueueParams{DeliveryID: issueUUID(uuid.NewSHA1(incidentID, []byte("slack/"+id)).String()), NotificationID: issueUUID(id)}); err != nil {
+			return err
+		}
 		if err = q.IssueAddTransition(ctx, tx, sqlc.IssueAddTransitionParams{ActivityID: issueUUID(id), AccountID: issueUUID(r.AccountID), AppID: issueUUID(r.AppID), Payload: payload}); err != nil {
 			return err
 		}

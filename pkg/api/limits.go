@@ -10524,3 +10524,17 @@ const (
 	IssueTrackerLinearOAuthTeamsPage     = 50
 	IssueTrackerLinearOAuthCleanupBatch  = 100
 )
+
+// Team Slack incident notifications (ADR-1234) use the existing webhook retry ladder.
+const (
+	IssueSlackTokenMaxBytes    = 4096
+	IssueSlackResponseMaxBytes = 64 << 10
+	IssueSlackBatch            = 10
+	IssueSlackDeliveryPageSize = 50
+	IssueSlackMaxAttempts      = 7
+	IssueSlackAttemptTimeout   = 10 * time.Second
+	IssueSlackLease            = time.Minute
+	IssueSlackDeliveryTTL      = 24 * time.Hour
+	IssueSlackSendInterval     = time.Second
+	IssueSlackTick             = 5 * time.Second
+)

@@ -1651,3 +1651,49 @@ made to decide escalation; its safe reason describes the last reported problem.
 Enqueue is atomic and deduplicated, while transport retries can repeat an HTTP
 request with the same event ID. The bounded one-minute sweep is best effort after
 the deadline. Check the existing webhook delivery history for transport results.
+
+### Team Slack destinations
+
+The app owner can configure **Team Slack destinations** in Tracker sync notifications.
+Create a Slack app bot with the `chat:write` scope, invite it to the channel, and
+enter its bot token and channel ID (`C…` or `G…`). An incoming webhook URL or channel
+name is not accepted. Each issue team can have one optional destination. Gregale
+seals the token and never displays it; leave the token blank to keep it when saving
+an existing destination. Host operators must configure the existing fleet age keys
+and the correct HTTPS dashboard origin (`FAAS_CLI_AUTH_URL_BASE`). Retain the sealing
+identity through credential replacement; before retiring it, resave destinations
+with replacement tokens sealed by the current key.
+
+Only future tracker notices routed to that team are queued. Existing notices are
+not replayed when Slack is enabled. Initial alerts, reminders and recovery share a
+thread for that incident and destination revision. A backup-team escalation starts
+a thread in the backup team's channel, and subsequent recovery follows the existing
+notification route. Notices routed to an account or app-owner fallback remain in
+Gregale and existing app webhooks. Slack membership does not grant Gregale access.
+Use the message's Gregale links to acknowledge, claim or snooze; Slack actions are
+not supported in this increment.
+
+Saving a destination cancels queued deliveries from its previous revision. Future
+notices start a fresh thread, including when a token is replaced. Disabling stops
+new queueing and cancels queued work; it cannot recall an HTTP request already in
+flight. Current owner eligibility, notification opt-in and captured team membership
+are checked again before sending. Deleting a team removes its destination and
+retained delivery records.
+
+**Recent Slack deliveries** shows up to 50 retained deliveries, including status,
+total attempts, fixed failure reason, HTTP status and the next scheduled retry.
+The worker uses the existing webhook retry ladder: up to seven automatic attempts
+within 24 hours, with jitter and Slack rate-limit delays. A failed first post holds
+later notices in the same incident thread until it succeeds or becomes terminal.
+Other incidents can proceed. The owner can retry retained failed/dead deliveries
+for the current enabled destination, starting a fresh attempt cycle while preserving
+the total attempt count. Successful, canceled and obsolete-destination deliveries
+cannot be replayed with this control.
+
+Each retry uses the same message ID, but Slack transport remains at least once:
+an ambiguous timeout or restart after remote acceptance may duplicate a message.
+A successful status means Slack accepted the post, not that someone read it.
+Raw Slack response bodies and bot tokens are never shown in delivery errors.
+Messages contain identifiers, a safe reason and dashboard links, without stack
+frames or issue titles. Delivery history follows the existing notice retention;
+thread roots with no retained deliveries are cleaned up automatically.

@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -3621,3 +3622,585 @@ func TestNativeIssueTrackerEscalationRoutesOnceAndStopsSafely(t *testing.T) {
 	execSQL("UPDATE apps SET status='deleted',deleted_at=clock_timestamp() WHERE id=$1", app.ID)
 	escalate(false)
 }
+
+func TestNativeIssueSlackDestinationsThreadRetryAndFenceDeliveries(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "tracker-slack")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Reminder", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	full := apidserver.IssueNativeStore(e)
+	st := state.NewPgStore(*e.Pool())
+	org, err := full.CreateOrg(t.Context(), state.Org{Slug: "slack-" + uuid.NewString()[:8], Name: "Reminders", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := full.CreateAccount(t.Context(), "reminder-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, app.AccountID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE apps SET org_id=$2 WHERE id=$1", app.ID, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	team, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "reminders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{app.AccountID, member.ID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign", AssigneeTeamID: team.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	link, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, accepted.IssueID, app.AccountID, api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: api.IssueTrackerProviderStatus{Provider: "github", ID: "42", URL: link.URL, State: "open"}, Policy: api.IssueTrackerAutoSync{LinkID: link.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "open"}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noticePolicy, err := st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Enabled: true, FailureThreshold: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execSQL := func(query string, args ...any) {
+		t.Helper()
+		if _, err := (*e.Pool()).Exec(t.Context(), query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := *apidserver.SetSecretRecipient
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = previous })
+	if _, err = st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, team.Key, api.PutIssueTeamRequest{Name: team.Name, MemberAccountIDs: []string{member.ID}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	complete := func(outcome string) {
+		t.Helper()
+		if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+			t.Fatal(err)
+		}
+		claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		claim.Policy.Outcome = outcome
+		claim.Policy.Reason = ""
+		if outcome == "error" {
+			claim.Policy.Reason = "provider_unavailable"
+		}
+		if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deliveries := func() []state.IssueSlackDelivery {
+		t.Helper()
+		out, err := st.ListIssueSlackDeliveries(t.Context(), app.ID, app.AccountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	forceDue := func() {
+		t.Helper()
+		execSQL("UPDATE issue_team_slack_destinations SET next_send_at=clock_timestamp()-interval '1 second' WHERE app_id=$1", app.ID)
+		execSQL("UPDATE issue_team_slack_deliveries SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE destination_id IN (SELECT id FROM issue_team_slack_destinations WHERE app_id=$1)", app.ID)
+	}
+	pageURL := "/dashboard/apps/" + app.Slug + "/issues/tracker-notifications"
+	getAs := func(account state.Account) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest("GET", pageURL, nil)
+		old := *e.Acct()
+		*e.Acct() = account
+		e.AddAdminSession(t, r)
+		*e.Acct() = old
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, r)
+		return out
+	}
+	csrfFor := func(account state.Account) *http.Cookie {
+		t.Helper()
+		p := getAs(account)
+		if p.Code != 200 {
+			t.Fatal("settings GET", p.Code, p.Body.String())
+		}
+		for _, c := range p.Result().Cookies() {
+			if c.Name == apidserver.DashboardIssueCookie {
+				return c
+			}
+		}
+		t.Fatal("no CSRF cookie")
+		return nil
+	}
+	postAs := func(account state.Account, form url.Values, csrf *http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest("POST", pageURL, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if csrf != nil {
+			r.AddCookie(csrf)
+		}
+		old := *e.Acct()
+		*e.Acct() = account
+		e.AddAdminSession(t, r)
+		*e.Acct() = old
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, r)
+		return out
+	}
+	hook, err := full.CreateAppWebhook(t.Context(), state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://example.com/notices", EventFilter: []string{"issue.tracker_sync.attention", "issue.tracker_sync.recovered"}, Enabled: true, SecretSealed: []byte("fake-sealed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete("error")
+	complete("matched")
+	if len(deliveries()) != 0 {
+		t.Fatal("unconfigured Slack captured notices")
+	}
+	csrf := csrfFor(*e.Acct())
+	form := url.Values{"settings_kind": {"slack_destination"}, "team_id": {team.ID}, "channel_id": {"C0123456789"}, "bot_token": {"xoxb-fake-token"}, "enabled": {"1"}, "expected_revision": {"0"}}
+	if out := postAs(*e.Acct(), form, nil); out.Code != 400 {
+		t.Fatal("Slack CSRF bypass", out.Code)
+	}
+	form.Set("csrf_token", csrf.Value)
+	if out := postAs(*e.Acct(), form, csrf); out.Code != 303 {
+		t.Fatal("Slack save", out.Code, out.Body.String())
+	}
+	if out := postAs(*e.Acct(), form, csrf); out.Code != 409 {
+		t.Fatal("Slack stale save", out.Code)
+	}
+	destinations, err := st.ListIssueSlackDestinations(t.Context(), app.ID, app.AccountID)
+	if err != nil || len(destinations) != 1 || !destinations[0].Enabled {
+		t.Fatal(destinations, err)
+	}
+	destination := destinations[0]
+	if len(deliveries()) != 0 {
+		t.Fatal("destination opt-in replayed old notices")
+	}
+	var sealed []byte
+	if err := (*e.Pool()).QueryRow(t.Context(), "SELECT token_sealed FROM issue_team_slack_destinations WHERE id=$1", destination.ID).Scan(&sealed); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sealed), "xoxb-fake-token") {
+		t.Fatal("plaintext token stored")
+	}
+	if token, err := issueslack.OpenToken([]*age.X25519Identity{identity}, sealed); err != nil || token != "xoxb-fake-token" {
+		t.Fatal("sealed token", err)
+	}
+	if page := getAs(*e.Acct()); page.Code != 200 || strings.Contains(page.Body.String(), "xoxb-fake-token") {
+		t.Fatal("token leaked to settings", page.Code)
+	}
+	if _, err = st.SetIssueSlackDestination(t.Context(), app.ID, member.ID, state.PutIssueSlackDestination{TeamID: team.ID, ChannelID: destination.ChannelID, Revision: destination.Revision}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("member changed Slack destination", err)
+	}
+	for _, bad := range []state.PutIssueSlackDestination{{TeamID: uuid.NewString(), ChannelID: destination.ChannelID}, {TeamID: team.ID, ChannelID: "https://hooks.slack.com/services/secret"}, {TeamID: team.ID, ChannelID: "general"}} {
+		bad.Revision = destination.Revision
+		if _, err = st.SetIssueSlackDestination(t.Context(), app.ID, app.AccountID, bad); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatal("bad Slack settings", err)
+		}
+	}
+	// A delivery enqueue failure rolls back the source notice and incident as well.
+	execSQL(`CREATE FUNCTION reject_slack_queue() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Slack queue unavailable'; END $$; CREATE TRIGGER reject_slack_queue BEFORE INSERT ON issue_team_slack_deliveries FOR EACH ROW EXECUTE FUNCTION reject_slack_queue()`)
+	if err = apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	failedClaim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedClaim.Policy.Outcome = "error"
+	failedClaim.Policy.Reason = "provider_unavailable"
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), failedClaim); err == nil {
+		t.Fatal("source committed failed Slack enqueue")
+	}
+	if len(deliveries()) != 0 {
+		t.Fatal("partial Slack delivery")
+	}
+	execSQL("DROP TRIGGER reject_slack_queue ON issue_team_slack_deliveries; DROP FUNCTION reject_slack_queue()")
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), failedClaim); err != nil {
+		t.Fatal(err)
+	}
+	if got := deliveries(); len(got) != 1 || got[0].Kind != "failure" || got[0].Status != "pending" {
+		t.Fatal("initial Slack enqueue", got)
+	}
+	memberCSRF := csrfFor(member)
+	form.Set("csrf_token", memberCSRF.Value)
+	if out := postAs(member, form, memberCSRF); out.Code != 403 {
+		t.Fatal("member Slack config", out.Code, out.Body.String())
+	}
+	if page := getAs(member); page.Code != 200 || strings.Contains(page.Body.String(), `name="bot_token"`) || strings.Contains(page.Body.String(), "Recent Slack deliveries") {
+		t.Fatal("member saw owner Slack controls", page.Code, page.Body.String())
+	}
+	// Claims serialize the destination and fence stale receipts.
+	type slackClaimResult struct {
+		claim state.IssueSlackClaim
+		found bool
+		err   error
+	}
+	claims := make(chan slackClaimResult, 2)
+	for range 2 {
+		go func() { c, ok, err := st.ClaimIssueSlackDelivery(t.Context()); claims <- slackClaimResult{c, ok, err} }()
+	}
+	wins := 0
+	var first state.IssueSlackClaim
+	for range 2 {
+		result := <-claims
+		c, ok, err := result.claim, result.found, result.err
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			wins++
+			first = c
+		}
+	}
+	if wins != 1 || first.Attempt != 1 || first.ThreadTS != "" {
+		t.Fatal("concurrent Slack claim", wins, first.Status)
+	}
+	if err = st.FinishIssueSlackDelivery(t.Context(), first, state.IssueSlackResult{Status: "failed", Error: "transport_error", RetryAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.RetryIssueSlackDelivery(t.Context(), app.ID, member.ID, first.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("member retried delivery", err)
+	}
+	// Queue a reminder behind the failed root; it must not overtake the retry.
+	rp, err := st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerReminderPolicy{Enabled: true, IntervalMinutes: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remind := func() {
+		t.Helper()
+		execSQL("UPDATE issue_tracker_sync_reminder_policies SET updated_at=clock_timestamp()-interval '2 days' WHERE app_id=$1", app.ID)
+		execSQL("UPDATE issue_tracker_sync_incidents SET opened_at=clock_timestamp()-interval '2 days',last_reminded_at=CASE WHEN reminder_count>0 THEN clock_timestamp()-interval '2 days' ELSE NULL END WHERE link_id=$1", link.ID)
+		ok, err := st.EnqueueIssueTrackerReminder(t.Context())
+		if err != nil || !ok {
+			t.Fatal("reminder", ok, err)
+		}
+	}
+	remind()
+	execSQL("UPDATE issue_team_slack_destinations SET next_send_at=clock_timestamp()-interval '1 second' WHERE id=$1", destination.ID)
+	if c, ok, err := st.ClaimIssueSlackDelivery(t.Context()); err != nil || ok {
+		t.Fatal("reminder overtook failed root", c.Kind, ok, err)
+	}
+	// A fake Slack API receives all HTTP. The configured provider URL stays fixed.
+	var mu sync.Mutex
+	requests := []map[string]any{}
+	mode := "ok"
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if r.Header.Get("Authorization") != "Bearer xoxb-fake-token" {
+			t.Error("Slack authentication")
+		}
+		mu.Lock()
+		requests = append(requests, payload)
+		m := mode
+		n := len(requests)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch m {
+		case "rate":
+			w.Header().Set("Retry-After", "120")
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"ratelimited"}`))
+		case "auth":
+			_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
+		default:
+			_, _ = fmt.Fprintf(w, `{"ok":true,"channel":%q,"ts":"1000.%06d"}`, payload["channel"], n)
+		}
+	}))
+	defer fake.Close()
+	target, _ := url.Parse(fake.URL)
+	client := issueslack.NewClient(&http.Client{Transport: issueSlackTestTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://slack.com/api/chat.postMessage" {
+			t.Error("nonfixed Slack endpoint")
+		}
+		copy := r.Clone(r.Context())
+		u := *r.URL
+		u.Host, u.Scheme = target.Host, target.Scheme
+		copy.URL = &u
+		return fake.Client().Transport.RoundTrip(copy)
+	})})
+	worker := issueslack.Worker{Store: st, Client: client, OpenToken: func(blob []byte) (string, error) { return issueslack.OpenToken([]*age.X25519Identity{identity}, blob) }, DashboardBase: "https://gregale.example"}
+	step := func(want bool) {
+		t.Helper()
+		ok, err := worker.Step(t.Context())
+		if err != nil || ok != want {
+			t.Fatal("Slack step", ok, err, "want", want)
+		}
+	}
+	forceDue()
+	step(true)
+	if got := deliveries(); got[len(got)-1].Status != "succeeded" || got[len(got)-1].Attempts != 2 {
+		t.Fatal("root success", got)
+	}
+	// Success persists the thread root; further posts are replies with independent stable IDs.
+	forceDue()
+	step(true)
+	mu.Lock()
+	root, replied := requests[0], requests[1]
+	mu.Unlock()
+	if root["thread_ts"] != nil || replied["thread_ts"] != "1000.000001" || root["client_msg_id"] != first.ID || root["client_msg_id"] == replied["client_msg_id"] {
+		t.Fatal("threading", root, replied)
+	}
+	if err = st.FinishIssueSlackDelivery(t.Context(), first, state.IssueSlackResult{Status: "succeeded", MessageTS: "999.999"}); !errors.Is(err, state.ErrIssueSlackClaimLost) {
+		t.Fatal("stale Slack receipt accepted", err)
+	}
+	// Retries and rate limiting retain the root and event ID.
+	remind()
+	forceDue()
+	mu.Lock()
+	mode = "rate"
+	mu.Unlock()
+	step(true)
+	latest := deliveries()[0]
+	if latest.Status != "failed" || latest.LastError != "rate_limited" || latest.NextAttemptAt.Before(time.Now().Add(119*time.Second)) {
+		t.Fatal("rate limit", latest)
+	}
+	step(false)
+	forceDue()
+	mu.Lock()
+	mode = "ok"
+	mu.Unlock()
+	step(true)
+	mu.Lock()
+	if requests[2]["client_msg_id"] != requests[3]["client_msg_id"] || requests[3]["thread_ts"] != "1000.000001" {
+		t.Error("retry identity/thread", requests[2], requests[3])
+	}
+	mu.Unlock()
+	// A permanent Slack error is visible, retryable by the owner, and never contains raw responses.
+	complete("matched")
+	forceDue()
+	mu.Lock()
+	mode = "auth"
+	mu.Unlock()
+	step(true)
+	latest = deliveries()[0]
+	if latest.Status != "dead" || latest.LastError != "invalid_auth" || !latest.CanRetry {
+		t.Fatal("Slack permanent failure", latest)
+	}
+	csrf = csrfFor(*e.Acct())
+	retryForm := url.Values{"settings_kind": {"slack_retry"}, "delivery_id": {latest.ID}, "csrf_token": {csrf.Value}}
+	if out := postAs(*e.Acct(), retryForm, csrf); out.Code != 303 {
+		t.Fatal("owner Slack retry", out.Code, out.Body.String())
+	}
+	forceDue()
+	mu.Lock()
+	mode = "ok"
+	mu.Unlock()
+	step(true)
+	if got := deliveries()[0]; got.Status != "succeeded" || got.Attempts != 2 {
+		t.Fatal("manual retry history", got)
+	}
+	// New incidents start a new root; an expired worker cannot finish a replacement claim.
+	complete("error")
+	forceDue()
+	old, ok, err := st.ClaimIssueSlackDelivery(t.Context())
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	execSQL("UPDATE issue_team_slack_deliveries SET claim_until=clock_timestamp()-interval '1 second' WHERE id=$1", old.ID)
+	execSQL("UPDATE issue_team_slack_destinations SET claim_until=clock_timestamp()-interval '1 second' WHERE id=$1", destination.ID)
+	replacement, ok, err := st.ClaimIssueSlackDelivery(t.Context())
+	if err != nil || !ok || replacement.ID != old.ID || replacement.ClaimID == old.ClaimID || replacement.ThreadTS != "" {
+		t.Fatal("lease reclaim", ok, err)
+	}
+	if err = st.FinishIssueSlackDelivery(t.Context(), old, state.IssueSlackResult{Status: "succeeded", MessageTS: "999.999"}); !errors.Is(err, state.ErrIssueSlackClaimLost) {
+		t.Fatal("expired claim finished", err)
+	}
+	// Rotating to another channel cancels in-flight and queued jobs and fences their completion.
+	destination, err = st.SetIssueSlackDestination(t.Context(), app.ID, app.AccountID, state.PutIssueSlackDestination{TeamID: team.ID, ChannelID: "C9876543210", Enabled: true, Revision: destination.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := st.IssueSlackDeliveryReady(t.Context(), replacement); err != nil || ready {
+		t.Fatal("rotated claim still ready", ready, err)
+	}
+	if err = st.FinishIssueSlackDelivery(t.Context(), replacement, state.IssueSlackResult{Status: "succeeded", MessageTS: "999.999"}); !errors.Is(err, state.ErrIssueSlackClaimLost) {
+		t.Fatal("rotated claim finished", err)
+	}
+	if got := deliveries()[0]; got.Status != "canceled" || got.ChannelID != "C0123456789" || got.CanRetry {
+		t.Fatal("historical channel changed", got)
+	}
+	forceDue()
+	step(false)
+	// A new notice uses the new channel and a new root. Membership loss cancels before HTTP.
+	remind()
+	forceDue()
+	held, ok, err := st.ClaimIssueSlackDelivery(t.Context())
+	if err != nil || !ok || held.ChannelID != "C9876543210" || held.ThreadTS != "" {
+		t.Fatal("new channel claim", ok, err, held.ChannelID)
+	}
+	execSQL("UPDATE org_memberships SET removed_at=clock_timestamp() WHERE org_id=$1 AND account_id=$2", org.ID, member.ID)
+	if ready, err := st.IssueSlackDeliveryReady(t.Context(), held); err != nil || ready {
+		t.Fatal("removed member ready", ready, err)
+	}
+	if err = st.FinishIssueSlackDelivery(t.Context(), held, state.IssueSlackResult{Status: "canceled", Error: "destination_unavailable"}); err != nil {
+		t.Fatal(err)
+	}
+	execSQL("UPDATE org_memberships SET removed_at=NULL WHERE org_id=$1 AND account_id=$2", org.ID, member.ID)
+	complete("matched")
+	forceDue()
+	step(true)
+	mu.Lock()
+	last := requests[len(requests)-1]
+	mu.Unlock()
+	if last["channel"] != "C9876543210" || last["thread_ts"] != nil {
+		t.Fatal("new destination thread", last)
+	}
+	complete("error")
+	forceDue()
+	// Revoked eligibility and opt-out stop already queued Slack work.
+	execSQL("UPDATE accounts SET plan='free' WHERE id=$1", app.AccountID)
+	step(true)
+	if got := deliveries()[0]; got.Status != "canceled" {
+		t.Fatal("ineligible owner delivered", got)
+	}
+	execSQL("UPDATE accounts SET plan='pro' WHERE id=$1", app.AccountID)
+	complete("matched")
+	forceDue()
+	noticePolicy.Enabled = false
+	noticePolicy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, noticePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step(true)
+	if got := deliveries()[0]; got.Status != "canceled" {
+		t.Fatal("notification opt-out ignored", got)
+	}
+	noticePolicy.Enabled = true
+	noticePolicy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, noticePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete("error")
+	forceDue()
+	execSQL("UPDATE issue_team_slack_deliveries SET expires_at=clock_timestamp()-interval '1 second',next_attempt_at=clock_timestamp()+interval '1 day' WHERE status='pending'")
+	execSQL("UPDATE issue_team_slack_destinations SET next_send_at=clock_timestamp()+interval '1 day' WHERE id=$1", destination.ID)
+	step(true)
+	if got := deliveries()[0]; got.Status != "dead" || got.LastError != "delivery_expired" {
+		t.Fatal("expired delivery sent", got)
+	}
+	if err = st.RetryIssueSlackDelivery(t.Context(), app.ID, app.AccountID, deliveries()[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	step(true)
+	// At the retry cap an abandoned claim becomes terminal without another HTTP call.
+	remind()
+	forceDue()
+	capClaim, ok, err := st.ClaimIssueSlackDelivery(t.Context())
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	execSQL("UPDATE issue_team_slack_deliveries SET attempt=$2,claim_until=clock_timestamp()-interval '1 second' WHERE id=$1", capClaim.ID, api.IssueSlackMaxAttempts)
+	execSQL("UPDATE issue_team_slack_destinations SET claim_until=clock_timestamp()-interval '1 second' WHERE id=$1", destination.ID)
+	mu.Lock()
+	before := len(requests)
+	mu.Unlock()
+	step(true)
+	mu.Lock()
+	after := len(requests)
+	mu.Unlock()
+	if before != after || deliveries()[0].LastError != "attempts_exhausted" {
+		t.Fatal("retry cap", before, after, deliveries()[0])
+	}
+	// Escalation creates a separate destination thread; recovery follows that route.
+	backup, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "slack-backup", api.PutIssueTeamRequest{Name: "Backup", MemberAccountIDs: []string{app.AccountID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.SetIssueSlackDestination(t.Context(), app.ID, app.AccountID, state.PutIssueSlackDestination{TeamID: backup.ID, ChannelID: "C2222222222", Enabled: true, TokenSealed: sealed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.SetIssueTrackerEscalationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerEscalationPolicy{Enabled: true, TeamID: backup.ID, DelayMinutes: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execSQL("UPDATE issue_tracker_sync_incidents SET first_reminded_at=clock_timestamp()-interval '2 days' WHERE link_id=$1", link.ID)
+	execSQL("UPDATE issue_tracker_sync_escalation_policies SET updated_at=clock_timestamp()-interval '2 days' WHERE app_id=$1", app.ID)
+	if ok, err := st.EnqueueIssueTrackerEscalation(t.Context()); err != nil || !ok {
+		t.Fatal("Slack escalation", ok, err)
+	}
+	forceDue()
+	step(true)
+	mu.Lock()
+	backupRoot := requests[len(requests)-1]
+	backupRootTS := fmt.Sprintf("1000.%06d", len(requests))
+	mu.Unlock()
+	if backupRoot["channel"] != "C2222222222" || backupRoot["thread_ts"] != nil {
+		t.Fatal("escalation Slack thread", backupRoot)
+	}
+	complete("matched")
+	forceDue()
+	step(true)
+	mu.Lock()
+	backupReply := requests[len(requests)-1]
+	mu.Unlock()
+	if backupReply["channel"] != "C2222222222" || backupReply["thread_ts"] != backupRootTS {
+		t.Fatal("escalation Slack recovery", backupReply)
+	}
+	destination, err = st.SetIssueSlackDestination(t.Context(), app.ID, app.AccountID, state.PutIssueSlackDestination{TeamID: team.ID, ChannelID: destination.ChannelID, Revision: destination.Revision, Enabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCount := len(deliveries())
+	complete("error")
+	if len(deliveries()) != oldCount {
+		t.Fatal("disabled destination captured new alert")
+	}
+	complete("matched")
+	destination, err = st.SetIssueSlackDestination(t.Context(), app.ID, app.AccountID, state.PutIssueSlackDestination{TeamID: team.ID, ChannelID: destination.ChannelID, Revision: destination.Revision, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete("error")
+	forceDue()
+	// App webhook delivery remains independent of Slack: no destination URL or bot token enters its payload.
+	if _, err = st.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
+	appDeliveries, _, err := full.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
+	if err != nil || len(appDeliveries) == 0 {
+		t.Fatal("app webhook delivery", len(appDeliveries), err)
+	}
+	for _, d := range appDeliveries {
+		if strings.Contains(string(d.Payload), "xoxb-fake-token") || strings.Contains(string(d.Payload), "C0123456789") {
+			t.Fatal("Slack credential or destination leaked into app webhook")
+		}
+	}
+
+	execSQL("UPDATE apps SET status='deleted',deleted_at=clock_timestamp() WHERE id=$1", app.ID)
+	step(true)
+	if got := deliveries()[0]; got.Status != "canceled" {
+		t.Fatal("deleted app sent Slack", got)
+	}
+
+	// Retention removes dependent delivery records and orphan thread roots.
+	execSQL("DELETE FROM issue_tracker_sync_notifications WHERE app_id=$1", app.ID)
+	if err = st.CleanupIssueSlackThreads(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries()) != 0 {
+		t.Fatal("delivery retention escaped source bounds")
+	}
+	var roots int
+	if err := (*e.Pool()).QueryRow(t.Context(), "SELECT count(*) FROM issue_team_slack_threads WHERE destination_id=$1", destination.ID).Scan(&roots); err != nil || roots != 0 {
+		t.Fatal("orphan roots", roots, err)
+	}
+	_ = rp
+}
+
+type issueSlackTestTransport func(*http.Request) (*http.Response, error)
+
+func (f issueSlackTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

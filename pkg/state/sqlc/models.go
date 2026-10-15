@@ -4000,6 +4000,49 @@ type IssueSplitRule struct {
 	UpdatedAt                    pgtype.Timestamptz
 }
 
+type IssueTeamSlackDelivery struct {
+	ID                  pgtype.UUID
+	DeliverySeq         pgtype.Int8
+	ChannelID           string
+	DestinationID       pgtype.UUID
+	DestinationRevision int64
+	NotificationID      pgtype.UUID
+	IncidentID          pgtype.UUID
+	Status              string
+	Attempt             int32
+	TotalAttempts       int64
+	NextAttemptAt       pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	ClaimID             pgtype.UUID
+	ClaimUntil          pgtype.Timestamptz
+	LastError           string
+	ResponseCode        int32
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type IssueTeamSlackDestination struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	TeamID      pgtype.UUID
+	ChannelID   string
+	TokenSealed []byte
+	Enabled     bool
+	Revision    int64
+	NextSendAt  pgtype.Timestamptz
+	ClaimID     pgtype.UUID
+	ClaimUntil  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type IssueTeamSlackThread struct {
+	DestinationID       pgtype.UUID
+	DestinationRevision int64
+	IncidentID          pgtype.UUID
+	RootTs              string
+}
+
 type IssueTrackerAutoSync struct {
 	LinkID                pgtype.UUID
 	AppID                 pgtype.UUID
