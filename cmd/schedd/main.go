@@ -1575,6 +1575,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	).WithTelemetry(engine.NodeTelemetryCache()).
 		WithNodeRegistry(nodeRegistry).
 		WithOwnerNodeID(ownerNodeID).
+		WithStatsRouter(vmmRouter).
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
 		}).
