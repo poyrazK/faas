@@ -2827,6 +2827,8 @@ type Querier interface {
 	OperatorAlertRetentionLock(ctx context.Context, db DBTX) (bool, error)
 	OperatorAlertRetentionStatus(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (OperatorAlertRetentionStatusRow, error)
 	OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, arg OperatorAlertRetentionSucceededParams) error
+	OperatorAlertTriageHistoryCoverage(ctx context.Context, db DBTX, arg OperatorAlertTriageHistoryCoverageParams) (OperatorAlertTriageHistoryCoverageRow, error)
+	OperatorAlertTriageHistoryEntries(ctx context.Context, db DBTX, arg OperatorAlertTriageHistoryEntriesParams) ([]OperatorAlertTriageHistoryEntriesRow, error)
 	OperatorAlertTriageLock(ctx context.Context, db DBTX, id string) (OperatorAlertTriageLockRow, error)
 	OperatorAlertTriageUpdate(ctx context.Context, db DBTX, arg OperatorAlertTriageUpdateParams) (int64, error)
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error

@@ -37,17 +37,20 @@ type obsBundleSection[T any] struct {
 }
 
 type obsBundleCoverage struct {
-	EvidenceHistoryTruncated  bool     `json:"evidence_history_truncated"`
-	RelatedResourcesTruncated bool     `json:"related_resources_truncated"`
-	RelatedTimelineTruncated  bool     `json:"related_timeline_truncated"`
-	UnavailableSources        []string `json:"unavailable_sources"`
-	UnhealthySignals          []string `json:"unhealthy_signals"`
-	MissingHealthMetadata     []string `json:"missing_health_metadata"`
-	AlertCollectionState      string   `json:"alert_collection_state"`
-	RetentionState            string   `json:"retention_state"`
-	ExpiredEpisodes           *int64   `json:"expired_episodes"`
-	RelationshipScope         string   `json:"relationship_scope"`
-	TimelineScope             string   `json:"timeline_scope"`
+	TriageHistoryState          string   `json:"triage_history_state"`
+	TriageHistoryTruncated      bool     `json:"triage_history_truncated"`
+	TriageHistoryMissingEntries *int64   `json:"triage_history_missing_entries"`
+	EvidenceHistoryTruncated    bool     `json:"evidence_history_truncated"`
+	RelatedResourcesTruncated   bool     `json:"related_resources_truncated"`
+	RelatedTimelineTruncated    bool     `json:"related_timeline_truncated"`
+	UnavailableSources          []string `json:"unavailable_sources"`
+	UnhealthySignals            []string `json:"unhealthy_signals"`
+	MissingHealthMetadata       []string `json:"missing_health_metadata"`
+	AlertCollectionState        string   `json:"alert_collection_state"`
+	RetentionState              string   `json:"retention_state"`
+	ExpiredEpisodes             *int64   `json:"expired_episodes"`
+	RelationshipScope           string   `json:"relationship_scope"`
+	TimelineScope               string   `json:"timeline_scope"`
 }
 
 type obsBundleRedaction struct {
@@ -173,6 +176,16 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 		n := health.AlertRetention.ExpiredEpisodes
 		coverage.ExpiredEpisodes = &n
 	}
+	coverage.TriageHistoryState = "not_applicable"
+	if evidence.Incident.Type == "platform_alert" {
+		coverage.TriageHistoryState = "unknown"
+		if history := evidence.TriageHistory; history != nil {
+			coverage.TriageHistoryState = history.Coverage.State
+			coverage.TriageHistoryTruncated = history.Truncated
+			missing := history.Coverage.MissingEntries
+			coverage.TriageHistoryMissingEntries = &missing
+		}
+	}
 	bundle.Coverage = coverage
 	bundle.Redaction = obsBundleRedaction{Profile: "operator-metadata-only", Excluded: []string{
 		"credentials", "local_configuration", "request_bodies_and_headers", "raw_logs", "raw_event_payloads", "actor_identities", "commands_and_environment", "raw_span_attributes", "raw_sql",
@@ -182,6 +195,7 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 		"relationships_are_current_potential_exposure_not_historical_impact_or_causation",
 		"one_resource_page_only_timeline_covers_incident_scope_and_returned_resources",
 		"history_windows_and_truncation_are_per_section",
+		"triage_history_is_one_page_revision_bounded_receipts_can_expire_between_reads",
 		"trace_and_diagnostic_links_are_not_fetched",
 		"unhealthy_or_missing_signal_metadata_makes_numeric_fallbacks_unusable",
 		"identifiers_and_operational_metadata_require_controlled_sharing",

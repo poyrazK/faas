@@ -31,6 +31,10 @@ func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.MutateOperatorAlertTriage(fx.Ctx, state.OperatorAlertTriageMutation{EpisodeID: episode.ID, ActorID: fx.Account.ID, Action: "unacknowledge", Now: now}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale triage: %v", err)
 	}
+	history, err := fx.Store.OperatorAlertTriageHistory(fx.Ctx, state.OperatorAlertTriageHistoryFilter{ID: episode.ID, Limit: 1})
+	if err != nil || history.SnapshotRevision != 1 || history.Coverage.State != "complete" || len(history.Items) != 1 || history.Items[0].Action != "acknowledge" {
+		t.Fatalf("triage history: %+v %v", history, err)
+	}
 	if err := fx.Store.RecordOperatorAlertFailure(fx.Ctx, now.Add(100*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}

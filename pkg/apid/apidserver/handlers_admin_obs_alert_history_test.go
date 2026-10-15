@@ -116,6 +116,9 @@ func (s *obsAlertFailureStore) OperatorAlertEpisodes(context.Context, state.Oper
 func (s *obsAlertFailureStore) OperatorAlertEpisode(context.Context, string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error) {
 	return state.OperatorAlertEpisode{}, state.OperatorAlertCollection{}, errors.New("private database detail")
 }
+func (s *obsAlertFailureStore) OperatorAlertTriageHistory(context.Context, state.OperatorAlertTriageHistoryFilter) (state.OperatorAlertTriageHistorySnapshot, error) {
+	return state.OperatorAlertTriageHistorySnapshot{}, errors.New("private database detail")
+}
 func (s *obsAlertFailureStore) OperatorAlertCollectionStatus(context.Context) (state.OperatorAlertCollection, error) {
 	return state.OperatorAlertCollection{}, errors.New("private database detail")
 }
@@ -124,7 +127,7 @@ func TestObsAlertHistoryDatabaseFailureIsUnavailable(t *testing.T) {
 	e := gapEnv(t)
 	fake := &obsAlertFailureStore{Store: *(*e.S()).Store()}
 	*(*e.S()).Store() = statetest.NewStore(fake)
-	for _, path := range []string{"/v1/admin/obs/incidents?type=platform_alert", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/evidence", "/v1/admin/obs/health"} {
+	for _, path := range []string{"/v1/admin/obs/incidents?type=platform_alert", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/evidence", "/v1/admin/obs/health", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/triage-history"} {
 		rec := e.Do(t, "GET", path, nil, nil)
 		if rec.Code != 503 || strings.Contains(rec.Body.String(), "private database detail") {
 			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
@@ -134,7 +137,7 @@ func TestObsAlertHistoryDatabaseFailureIsUnavailable(t *testing.T) {
 
 func TestObsAlertHistoryRemainsAdminOnly(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesReadSurface, "ops@faas.dev", "customer@faas.dev")
-	for _, path := range []string{"/v1/admin/obs/incidents?type=platform_alert&alert_status=resolved", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/evidence"} {
+	for _, path := range []string{"/v1/admin/obs/incidents?type=platform_alert&alert_status=resolved", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/evidence", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/triage-history"} {
 		rec := e.Do(t, "GET", path, nil, nil)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())

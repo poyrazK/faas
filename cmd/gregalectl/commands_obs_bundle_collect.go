@@ -66,6 +66,9 @@ func validObsBundleEvidence(requested string, evidence api.ObsIncidentEvidenceRe
 	if operatorobs.ValidateReference(kind, id) != nil || evidence.Incident.Type != kind || !resourceMatches || evidence.GeneratedAt.IsZero() || evidence.Since.IsZero() || evidence.GeneratedAt.Before(evidence.Since) || evidence.Limit != limit || len(evidence.History) > limit {
 		return false
 	}
+	if !validObsBundleTriageHistory(evidence, limit) {
+		return false
+	}
 	if requested == evidence.Incident.ID {
 		return true
 	}

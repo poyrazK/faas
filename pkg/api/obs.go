@@ -1000,6 +1000,7 @@ type ObsAlertRetentionHealth struct {
 // record. Resource lookups also work after recovery. History contains only exact
 // resource matches within Since; Truncated signals that older matches remain.
 type ObsIncidentEvidenceResponse struct {
+	TriageHistory      *ObsAlertTriageHistory     `json:"triage_history,omitempty"`
 	GeneratedAt        time.Time                  `json:"generated_at"`
 	Incident           ObsIncident                `json:"incident"`
 	ErrorCode          string                     `json:"error_code,omitempty"`

@@ -60,6 +60,7 @@ const subObsHealth = "health"
 
 const subObsIncidents = "incidents"
 const subObsTriage = "triage"
+const subObsTriageHistory = "triage-history"
 
 const subObsEvidence = "evidence"
 
@@ -92,6 +93,8 @@ func cmdObsDispatch(args []string) int {
 	switch args[0] {
 	case subObsHealth:
 		return cmdObsHealth(args[1:])
+	case subObsTriageHistory:
+		return cmdObsTriageHistory(args[1:])
 	case subObsTriage:
 		return cmdObsTriage(args[1:])
 	case subObsIncidents:

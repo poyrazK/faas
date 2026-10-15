@@ -19,6 +19,7 @@ import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { ObsAlertTriageHistory } from '../models/ObsAlertTriageHistory.js';
 import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
 import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
@@ -1056,6 +1057,63 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read revision-bounded triage receipts for one retained alert episode.
+   * Requires operator read authorization, MFA and the operator allowlist.
+   * Initial reads accept an immutable episode ID or a legacy series alias.
+   * The response identifies the canonical episode. Cursors pin that episode
+   * and the initial upper revision for 15 minutes; an alias moving to a
+   * recurrence invalidates an earlier cursor. Entries are ordered by
+   * descending revision even if receipt clocks move backwards. Each page
+   * is a consistent database read, but retention can change between pages.
+   * Coverage reports missing receipts without claiming why they disappeared.
+   * History excludes actor identities and raw audit payloads.
+   *
+   * @returns ObsAlertTriageHistory Sanitized triage page with whole-snapshot receipt coverage.
+   * @throws ApiError
+   */
+  public static getObsAlertTriageHistory({
+    id,
+    limit = 25,
+    cursor,
+  }: {
+    /**
+     * Retained episode hash or legacy series alias resolving to its latest episode.
+     */
+    id: string,
+    /**
+     * Maximum receipts on this page; changing the limit between pages is allowed.
+     */
+    limit?: number,
+    /**
+     * Opaque next_cursor from this episode history; expires 15 minutes after the first page.
+     */
+    cursor?: string,
+  }): CancelablePromise<ObsAlertTriageHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/incidents/platform_alert/{id}/triage-history',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `Invalid bounds, cursor, episode binding or expired cursor.`,
+        401: `code: unauthorized`,
+        403: `Operator read scope, MFA or allowlist rejected.`,
+        404: `No retained episode exists for this reference.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Receipt storage or integrity could not be verified within the read budget.`,
       },
     });
   }

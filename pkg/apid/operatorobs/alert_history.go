@@ -72,11 +72,11 @@ func retainedIncident(e state.OperatorAlertEpisode, c state.OperatorAlertCollect
 }
 
 func retainedAlertEvidence(ctx context.Context, store Store, id string, out api.ObsIncidentEvidenceResponse) (api.ObsIncidentEvidenceResponse, bool, error) {
-	reader, ok := store.(state.OperatorAlertHistoryReader)
+	_, ok := store.(state.OperatorAlertHistoryReader)
 	if !ok {
 		return out, false, nil
 	}
-	e, collection, err := reader.OperatorAlertEpisode(ctx, id)
+	e, collection, err := retainedAlertSnapshot(ctx, store, id, &out)
 	if errors.Is(err, state.ErrNotFound) {
 		return out, !collection.LastSuccessAt.IsZero(), err
 	}

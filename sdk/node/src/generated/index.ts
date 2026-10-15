@@ -1138,6 +1138,9 @@ export type { ObsAlertCollectionHealth } from './models/ObsAlertCollectionHealth
 export type { ObsAlertEpisode } from './models/ObsAlertEpisode.js';
 export type { ObsAlertRetentionHealth } from './models/ObsAlertRetentionHealth.js';
 export type { ObsAlertTriage } from './models/ObsAlertTriage.js';
+export type { ObsAlertTriageHistory } from './models/ObsAlertTriageHistory.js';
+export type { ObsAlertTriageHistoryCoverage } from './models/ObsAlertTriageHistoryCoverage.js';
+export type { ObsAlertTriageHistoryEntry } from './models/ObsAlertTriageHistoryEntry.js';
 export type { ObsAlertTriageRequest } from './models/ObsAlertTriageRequest.js';
 export type { ObsAlertTriageResponse } from './models/ObsAlertTriageResponse.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';

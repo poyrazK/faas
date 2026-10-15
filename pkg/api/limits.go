@@ -8847,21 +8847,26 @@ const (
 	ObsOverviewCohortWindow   = 14 * 24 * time.Hour
 	ObsOverviewNodeStaleAfter = time.Minute
 
-	ObsAlertCollectionInterval             = 30 * time.Second
-	ObsAlertCollectionBudget               = 10 * time.Second
-	ObsAlertHistoryRetention               = 30 * 24 * time.Hour
-	ObsAlertHistoryPruneBatch              = 500
-	ObsAlertTriageSnoozeMax                = 24 * time.Hour
-	ObsAlertTriageRevisionMax        int64 = 9007199254740991
-	ObsAlertRetentionInterval              = 30 * time.Second
-	ObsAlertRetentionBudget                = 10 * time.Second
-	ObsAlertMaintenanceReadBudget          = 5 * time.Second
-	ObsAlertRetentionFreshnessMaxAge       = 2 * time.Minute
-	ObsAlertSnapshotMaxRules               = 4096
-	ObsAlertSnapshotMaxAlerts              = 4096
-	ObsAlertNameMaxBytes                   = 128
-	ObsAlertComponentMaxBytes              = 64
-	ObsAlertRunbookMaxBytes                = 2048
+	ObsAlertCollectionInterval                = 30 * time.Second
+	ObsAlertCollectionBudget                  = 10 * time.Second
+	ObsAlertHistoryRetention                  = 30 * 24 * time.Hour
+	ObsAlertHistoryPruneBatch                 = 500
+	ObsAlertTriageSnoozeMax                   = 24 * time.Hour
+	ObsAlertTriageHistoryLimitDefault         = 25
+	ObsAlertTriageHistoryLimitMax             = 100
+	ObsAlertTriageHistoryCursorTTL            = 15 * time.Minute
+	ObsAlertTriageHistoryCursorMaxBytes       = 1024
+	ObsAlertTriageHistoryBudget               = 5 * time.Second
+	ObsAlertTriageRevisionMax           int64 = 9007199254740991
+	ObsAlertRetentionInterval                 = 30 * time.Second
+	ObsAlertRetentionBudget                   = 10 * time.Second
+	ObsAlertMaintenanceReadBudget             = 5 * time.Second
+	ObsAlertRetentionFreshnessMaxAge          = 2 * time.Minute
+	ObsAlertSnapshotMaxRules                  = 4096
+	ObsAlertSnapshotMaxAlerts                 = 4096
+	ObsAlertNameMaxBytes                      = 128
+	ObsAlertComponentMaxBytes                 = 64
+	ObsAlertRunbookMaxBytes                   = 2048
 
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25

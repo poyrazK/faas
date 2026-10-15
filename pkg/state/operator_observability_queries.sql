@@ -344,3 +344,27 @@ UPDATE operator_alert_episodes SET triage_revision = sqlc.arg(revision)::bigint,
  triage_acknowledged = sqlc.arg(acknowledged)::boolean, triage_owner_id = sqlc.narg(owner_id)::uuid,
  triage_snoozed_until = sqlc.narg(snoozed_until)::timestamptz, triage_updated_at = sqlc.arg(updated_at)::timestamptz
 WHERE id = sqlc.arg(id)::text AND triage_revision = sqlc.arg(expected_revision)::bigint;
+
+-- name: OperatorAlertTriageHistoryCoverage :one
+WITH receipts AS (
+ SELECT CASE WHEN jsonb_typeof(data#>'{triage,revision}') = 'number' AND (data#>>'{triage,revision}') ~ '^[1-9][0-9]{0,15}$' THEN (data#>>'{triage,revision}')::bigint END AS revision
+ FROM audit_log WHERE kind = 'operator.action.alert_triage' AND data->>'episode_id' = sqlc.arg(episode_id)::text
+)
+SELECT count(*)::bigint AS total_entries, count(DISTINCT revision)::bigint AS distinct_entries,
+ coalesce(min(revision),0)::bigint AS oldest_revision, coalesce(max(revision),0)::bigint AS newest_revision
+FROM receipts WHERE revision <= sqlc.arg(snapshot_revision)::bigint OR revision IS NULL;
+
+-- name: OperatorAlertTriageHistoryEntries :many
+WITH receipts AS (
+ SELECT id, received_at, data, CASE WHEN jsonb_typeof(data#>'{triage,revision}') = 'number' AND (data#>>'{triage,revision}') ~ '^[1-9][0-9]{0,15}$' THEN (data#>>'{triage,revision}')::bigint END AS revision
+ FROM audit_log WHERE kind = 'operator.action.alert_triage' AND data->>'episode_id' = sqlc.arg(episode_id)::text
+)
+SELECT id::text AS id, received_at, revision::bigint AS revision,
+ jsonb_build_object('episode_id',data->'episode_id','action',data->'action','previous_revision',data->'previous_revision',
+  'triage',jsonb_build_object('revision',data#>'{triage,revision}','acknowledged',data#>'{triage,acknowledged}',
+   'owned',data#>'{triage,owned}','snoozed_until',data#>'{triage,snoozed_until}','as_of',data#>'{triage,as_of}'),
+  'trace_id',data->'trace_id')::jsonb AS payload
+FROM receipts
+WHERE revision <= sqlc.arg(snapshot_revision)::bigint
+ AND (sqlc.arg(before_revision)::bigint = 0 OR revision < sqlc.arg(before_revision)::bigint)
+ORDER BY revision DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;

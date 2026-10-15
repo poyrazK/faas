@@ -1006,6 +1006,7 @@ type Store interface {
 	OperatorObservabilityReader
 	OperatorAlertHistoryStore
 	OperatorAlertTriageWriter
+	OperatorAlertTriageHistoryReader
 	OperatorAlertRetentionStore
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)

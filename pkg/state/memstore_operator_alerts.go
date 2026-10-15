@@ -142,6 +142,10 @@ func (m *MemStore) OperatorAlertEpisode(ctx context.Context, id string) (Operato
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.operatorAlertEpisodeLocked(id)
+}
+
+func (m *MemStore) operatorAlertEpisodeLocked(id string) (OperatorAlertEpisode, OperatorAlertCollection, error) {
 	if e, ok := m.operatorAlertEpisodes[id]; ok {
 		return copyOperatorAlertEpisode(e), m.operatorAlertCollection, nil
 	}

@@ -396,6 +396,100 @@ func (q *Queries) OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, 
 	return err
 }
 
+const operatorAlertTriageHistoryCoverage = `-- name: OperatorAlertTriageHistoryCoverage :one
+WITH receipts AS (
+ SELECT CASE WHEN jsonb_typeof(data#>'{triage,revision}') = 'number' AND (data#>>'{triage,revision}') ~ '^[1-9][0-9]{0,15}$' THEN (data#>>'{triage,revision}')::bigint END AS revision
+ FROM audit_log WHERE kind = 'operator.action.alert_triage' AND data->>'episode_id' = $2::text
+)
+SELECT count(*)::bigint AS total_entries, count(DISTINCT revision)::bigint AS distinct_entries,
+ coalesce(min(revision),0)::bigint AS oldest_revision, coalesce(max(revision),0)::bigint AS newest_revision
+FROM receipts WHERE revision <= $1::bigint OR revision IS NULL
+`
+
+type OperatorAlertTriageHistoryCoverageParams struct {
+	SnapshotRevision int64
+	EpisodeID        string
+}
+
+type OperatorAlertTriageHistoryCoverageRow struct {
+	TotalEntries    int64
+	DistinctEntries int64
+	OldestRevision  int64
+	NewestRevision  int64
+}
+
+func (q *Queries) OperatorAlertTriageHistoryCoverage(ctx context.Context, db DBTX, arg OperatorAlertTriageHistoryCoverageParams) (OperatorAlertTriageHistoryCoverageRow, error) {
+	row := db.QueryRow(ctx, operatorAlertTriageHistoryCoverage, arg.SnapshotRevision, arg.EpisodeID)
+	var i OperatorAlertTriageHistoryCoverageRow
+	err := row.Scan(
+		&i.TotalEntries,
+		&i.DistinctEntries,
+		&i.OldestRevision,
+		&i.NewestRevision,
+	)
+	return i, err
+}
+
+const operatorAlertTriageHistoryEntries = `-- name: OperatorAlertTriageHistoryEntries :many
+WITH receipts AS (
+ SELECT id, received_at, data, CASE WHEN jsonb_typeof(data#>'{triage,revision}') = 'number' AND (data#>>'{triage,revision}') ~ '^[1-9][0-9]{0,15}$' THEN (data#>>'{triage,revision}')::bigint END AS revision
+ FROM audit_log WHERE kind = 'operator.action.alert_triage' AND data->>'episode_id' = $4::text
+)
+SELECT id::text AS id, received_at, revision::bigint AS revision,
+ jsonb_build_object('episode_id',data->'episode_id','action',data->'action','previous_revision',data->'previous_revision',
+  'triage',jsonb_build_object('revision',data#>'{triage,revision}','acknowledged',data#>'{triage,acknowledged}',
+   'owned',data#>'{triage,owned}','snoozed_until',data#>'{triage,snoozed_until}','as_of',data#>'{triage,as_of}'),
+  'trace_id',data->'trace_id')::jsonb AS payload
+FROM receipts
+WHERE revision <= $1::bigint
+ AND ($2::bigint = 0 OR revision < $2::bigint)
+ORDER BY revision DESC, id DESC LIMIT $3::integer
+`
+
+type OperatorAlertTriageHistoryEntriesParams struct {
+	SnapshotRevision int64
+	BeforeRevision   int64
+	PageLimit        int32
+	EpisodeID        string
+}
+
+type OperatorAlertTriageHistoryEntriesRow struct {
+	ID         string
+	ReceivedAt pgtype.Timestamptz
+	Revision   int64
+	Payload    []byte
+}
+
+func (q *Queries) OperatorAlertTriageHistoryEntries(ctx context.Context, db DBTX, arg OperatorAlertTriageHistoryEntriesParams) ([]OperatorAlertTriageHistoryEntriesRow, error) {
+	rows, err := db.Query(ctx, operatorAlertTriageHistoryEntries,
+		arg.SnapshotRevision,
+		arg.BeforeRevision,
+		arg.PageLimit,
+		arg.EpisodeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertTriageHistoryEntriesRow{}
+	for rows.Next() {
+		var i OperatorAlertTriageHistoryEntriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReceivedAt,
+			&i.Revision,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAlertTriageLock = `-- name: OperatorAlertTriageLock :one
 SELECT triage_revision, triage_acknowledged, coalesce(triage_owner_id::text,'')::text AS triage_owner_id,
  triage_snoozed_until, triage_updated_at

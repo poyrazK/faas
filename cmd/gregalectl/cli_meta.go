@@ -989,6 +989,18 @@ var cliCommands = []cliCommand{
 			},
 
 			{
+				Name:  subObsTriageHistory,
+				Short: "Read retained episode triage actions and receipt coverage",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "platform_alert/episode-id (legacy series aliases resolve on the first page)"},
+					{Name: "limit", Short: "maximum receipts (1..100; default 25)"},
+					{Name: "cursor", Short: "opaque next_cursor from this episode; expires after 15 minutes"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
 				Name:  subObsTriage,
 				Short: "Acknowledge, claim, or snooze a retained alert episode (operator session + fresh MFA)",
 				Flags: []cliFlag{

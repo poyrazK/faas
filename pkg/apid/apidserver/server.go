@@ -3437,6 +3437,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/context",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentContext))))
 
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertTriageHistory))))
+
 	mux.Handle("POST /v1/admin/obs/incidents/platform_alert/{id}/triage", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAlertTriage))))
 
 	// P2a + P2b + P2d — operator recovery primitives. All three

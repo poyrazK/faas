@@ -41832,6 +41832,18 @@ CREATE INDEX audit_log_account_idx ON public.audit_log USING btree (account_id, 
 
 
 --
+-- Name: audit_log_operator_alert_triage_episode_revision_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX audit_log_operator_alert_triage_episode_revision_idx ON public.audit_log USING btree (((data ->> 'episode_id'::text)), (
+CASE
+    WHEN ((jsonb_typeof((data #> '{triage,revision}'::text[])) = 'number'::text) AND ((data #>> '{triage,revision}'::text[]) ~ '^[1-9][0-9]{0,15}$'::text)) THEN ((data #>> '{triage,revision}'::text[]))::bigint
+    ELSE NULL::bigint
+END) DESC, id DESC) WHERE (kind = 'operator.action.alert_triage'::text);
+
+
+
+--
 -- Name: audit_log_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 

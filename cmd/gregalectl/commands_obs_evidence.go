@@ -67,5 +67,10 @@ func writeObsEvidenceHuman(w io.Writer, response api.ObsIncidentEvidenceResponse
 		_, _ = fmt.Fprintf(w, "  source=%s id=%s at=%s kind=%s status=%s trace_path=%s\n",
 			entry.Source, entry.ID, entry.At.UTC().Format(time.RFC3339), entry.Kind, entry.Status, entry.TracePath)
 	}
+	if response.TriageHistory != nil {
+		writeObsTriageHistoryHuman(w, *response.TriageHistory)
+	} else if item.Type == "platform_alert" {
+		_, _ = fmt.Fprintln(w, "triage_history=unknown")
+	}
 	_, _ = fmt.Fprintf(w, "action_path=%s audit_path=%s runbook_url=%s\n", item.ActionPath, item.AuditPath, item.RunbookURL)
 }
