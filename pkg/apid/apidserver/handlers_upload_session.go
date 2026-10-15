@@ -517,9 +517,6 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleCommitUpload is POST /v1/uploads/{id}/commit. Validates
-// tarball shape over the .part file, enqueues the build, records
-// the dedupe row, and marks the session committed.
 // uploadCommitFinishTimeout bounds the bookkeeping after a commit has created
 // its deployment (outcome, session state, response read).
 const uploadCommitFinishTimeout = 15 * time.Second
@@ -532,6 +529,11 @@ func uploadCommitProcessTimeout(bytes int64) time.Duration {
 	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
 }
 
+// handleCommitUpload is POST /v1/uploads/{id}/commit. Validates
+// tarball shape over the .part file, enqueues the build, records
+// the dedupe row, and marks the session committed.
+//
+//nolint:contextcheck // Once every byte has arrived, r carries a context detached from the request budget under a size-scaled bound (H10-26); the outcome is recorded idempotently (H9-127).
 func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	// Serialize per-upload_id upload/file critical sections to
@@ -591,7 +593,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	defer cancel()
 	r = r.WithContext(ctx)
 
-	app, err := s.store.AppBySlug(r.Context(), row.AppSlug) //nolint:contextcheck // r carries the commit context detached from the request budget (H10-26)
+	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such app")
@@ -609,7 +611,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 		return
 	}
-	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil { //nolint:contextcheck // r carries the commit context detached from the request budget (H10-26)
+	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -624,7 +626,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	}
 	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	manifestCommitted := false
-	defer func(ctx context.Context) { //nolint:contextcheck // r carries the commit context detached from the request budget (H10-26)
+	defer func(ctx context.Context) {
 		if manifestCommitted || !sourceRefManifestNeedsRollback(stagedManifest) {
 			return
 		}
