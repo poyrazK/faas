@@ -3381,3 +3381,13 @@ renews and explicitly completes using an app-authorized, attempt-scoped token.
 Expiry retries only that consumer and respects a finite attempt budget. Ordinary
 subscriptions keep HTTP-success completion. This remains at least once; consumer
 receipts and external-effect idempotency remain necessary.
+
+### Transactional application event outbox
+
+The standalone Go SDK can atomically stage publication intent alongside business
+writes and recover it after commit. Publication requests may include
+`expected_app_id`, a canonical application UUID guard; publication and read-only
+content verification return 409 on a mismatch before acceptance/comparison. The
+outbox always supplies this guard, preserves the producer key, and bounds retries
+to an immutable window shorter than normal acceptance retention. See
+[the application outbox guide](event-outbox.md) for setup, recovery and limitations.

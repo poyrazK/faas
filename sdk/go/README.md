@@ -1248,3 +1248,9 @@ An opted-in handler durably enqueues processing before returning HTTP 202; its
 worker uses `RenewEventAcknowledgment` and `CompleteEventAcknowledgment` with the
 secret delivery token and an appropriately scoped API credential. Inspect state
 with `GetEventAcknowledgment`. See [the protocol and rollout requirements](../../docs/event-deferred-acknowledgments.md).
+
+For application event publication, `SaveEventOutbox` stages a producer-key request
+in the business transaction; `RecoverNextEventOutbox` publishes retained due work
+with leased recovery. Install the application-owned `EventOutboxSchema` explicitly.
+See [the event outbox contract](../../docs/event-outbox.md), including the required
+server identity guard and bounded retry/retention policy.

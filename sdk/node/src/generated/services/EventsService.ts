@@ -181,6 +181,8 @@ export class EventsService {
    * replacement_acceptance or unavailable independently of content status.
    * Returned receipts describe the currently observed acceptance even on mismatch.
    * Only expected_accepted_at is accepted as a query parameter; use the status read for consumer evidence.
+   * An optional expected_app_id in the body returns 409 before comparison if
+   * the resolved application UUID differs.
    *
    * @returns AppEventPublicationVerification Content comparison observation with retained acceptance when available.
    * @throws ApiError
@@ -219,6 +221,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         413: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -323,6 +326,8 @@ export class EventsService {
    * become eligible for pruning after 30 days; holds can extend this window.
    * After pruning the same key may be accepted again. App renames preserve
    * identity; replacement apps have a new UUID and a new key namespace.
+   * Optional expected_app_id must match the resolved canonical app UUID;
+   * mismatches return 409 before accepting any publication.
    * No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
    * with the same app, key and content. Acceptance does not mean delivery success.
    *
