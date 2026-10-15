@@ -23,7 +23,7 @@ type IssueTrackerReview struct {
 	Revision                                                                         int64
 	Regrouped                                                                        bool
 	CreatedAt, UpdatedAt                                                             time.Time
-	LastCheckedAt, NextCheckAt, ClaimUntil                                           *time.Time
+	LastCheckedAt, LastSuccessfulAt, NextCheckAt, ClaimUntil                         *time.Time
 }
 
 func ValidIssueTrackerReviewCategory(category string) bool {

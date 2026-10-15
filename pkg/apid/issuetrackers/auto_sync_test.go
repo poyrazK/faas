@@ -191,3 +191,25 @@ func TestGroupScopeTracksMembersAndSplitRulesWithoutTrafficNoise(t *testing.T) {
 		t.Fatal("split-rule edit did not change source scope")
 	}
 }
+
+func TestGitHubPendingWriteIsObservedWithoutRedispatch(t *testing.T) {
+	service, host, store, provider := autoFixture()
+	host.p.Issue.State = "resolved"
+	store.r.Policy.PendingState = "resolved"
+	store.r.Policy.Outcome = "error"
+	for range 3 {
+		out := AutoSyncStep(t.Context(), service, store, store.r)
+		if out.Policy.Outcome != "error" || out.Policy.Reason != "pending_outcome_unconfirmed" || out.Policy.PendingState != "resolved" || out.Baseline.State != "open" || provider.writes != 0 || store.pending != 0 {
+			t.Fatal(out, provider.writes)
+		}
+		store.r = out
+	}
+	provider.status.State = "resolved"
+	out := AutoSyncStep(t.Context(), service, store, store.r)
+	if out.Policy.Outcome != "applied" || out.Policy.PendingState != "" || provider.writes != 0 {
+		t.Fatal(out, provider.writes)
+	}
+	if reason := InspectionFailureReason(errors.New("token=secret-provider-body")); reason != "provider_unavailable" {
+		t.Fatal(reason)
+	}
+}

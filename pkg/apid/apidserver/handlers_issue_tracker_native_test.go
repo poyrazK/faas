@@ -44,13 +44,14 @@ func (g *nativeGitHubFake) MintInstallationToken(context.Context, string, int64)
 }
 
 type nativeStatusFake struct {
+	readErr       error
 	status        issuetracker.Status
 	reads, writes int
 }
 
 func (p *nativeStatusFake) ReadStatus(_ context.Context, _ string, token string) (issuetracker.Status, error) {
 	p.reads++
-	return p.status, nil
+	return p.status, p.readErr
 }
 func (p *nativeStatusFake) SetStatus(_ context.Context, expected issuetracker.Status, token, wanted, _ string) (issuetracker.Status, error) {
 	if p.status != expected {
@@ -1891,5 +1892,222 @@ func TestNativeIssueTrackerReviewQueueScopesFiltersAndPages(t *testing.T) {
 	choices, err = st.ListIssueTrackerInboundDeployments(t.Context(), app.ID, app.AccountID, accepted.IssueID)
 	if err != nil || len(choices) != 0 {
 		t.Fatal("off-environment suggestion", choices, err)
+	}
+}
+
+// adr: 1228
+func TestNativeIssueSyncHealthReceiptsAndReadOnlyRecovery(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "sync-health")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	ingest := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "SyncHealth", Message: "failed"}, map[string]string{"Authorization": "Bearer " + ingest.Token}), 202)
+	issuePath := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, nil), 200)
+	native := issuePath + "/tracker-links/" + link.ID + "/native-status"
+	policyPath := issuePath + "/tracker-links/" + link.ID + "/auto-sync"
+	store := apidserver.IssueNativeStore(e)
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{AccountID: app.AccountID, InstallationID: 42, DefaultBranch: "main", AuditGithubLogin: "owner", SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertGithubInstallBinding(t.Context(), state.GitHubBinding{AppID: app.ID, AccountID: app.AccountID, BindingID: uuid.NewString(), InstallID: 42, RepoFullName: "Owner/Repo", OwnerID: 10, RepoID: 100, ProductionBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &nativeStatusFake{status: issuetracker.Status{Provider: "github", URL: link.URL, ID: "42", State: "open"}}
+	apidserver.IssueNativeSetClients(e, &nativeGitHubFake{repoID: 100}, provider)
+	snapshot := apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", native, nil, nil), 200)
+	enable := api.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedStatus: &snapshot, ExpectedIssueState: "open"}
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", policyPath, enable, nil), 200)
+	st := state.NewPgStore(*e.Pool())
+	health := func() state.IssueTrackerSyncHealth {
+		v, err := st.GetIssueTrackerSyncHealth(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	h := health()
+	if h.LastSuccessfulAt != nil || len(h.History) != 1 || h.History[0].EventType != "enabled" {
+		t.Fatal(h)
+	}
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	h = health()
+	if h.LastSuccessfulAt == nil || h.History[0].EventType != "checked" || h.History[0].Outcome != "matched" {
+		t.Fatal(h)
+	}
+	successful := *h.LastSuccessfulAt
+	provider.readErr = errors.New("token=secret-provider-body")
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	h = health()
+	if !h.LastSuccessfulAt.Equal(successful) || h.History[0].Outcome != "error" || h.History[0].Reason != "provider_unavailable" {
+		t.Fatal(h)
+	}
+	healthPath := "/dashboard/apps/" + app.Slug + "/issues/" + accepted.IssueID + "/tracker-sync/" + link.ID
+	get := func(auth bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", healthPath, nil)
+		if auth {
+			e.AddAdminSession(t, req)
+		}
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	reads := provider.reads
+	response := get(true)
+	if response.Code != 200 || provider.reads != reads || !strings.Contains(response.Body.String(), "Retryable check failure") || strings.Contains(response.Body.String(), "secret-provider-body") {
+		t.Fatal(response.Code, response.Body.String(), provider.reads)
+	}
+	var csrf *http.Cookie
+	for _, c := range response.Result().Cookies() {
+		if c.Name == apidserver.DashboardIssueCookie {
+			csrf = c
+		}
+	}
+	if csrf == nil {
+		t.Fatal("missing CSRF")
+	}
+	preview := func(valid bool) *httptest.ResponseRecorder {
+		form := url.Values{"action": {"preview"}, "provider": {"github"}, "link_id": {link.ID}}
+		if valid {
+			form.Set("csrf_token", csrf.Value)
+		}
+		req := httptest.NewRequest("POST", "/dashboard/apps/"+app.Slug+"/issues/"+accepted.IssueID+"/tracker-sync", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if valid {
+			req.AddCookie(csrf)
+		}
+		e.AddAdminSession(t, req)
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	count := len(health().History)
+	if out := preview(false); out.Code != 400 || len(health().History) != count {
+		t.Fatal("unauthenticated inspection", out.Code)
+	}
+	if out := preview(true); out.Code != 502 {
+		t.Fatal("provider error not returned", out.Code, out.Body.String())
+	}
+	h = health()
+	if h.History[0].EventType != "inspected" || h.History[0].Reason != "provider_unavailable" || h.History[0].ObservedState != "" || !h.LastSuccessfulAt.Equal(successful) {
+		t.Fatal(h)
+	}
+	if get(false).Code == 200 {
+		t.Fatal("anonymous health access")
+	}
+	if _, err := st.GetIssueTrackerSyncHealth(t.Context(), app.ID, uuid.NewString(), accepted.IssueID, link.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("foreign owner saw history", err)
+	}
+	provider.readErr = nil
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET outcome='conflict',reason='provider_changed' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := preview(true); out.Code != 200 {
+		t.Fatal(out.Code, out.Body.String())
+	}
+	after, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	h = health()
+	if err != nil || before.Policy.Revision != after.Policy.Revision || after.Policy.Outcome != "conflict" || before.Baseline != after.Baseline || provider.writes != 0 || h.History[0].EventType != "inspected" || h.History[0].ObservedState != "open" || !h.LastSuccessfulAt.Equal(successful) {
+		t.Fatal("inspection resumed or rebased policy", after, h, err)
+	}
+	snapshot = apidserver.IssueDecode[api.NativeIssueTrackerStatus](t, e.Do(t, "GET", native, nil, nil), 200)
+	enable.ExpectedStatus = &snapshot
+	enable.ExpectedRevision = 1
+	apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", policyPath, enable, nil), 200)
+	claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, claim, 2); err == nil {
+		t.Fatal("active lease was reset by enable")
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET claim_until=now()-interval '1 second' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); !errors.Is(err, state.ErrIssueTrackerAutoSyncClaimLost) {
+		t.Fatal("expired completion accepted", err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET claim_until=now()+interval '1 minute' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Force the history insert to fail. The successful policy completion and its
+	// last-success timestamp must roll back, retaining the live claim for retry.
+	if _, err = (*e.Pool()).Exec(t.Context(), `CREATE FUNCTION reject_sync_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'receipt unavailable'; END $$; CREATE TRIGGER reject_sync_receipt BEFORE INSERT ON issue_tracker_sync_history FOR EACH ROW EXECUTE FUNCTION reject_sync_receipt()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err == nil {
+		t.Fatal("receipt failure committed completion")
+	}
+	after, err = st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil || after.ClaimID != claim.ClaimID || !health().LastSuccessfulAt.Equal(successful) {
+		t.Fatal("partial completion", after, err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "DROP TRIGGER reject_sync_receipt ON issue_tracker_sync_history; DROP FUNCTION reject_sync_receipt()"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+		t.Fatal(err)
+	}
+	count = len(health().History)
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); !errors.Is(err, state.ErrIssueTrackerAutoSyncClaimLost) || len(health().History) != count {
+		t.Fatal("duplicate completion receipt", err)
+	}
+	if err = apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, err = st.ClaimIssueTrackerAutoSync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.MarkIssueTrackerAutoSyncPending(t.Context(), claim, "resolved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, pending, 2); err == nil {
+		t.Fatal("pending intent replaced by enable")
+	}
+	_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{Policy: api.IssueTrackerAutoSync{LinkID: link.ID}}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h = health()
+	if h.History[0].EventType != "disabled" || h.History[0].PendingState != "resolved" {
+		t.Fatal("unknown dispatch evidence lost on disable", h)
+	}
+	if _, err = st.FinishIssueTrackerAutoSync(t.Context(), pending); !errors.Is(err, state.ErrIssueTrackerAutoSyncClaimLost) {
+		t.Fatal(err)
+	}
+	current, err := st.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := st.GetIssueTrackerInboundGuard(t.Context(), app.ID, app.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := state.IssueTrackerSyncInspection{Record: current, GuardRevision: guard, Observed: current.Baseline, Reason: "policy_disabled"}
+	lastSuccess := *h.LastSuccessfulAt
+	for range api.IssueTrackerSyncHistoryMax + 2 {
+		if err = st.RecordIssueTrackerSyncInspection(t.Context(), inspection); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h = health()
+	if len(h.History) != api.IssueTrackerSyncHistoryMax || h.History[0].EventType != "inspected" || !h.LastSuccessfulAt.Equal(lastSuccess) {
+		t.Fatal("unbounded or misleading history", h)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE app_issues SET assignee_account_id=$2 WHERE id=$1", accepted.IssueID, app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.RecordIssueTrackerSyncInspection(t.Context(), inspection); err == nil {
+		t.Fatal("stale inspection accepted")
 	}
 }

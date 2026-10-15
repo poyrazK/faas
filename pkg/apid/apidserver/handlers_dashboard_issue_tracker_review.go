@@ -58,9 +58,10 @@ func (s *server) renderDashboardTrackerReviews(w http.ResponseWriter, r *http.Re
 	}
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
-	view := dashboard.IssueTrackerReviewView{AppSlug: app.Slug, Category: category, CSRF: token, Items: page.Items, Reasons: map[string]string{}}
+	view := dashboard.IssueTrackerReviewView{AppSlug: app.Slug, Category: category, CSRF: token, Items: page.Items, Reasons: map[string]string{}, Recovery: map[string]string{}}
 	for _, item := range page.Items {
 		view.Reasons[item.LinkID] = dashboard.IssueTrackerSyncReason(item.Reason)
+		view.Recovery[item.LinkID] = dashboard.IssueTrackerRecoverySummary(true, item.Outcome, item.PendingState)
 	}
 	if page.NextCursor != "" {
 		view.NextURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/issues/tracker-review?category=" + url.QueryEscape(category) + "&cursor=" + url.QueryEscape(page.NextCursor)

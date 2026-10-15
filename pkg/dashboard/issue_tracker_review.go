@@ -10,6 +10,7 @@ type IssueTrackerReviewView struct {
 	AppSlug, CSRF, Category, NextURL string
 	Items                            []state.IssueTrackerReview
 	Reasons                          map[string]string
+	Recovery                         map[string]string
 }
 
 type IssueTrackerDeploymentSuggestion struct {

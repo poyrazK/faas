@@ -13,8 +13,8 @@ import (
 
 const issueTrackerAutoReopenComplete = `-- name: IssueTrackerAutoReopenComplete :one
 UPDATE issue_tracker_auto_sync SET baseline=$1,source_state='open',source_revision=$2,
- observed_state='open',pending_state='',pending_source_revision=0,outcome='applied',reason='',claim_id=NULL,claim_until=NULL,last_checked_at=clock_timestamp(),next_check_at=$3,updated_at=clock_timestamp()
-WHERE link_id=$4 AND enabled AND revision=$5 AND claim_id=$6 AND claim_until>clock_timestamp() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
+ last_successful_at=clock_timestamp(),observed_state='open',pending_state='',pending_source_revision=0,outcome='applied',reason='',claim_id=NULL,claim_until=NULL,last_checked_at=clock_timestamp(),next_check_at=$3,updated_at=clock_timestamp()
+WHERE link_id=$4 AND enabled AND revision=$5 AND claim_id=$6 AND claim_until>clock_timestamp() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at
 `
 
 type IssueTrackerAutoReopenCompleteParams struct {
@@ -60,6 +60,7 @@ func (q *Queries) IssueTrackerAutoReopenComplete(ctx context.Context, db DBTX, a
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
@@ -71,7 +72,7 @@ WITH due AS (
  ORDER BY next_check_at,link_id FOR UPDATE SKIP LOCKED LIMIT 1
 )
 UPDATE issue_tracker_auto_sync p SET claim_id=$1,claim_until=$2,next_check_at=$2
-FROM due WHERE p.link_id=due.link_id RETURNING p.link_id, p.app_id, p.account_id, p.source_issue_id, p.enabled, p.revision, p.binding_fingerprint, p.baseline, p.source_state, p.pending_state, p.outcome, p.reason, p.claim_id, p.claim_until, p.last_checked_at, p.next_check_at, p.updated_at, p.linear_open_state_id, p.linear_resolved_state_id, p.direction, p.source_revision, p.pending_source_revision, p.observed_state
+FROM due WHERE p.link_id=due.link_id RETURNING p.link_id, p.app_id, p.account_id, p.source_issue_id, p.enabled, p.revision, p.binding_fingerprint, p.baseline, p.source_state, p.pending_state, p.outcome, p.reason, p.claim_id, p.claim_until, p.last_checked_at, p.next_check_at, p.updated_at, p.linear_open_state_id, p.linear_resolved_state_id, p.direction, p.source_revision, p.pending_source_revision, p.observed_state, p.last_successful_at
 `
 
 type IssueTrackerAutoSyncClaimParams struct {
@@ -106,12 +107,13 @@ func (q *Queries) IssueTrackerAutoSyncClaim(ctx context.Context, db DBTX, arg Is
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncDisable = `-- name: IssueTrackerAutoSyncDisable :one
-UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,outcome='disabled',reason='',pending_state='',pending_source_revision=0,claim_id=NULL,claim_until=NULL,updated_at=now() WHERE link_id=$1 RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
+UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,outcome='disabled',reason='',pending_state='',pending_source_revision=0,claim_id=NULL,claim_until=NULL,updated_at=now() WHERE link_id=$1 RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at
 `
 
 func (q *Queries) IssueTrackerAutoSyncDisable(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
@@ -141,6 +143,7 @@ func (q *Queries) IssueTrackerAutoSyncDisable(ctx context.Context, db DBTX, link
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
@@ -150,7 +153,7 @@ INSERT INTO issue_tracker_auto_sync(link_id,app_id,account_id,source_issue_id,bi
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT(link_id) DO UPDATE SET direction=excluded.direction,source_revision=excluded.source_revision,pending_source_revision=0,observed_state=excluded.observed_state,app_id=excluded.app_id,account_id=excluded.account_id,enabled=true,revision=issue_tracker_auto_sync.revision+1,source_issue_id=excluded.source_issue_id,
  linear_open_state_id=excluded.linear_open_state_id,linear_resolved_state_id=excluded.linear_resolved_state_id, binding_fingerprint=excluded.binding_fingerprint,baseline=excluded.baseline,source_state=excluded.source_state,pending_state='',outcome='matched',reason='',claim_id=NULL,claim_until=NULL,next_check_at=now(),updated_at=now()
-RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
+RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at
 `
 
 type IssueTrackerAutoSyncEnableParams struct {
@@ -208,14 +211,16 @@ func (q *Queries) IssueTrackerAutoSyncEnable(ctx context.Context, db DBTX, arg I
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncFinish = `-- name: IssueTrackerAutoSyncFinish :one
 UPDATE issue_tracker_auto_sync SET source_revision=$1,pending_source_revision=$2,observed_state=$3,baseline=$4,source_state=$5,pending_state=$6,
+ last_successful_at=CASE WHEN $7::text IN ('matched','applied') AND $6::text='' THEN clock_timestamp() ELSE last_successful_at END,
  outcome=$7,reason=$8,last_checked_at=now(),next_check_at=$9,claim_id=NULL,claim_until=NULL,updated_at=now()
-WHERE link_id=$10 AND enabled AND revision=$11 AND claim_id=$12 RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
+WHERE link_id=$10 AND enabled AND revision=$11 AND claim_id=$12 AND claim_until>clock_timestamp() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at
 `
 
 type IssueTrackerAutoSyncFinishParams struct {
@@ -273,12 +278,13 @@ func (q *Queries) IssueTrackerAutoSyncFinish(ctx context.Context, db DBTX, arg I
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncGet = `-- name: IssueTrackerAutoSyncGet :one
-SELECT link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state FROM issue_tracker_auto_sync WHERE link_id=$1
+SELECT link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at FROM issue_tracker_auto_sync WHERE link_id=$1
 `
 
 func (q *Queries) IssueTrackerAutoSyncGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
@@ -308,13 +314,14 @@ func (q *Queries) IssueTrackerAutoSyncGet(ctx context.Context, db DBTX, linkID p
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
 
 const issueTrackerAutoSyncPending = `-- name: IssueTrackerAutoSyncPending :one
 UPDATE issue_tracker_auto_sync SET pending_source_revision=$1,pending_state=$2,outcome='pending',updated_at=now()
-WHERE link_id=$3 AND enabled AND revision=$4 AND claim_id=$5 AND claim_until>now() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state
+WHERE link_id=$3 AND enabled AND revision=$4 AND claim_id=$5 AND claim_until>now() RETURNING link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at
 `
 
 type IssueTrackerAutoSyncPendingParams struct {
@@ -358,6 +365,7 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
@@ -468,7 +476,7 @@ func (q *Queries) IssueTrackerInboundGuardLock(ctx context.Context, db DBTX, app
 }
 
 const issueTrackerInboundPolicyLock = `-- name: IssueTrackerInboundPolicyLock :one
-SELECT link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state FROM issue_tracker_auto_sync WHERE link_id=$1 FOR UPDATE
+SELECT link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at, linear_open_state_id, linear_resolved_state_id, direction, source_revision, pending_source_revision, observed_state, last_successful_at FROM issue_tracker_auto_sync WHERE link_id=$1 FOR UPDATE
 `
 
 func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
@@ -498,13 +506,14 @@ func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, li
 		&i.SourceRevision,
 		&i.PendingSourceRevision,
 		&i.ObservedState,
+		&i.LastSuccessfulAt,
 	)
 	return i, err
 }
 
 const issueTrackerReviewQueue = `-- name: IssueTrackerReviewQueue :many
 SELECT p.link_id,p.direction,p.outcome,p.reason,p.pending_state,p.observed_state,p.source_state,p.revision,
- p.last_checked_at,p.next_check_at,p.claim_until,p.updated_at,
+ p.last_checked_at,p.last_successful_at,p.next_check_at,p.claim_until,p.updated_at,
  l.provider,l.external_key,l.title AS ticket_title,l.created_at,
  i.id AS issue_id,i.title AS issue_title,i.environment,i.state AS issue_state,
  (p.source_issue_id<>i.id)::boolean AS regrouped
@@ -533,27 +542,28 @@ type IssueTrackerReviewQueueParams struct {
 }
 
 type IssueTrackerReviewQueueRow struct {
-	LinkID        pgtype.UUID
-	Direction     string
-	Outcome       string
-	Reason        string
-	PendingState  string
-	ObservedState string
-	SourceState   string
-	Revision      int64
-	LastCheckedAt pgtype.Timestamptz
-	NextCheckAt   pgtype.Timestamptz
-	ClaimUntil    pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	Provider      string
-	ExternalKey   string
-	TicketTitle   string
-	CreatedAt     pgtype.Timestamptz
-	IssueID       pgtype.UUID
-	IssueTitle    string
-	Environment   string
-	IssueState    string
-	Regrouped     bool
+	LinkID           pgtype.UUID
+	Direction        string
+	Outcome          string
+	Reason           string
+	PendingState     string
+	ObservedState    string
+	SourceState      string
+	Revision         int64
+	LastCheckedAt    pgtype.Timestamptz
+	LastSuccessfulAt pgtype.Timestamptz
+	NextCheckAt      pgtype.Timestamptz
+	ClaimUntil       pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	Provider         string
+	ExternalKey      string
+	TicketTitle      string
+	CreatedAt        pgtype.Timestamptz
+	IssueID          pgtype.UUID
+	IssueTitle       string
+	Environment      string
+	IssueState       string
+	Regrouped        bool
 }
 
 func (q *Queries) IssueTrackerReviewQueue(ctx context.Context, db DBTX, arg IssueTrackerReviewQueueParams) ([]IssueTrackerReviewQueueRow, error) {
@@ -582,6 +592,7 @@ func (q *Queries) IssueTrackerReviewQueue(ctx context.Context, db DBTX, arg Issu
 			&i.SourceState,
 			&i.Revision,
 			&i.LastCheckedAt,
+			&i.LastSuccessfulAt,
 			&i.NextCheckAt,
 			&i.ClaimUntil,
 			&i.UpdatedAt,
@@ -642,4 +653,107 @@ func (q *Queries) IssueTrackerSourceRevisionLock(ctx context.Context, db DBTX, a
 	var source_revision int64
 	err := row.Scan(&source_revision)
 	return source_revision, err
+}
+
+const issueTrackerSyncHistoryAdd = `-- name: IssueTrackerSyncHistoryAdd :exec
+INSERT INTO issue_tracker_sync_history(link_id,app_id,account_id,source_issue_id,policy_revision,claim_id,event_type,direction,outcome,reason,source_state,observed_state,pending_state)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+`
+
+type IssueTrackerSyncHistoryAddParams struct {
+	LinkID         pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceIssueID  pgtype.UUID
+	PolicyRevision int64
+	ClaimID        pgtype.UUID
+	EventType      string
+	Direction      string
+	Outcome        string
+	Reason         string
+	SourceState    string
+	ObservedState  string
+	PendingState   string
+}
+
+func (q *Queries) IssueTrackerSyncHistoryAdd(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryAddParams) error {
+	_, err := db.Exec(ctx, issueTrackerSyncHistoryAdd,
+		arg.LinkID,
+		arg.AppID,
+		arg.AccountID,
+		arg.SourceIssueID,
+		arg.PolicyRevision,
+		arg.ClaimID,
+		arg.EventType,
+		arg.Direction,
+		arg.Outcome,
+		arg.Reason,
+		arg.SourceState,
+		arg.ObservedState,
+		arg.PendingState,
+	)
+	return err
+}
+
+const issueTrackerSyncHistoryList = `-- name: IssueTrackerSyncHistoryList :many
+SELECT id, link_id, app_id, account_id, source_issue_id, policy_revision, claim_id, event_type, direction, outcome, reason, source_state, observed_state, pending_state, created_at FROM issue_tracker_sync_history WHERE link_id=$1 AND account_id=$2
+ORDER BY created_at DESC,id DESC LIMIT $3
+`
+
+type IssueTrackerSyncHistoryListParams struct {
+	LinkID    pgtype.UUID
+	AccountID pgtype.UUID
+	Limit     int32
+}
+
+func (q *Queries) IssueTrackerSyncHistoryList(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryListParams) ([]IssueTrackerSyncHistory, error) {
+	rows, err := db.Query(ctx, issueTrackerSyncHistoryList, arg.LinkID, arg.AccountID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerSyncHistory{}
+	for rows.Next() {
+		var i IssueTrackerSyncHistory
+		if err := rows.Scan(
+			&i.ID,
+			&i.LinkID,
+			&i.AppID,
+			&i.AccountID,
+			&i.SourceIssueID,
+			&i.PolicyRevision,
+			&i.ClaimID,
+			&i.EventType,
+			&i.Direction,
+			&i.Outcome,
+			&i.Reason,
+			&i.SourceState,
+			&i.ObservedState,
+			&i.PendingState,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerSyncHistoryPrune = `-- name: IssueTrackerSyncHistoryPrune :exec
+DELETE FROM issue_tracker_sync_history h WHERE h.link_id=$1 AND h.id IN (
+ SELECT old.id FROM issue_tracker_sync_history old WHERE old.link_id=$1
+ ORDER BY old.created_at DESC,old.id DESC OFFSET $2)
+`
+
+type IssueTrackerSyncHistoryPruneParams struct {
+	LinkID        pgtype.UUID
+	RetainedCount int32
+}
+
+func (q *Queries) IssueTrackerSyncHistoryPrune(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryPruneParams) error {
+	_, err := db.Exec(ctx, issueTrackerSyncHistoryPrune, arg.LinkID, arg.RetainedCount)
+	return err
 }

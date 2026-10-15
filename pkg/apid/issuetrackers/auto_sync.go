@@ -139,7 +139,7 @@ func autoSyncRun(ctx context.Context, prepare func(context.Context) (Prepared, e
 		r.Policy.Reason = "source_changed_after_dispatch"
 		return r
 	}
-	if r.Baseline.Provider == "linear" && r.Policy.PendingState != "" {
+	if r.Policy.PendingState != "" {
 		r.Policy.Outcome = "error"
 		r.Policy.Reason = "pending_outcome_unconfirmed"
 		return r
@@ -195,4 +195,9 @@ func autoSyncFailure(r state.IssueTrackerAutoSyncRecord, err error) state.IssueT
 		}
 	}
 	return r
+}
+
+// InspectionFailureReason returns a stable code, never a provider error body.
+func InspectionFailureReason(err error) string {
+	return autoSyncFailure(state.IssueTrackerAutoSyncRecord{}, err).Policy.Reason
 }

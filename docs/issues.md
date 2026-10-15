@@ -1014,7 +1014,7 @@ Policies are disabled by default. Configuration requires the app owner, Issues e
 
 Gregale drives this automatic mode. Verified resolution in a fixing deployment closes the linked GitHub ticket; reopening or regression reopens it. The worker never creates tickets or pulls GitHub closures into Gregale. Manual pull still requires fixing-deployment evidence. GitHub Issues write permission must remain available on the connected installation.
 
-The worker polls every minute, takes at most five due references per batch, and normally checks each policy every five minutes. Backlogs can extend that delay. The policy reports `revision`, `source_issue_id`, last confirmed `source_state`/`provider_state`, any `pending_state`, `outcome`, `reason`, `last_checked_at` and `next_check_at`. Use `--json` for structured output. Transient provider errors retain evidence and retry; an uncertain write is confirmed by a later observation before repeating a push.
+The worker polls every minute, takes at most five due references per batch, and normally checks each policy every five minutes. Backlogs can extend that delay. The policy reports `revision`, `source_issue_id`, last confirmed `source_state`/`provider_state`, any `pending_state`, `outcome`, `reason`, `last_checked_at` and `next_check_at`. Use `--json` for structured output. Transient provider errors retain evidence and retry checks; an uncertain write is observed without repeating the push. A matching observation confirms its outcome.
 
 Unexpected provider edits, a changed source group or connection, ignored/unsupported states, and owner/entitlement loss pause the policy. Outcomes `conflict` and `blocked` require manual triage and an explicit aligned `--enable`; they do not silently resume. `enabled: true` means the delegation remains configured, while the outcome tells you whether the worker is paused. The connection and canonical source are pinned; merges/splits require review before re-enabling. Removing a tracker reference removes its policy.
 
@@ -1460,3 +1460,40 @@ prove a fix. Explicitly choose the deployment that fixes the issue and confirm t
 pull. Confirmation rechecks issue intent, policy, provider and deployment scope;
 it resolves Gregale and pauses automatic sync together. Conflicts, unconfirmed
 writes and live worker leases must be reviewed before applying a pull.
+
+### Inspect sync health and recover safely
+
+Use **Sync health and history** on an issue's tracker reference or in the review
+queue. The owner-only page loads local evidence, so it remains available during
+provider failures. It shows the last successful automatic check separately from
+retryable failures, paused conflicts and unconfirmed writes. Historical success
+is not confirmation of the provider's current status. No success is backfilled
+for policies created before health recording was introduced.
+
+The page retains the latest 50 receipts per linked ticket: completed worker
+checks, policy enable/disable actions, reviewed pulls and owner inspections.
+Receipts include direction, policy revision, observed lifecycle, pending intent
+and safe reason codes. They do not contain credentials or raw provider errors.
+Last successful automatic check time survives receipt pruning. Deleting the
+tracker reference deletes its retained history. Checks that crash or lose their
+lease before completion do not produce completed-check receipts.
+
+**Check now and review** explicitly reads fresh provider status and saves an
+inspection receipt. It never sends a provider write, applies a lifecycle change,
+clears pending intent, advances the delegated baseline or resumes a paused policy.
+An inspection can therefore succeed while a policy still needs review. Failures
+that reach the scoped inspection are recorded with stable codes when the local
+intent fence permits it; local recording failures can leave no receipt. Loading
+the health page or queue itself does not contact providers.
+
+Retryable check errors keep their existing schedule. Unconfirmed GitHub and Linear
+writes are observed without resending them; an exact observation of the intended
+result confirms the old dispatch. An unchanged provider baseline leaves it
+unconfirmed. Conflicts and blocked policies stay paused until owner review.
+Re-enabling rejects live worker leases and unresolved pending writes in every
+direction and still requires fresh aligned provider verification.
+
+If explicitly disabling to end/reset delegation, inspect the ticket first. The
+disable receipt preserves the old pending lifecycle within the bounded history,
+but disabling clears active delegation and cannot recall an already dispatched
+write. Review the provider and Gregale lifecycles again before re-enabling.

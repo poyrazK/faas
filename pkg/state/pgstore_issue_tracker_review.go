@@ -24,6 +24,9 @@ func (s *PgStore) ListIssueTrackerReviews(ctx context.Context, app, account, cat
 			break
 		}
 		item := IssueTrackerReview{LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, TicketTitle: r.TicketTitle, ExternalKey: r.ExternalKey, Provider: r.Provider, Environment: r.Environment, Direction: r.Direction, Outcome: r.Outcome, Reason: r.Reason, PendingState: r.PendingState, ObservedState: r.ObservedState, SourceState: r.SourceState, IssueState: r.IssueState, Revision: r.Revision, Regrouped: r.Regrouped, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+		if r.LastSuccessfulAt.Valid {
+			item.LastSuccessfulAt = &r.LastSuccessfulAt.Time
+		}
 		if r.LastCheckedAt.Valid {
 			item.LastCheckedAt = &r.LastCheckedAt.Time
 		}

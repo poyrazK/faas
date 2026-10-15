@@ -4024,6 +4024,7 @@ type IssueTrackerAutoSync struct {
 	SourceRevision        int64
 	PendingSourceRevision int64
 	ObservedState         string
+	LastSuccessfulAt      pgtype.Timestamptz
 }
 
 type IssueTrackerCallback struct {
@@ -4109,6 +4110,24 @@ type IssueTrackerLink struct {
 type IssueTrackerSourceGuard struct {
 	IssueID  pgtype.UUID
 	Revision int64
+}
+
+type IssueTrackerSyncHistory struct {
+	ID             pgtype.UUID
+	LinkID         pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceIssueID  pgtype.UUID
+	PolicyRevision int64
+	ClaimID        pgtype.UUID
+	EventType      string
+	Direction      string
+	Outcome        string
+	Reason         string
+	SourceState    string
+	ObservedState  string
+	PendingState   string
+	CreatedAt      pgtype.Timestamptz
 }
 
 type Job struct {

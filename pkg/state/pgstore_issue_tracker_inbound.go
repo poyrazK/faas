@@ -78,6 +78,16 @@ func (s *PgStore) ApplyIssueTrackerInbound(ctx context.Context, in IssueTrackerI
 	if err = q.IssueTrackerInboundApplied(ctx, tx, sqlc.IssueTrackerInboundAppliedParams{LinkID: issueUUID(r.Policy.LinkID), Baseline: data, SourceState: out.State}); err != nil {
 		return api.Issue{}, err
 	}
+	receipt := current
+	receipt.Policy.Enabled = false
+	receipt.Policy.Revision++
+	receipt.Policy.Outcome = "disabled"
+	receipt.Policy.Reason = ""
+	receipt.Policy.SourceState = out.State
+	receipt.Policy.ObservedState = in.Observed.State
+	if err = recordIssueTrackerSyncHistory(ctx, q, tx, receipt, "pulled", ""); err != nil {
+		return api.Issue{}, err
+	}
 	return out, tx.Commit(ctx)
 }
 

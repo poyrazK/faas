@@ -198,7 +198,7 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	view := dashboard.IssueTrackerSyncPreview{AppSlug: app.Slug, IssueID: r.PathValue("issue_id"), LinkID: r.PathValue("link_id"), CSRF: r.PostForm.Get("csrf_token"), Provider: r.PostForm.Get("provider"), Policy: row.Policy}
-	snapshot, catalog, inbound, ok := s.observeDashboardTrackerPreview(w, r, acct, app, row, &view)
+	snapshot, catalog, inbound, ok := s.observeDashboardTrackerPreview(w, r, acct, app, row, guard, &view)
 	if !ok {
 		return
 	}
@@ -213,7 +213,7 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 	}
 	s.renderDashboardTrackerPreview(w, r, acct, view, catalog)
 }
-func (s *server) observeDashboardTrackerPreview(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, row state.IssueTrackerAutoSyncRecord, view *dashboard.IssueTrackerSyncPreview) (any, []issuetracker.LinearWorkflowState, issuetrackers.InboundPreview, bool) {
+func (s *server) observeDashboardTrackerPreview(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, row state.IssueTrackerAutoSyncRecord, guard int64, view *dashboard.IssueTrackerSyncPreview) (any, []issuetracker.LinearWorkflowState, issuetrackers.InboundPreview, bool) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(api.IssueTrackerRequestTimeoutSeconds)*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
@@ -243,6 +243,11 @@ func (s *server) observeDashboardTrackerPreview(w http.ResponseWriter, r *http.R
 		return nil, nil, issuetrackers.InboundPreview{}, false
 	}
 	if err != nil {
+		s.recordDashboardTrackerInspectionFailure(r, row, guard, err)
+		writeNativeIssueTrackerError(w, err)
+		return nil, nil, issuetrackers.InboundPreview{}, false
+	}
+	if err = s.recordDashboardTrackerInspection(r, row, guard, view.Status, inbound.Reason, false); err != nil {
 		writeNativeIssueTrackerError(w, err)
 		return nil, nil, issuetrackers.InboundPreview{}, false
 	}

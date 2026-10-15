@@ -88,6 +88,9 @@ func (s *PgStore) ApplyIssueTrackerAutoReopen(ctx context.Context, r IssueTracke
 	if err != nil {
 		return r, err
 	}
+	if err = recordIssueTrackerSyncHistory(ctx, q, tx, out, "checked", r.ClaimID); err != nil {
+		return r, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return r, err
 	}

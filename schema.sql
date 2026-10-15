@@ -58327,6 +58327,7 @@ CREATE TABLE public.issue_tracker_auto_sync (
     source_revision bigint DEFAULT 0 NOT NULL,
     pending_source_revision bigint DEFAULT 0 NOT NULL,
     observed_state text DEFAULT ''::text NOT NULL,
+    last_successful_at timestamp with time zone,
     CONSTRAINT issue_tracker_auto_sync_baseline_check CHECK ((jsonb_typeof(baseline) = 'object'::text)),
     CONSTRAINT issue_tracker_auto_sync_binding_fingerprint_check CHECK ((binding_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT issue_tracker_auto_sync_direction_check CHECK ((direction = ANY (ARRAY['outbound'::text, 'inbound'::text, 'both'::text]))),
@@ -58851,3 +58852,23 @@ ALTER TABLE ONLY public.issue_tracker_source_guards
 --
 
 CREATE INDEX issue_tracker_auto_sync_review_idx ON public.issue_tracker_auto_sync USING btree (app_id, link_id) WHERE (enabled AND ((reason = 'fixing_deployment_required'::text) OR (outcome = ANY (ARRAY['blocked'::text, 'conflict'::text, 'error'::text])) OR (pending_state <> ''::text)));
+
+CREATE TABLE public.issue_tracker_sync_history (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ link_id uuid NOT NULL REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL,
+ source_issue_id uuid NOT NULL,
+ policy_revision bigint NOT NULL CHECK(policy_revision>0),
+ claim_id uuid,
+ event_type text NOT NULL CHECK(event_type IN ('enabled','disabled','checked','pulled','inspected')),
+ direction text NOT NULL CHECK(direction IN ('outbound','inbound','both')),
+ outcome text NOT NULL CHECK(outcome IN ('matched','pending','applied','error','conflict','blocked','disabled')),
+ reason text NOT NULL DEFAULT '' CHECK(octet_length(reason)<=128),
+ source_state text NOT NULL CHECK(source_state IN ('open','resolved')),
+ observed_state text NOT NULL DEFAULT '' CHECK(observed_state IN ('','open','resolved')),
+ pending_state text NOT NULL DEFAULT '' CHECK(pending_state IN ('','open','resolved')),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CONSTRAINT issue_tracker_sync_history_claim_key UNIQUE(link_id,claim_id)
+);
+CREATE INDEX issue_tracker_sync_history_page_idx ON public.issue_tracker_sync_history(link_id,created_at DESC,id DESC);

@@ -21,8 +21,9 @@ UPDATE issue_tracker_auto_sync SET pending_source_revision=sqlc.arg(pending_sour
 WHERE link_id=sqlc.arg(link_id) AND enabled AND revision=sqlc.arg(revision) AND claim_id=sqlc.arg(claim_id) AND claim_until>now() RETURNING *;
 -- name: IssueTrackerAutoSyncFinish :one
 UPDATE issue_tracker_auto_sync SET source_revision=sqlc.arg(source_revision),pending_source_revision=sqlc.arg(pending_source_revision),observed_state=sqlc.arg(observed_state),baseline=sqlc.arg(baseline),source_state=sqlc.arg(source_state),pending_state=sqlc.arg(pending_state),
+ last_successful_at=CASE WHEN sqlc.arg(outcome)::text IN ('matched','applied') AND sqlc.arg(pending_state)::text='' THEN clock_timestamp() ELSE last_successful_at END,
  outcome=sqlc.arg(outcome),reason=sqlc.arg(reason),last_checked_at=now(),next_check_at=sqlc.arg(next_check_at),claim_id=NULL,claim_until=NULL,updated_at=now()
-WHERE link_id=sqlc.arg(link_id) AND enabled AND revision=sqlc.arg(revision) AND claim_id=sqlc.arg(claim_id) RETURNING *;
+WHERE link_id=sqlc.arg(link_id) AND enabled AND revision=sqlc.arg(revision) AND claim_id=sqlc.arg(claim_id) AND claim_until>clock_timestamp() RETURNING *;
 
 -- name: IssueTrackerInboundGuard :one
 SELECT g.revision FROM issue_tracker_inbound_guards g JOIN apps a ON a.id=g.app_id
@@ -58,12 +59,12 @@ SELECT g.source_revision FROM issue_tracker_inbound_guards g JOIN app_issues i O
 WHERE g.app_id=sqlc.arg(app_id) FOR UPDATE OF g;
 -- name: IssueTrackerAutoReopenComplete :one
 UPDATE issue_tracker_auto_sync SET baseline=sqlc.arg(baseline),source_state='open',source_revision=sqlc.arg(source_revision),
- observed_state='open',pending_state='',pending_source_revision=0,outcome='applied',reason='',claim_id=NULL,claim_until=NULL,last_checked_at=clock_timestamp(),next_check_at=sqlc.arg(next_check_at),updated_at=clock_timestamp()
+ last_successful_at=clock_timestamp(),observed_state='open',pending_state='',pending_source_revision=0,outcome='applied',reason='',claim_id=NULL,claim_until=NULL,last_checked_at=clock_timestamp(),next_check_at=sqlc.arg(next_check_at),updated_at=clock_timestamp()
 WHERE link_id=sqlc.arg(link_id) AND enabled AND revision=sqlc.arg(revision) AND claim_id=sqlc.arg(claim_id) AND claim_until>clock_timestamp() RETURNING *;
 
 -- name: IssueTrackerReviewQueue :many
 SELECT p.link_id,p.direction,p.outcome,p.reason,p.pending_state,p.observed_state,p.source_state,p.revision,
- p.last_checked_at,p.next_check_at,p.claim_until,p.updated_at,
+ p.last_checked_at,p.last_successful_at,p.next_check_at,p.claim_until,p.updated_at,
  l.provider,l.external_key,l.title AS ticket_title,l.created_at,
  i.id AS issue_id,i.title AS issue_title,i.environment,i.state AS issue_state,
  (p.source_issue_id<>i.id)::boolean AS regrouped
@@ -80,3 +81,14 @@ WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_
   OR (sqlc.arg(category)='paused' AND p.outcome IN ('blocked','error') AND p.reason<>'fixing_deployment_required'))
  AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (l.created_at,l.id)<(sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
 ORDER BY l.created_at DESC,l.id DESC LIMIT sqlc.arg(page_limit);
+
+-- name: IssueTrackerSyncHistoryAdd :exec
+INSERT INTO issue_tracker_sync_history(link_id,app_id,account_id,source_issue_id,policy_revision,claim_id,event_type,direction,outcome,reason,source_state,observed_state,pending_state)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13);
+-- name: IssueTrackerSyncHistoryPrune :exec
+DELETE FROM issue_tracker_sync_history h WHERE h.link_id=sqlc.arg(link_id) AND h.id IN (
+ SELECT old.id FROM issue_tracker_sync_history old WHERE old.link_id=sqlc.arg(link_id)
+ ORDER BY old.created_at DESC,old.id DESC OFFSET sqlc.arg(retained_count));
+-- name: IssueTrackerSyncHistoryList :many
+SELECT * FROM issue_tracker_sync_history WHERE link_id=$1 AND account_id=$2
+ORDER BY created_at DESC,id DESC LIMIT $3;
