@@ -10,6 +10,7 @@
 //	                           (--json / $FAAS_JSON=1).
 //	gregalectl obs incidents — fetch the bounded, read-only incident inbox
 //	                           (deployment/job/node/alert correlation).
+//	gregalectl obs evidence  — inspect current state and exact-resource history.
 //	gregalectl obs overview  — fetch the bounded fleet/account KPI snapshot.
 //	gregalectl obs capacity  — fetch the bounded fleet capacity snapshot.
 //
@@ -58,6 +59,8 @@ const subObsHealth = "health"
 
 const subObsIncidents = "incidents"
 
+const subObsEvidence = "evidence"
+
 const subObsOverview = "overview"
 
 const subObsCapacity = "capacity"
@@ -77,7 +80,7 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|evidence|overview|capacity")
 		return 2
 	}
 	switch args[0] {
@@ -85,6 +88,8 @@ func cmdObsDispatch(args []string) int {
 		return cmdObsHealth(args[1:])
 	case subObsIncidents:
 		return cmdObsIncidents(args[1:])
+	case subObsEvidence:
+		return cmdObsEvidence(args[1:])
 	case subObsOverview:
 		return cmdObsOverview(args[1:])
 	case subObsCapacity:
@@ -436,6 +441,9 @@ func writeObsIncidentsHuman(w io.Writer, response api.ObsIncidentListResponse) {
 		}
 		if item.AuditPath != "" {
 			_, _ = fmt.Fprintf(w, " audit_path=%s", item.AuditPath)
+		}
+		if item.EvidencePath != "" {
+			_, _ = fmt.Fprintf(w, " evidence_path=%s", item.EvidencePath)
 		}
 		if item.RunbookURL != "" {
 			_, _ = fmt.Fprintf(w, " runbook=%s", item.RunbookURL)

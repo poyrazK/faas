@@ -8,15 +8,13 @@ package apidserver
 // remain owned by their existing controllers.
 
 import (
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -132,14 +130,12 @@ func (s *server) loadObsIncidents(r *http.Request, q obsIncidentQuery) ([]api.Ob
 			return nil, nil, err
 		}
 		for i := range items {
-			enrichObsIncident(&items[i])
+			operatorobs.Enrich(&items[i])
 		}
 	}
 	if q.kind == "" || q.kind == "platform_alert" {
-		alerts, available := s.obsFiringAlertIncidents(r)
-		if !available {
-			unavailable = append(unavailable, "prometheus")
-		}
+		alerts, missing := operatorobs.FiringAlerts(r.Context(), s.promqlClient)
+		unavailable = append(unavailable, missing...)
 		for _, alert := range alerts {
 			if q.severity == "" || q.severity == alert.Severity {
 				items = append(items, alert)
@@ -153,59 +149,6 @@ func (s *server) loadObsIncidents(r *http.Request, q obsIncidentQuery) ([]api.Ob
 		return items[i].ObservedAt.After(items[j].ObservedAt)
 	})
 	return items, unavailable, nil
-}
-
-func enrichObsIncident(item *api.ObsIncident) {
-	item.DedupeKey = strings.Replace(item.ID, "/", ":", 1)
-	if item.AccountID != "" {
-		item.AuditPath = "/v1/admin/obs/audit-log/search?target_account_id=" + item.AccountID
-	}
-	switch item.Type {
-	case "deployment":
-		item.ActionPath = "/v1/admin/ops/deployments/" + item.ResourceID
-		item.RunbookURL = "/docs/runbooks/FaasDeployFailed.md"
-	case "job_run":
-		item.ActionPath = "/v1/admin/ops/jobs/runs/" + item.ResourceID
-		item.RunbookURL = "/docs/ops/gregalectl-operator-quickstart.md#job-run-incidents"
-	case "compute_node":
-		item.ActionPath = "/v1/admin/obs/nodes/" + item.ResourceName + "/detail"
-		item.AuditPath = "/v1/admin/obs/audit-log/search?kind_prefix=operator.action."
-		item.RunbookURL = "/docs/runbooks/FaasComputeNodeStuckInactive.md"
-	}
-}
-
-func (s *server) obsFiringAlertIncidents(r *http.Request) ([]api.ObsIncident, bool) {
-	if s.promqlClient == nil {
-		return nil, false
-	}
-	// ALERTS_FOR_STATE holds the persisted activation time. A scrape timestamp
-	// changes on every request and would make keyset pagination skip alerts.
-	rows, err := s.promqlClient.QueryVector(r.Context(), `ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"} * ignoring(alertstate) group_left() ALERTS_FOR_STATE`)
-	if err != nil {
-		return nil, false
-	}
-	out := make([]api.ObsIncident, 0, len(rows))
-	for _, row := range rows {
-		name := row.Labels["alertname"]
-		if name == "" || row.Value <= 0 {
-			return nil, false
-		}
-		severity := "warning"
-		switch row.Labels["severity"] {
-		case "page", "critical":
-			severity = "critical"
-		case "error":
-			severity = "error"
-		}
-		labels, _ := json.Marshal(row.Labels)
-		key := fmt.Sprintf("platform_alert/%x", sha256.Sum256(labels))
-		summary := name
-		if component := row.Labels["component"]; component != "" {
-			summary += " (" + component + ")"
-		}
-		out = append(out, api.ObsIncident{ID: key, Type: "platform_alert", Severity: severity, Status: "firing", Summary: summary, ResourceID: name, ResourceName: summary, ObservedAt: time.UnixMilli(int64(row.Value * 1000)).UTC(), DedupeKey: key, ActionPath: "/v1/admin/obs/health", RunbookURL: "/docs/ops/alert-cookbook.md"})
-	}
-	return out, true
 }
 
 func paginateObsIncidents(items []api.ObsIncident, rawCursor string, limit int) ([]api.ObsIncident, string, *api.Problem) {

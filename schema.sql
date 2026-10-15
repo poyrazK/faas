@@ -43463,6 +43463,13 @@ CREATE INDEX events_kind_at_idx ON public.events USING btree (kind, at DESC);
 
 
 --
+-- Name: events_operator_resource_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_operator_resource_at_id_idx ON public.events USING btree (COALESCE(NULLIF((data ->> 'target_id'::text), ''::text), NULLIF((data ->> 'run_id'::text), ''::text), NULLIF((data ->> 'deployment_id'::text), ''::text)), at DESC, id DESC) WHERE (kind ~~ 'operator.action.%'::text);
+
+
+--
 -- Name: events_outbox_id_uniq; Type: INDEX; Schema: public; Owner: -
 --
 

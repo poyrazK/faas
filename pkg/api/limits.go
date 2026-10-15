@@ -8844,6 +8844,11 @@ const (
 	ObsOverviewTopN          = 5
 	ObsOverviewAuditWindow   = 24 * time.Hour
 	ObsOverviewFailureWindow = time.Hour
+
+	// Evidence reads over-fetch one row to make history truncation explicit.
+	ObsIncidentEvidenceLimitDefault = 25
+	ObsIncidentEvidenceLimitMax     = 100
+
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.

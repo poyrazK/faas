@@ -23,6 +23,77 @@ func (q *Queries) OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since
 	return ratio, err
 }
 
+const operatorIncidentEvidence = `-- name: OperatorIncidentEvidence :many
+WITH history AS (
+    (SELECT e.id::text AS id, 'event'::text AS source, e.kind::text AS kind,
+            ''::text AS status, e.at AS at, coalesce(e.trace_id, '')::text AS trace_id
+     FROM events e WHERE e.subject = $2::uuid AND e.at >= $3
+     ORDER BY e.at DESC, e.id::text COLLATE "C" DESC LIMIT $1)
+    UNION ALL
+    (SELECT e.id::text, 'event'::text, e.kind::text, ''::text, e.at, coalesce(e.trace_id, '')::text
+     FROM events e
+     WHERE e.kind LIKE 'operator.action.%'
+       AND coalesce(nullif(e.data->>'target_id', ''), nullif(e.data->>'run_id', ''), nullif(e.data->>'deployment_id', '')) = $2::text
+       AND e.subject IS DISTINCT FROM $2::uuid AND e.at >= $3
+     ORDER BY e.at DESC, e.id::text COLLATE "C" DESC LIMIT $1)
+    UNION ALL
+    (SELECT a.id::text, 'deployment_audit'::text, a.kind::text, ''::text, a.at, ''::text
+     FROM deployment_audit a WHERE a.deployment_id = $2::uuid AND a.at >= $3
+     ORDER BY a.at DESC, a.id::text COLLATE "C" DESC LIMIT $1)
+    UNION ALL
+    (SELECT i.id::text, 'operator_intent'::text, i.kind::text, i.status::text,
+            i.requested_at, coalesce(i.trace_id, '')::text
+     FROM operator_intents i WHERE i.target_id = $2::text AND i.requested_at >= $3
+     ORDER BY i.requested_at DESC, i.id::text COLLATE "C" DESC LIMIT $1)
+)
+SELECT id, source, kind, status, at, trace_id FROM history
+ORDER BY at DESC, source COLLATE "C" DESC, id COLLATE "C" DESC LIMIT $1
+`
+
+type OperatorIncidentEvidenceParams struct {
+	PageLimit int32
+	TargetID  pgtype.UUID
+	Since     pgtype.Timestamptz
+}
+
+type OperatorIncidentEvidenceRow struct {
+	ID      string
+	Source  string
+	Kind    string
+	Status  string
+	At      pgtype.Timestamptz
+	TraceID string
+}
+
+// Each branch uses an exact-resource index and is independently bounded before
+// the merge. Payload references use the partial operator-resource index.
+func (q *Queries) OperatorIncidentEvidence(ctx context.Context, db DBTX, arg OperatorIncidentEvidenceParams) ([]OperatorIncidentEvidenceRow, error) {
+	rows, err := db.Query(ctx, operatorIncidentEvidence, arg.PageLimit, arg.TargetID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorIncidentEvidenceRow{}
+	for rows.Next() {
+		var i OperatorIncidentEvidenceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Source,
+			&i.Kind,
+			&i.Status,
+			&i.At,
+			&i.TraceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorIncidents = `-- name: OperatorIncidents :many
 WITH signals AS (
     SELECT ('deployment/' || d.id::text)::text AS id, 'deployment'::text AS type,

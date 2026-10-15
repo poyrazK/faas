@@ -2,12 +2,86 @@ package state
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func (m *MemStore) OperatorIncidentEvidence(_ context.Context, targetID string, since time.Time, limit int) ([]api.ObsIncidentEvidenceEntry, error) {
+	limit = operatorIncidentEvidenceLimit(limit)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []api.ObsIncidentEvidenceEntry{}
+	for _, row := range m.events {
+		if row.At.Before(since) || !operatorEventTargets(row, targetID) {
+			continue
+		}
+		entry := api.ObsIncidentEvidenceEntry{ID: fmt.Sprint(row.ID), Source: "event", Kind: row.Kind, At: row.At.UTC()}
+		if row.TraceID != nil {
+			entry.TraceID = *row.TraceID
+		}
+		out = append(out, entry)
+	}
+	for _, row := range m.deploymentAudit {
+		if row.DeploymentID.String() == targetID && !row.At.Before(since) {
+			out = append(out, api.ObsIncidentEvidenceEntry{ID: fmt.Sprint(row.ID), Source: "deployment_audit", Kind: string(row.Kind), At: row.At.UTC()})
+		}
+	}
+	for _, row := range m.operatorIntents {
+		if row.TargetID != targetID || row.RequestedAt.Before(since) {
+			continue
+		}
+		entry := api.ObsIncidentEvidenceEntry{ID: row.ID, Source: "operator_intent", Kind: string(row.Kind), Status: string(row.Status), At: row.RequestedAt.UTC()}
+		if row.TraceID != nil {
+			entry.TraceID = *row.TraceID
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].At.Equal(out[j].At) {
+			return out[i].At.After(out[j].At)
+		}
+		if out[i].Source != out[j].Source {
+			return out[i].Source > out[j].Source
+		}
+		return out[i].ID > out[j].ID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func operatorEventTargets(row Event, targetID string) bool {
+	if row.Subject != nil && row.Subject.String() == targetID {
+		return true
+	}
+	if !strings.HasPrefix(row.Kind, "operator.action.") {
+		return false
+	}
+	var refs map[string]json.RawMessage
+	if json.Unmarshal(row.Data, &refs) != nil {
+		return false
+	}
+	for _, key := range []string{"target_id", "run_id", "deployment_id"} {
+		value := refs[key]
+		if len(value) == 0 || string(value) == "null" {
+			continue
+		}
+		var reference string
+		if json.Unmarshal(value, &reference) != nil {
+			return false
+		}
+		if reference != "" {
+			return reference == targetID
+		}
+	}
+	return false
+}
 
 func (m *MemStore) OperatorAuditTraceCoverage(_ context.Context, since time.Time) (float64, error) {
 	m.mu.Lock()

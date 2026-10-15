@@ -1097,3 +1097,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+- [Operator incident evidence (2026-10-15)](20261015-operator-incident-evidence.md)

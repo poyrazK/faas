@@ -68,3 +68,31 @@ WHERE (sqlc.arg(kind)::text = '' OR type = sqlc.arg(kind))
   AND (sqlc.arg(before_id)::text = '' OR (observed_at, id) < (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
 ORDER BY observed_at DESC, id DESC
 LIMIT sqlc.arg(page_limit);
+
+-- name: OperatorIncidentEvidence :many
+-- Each branch uses an exact-resource index and is independently bounded before
+-- the merge. Payload references use the partial operator-resource index.
+WITH history AS (
+    (SELECT e.id::text AS id, 'event'::text AS source, e.kind::text AS kind,
+            ''::text AS status, e.at AS at, coalesce(e.trace_id, '')::text AS trace_id
+     FROM events e WHERE e.subject = sqlc.arg(target_id)::uuid AND e.at >= sqlc.arg(since)
+     ORDER BY e.at DESC, e.id::text COLLATE "C" DESC LIMIT sqlc.arg(page_limit))
+    UNION ALL
+    (SELECT e.id::text, 'event'::text, e.kind::text, ''::text, e.at, coalesce(e.trace_id, '')::text
+     FROM events e
+     WHERE e.kind LIKE 'operator.action.%'
+       AND coalesce(nullif(e.data->>'target_id', ''), nullif(e.data->>'run_id', ''), nullif(e.data->>'deployment_id', '')) = sqlc.arg(target_id)::text
+       AND e.subject IS DISTINCT FROM sqlc.arg(target_id)::uuid AND e.at >= sqlc.arg(since)
+     ORDER BY e.at DESC, e.id::text COLLATE "C" DESC LIMIT sqlc.arg(page_limit))
+    UNION ALL
+    (SELECT a.id::text, 'deployment_audit'::text, a.kind::text, ''::text, a.at, ''::text
+     FROM deployment_audit a WHERE a.deployment_id = sqlc.arg(target_id)::uuid AND a.at >= sqlc.arg(since)
+     ORDER BY a.at DESC, a.id::text COLLATE "C" DESC LIMIT sqlc.arg(page_limit))
+    UNION ALL
+    (SELECT i.id::text, 'operator_intent'::text, i.kind::text, i.status::text,
+            i.requested_at, coalesce(i.trace_id, '')::text
+     FROM operator_intents i WHERE i.target_id = sqlc.arg(target_id)::text AND i.requested_at >= sqlc.arg(since)
+     ORDER BY i.requested_at DESC, i.id::text COLLATE "C" DESC LIMIT sqlc.arg(page_limit))
+)
+SELECT id, source, kind, status, at, trace_id FROM history
+ORDER BY at DESC, source COLLATE "C" DESC, id COLLATE "C" DESC LIMIT sqlc.arg(page_limit);

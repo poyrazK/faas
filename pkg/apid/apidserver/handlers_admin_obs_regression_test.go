@@ -169,6 +169,10 @@ func TestObsRegressionWakeNodeBuckets(t *testing.T) {
 func TestObsRegressionAlertsPreserveIdentityAndSeverity(t *testing.T) {
 	e := gapEnv(t)
 	p := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/alerts" {
+			fmt.Fprint(w, `{"status":"success","data":{"alerts":[]}}`)
+			return
+		}
 		query := r.URL.Query().Get("query")
 		if !strings.Contains(query, `alertname!="FaasWatchdog"`) || !strings.Contains(query, `severity!="info"`) {
 			t.Errorf("query includes heartbeat or info alerts: %s", query)

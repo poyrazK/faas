@@ -559,3 +559,35 @@ follow-up ("operator-vs-customer split") is filed separately.
   [`docs/ops/release-manifest-anchor.md`](release-manifest-anchor.md).
 - **Per-secret rotation cadence?** Read
   [`docs/ops/secrets-rotation.md`](secrets-rotation.md).
+## Incident evidence
+
+Copy an ID from `gregalectl obs incidents --json`, then inspect its current
+state and exact-resource history without direct database access:
+
+```bash
+gregalectl obs evidence --incident deployment/11111111-1111-4111-8111-111111111111 --limit 25 --json
+gregalectl obs evidence --incident compute_node/11111111-1111-4111-8111-111111111111
+```
+
+The API is `GET /v1/admin/obs/incidents/{kind}/{id}/evidence?limit=25`.
+Supported kinds are `deployment`, `job_run`, `compute_node`, and `platform_alert`;
+alerts use the full 64-character hash from their inbox ID. All existing admin,
+MFA, and email-allowlist gates apply. Resource evidence remains readable after
+recovery. A missing/deleted resource or a no-longer-firing alert returns 404;
+an unavailable required source returns 503.
+
+`history` contains the last 24 hours of exact-resource event, deployment-audit,
+and operator-intent metadata, newest first. Operator events can match either
+their resource subject or their explicit resource reference in the payload.
+It excludes account-wide activity
+and raw payloads. `limit` defaults to 25 and is capped at 100. `truncated=true`
+means more matching history exists in that window; increase the limit or use
+the existing event/audit inspection routes. Trace links use the existing
+`/v1/admin/obs/traces/{trace_id}` lookup.
+
+Platform alerts retain their activation time and ID while gaining rule-specific
+runbook links and validated resource links. `prometheus_alert_metadata` in
+`unavailable_sources` means annotations could not be loaded: the firing signal
+is still present, with a generic runbook fallback. This does not block database
+resource evidence. Alert evidence is a current snapshot; it does not retain
+resolved alert history.

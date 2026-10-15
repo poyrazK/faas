@@ -58,6 +58,16 @@ type OperatorIncidentFilter struct {
 	Limit       int
 }
 
+func operatorIncidentEvidenceLimit(limit int) int {
+	if limit < 1 {
+		return api.ObsIncidentEvidenceLimitDefault + 1
+	}
+	if limit > api.ObsIncidentEvidenceLimitMax+1 {
+		return api.ObsIncidentEvidenceLimitMax + 1
+	}
+	return limit
+}
+
 // OperatorObservabilityReader keeps fleet projections bounded at their source.
 // Store embeds it so store adapters preserve these reads as well.
 type OperatorObservabilityReader interface {
@@ -65,4 +75,5 @@ type OperatorObservabilityReader interface {
 	OperatorOverviewActivity(context.Context, time.Time, time.Time) (OperatorOverviewActivity, error)
 	OperatorTenantCounts(context.Context, string) (int, int, error)
 	ListOperatorIncidents(context.Context, OperatorIncidentFilter) ([]api.ObsIncident, error)
+	OperatorIncidentEvidence(context.Context, string, time.Time, int) ([]api.ObsIncidentEvidenceEntry, error)
 }

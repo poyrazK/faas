@@ -988,6 +988,17 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  subObsEvidence,
+				Short: "Inspect current resource state and bounded incident history",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "limit", Short: "maximum history entries (1..100; default 25)"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+				},
+			},
+			{
 				Name:  subObsOverview,
 				Short: "Fetch GET /v1/admin/obs/overview (admin scope + MFA required)",
 				Flags: []cliFlag{

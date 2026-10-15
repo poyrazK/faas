@@ -925,6 +925,7 @@ type ObsIncident struct {
 	Summary      string    `json:"summary"`
 	AccountID    string    `json:"account_id,omitempty"`
 	AppID        string    `json:"app_id,omitempty"`
+	NodeID       string    `json:"node_id,omitempty"`
 	ResourceID   string    `json:"resource_id"`
 	ResourceName string    `json:"resource_name,omitempty"`
 	ObservedAt   time.Time `json:"observed_at"`
@@ -932,6 +933,34 @@ type ObsIncident struct {
 	ActionPath   string    `json:"action_path,omitempty"`
 	AuditPath    string    `json:"audit_path,omitempty"`
 	RunbookURL   string    `json:"runbook_url,omitempty"`
+	EvidencePath string    `json:"evidence_path,omitempty"`
+}
+
+// ObsIncidentEvidenceResponse is a read-only snapshot, not a persisted incident
+// record. Resource lookups also work after recovery. History contains only exact
+// resource matches within Since; Truncated signals that older matches remain.
+type ObsIncidentEvidenceResponse struct {
+	GeneratedAt        time.Time                  `json:"generated_at"`
+	Incident           ObsIncident                `json:"incident"`
+	ErrorCode          string                     `json:"error_code,omitempty"`
+	Since              time.Time                  `json:"since"`
+	Limit              int                        `json:"limit"`
+	Truncated          bool                       `json:"truncated"`
+	History            []ObsIncidentEvidenceEntry `json:"history"`
+	UnavailableSources []string                   `json:"unavailable_sources"`
+}
+
+// ObsIncidentEvidenceEntry deliberately omits actor identities, raw event data,
+// intent metadata, and free-form errors. Follow existing gated diagnostic links
+// when the full payload is needed. IDs are strings to preserve bigint precision.
+type ObsIncidentEvidenceEntry struct {
+	ID        string    `json:"id"`
+	Source    string    `json:"source"`
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status,omitempty"`
+	At        time.Time `json:"at"`
+	TraceID   string    `json:"trace_id,omitempty"`
+	TracePath string    `json:"trace_path,omitempty"`
 }
 
 // ObsIncidentListResponse is the body of GET /v1/admin/obs/incidents. The
