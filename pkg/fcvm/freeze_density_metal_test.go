@@ -8,12 +8,15 @@ package fcvm
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +31,9 @@ import (
 // moves anonymous memory out. FAAS_TEST_FREEZE_FROM_SNAPSHOT=1 restores every
 // VM from one snapshot first, as production wakes do: pages read since the
 // restore stay file-backed and reclaimable without swap.
+// FAAS_TEST_FREEZE_TRAFFIC (a duration) serves every VM a request mix for
+// that long before the freeze, so a restored VM writes into memory of its
+// own the way a serving one does (prod: 48-66 MB anonymous, ADR-906).
 func TestMetalFreezeDensity(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 	if os.Getenv("FAAS_TEST_FREEZE_DENSITY") != "1" {
@@ -92,6 +98,13 @@ func TestMetalFreezeDensity(t *testing.T) {
 		}
 		get(t, hosts[i]+"/heavy")
 	}
+	if raw := os.Getenv("FAAS_TEST_FREEZE_TRAFFIC"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			t.Fatalf("FAAS_TEST_FREEZE_TRAFFIC=%q: %v", raw, err)
+		}
+		serveTraffic(t, hosts, d)
+	}
 	time.Sleep(3 * time.Second)
 	vmMB := func() (total int64) {
 		for _, id := range ids {
@@ -101,10 +114,21 @@ func TestMetalFreezeDensity(t *testing.T) {
 		}
 		return total
 	}
+	vmStatMB := func(key string) (total int64) {
+		for _, id := range ids {
+			if stat, err := readCgroupStat(cgroupRoot + "/" + ParentCgroupFor("scale") + "/" + PerInstanceScope(id)); err == nil {
+				total += stat[key] >> 20
+			}
+		}
+		return total
+	}
 	running, availRunning := vmMB(), memAvailableMB(t)
+	t.Logf("running: per VM %.1f MB anonymous, %.1f MB file", float64(vmStatMB("anon"))/float64(n), float64(vmStatMB("file"))/float64(n))
 
 	var freezeTimes []time.Duration
 	var swapped int64
+	var freedMB []int64
+	kept := 0
 	for _, id := range ids {
 		start := time.Now()
 		rep, err := m.Freeze(ctx, id, FreezeOptions{Reclaim: true})
@@ -113,6 +137,13 @@ func TestMetalFreezeDensity(t *testing.T) {
 		}
 		freezeTimes = append(freezeTimes, time.Since(start))
 		swapped += rep.SwappedBytes >> 20
+		// schedd keeps a compressed VM frozen only when this frees at least
+		// 16 MB and half its memory (pkg/sched/frozen_compress.go).
+		freed := rep.BeforeBytes - rep.AfterBytes
+		freedMB = append(freedMB, freed>>20)
+		if rep.BeforeBytes > 0 && freed >= 16<<20 && freed*2 >= rep.BeforeBytes {
+			kept++
+		}
 	}
 	time.Sleep(2 * time.Second)
 	frozen, availFrozen := vmMB(), memAvailableMB(t)
@@ -122,6 +153,9 @@ func TestMetalFreezeDensity(t *testing.T) {
 	// zswap (ADR-906 decision 6): the RAM the compressed pool takes and the
 	// memory it holds; both zero without zswap.
 	t.Logf("zswap pool: %d MB holding %d MB", meminfoMB(t, "Zswap:"), meminfoMB(t, "Zswapped:"))
+	sort.Slice(freedMB, func(i, j int) bool { return freedMB[i] < freedMB[j] })
+	t.Logf("freed per VM median %d MB, min %d MB; %d of %d would stay compressed under schedd's rule",
+		freedMB[n/2], freedMB[0], kept, n)
 
 	var firstByte, heavy []time.Duration
 	for i, id := range ids {
@@ -167,6 +201,45 @@ func TestMetalFreezeDensity(t *testing.T) {
 	}
 	if frozen > running {
 		t.Fatalf("freezing grew the VMs: %d -> %d MB", running, frozen)
+	}
+}
+
+// serveTraffic serves every VM, four requests at a time, for d: JSON reads
+// (allocation churn, so young-generation GC) with a CPU-bound request every
+// 50th.
+func serveTraffic(t *testing.T, hosts []string, d time.Duration) {
+	t.Helper()
+	client := &http.Client{Timeout: 60 * time.Second}
+	deadline := time.Now().Add(d)
+	var wg sync.WaitGroup
+	var served, failed atomic.Int64
+	for _, host := range hosts {
+		for w := 0; w < 4; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; time.Now().Before(deadline); i++ {
+					path := "/"
+					if i%50 == 49 {
+						path = "/heavy"
+					}
+					resp, err := client.Get(host + path)
+					if err != nil {
+						failed.Add(1)
+						time.Sleep(100 * time.Millisecond)
+						continue
+					}
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+					served.Add(1)
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	t.Logf("traffic: %d requests to %d VMs over %v", served.Load(), len(hosts), d)
+	if failed.Load() > 0 {
+		t.Fatalf("traffic: %d requests failed", failed.Load())
 	}
 }
 
