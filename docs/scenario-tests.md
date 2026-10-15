@@ -2024,6 +2024,29 @@ JSON and JUnit retain the underlying metrics, assertions and explicit phase role
 in `chaos_phases`. Older reports without roles use their recorded rule and recovery
 evidence for display, rather than guessing from phase names.
 
+### Failure summaries and supporting evidence
+
+Failed runs show a summary above their HTML report details. The summary selects
+the first recorded failed matrix/repeated-run receipt and staged step, then the
+first failed assertion in timed phase order. This is recorded execution order,
+not a claim of root cause or a timestamp-based ordering of concurrent assertions.
+Group-level failures remain visible even when an individual run is selected.
+
+The summary includes expected/observed assertion values when recorded, matching
+phase measurements, attempt evidence, recovery observations and cleanup errors
+along the selected receipt path. Recovery failures refer to the immediately
+preceding fault phase. Missing phase match evidence is not replaced with an
+unrelated fault's counters; injection remains unconfirmed. Absence of a cleanup
+error is not independent proof that workload retirement was verified.
+
+Each summary links to its full receipt within the same HTML file. Supported
+isolated failure receipts also show a shell-quoted replay selector for the saved
+run ID. Replace the report and original-manifest path placeholders before running
+it; the existing replay command validates the saved configuration. Unsupported
+or missing replay metadata produces no command. Passing groups, including those
+that tolerate individual failed runs under a pass-rate budget, have no failure
+summary. Rendering changes no verdict and does not execute replay.
+
 ### Recovery regressions between CI runs
 
 Set a recovery regression budget on a resilience scenario:
