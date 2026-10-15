@@ -605,6 +605,8 @@ type MemStore struct {
 	profileCanaryChecks       map[string]*memProfileCanaryCheck
 	automaticRouteChecks      map[string]memAutomaticRouteCheck
 	canaryRouteGates          map[string]api.CanaryRouteGate
+	environmentBudgetConfigs  map[string]scopedBudgetRow
+	environmentBudgetReceipts map[string]memoryBudgetReceipt
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
@@ -3462,6 +3464,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			delete(m.featureFlagVersions, environmentID)
 			m.deleteEnvironmentSecretRefsLocked("", environmentID)
 			m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
+			m.deleteEnvironmentBudgetConfigsLocked(environmentID)
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3678,6 +3681,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
+	m.deleteEnvironmentBudgetConfigsLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
@@ -3778,6 +3782,11 @@ func cloneProjectEnvironmentCleanupJob(job ProjectEnvironmentCleanupJob) Project
 func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.projectEnvironmentApprovals {
+		if existing.ApprovalTokenHash == approval.ApprovalTokenHash {
+			return ProjectEnvironmentApproval{}, ErrConflict
+		}
+	}
 	if approval.AccountID == "" || approval.ProjectSlug == "" || approval.EnvironmentSlug == "" || approval.PlanTokenHash == "" || approval.ApprovalTokenHash == "" {
 		return ProjectEnvironmentApproval{}, ErrNotFound
 	}
@@ -5291,7 +5300,7 @@ func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPe
 	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
+func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard, reviews ...*api.AppReleaseReview) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -5311,13 +5320,25 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
 		return Deployment{}, err
 	}
+	if len(reviews) > 0 {
+		if len(reviews) != 1 || reviews[0] == nil {
+			return Deployment{}, ErrInvalidArgument
+		}
+		current, err := m.releaseReviewLocked(d.AppID, normalizedDeploymentScope(d.Scope))
+		if err != nil {
+			return Deployment{}, err
+		}
+		if err := validateReviewedTraffic(*reviews[0], current, newPercent); err != nil {
+			return Deployment{}, err
+		}
+	}
 	for _, sibling := range m.deployments {
-		if sibling.AppID == d.AppID && sibling.EnvironmentWorkloadManaged() {
+		if sibling.AppID == d.AppID && normalizedDeploymentScope(sibling.Scope) == normalizedDeploymentScope(d.Scope) && sibling.EnvironmentWorkloadManaged() {
 			return Deployment{}, ErrConflict
 		}
 	}
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
 			(other.RolloutState == "pending" || other.RolloutState == "rolling_out") {
 			return Deployment{}, ErrTrafficChangeDuringCanary
 		}
@@ -5334,7 +5355,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		servingID := ""
 		servingCount := 0
 		for otherID, other := range m.deployments {
-			if other.AppID == d.AppID && other.Status == DeployLive && other.TrafficPercent > 0 && otherID != id {
+			if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.TrafficPercent > 0 && otherID != id {
 				servingID = otherID
 				servingCount++
 			}
@@ -5358,7 +5379,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	var siblings []sibling
 	for otherID, other := range m.deployments {
-		if other.AppID != appID || other.Status != DeployLive || otherID == id {
+		if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive || otherID == id {
 			continue
 		}
 		siblings = append(siblings, sibling{ID: otherID, Prior: other.TrafficPercent})
@@ -6544,6 +6565,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.savedRouteRequirements, id)
 	m.deleteProfileInvestigationsLocked(id)
 	delete(m.canaryRouteGates, id)
+	m.deleteEnvironmentBudgetsForAppLocked(id)
 	delete(m.routeMonitorConfigs, id)
 	delete(m.routeMonitorNextCheck, id)
 	delete(m.routeMonitorIncidents, id)
@@ -7139,6 +7161,8 @@ func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment,
 }
 
 func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	reviewed := d.ExpectedReview != nil
+	var reviewedSpec ProjectEnvironmentWorkloadSpec
 	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -7151,6 +7175,29 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if d.ExpectedReview != nil {
+		if err := validateReviewedDeployment(d); err != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		review, err := m.releaseReviewLocked(d.AppID, normalizedDeploymentScope(d.Scope))
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if d.ReviewedRolloutMode != "" && review.Protected {
+			return Deployment{}, 0, ErrReleaseReviewChanged
+		}
+		if err := checkReleaseReview(*d.ExpectedReview, review); err != nil {
+			return Deployment{}, 0, err
+		}
+		reviewedSpec, err = m.prepareReviewedWorkloadLocked(app, d, review)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		d.ExpectedReview = nil
+		d.ReviewedRolloutMode = ""
+	}
+	d.ReviewedSettings = nil
+
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
 		if len(cloneInputs) != 1 || cloneInputs[0] == nil || promotionInput != nil || activity != nil {
@@ -7342,6 +7389,10 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
 	m.recordRecoveryPredecessorLocked(d)
+	if reviewedSpec.ID != "" {
+		m.projectEnvironmentWorkloadSpecs[reviewedSpec.ID] = reviewedSpec
+		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(reviewedSpec.EnvironmentID, app.ID)] = reviewedSpec.ID
+	}
 	m.putDeploymentLocked(d.ID, d)
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate
@@ -7374,6 +7425,13 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)
+	}
+	if reviewed {
+		review, err := m.releaseReviewLocked(d.AppID, normalizedDeploymentScope(d.Scope))
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		d.StagedReview = &review
 	}
 	return d, outboxID, nil
 }
@@ -21941,6 +21999,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.savedRouteRequirements, aid)
 			m.deleteProfileInvestigationsLocked(aid)
 			delete(m.canaryRouteGates, aid)
+			m.deleteEnvironmentBudgetsForAppLocked(aid)
 			delete(m.routeMonitorConfigs, aid)
 			delete(m.routeMonitorNextCheck, aid)
 			delete(m.routeMonitorIncidents, aid)

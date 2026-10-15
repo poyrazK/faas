@@ -20315,13 +20315,17 @@ CREATE TABLE public.edge_rule_events (
     client_ip inet,
     country text DEFAULT ''::text NOT NULL,
     user_agent text DEFAULT ''::text NOT NULL,
+    waf_rule_ids integer[] DEFAULT '{}'::integer[] NOT NULL,
+    waf_categories text[] DEFAULT '{}'::text[] NOT NULL,
+    waf_score integer DEFAULT 0 NOT NULL,
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
-    CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256))
+    CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
+    CONSTRAINT edge_rule_events_waf_chk CHECK ((((cardinality(waf_rule_ids) <= 32) AND (cardinality(waf_categories) <= 16)) AND ((waf_score >= 0) AND (waf_score <= 10000))))
 );
 
 
@@ -61211,6 +61215,107 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+--
+-- Name: app_environment_route_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_environment_route_budgets (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    project_id uuid,
+    environment_id uuid,
+    inherit boolean NOT NULL,
+    enabled boolean NOT NULL,
+    revision bigint NOT NULL,
+    routes jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_environment_route_budgets_check CHECK ((((scope = 'default'::text) AND (environment_id IS NULL) AND (project_id IS NULL)) OR ((scope <> 'default'::text) AND (environment_id IS NOT NULL) AND (project_id IS NOT NULL)))),
+    CONSTRAINT app_environment_route_budgets_check1 CHECK (((NOT inherit) OR ((NOT enabled) AND (routes = '[]'::jsonb)))),
+    CONSTRAINT app_environment_route_budgets_revision_check CHECK (((revision > 0) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT app_environment_route_budgets_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20)))
+);
+
+
+--
+-- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_route_budget_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
+);
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_pkey PRIMARY KEY (app_id, scope);
+
+
+--
+-- Name: environment_route_budget_receipts environment_route_budget_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_route_budget_receipts
+    ADD CONSTRAINT environment_route_budget_receipts_pkey PRIMARY KEY (account_id, request_id);
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_route_budget_receipts environment_route_budget_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_route_budget_receipts
+    ADD CONSTRAINT environment_route_budget_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_route_budget_receipts environment_route_budget_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_route_budget_receipts
+    ADD CONSTRAINT environment_route_budget_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
 CREATE INDEX event_execution_reconciliation_pending_idx ON public.event_execution_coverage(reconciliation_requested_at,subscription_id) WHERE reconciliation_requested_at IS NOT NULL AND NOT ledger_baseline_known;
 
 CREATE TABLE IF NOT EXISTS event_execution_lineage_cases (

@@ -10405,6 +10405,20 @@ const (
 	AuthImportBatch    = 100
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
+	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a
+	// standby key and previous keys whose tokens have not yet expired.
+	AuthMaxSigningKeys = 4
+	// AuthKeyChangeWait bounds how long `gregale auth keys` waits for the
+	// restarted Auth app to publish a key change.
+	AuthKeyChangeWait = 5 * time.Minute
+	// AuthPasswordMinLength bounds the configurable minimum password length:
+	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
+	AuthPasswordMinLengthFloor   = 6
+	AuthPasswordMinLengthCeiling = 72
+	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
+	// provider credentials; Apple's client secret is a signed JWT.
+	AuthProviderClientIDMaxBytes = 512
+	AuthProviderSecretMaxBytes   = 4096
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

@@ -159,8 +159,8 @@ func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
 
 func TestIdempotencyReplayable(t *testing.T) {
 	for status, want := range map[int]bool{
-		200: true, 201: true, 202: true, 400: true, 404: true, 409: true, 422: true, 500: true,
-		401: false, 402: false, 403: false, 429: false, 503: false,
+		200: true, 201: true, 202: true, 400: true, 409: true, 422: true, 500: true,
+		401: false, 402: false, 403: false, 404: false, 429: false, 503: false,
 	} {
 		if got := apidserver.IdempotencyReplayable(status); got != want {
 			t.Errorf("idempotencyReplayable(%d) = %v, want %v", status, got, want)

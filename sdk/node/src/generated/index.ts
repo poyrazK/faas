@@ -142,6 +142,7 @@ export type { AppPublishEventRequest } from './models/AppPublishEventRequest.js'
 export type { AppPublishEventResponse } from './models/AppPublishEventResponse.js';
 export type { AppRegistryCredentialListResponse } from './models/AppRegistryCredentialListResponse.js';
 export type { AppRegistryCredentialResponse } from './models/AppRegistryCredentialResponse.js';
+export type { AppReleaseReview } from './models/AppReleaseReview.js';
 export type { AppResponse } from './models/AppResponse.js';
 export type { AppRestartResponse } from './models/AppRestartResponse.js';
 export type { AppRoutesResponse } from './models/AppRoutesResponse.js';
@@ -232,6 +233,9 @@ export type { BindingRuntimeFreshness } from './models/BindingRuntimeFreshness.j
 export type { BindingRuntimeInstanceCounts } from './models/BindingRuntimeInstanceCounts.js';
 export type { BindingVerification } from './models/BindingVerification.js';
 export type { BindingVerificationCheck } from './models/BindingVerificationCheck.js';
+export type { BrowserPromotionApprovalExchange } from './models/BrowserPromotionApprovalExchange.js';
+export type { BrowserPromotionApprovalRequest } from './models/BrowserPromotionApprovalRequest.js';
+export type { BrowserPromotionApprovalResponse } from './models/BrowserPromotionApprovalResponse.js';
 export type { BudgetThresholdWebhookPayload } from './models/BudgetThresholdWebhookPayload.js';
 export type { BuildExportResponse } from './models/BuildExportResponse.js';
 export type { BuildListResponse } from './models/BuildListResponse.js';
@@ -557,6 +561,7 @@ export type { EnvironmentJobSmoke } from './models/EnvironmentJobSmoke.js';
 export type { EnvironmentPolicy } from './models/EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './models/EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './models/EnvironmentQueueSmoke.js';
+export type { EnvironmentRouteBudgets } from './models/EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './models/EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './models/EnvironmentServiceBinding.js';
 export type { EnvironmentWorkload } from './models/EnvironmentWorkload.js';
@@ -2098,6 +2103,7 @@ export type { ScheduleOccurrenceResponse } from './models/ScheduleOccurrenceResp
 export type { SchedulePolicy } from './models/SchedulePolicy.js';
 export type { ScopedAppEnvResponse } from './models/ScopedAppEnvResponse.js';
 export type { ScopedAppSecretResponse } from './models/ScopedAppSecretResponse.js';
+export type { ScopedRouteBudgetReport } from './models/ScopedRouteBudgetReport.js';
 export type { SeatUsageResponse } from './models/SeatUsageResponse.js';
 export type { SecretFinding } from './models/SecretFinding.js';
 export type { SecretKey } from './models/SecretKey.js';
@@ -2135,6 +2141,7 @@ export type { SetAutomationPublishPolicyRequest } from './models/SetAutomationPu
 export type { SetBindingReleasePolicyRequest } from './models/SetBindingReleasePolicyRequest.js';
 export type { SetCanaryRouteGateRequest } from './models/SetCanaryRouteGateRequest.js';
 export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasRequest.js';
+export type { SetEnvironmentRouteBudgetsRequest } from './models/SetEnvironmentRouteBudgetsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucketAccessGrantRequest.js';
 export type { SetObjectS3CopySourceRequest } from './models/SetObjectS3CopySourceRequest.js';
@@ -2165,6 +2172,8 @@ export type { SimulateAutomationResponse } from './models/SimulateAutomationResp
 export type { SLODuration } from './models/SLODuration.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';
+export type { SourceReviewRequest } from './models/SourceReviewRequest.js';
+export type { SourceReviewResponse } from './models/SourceReviewResponse.js';
 export type { SourceTarballDeployRequest } from './models/SourceTarballDeployRequest.js';
 export type { StatusIncident } from './models/StatusIncident.js';
 export type { StatusPage } from './models/StatusPage.js';
@@ -2253,6 +2262,7 @@ export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
 export type { WebhookAutomationBindingResponse } from './models/WebhookAutomationBindingResponse.js';
 export type { WebhookAutomationReceiptResponse } from './models/WebhookAutomationReceiptResponse.js';
 export type { WorkDecision } from './models/WorkDecision.js';
+export type { WorkerRolloutObservation } from './models/WorkerRolloutObservation.js';
 export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './models/WorkflowCallbackResponse.js';
 export type { WorkflowCallbackWebhookBindingResponse } from './models/WorkflowCallbackWebhookBindingResponse.js';

@@ -2900,6 +2900,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
 		handler.WithEdgeRuleHitRecorder(hitCounter)
+		// ADR-831 amendment 5: off-path WAF detections become events too.
+		wafInspector.WithEventRecorder(hitCounter)
 		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that

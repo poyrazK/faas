@@ -90,12 +90,20 @@
       <p class="fine">Nothing was authorized. You can close this tab.</p>
     {{else}}
       <p>
+        {{if index .Data "MCP"}}
+        A Gregale MCP bridge requested a connection as <strong>{{index .Data "AccountEmail"}}</strong>.
+        Authorizing issues an eight-hour credential to inspect apps, logs, metrics and deployments.
+        {{if index .Data "MCPWrites"}}It also permits deployment, promotion and rollback.{{end}}
+        Return to the bridge to review the agent and select its apps before connecting.
+        You can revoke the credential from your account's API keys page.
+        {{else}}
         <code>gregale login</code> opened this page. Authorizing gives that
         terminal access as <strong>{{index .Data "AccountEmail"}}</strong> — this
         account only.
+        {{end}}
       </p>
 
-      <p class="code-label">Code, as printed in your terminal</p>
+      <p class="code-label">Authorization code</p>
       <div class="code">{{index .Data "Code"}}</div>
 
       <form method="POST" action="/cli-auth">

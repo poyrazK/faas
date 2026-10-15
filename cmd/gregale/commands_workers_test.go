@@ -596,3 +596,28 @@ func TestCmdWorkersLogs_RejectsNonWorker(t *testing.T) {
 		t.Fatalf("expected 'not a worker' error; got: %s", stderr)
 	}
 }
+
+// A worker without worker_replicas runs one replica and may grow to its
+// max_concurrency (schedd's default); the CLI printed 0..0 for it (H10-63).
+func TestWorkerReplicaBoundsMirrorScheduler(t *testing.T) {
+	worker := api.AppManifest{ExecutionMode: api.ExecutionModeWorker}
+	tests := []struct {
+		name           string
+		app            api.AppResponse
+		wantLo, wantHi int
+	}{
+		{name: "undeclared", app: api.AppResponse{MaxConcurrency: 5, Manifest: worker}, wantLo: 1, wantHi: 5},
+		{name: "scaling max caps", app: api.AppResponse{MaxConcurrency: 5, ScalingPolicy: &api.ScalingPolicy{MaxInstances: 2}, Manifest: worker}, wantLo: 1, wantHi: 2},
+		{name: "declared bounds", app: api.AppResponse{MaxConcurrency: 5, Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker, WorkerReplicas: &api.WorkerScaling{Min: 0, Max: 3}}}, wantLo: 0, wantHi: 3},
+		{name: "declared max above app cap", app: api.AppResponse{MaxConcurrency: 5, Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker, WorkerReplicas: &api.WorkerScaling{Min: 2, Max: 9}}}, wantLo: 2, wantHi: 5},
+		{name: "declared min only", app: api.AppResponse{MaxConcurrency: 4, Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker, WorkerReplicas: &api.WorkerScaling{Min: 2}}}, wantLo: 2, wantHi: 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lo, hi := workerReplicaBounds(tt.app)
+			if lo != tt.wantLo || hi != tt.wantHi {
+				t.Fatalf("bounds = %d..%d, want %d..%d", lo, hi, tt.wantLo, tt.wantHi)
+			}
+		})
+	}
+}

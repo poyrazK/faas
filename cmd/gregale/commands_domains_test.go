@@ -14,7 +14,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -322,5 +324,52 @@ func TestDomainsAdd_PositionalDomainWithTrailingFlags(t *testing.T) {
 	authedFakeAPI(t, "", http.StatusOK)
 	if code := cmdDomains([]string{"add", "a.example.com", "--domain", "b.example.com", "--app", "shop-api"}); code == 0 {
 		t.Fatal("conflicting positional and --domain accepted")
+	}
+}
+
+// On an installation without customer certificates the control plane reports
+// custom-domains as runtime_unavailable; domains add must refuse instead of
+// creating a binding that stays pending while promising a certificate (H10-64).
+func TestDomainsAdd_RefusesWhenCustomDomainsRuntimeUnavailable(t *testing.T) {
+	resetJSONOut(t)
+	for _, tc := range []struct {
+		name       string
+		capability string
+		wantCode   int
+		wantCreate bool
+	}{
+		{name: "runtime unavailable", capability: `{"key":"custom-domains","enabled":false,"unavailable_reason":"runtime_unavailable","unavailable_detail":"Not on this installation."}`, wantCode: 1},
+		{name: "enabled", capability: `{"key":"custom-domains","enabled":true}`, wantCode: 0, wantCreate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			created := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/v1/capabilities":
+					_, _ = io.WriteString(w, `{"capabilities":[`+tc.capability+`]}`)
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/domains":
+					created = true
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = io.WriteString(w, `{"domain":"app.example.com","app_id":"app-1","challenge_token":"challenge"}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			code, stderr := runWithStderr(t, func() int {
+				return cmdDomains([]string{"add", "app.example.com", "--app", "shop-api"})
+			})
+			if code != tc.wantCode || created != tc.wantCreate {
+				t.Fatalf("exit = %d created = %t, want %d/%t; stderr=%s", code, created, tc.wantCode, tc.wantCreate, stderr)
+			}
+			if !tc.wantCreate && !strings.Contains(stderr, "never get a certificate") {
+				t.Fatalf("refusal should say why: %s", stderr)
+			}
+		})
 	}
 }

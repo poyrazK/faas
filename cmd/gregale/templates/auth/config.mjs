@@ -1,5 +1,7 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4 })
+
+import { createPrivateKey } from 'node:crypto'
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
 
@@ -7,6 +9,20 @@ export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migr
 // setting these GoTrue variables as app secrets. Everything else is owned by
 // Gregale; any other GOTRUE_ variable fails startup instead of being ignored.
 const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_']
+
+// OAuth providers `gregale auth providers` configures; GoTrue v2.197.0 names.
+// Mirrored by cmd/gregale (TestAuthTemplateSettingsContract).
+export const providers = Object.freeze(['apple', 'azure', 'bitbucket', 'discord', 'facebook', 'figma', 'github', 'gitlab', 'google', 'kakao', 'keycloak', 'linkedin_oidc', 'notion', 'slack_oidc', 'spotify', 'twitch', 'workos', 'x', 'zoom'])
+
+// Password character classes for GOTRUE_PASSWORD_REQUIRED_CHARACTERS, which
+// separates classes with ':'. No class contains ':' or a backslash, so none needs
+// escaping. Mirrored by cmd/gregale (TestAuthTemplateSettingsContract).
+export const characterClasses = Object.freeze({
+  lower: 'abcdefghijklmnopqrstuvwxyz',
+  upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  digit: '0123456789',
+  symbol: '!@#$%^&*()_+-=[]{};\'"|<>?,./`~',
+})
 
 export function databaseURL(value) {
   const url = new URL(value)
@@ -33,22 +49,49 @@ function redirectURL(value, name) {
   return value
 }
 
-// GOTRUE_JWT_KEYS is a JSON array of private JWKs; exactly one may sign.
-// Verification-only keys keep previously issued tokens valid during rotation.
-export function signingKeys(value) {
-  let keys
-  try { keys = JSON.parse(value) } catch { throw new Error('Invalid AUTH_JWT_KEYS') }
-  if (!Array.isArray(keys) || keys.length < 1 || keys.length > 4) throw new Error('AUTH_JWT_KEYS must hold one to four keys')
-  const kids = new Set()
-  let signers = 0
-  for (const key of keys) {
-    if (!key || typeof key !== 'object' || key.kty !== 'EC' || key.crv !== 'P-256' || key.alg !== 'ES256' || typeof key.d !== 'string' || typeof key.kid !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(key.kid) || kids.has(key.kid)) throw new Error('AUTH_JWT_KEYS must hold distinct ES256 private keys')
-    kids.add(key.kid)
-    if (!Array.isArray(key.key_ops) || !key.key_ops.every(op => op === 'sign' || op === 'verify')) throw new Error('Invalid AUTH_JWT_KEYS key_ops')
-    if (key.key_ops.includes('sign')) signers++
+const signingKeyName = /^AUTH_JWT_KEY_([0-9A-F]{8})$/
+const signerName = /^AUTH_JWT_SIGNER_([0-9A-F]{8})$/
+
+export const signingKeyID = id => `gregale-${id.toLowerCase()}`
+
+// Each signing key is its own sealed app secret, AUTH_JWT_KEY_<ID>, holding
+// one private ES256 JWK. AUTH_JWT_SIGNER_<ID> secrets hold the Unix time a key
+// was made the signer, and the newest one signs, so activating a key is one
+// write and the CLI can see from secret names which keys are or are about to
+// become the signer. The other keys only verify: a standby key is published
+// before it signs, and a previous key keeps its unexpired tokens valid.
+// Rotating therefore never reads a private key back out of a write-only
+// secret. The result feeds GOTRUE_JWT_KEYS, in which exactly one key signs.
+export function signingKeys(env) {
+  const keys = []
+  for (const [name, value] of Object.entries(env)) {
+    const id = signingKeyName.exec(name)?.[1]
+    if (!id) continue
+    let jwk
+    try { jwk = JSON.parse(value) } catch { throw new Error(`Invalid ${name}`) }
+    const valid = jwk && typeof jwk === 'object' && jwk.kty === 'EC' && jwk.crv === 'P-256' && jwk.alg === 'ES256' && jwk.kid === signingKeyID(id) && ['x', 'y', 'd'].every(field => typeof jwk[field] === 'string')
+    if (!valid) throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`)
+    try { createPrivateKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }, format: 'jwk' }) } catch { throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`) }
+    keys.push({ id, jwk })
   }
-  if (signers !== 1) throw new Error('AUTH_JWT_KEYS must hold exactly one signing key')
-  return JSON.stringify(keys)
+  if (keys.length < 1 || keys.length > limits.signingKeys) throw new Error(`Configure one to ${limits.signingKeys} AUTH_JWT_KEY_<ID> secrets`)
+  const signers = []
+  for (const [name, value] of Object.entries(env)) {
+    const id = signerName.exec(name)?.[1]
+    if (!id) continue
+    if (!/^[1-9][0-9]{0,11}$/.test(value)) throw new Error(`${name} must hold a Unix time`)
+    signers.push({ id, at: Number(value) })
+  }
+  signers.sort((a, b) => b.at - a.at)
+  if (signers.length === 0 || (signers.length > 1 && signers[0].at === signers[1].at)) throw new Error('Exactly one newest AUTH_JWT_SIGNER_<ID> must name the signing key')
+  const signing = signers[0].id
+  if (!keys.some(key => key.id === signing)) throw new Error(`AUTH_JWT_SIGNER_${signing} names no AUTH_JWT_KEY_${signing}`)
+  keys.sort((a, b) => a.id.localeCompare(b.id))
+  return {
+    signing,
+    verifying: keys.map(key => key.id).filter(id => id !== signing),
+    gotrue: JSON.stringify(keys.map(({ id, jwk }) => ({ kty: 'EC', crv: 'P-256', alg: 'ES256', kid: jwk.kid, x: jwk.x, y: jwk.y, d: jwk.d, key_ops: id === signing ? ['sign', 'verify'] : ['verify'] }))),
+  }
 }
 
 export function runtimeConfig(env) {
@@ -68,7 +111,15 @@ export function runtimeConfig(env) {
     passthrough[key] = value
   }
   const api = `${external}/auth/v1`
+  const keys = signingKeys(env)
+  // GoTrue needs each provider's callback; it is always this app's.
+  const callbacks = {}
+  for (const provider of providers) {
+    const prefix = `GOTRUE_EXTERNAL_${provider.toUpperCase()}`
+    if (passthrough[`${prefix}_ENABLED`] === 'true' && !passthrough[`${prefix}_REDIRECT_URI`]) callbacks[`${prefix}_REDIRECT_URI`] = `${api}/callback`
+  }
   const gotrueEnv = {
+    ...callbacks,
     ...passthrough,
     GOTRUE_API_HOST: gotrue.host,
     PORT: String(gotrue.port),
@@ -82,7 +133,7 @@ export function runtimeConfig(env) {
     GOTRUE_DB_MAX_POOL_SIZE: String(limits.pool),
     GOTRUE_DB_MIGRATIONS_PATH: gotrue.migrations,
     GOTRUE_JWT_SECRET: env.AUTH_JWT_SECRET,
-    GOTRUE_JWT_KEYS: signingKeys(env.AUTH_JWT_KEYS),
+    GOTRUE_JWT_KEYS: keys.gotrue,
     GOTRUE_JWT_EXP: String(limits.accessTokenSeconds),
     GOTRUE_JWT_AUD: 'authenticated',
     GOTRUE_JWT_ISSUER: api,
@@ -97,7 +148,32 @@ export function runtimeConfig(env) {
     // which carry user email addresses; logs.mjs filters them as well.
     GOTRUE_LOG_LEVEL: 'warn',
   }
-  return { external, api, gotrueEnv, redirects, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email: emailConfig(env), app: new URL(site).host }
+  const email = emailConfig(env)
+  const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: new URL(site).host }
+  return { ...config, settings: publicSettings(config) }
+}
+
+// publicSettings is what /settings/v1 reports: only values that are public
+// anyway (published key IDs, enabled providers, rules a sign-up form shows)
+// or harmless. The CLI and dashboard read settings here because app secrets
+// are write-only.
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app }) {
+  const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
+  const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
+    .map(chars => Object.keys(characterClasses).find(name => characterClasses[name] === chars) ?? 'custom')
+  return {
+    app,
+    site_url: g.GOTRUE_SITE_URL,
+    redirect_urls: redirects,
+    signup: { enabled: g.GOTRUE_DISABLE_SIGNUP !== 'true', autoconfirm: g.GOTRUE_MAILER_AUTOCONFIRM === 'true' },
+    providers: providers.filter(provider => g[`GOTRUE_EXTERNAL_${provider.toUpperCase()}_ENABLED`] === 'true'),
+    // GoTrue's defaults: six characters, no classes, TOTP enrolment on.
+    // `--mfa off` stops enrolment only; enrolled users keep verifying.
+    password: { min_length: Number(g.GOTRUE_PASSWORD_MIN_LENGTH ?? 6), required, leaked_password_check: flag(g.GOTRUE_PASSWORD_HIBP_ENABLED, false) },
+    mfa: { totp: flag(g.GOTRUE_MFA_TOTP_ENROLL_ENABLED, true) },
+    email: { configured: email !== null },
+    keys,
+  }
 }
 
 // AUTH_AUTHZ declares custom roles and policies; gregale_auth.apply_authz

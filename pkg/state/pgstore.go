@@ -6831,6 +6831,7 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	reviewed := d.ExpectedReview != nil
 	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -6869,6 +6870,15 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.RolloutStartedAt = &now
 	}
 
+	if reviewed && normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope {
+		params := sqlc.LockReviewedEnvironmentParams{AppID: mustPgUUID(d.AppID), Scope: d.Scope}
+		if _, err := sqlc.New().LockReviewedEnvironment(ctx, tx, params); err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+		if err := sqlc.New().LockReviewedRoutePolicy(ctx, tx, sqlc.LockReviewedRoutePolicyParams(params)); err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+	}
 	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, d.AppID); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6888,6 +6898,28 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
+	if d.ExpectedReview != nil {
+		if err := validateReviewedDeployment(d); err != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		review, err := readReleaseReview(ctx, tx, d.AppID, d.Scope)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if d.ReviewedRolloutMode != "" && review.Protected {
+			return Deployment{}, 0, ErrReleaseReviewChanged
+		}
+		if err := checkReleaseReview(*d.ExpectedReview, review); err != nil {
+			return Deployment{}, 0, err
+		}
+		if err := prepareReviewedWorkloadTx(ctx, tx, d, review); err != nil {
+			return Deployment{}, 0, err
+		}
+		d.ExpectedReview = nil
+		d.ReviewedRolloutMode = ""
+	}
+	d.ReviewedSettings = nil
+
 	if len(cloneInputs) > 0 {
 		d, cloneRecord, err = prepareCloneDeploymentTx(ctx, tx, *cloneInputs[0], cloneOperation)
 		if err != nil {
@@ -7167,6 +7199,13 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		if err != nil {
 			return Deployment{}, 0, err
 		}
+	}
+	if reviewed {
+		review, err := readReleaseReview(ctx, tx, created.AppID, normalizedDeploymentScope(created.Scope))
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		created.StagedReview = &review
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: commit create deployment: %w", err)
@@ -7765,7 +7804,7 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return s.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
+func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard, reviews ...*api.AppReleaseReview) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7777,6 +7816,23 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer s.finishMCPAdmission(ctx, tx, admission, &resultErr)
 
+	trafficTarget, err := sqlc.New().ReadDeploymentTrafficScope(ctx, tx, mustPgUUID(id))
+	if err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	trafficScope := trafficTarget.Scope
+	if len(reviews) > 0 {
+		if len(reviews) != 1 || reviews[0] == nil || reviews[0].AppID != trafficTarget.AppID || normalizedDeploymentScope(reviews[0].Scope) != trafficScope {
+			return Deployment{}, ErrInvalidArgument
+		}
+		params := sqlc.LockReviewedEnvironmentParams{AppID: mustPgUUID(reviews[0].AppID), Scope: trafficScope}
+		if _, err := sqlc.New().LockReviewedEnvironment(ctx, tx, params); err != nil {
+			return Deployment{}, mapErr(err)
+		}
+		if err := sqlc.New().LockReviewedRoutePolicy(ctx, tx, sqlc.LockReviewedRoutePolicyParams(params)); err != nil {
+			return Deployment{}, mapErr(err)
+		}
+	}
 	if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
 		return Deployment{}, err
 	}
@@ -7792,6 +7848,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	// Serialize with cutover/configuration before deployment locks.
 	if _, err := sqlc.New().LockDeploymentTrafficApp(ctx, tx, mustPgUUID(id)); err != nil {
 		return Deployment{}, fmt.Errorf("state: lock traffic app: %w", mapErr(err))
+	}
+	if len(reviews) > 0 {
+		current, err := readReleaseReview(ctx, tx, reviews[0].AppID, trafficScope)
+		if err != nil {
+			return Deployment{}, err
+		}
+		if err := validateReviewedTraffic(*reviews[0], current, newPercent); err != nil {
+			return Deployment{}, err
+		}
 	}
 	// (1) Lock the app's live rows. FOR UPDATE serialises concurrent
 	// UpdateDeploymentTraffic / CreateDeployment calls.
@@ -7838,10 +7903,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err := tx.QueryRow(ctx,
 		`select exists (
 		   select 1 from deployments
-		    where app_id = $1 and status = 'live'
+		    where app_id = $1 and scope = $2 and status = 'live'
 		      and canary_total_steps > 0
 		      and rollout_state in ('pending', 'rolling_out')
-		 )`, appID).Scan(&activeCanary); err != nil {
+		 )`, appID, trafficScope).Scan(&activeCanary); err != nil {
 		return Deployment{}, fmt.Errorf("state: check active canary before traffic update: %w", err)
 	}
 	if activeCanary {
@@ -7886,31 +7951,17 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	// Read sibling weights first so the algorithm has the prior
 	// distribution to redistribute proportionally. We re-stamp
 	// inside the same tx that holds the FOR UPDATE locks above.
-	rows, err := tx.Query(ctx,
-		`select id, traffic_percent
-		   from deployments
-		  where app_id = $1 and status = 'live' and id != $2
-		  order by id`,
-		appID, id)
+	rows, err := sqlc.New().ListTrafficSiblingsInScope(ctx, tx, sqlc.ListTrafficSiblingsInScopeParams{AppID: mustPgUUID(appID), Scope: trafficScope, ID: mustPgUUID(id)})
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: read sibling weights: %w", err)
+		return Deployment{}, err
 	}
 	type sibling struct {
 		ID    string
 		Prior int
 	}
-	var siblings []sibling
-	for rows.Next() {
-		var s sibling
-		if err := rows.Scan(&s.ID, &s.Prior); err != nil {
-			rows.Close()
-			return Deployment{}, fmt.Errorf("state: scan sibling weight: %w", err)
-		}
-		siblings = append(siblings, s)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return Deployment{}, fmt.Errorf("state: iterate sibling weights: %w", err)
+	siblings := make([]sibling, 0, len(rows))
+	for _, row := range rows {
+		siblings = append(siblings, sibling{ID: row.ID, Prior: int(row.TrafficPercent)})
 	}
 	if len(expectedServingID) > 0 {
 		servingID := ""
@@ -7973,13 +8024,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	// (5) Σ invariant assertion. Structurally guaranteed by
 	// RedistributeTraffic + the newPercent stamp above, but the
 	// test suite pins the check (defence in depth).
-	var sum int
-	if err := tx.QueryRow(ctx,
-		`select coalesce(sum(traffic_percent), 0)
-		   from deployments
-		  where app_id = $1 and status = 'live'`,
-		appID).Scan(&sum); err != nil {
-		return Deployment{}, fmt.Errorf("state: read Σ traffic_percent: %w", err)
+	sum, err := sqlc.New().ReadLiveTrafficSumInScope(ctx, tx, sqlc.ReadLiveTrafficSumInScopeParams{AppID: mustPgUUID(appID), Scope: trafficScope})
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: read scoped traffic sum: %w", err)
 	}
 	if sum != 100 {
 		return Deployment{}, fmt.Errorf("state: Σ traffic_percent = %d, want 100: %w",
@@ -20059,6 +20106,56 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 	return out, rows.Err()
 }
 
+// listCustomerEventsHead and listCustomerEventsTail frame both shapes of the
+// account-wide ListCustomerEvents query; only the kind-prefix predicate
+// differs. $1 account, $2 include anonymous, $3 kind prefix, $4 since,
+// $5 app id, $6 limit.
+const listCustomerEventsHead = `
+		SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
+		  FROM events e
+		 WHERE (
+		       e.subject = $1::uuid
+		       OR ($2::bool AND e.subject IS NULL AND (
+		           EXISTS (SELECT 1 FROM apps a
+		                    WHERE a.account_id = $1::uuid AND a.id::text = e.data->>'app_id')
+		           OR EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+		                      WHERE a.account_id = $1::uuid AND d.id::text = e.data->>'deployment_id')
+		           OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+		                      WHERE a.account_id = $1::uuid AND b.id::text = e.data->>'build_id')
+		           OR EXISTS (SELECT 1 FROM instances i JOIN apps a ON a.id = i.app_id
+		                      WHERE a.account_id = $1::uuid AND i.id::text IN (e.data->>'instance_id', e.data->>'instance'))
+		       ))
+		   )`
+
+const listCustomerEventsTail = `
+		   AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
+		   AND ($5::text = '' OR (
+		       e.data->>'app_id' = $5::text
+		       OR EXISTS (SELECT 1 FROM deployments d WHERE d.id::text = e.data->>'deployment_id' AND d.app_id::text = $5::text)
+		       OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id
+		                  WHERE b.id::text = e.data->>'build_id' AND d.app_id::text = $5::text)
+		       OR EXISTS (SELECT 1 FROM instances i WHERE i.id::text IN (e.data->>'instance_id', e.data->>'instance') AND i.app_id::text = $5::text)
+		   ))
+		 ORDER BY e.at DESC, e.id DESC
+		 LIMIT $6`
+
+// listCustomerEventsSQL serves requests without a kind prefix.
+const listCustomerEventsSQL = listCustomerEventsHead + `
+		   AND ($3::text = '' OR left(e.kind, length($3::text)) = $3::text)` + listCustomerEventsTail
+
+// listCustomerEventsByKindPrefixSQL serves requests with a kind prefix. The
+// byte-order range lets events_subject_kind_c_at_id_idx find the matching
+// kinds directly. The left() check alone cannot use an index, so a
+// selective prefix used to read every event the account owns: 73k rows and
+// ~750 ms warm on production-us, past the request deadline cold (H10-43).
+// Under COLLATE "C" (byte order) the range holds every kind that starts with
+// the prefix, unless U+10FFFF follows it (kinds are ASCII); left() keeps the
+// result exact.
+const listCustomerEventsByKindPrefixSQL = listCustomerEventsHead + `
+		   AND e.kind COLLATE "C" >= $3::text COLLATE "C"
+		   AND e.kind COLLATE "C" < ($3::text || chr(1114111)) COLLATE "C"
+		   AND left(e.kind, length($3::text)) = $3::text` + listCustomerEventsTail
+
 // ListCustomerEvents applies tenant ownership and all public filters in one
 // bounded PostgreSQL query. Anonymous rows with no resolvable customer object
 // remain operator-only.
@@ -20075,33 +20172,11 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 	if !filter.Since.IsZero() {
 		since = filter.Since
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT e.id, e.at, e.actor, e.kind, e.subject, e.data
-		  FROM events e
-		 WHERE (
-		       e.subject = $1::uuid
-		       OR ($2::bool AND e.subject IS NULL AND (
-		           EXISTS (SELECT 1 FROM apps a
-		                    WHERE a.account_id = $1::uuid AND a.id::text = e.data->>'app_id')
-		           OR EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
-		                      WHERE a.account_id = $1::uuid AND d.id::text = e.data->>'deployment_id')
-		           OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
-		                      WHERE a.account_id = $1::uuid AND b.id::text = e.data->>'build_id')
-		           OR EXISTS (SELECT 1 FROM instances i JOIN apps a ON a.id = i.app_id
-		                      WHERE a.account_id = $1::uuid AND i.id::text IN (e.data->>'instance_id', e.data->>'instance'))
-		       ))
-		   )
-		   AND ($3::text = '' OR left(e.kind, length($3::text)) = $3::text)
-		   AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
-		   AND ($5::text = '' OR (
-		       e.data->>'app_id' = $5::text
-		       OR EXISTS (SELECT 1 FROM deployments d WHERE d.id::text = e.data->>'deployment_id' AND d.app_id::text = $5::text)
-		       OR EXISTS (SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id
-		                  WHERE b.id::text = e.data->>'build_id' AND d.app_id::text = $5::text)
-		       OR EXISTS (SELECT 1 FROM instances i WHERE i.id::text IN (e.data->>'instance_id', e.data->>'instance') AND i.app_id::text = $5::text)
-		   ))
-		 ORDER BY e.at DESC, e.id DESC
-		 LIMIT $6`, filter.AccountID, filter.IncludeAnonymous, filter.KindPrefix, since, filter.AppID, filter.Limit)
+	query := listCustomerEventsSQL
+	if filter.KindPrefix != "" {
+		query = listCustomerEventsByKindPrefixSQL
+	}
+	rows, err := s.pool.Query(ctx, query, filter.AccountID, filter.IncludeAnonymous, filter.KindPrefix, since, filter.AppID, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
