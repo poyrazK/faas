@@ -512,7 +512,7 @@ func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, li
 }
 
 const issueTrackerIncidentGet = `-- name: IssueTrackerIncidentGet :one
-SELECT link_id, settings_revision, failures, incident_id, announced_kind, issue_id, team_id, recipient_account_ids FROM issue_tracker_sync_incidents WHERE link_id=$1
+SELECT link_id, settings_revision, failures, incident_id, announced_kind, issue_id, team_id, recipient_account_ids, opened_at, reminder_count, last_reminded_at FROM issue_tracker_sync_incidents WHERE link_id=$1
 `
 
 func (q *Queries) IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerSyncIncident, error) {
@@ -527,13 +527,19 @@ func (q *Queries) IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID p
 		&i.IssueID,
 		&i.TeamID,
 		&i.RecipientAccountIds,
+		&i.OpenedAt,
+		&i.ReminderCount,
+		&i.LastRemindedAt,
 	)
 	return i, err
 }
 
 const issueTrackerIncidentPut = `-- name: IssueTrackerIncidentPut :exec
-INSERT INTO issue_tracker_sync_incidents(link_id,settings_revision,failures,incident_id,announced_kind,issue_id,team_id,recipient_account_ids)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(link_id) DO UPDATE SET settings_revision=excluded.settings_revision,failures=excluded.failures,incident_id=excluded.incident_id,announced_kind=excluded.announced_kind,issue_id=excluded.issue_id,team_id=excluded.team_id,recipient_account_ids=excluded.recipient_account_ids
+INSERT INTO issue_tracker_sync_incidents(link_id,settings_revision,failures,incident_id,announced_kind,issue_id,team_id,recipient_account_ids,opened_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $4::uuid IS NOT NULL THEN clock_timestamp() ELSE NULL END) ON CONFLICT(link_id) DO UPDATE SET settings_revision=excluded.settings_revision,failures=excluded.failures,incident_id=excluded.incident_id,announced_kind=excluded.announced_kind,issue_id=excluded.issue_id,team_id=excluded.team_id,recipient_account_ids=excluded.recipient_account_ids,
+ opened_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.opened_at WHEN excluded.incident_id IS NOT NULL THEN clock_timestamp() ELSE NULL END,
+ reminder_count=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.reminder_count ELSE 0 END,
+ last_reminded_at=CASE WHEN issue_tracker_sync_incidents.incident_id=excluded.incident_id THEN issue_tracker_sync_incidents.last_reminded_at ELSE NULL END
 `
 
 type IssueTrackerIncidentPutParams struct {
@@ -591,8 +597,8 @@ func (q *Queries) IssueTrackerNotificationCanRead(ctx context.Context, db DBTX, 
 }
 
 const issueTrackerNotificationInsert = `-- name: IssueTrackerNotificationInsert :execrows
-INSERT INTO issue_tracker_sync_notifications(id,link_id,app_id,account_id,issue_id,incident_id,kind,outcome,reason,team_id,recipient_account_ids,payload)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(incident_id,kind) DO NOTHING
+INSERT INTO issue_tracker_sync_notifications(id,link_id,app_id,account_id,issue_id,incident_id,kind,outcome,reason,team_id,recipient_account_ids,payload,reminder_sequence)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(incident_id,kind,reminder_sequence) DO NOTHING
 `
 
 type IssueTrackerNotificationInsertParams struct {
@@ -608,6 +614,7 @@ type IssueTrackerNotificationInsertParams struct {
 	TeamID              pgtype.UUID
 	RecipientAccountIds []pgtype.UUID
 	Payload             []byte
+	ReminderSequence    int32
 }
 
 func (q *Queries) IssueTrackerNotificationInsert(ctx context.Context, db DBTX, arg IssueTrackerNotificationInsertParams) (int64, error) {
@@ -624,6 +631,7 @@ func (q *Queries) IssueTrackerNotificationInsert(ctx context.Context, db DBTX, a
 		arg.TeamID,
 		arg.RecipientAccountIds,
 		arg.Payload,
+		arg.ReminderSequence,
 	)
 	if err != nil {
 		return 0, err
@@ -632,7 +640,7 @@ func (q *Queries) IssueTrackerNotificationInsert(ctx context.Context, db DBTX, a
 }
 
 const issueTrackerNotificationList = `-- name: IssueTrackerNotificationList :many
-WITH notices AS (SELECT n.id,n.link_id,n.kind,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
+WITH notices AS (SELECT n.id,n.link_id,n.kind,n.reminder_sequence,n.outcome,n.reason,n.created_at,n.team_id,COALESCE(t.name,'')::text AS team_name,
  i.id AS issue_id,i.title AS issue_title,
  COALESCE(tr.revision,0)::bigint AS triage_revision,tr.acknowledged_by,tr.claimed_by,
  COALESCE(ack.email::text,'')::text AS acknowledged_name, COALESCE(claim.email::text,'')::text AS claimed_name,
@@ -653,12 +661,12 @@ AND (a.account_id=$8::uuid OR (
  $8::uuid=ANY(n.recipient_account_ids)
  AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$8 AND m.removed_at IS NULL)
  AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$8))))
-), inbox AS (SELECT notices.id, notices.link_id, notices.kind, notices.outcome, notices.reason, notices.created_at, notices.team_id, notices.team_name, notices.issue_id, notices.issue_title, notices.triage_revision, notices.acknowledged_by, notices.claimed_by, notices.acknowledged_name, notices.claimed_name, notices.snoozed_until, notices.snoozed_by, notices.snooze_reason, notices.snoozed_name, notices.active,
+), inbox AS (SELECT notices.id, notices.link_id, notices.kind, notices.reminder_sequence, notices.outcome, notices.reason, notices.created_at, notices.team_id, notices.team_name, notices.issue_id, notices.issue_title, notices.triage_revision, notices.acknowledged_by, notices.claimed_by, notices.acknowledged_name, notices.claimed_name, notices.snoozed_until, notices.snoozed_by, notices.snooze_reason, notices.snoozed_name, notices.active,
  COALESCE(active AND snoozed_until>statement_timestamp(),false)::boolean AS snoozed,
  COALESCE(active AND snoozed_until<=statement_timestamp(),false)::boolean AS resurfaced,
  (CASE WHEN active AND snoozed_until<=statement_timestamp() THEN GREATEST(created_at,snoozed_until) ELSE created_at END)::timestamptz AS sort_at
  FROM notices)
-SELECT id, link_id, kind, outcome, reason, created_at, team_id, team_name, issue_id, issue_title, triage_revision, acknowledged_by, claimed_by, acknowledged_name, claimed_name, snoozed_until, snoozed_by, snooze_reason, snoozed_name, active, snoozed, resurfaced, sort_at FROM inbox
+SELECT id, link_id, kind, reminder_sequence, outcome, reason, created_at, team_id, team_name, issue_id, issue_title, triage_revision, acknowledged_by, claimed_by, acknowledged_name, claimed_name, snoozed_until, snoozed_by, snooze_reason, snoozed_name, active, snoozed, resurfaced, sort_at FROM inbox
 WHERE ($1::text='all' OR ($1='snoozed' AND snoozed) OR ($1='active' AND NOT snoozed))
 AND ($2::timestamptz IS NULL OR (sort_at,id)<($2,$3::uuid))
 ORDER BY sort_at DESC,id DESC LIMIT $4
@@ -679,6 +687,7 @@ type IssueTrackerNotificationListRow struct {
 	ID               pgtype.UUID
 	LinkID           pgtype.UUID
 	Kind             string
+	ReminderSequence int32
 	Outcome          string
 	Reason           string
 	CreatedAt        pgtype.Timestamptz
@@ -723,6 +732,7 @@ func (q *Queries) IssueTrackerNotificationList(ctx context.Context, db DBTX, arg
 			&i.ID,
 			&i.LinkID,
 			&i.Kind,
+			&i.ReminderSequence,
 			&i.Outcome,
 			&i.Reason,
 			&i.CreatedAt,
@@ -919,6 +929,236 @@ func (q *Queries) IssueTrackerNotificationTarget(ctx context.Context, db DBTX, a
 		&i.Slug,
 	)
 	return i, err
+}
+
+const issueTrackerReminderApp = `-- name: IssueTrackerReminderApp :one
+SELECT a.id,a.account_id FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT (GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute')::timestamptz AS due_at FROM issue_tracker_sync_incidents c
+ JOIN issue_tracker_links l ON l.id=c.link_id
+ JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
+ JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
+ JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id AND p.enabled AND p.revision=c.settings_revision
+ JOIN issue_tracker_sync_reminder_policies rp ON rp.app_id=a.id AND rp.account_id=a.account_id AND rp.enabled
+ LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=c.incident_id
+ WHERE c.incident_id IS NOT NULL AND c.opened_at IS NOT NULL AND c.reminder_count<$1
+ AND tr.acknowledged_by IS NULL
+ AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
+ AND GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute'<=statement_timestamp() ORDER BY due_at,c.link_id LIMIT 1) ready ON true
+WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL
+AND owner.plan=ANY($2::text[]) ORDER BY ready.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+`
+
+type IssueTrackerReminderAppParams struct {
+	ReminderMax   int32
+	EntitledPlans []string
+}
+
+type IssueTrackerReminderAppRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerReminderApp(ctx context.Context, db DBTX, arg IssueTrackerReminderAppParams) (IssueTrackerReminderAppRow, error) {
+	row := db.QueryRow(ctx, issueTrackerReminderApp, arg.ReminderMax, arg.EntitledPlans)
+	var i IssueTrackerReminderAppRow
+	err := row.Scan(&i.ID, &i.AccountID)
+	return i, err
+}
+
+const issueTrackerReminderDue = `-- name: IssueTrackerReminderDue :one
+SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at FROM apps a JOIN accounts owner ON owner.id=a.account_id
+JOIN LATERAL (SELECT c.link_id, c.settings_revision, c.failures, c.incident_id, c.announced_kind, c.issue_id, c.team_id, c.recipient_account_ids, c.opened_at, c.reminder_count, c.last_reminded_at FROM issue_tracker_sync_incidents c
+ JOIN issue_tracker_links l ON l.id=c.link_id
+ JOIN app_issues original ON original.id=l.issue_id AND original.app_id=a.id
+ JOIN issue_tracker_auto_sync s ON s.link_id=c.link_id AND s.account_id=a.account_id AND s.app_id=a.id
+ JOIN issue_tracker_sync_notification_policies p ON p.app_id=a.id AND p.account_id=a.account_id AND p.enabled AND p.revision=c.settings_revision
+ JOIN issue_tracker_sync_reminder_policies rp ON rp.app_id=a.id AND rp.account_id=a.account_id AND rp.enabled
+ LEFT JOIN issue_tracker_sync_triage tr ON tr.incident_id=c.incident_id
+ WHERE c.incident_id IS NOT NULL AND c.opened_at IS NOT NULL AND c.reminder_count<$1
+ AND tr.acknowledged_by IS NULL
+ AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp())
+ AND GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until)+rp.interval_minutes*interval '1 minute'<=statement_timestamp() ORDER BY GREATEST(c.opened_at,rp.updated_at,c.last_reminded_at,tr.snoozed_until),c.link_id LIMIT 1) c ON true
+WHERE a.id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($4::text[])
+`
+
+type IssueTrackerReminderDueParams struct {
+	ReminderMax   int32
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	EntitledPlans []string
+}
+
+func (q *Queries) IssueTrackerReminderDue(ctx context.Context, db DBTX, arg IssueTrackerReminderDueParams) (IssueTrackerSyncIncident, error) {
+	row := db.QueryRow(ctx, issueTrackerReminderDue,
+		arg.ReminderMax,
+		arg.AppID,
+		arg.AccountID,
+		arg.EntitledPlans,
+	)
+	var i IssueTrackerSyncIncident
+	err := row.Scan(
+		&i.LinkID,
+		&i.SettingsRevision,
+		&i.Failures,
+		&i.IncidentID,
+		&i.AnnouncedKind,
+		&i.IssueID,
+		&i.TeamID,
+		&i.RecipientAccountIds,
+		&i.OpenedAt,
+		&i.ReminderCount,
+		&i.LastRemindedAt,
+	)
+	return i, err
+}
+
+const issueTrackerReminderHistory = `-- name: IssueTrackerReminderHistory :many
+SELECT n.reminder_sequence,n.created_at,COALESCE(t.name,'')::text AS team_name FROM issue_tracker_sync_notifications n
+JOIN apps a ON a.id=n.app_id AND a.account_id=n.account_id LEFT JOIN app_issue_teams t ON t.id=n.team_id AND t.app_id=a.id
+WHERE n.incident_id=$1 AND n.kind='reminder' AND a.id=$2 AND a.account_id=$3
+AND (a.account_id=$4::uuid OR (
+ $4::uuid=ANY(n.recipient_account_ids)
+ AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$4 AND m.removed_at IS NULL)
+ AND (n.team_id IS NULL OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=n.team_id AND tm.account_id=$4))))
+ORDER BY n.reminder_sequence DESC LIMIT $5
+`
+
+type IssueTrackerReminderHistoryParams struct {
+	IncidentID     pgtype.UUID
+	AppID          pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	ActorAccountID pgtype.UUID
+	HistoryLimit   int32
+}
+
+type IssueTrackerReminderHistoryRow struct {
+	ReminderSequence int32
+	CreatedAt        pgtype.Timestamptz
+	TeamName         string
+}
+
+func (q *Queries) IssueTrackerReminderHistory(ctx context.Context, db DBTX, arg IssueTrackerReminderHistoryParams) ([]IssueTrackerReminderHistoryRow, error) {
+	rows, err := db.Query(ctx, issueTrackerReminderHistory,
+		arg.IncidentID,
+		arg.AppID,
+		arg.OwnerAccountID,
+		arg.ActorAccountID,
+		arg.HistoryLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerReminderHistoryRow{}
+	for rows.Next() {
+		var i IssueTrackerReminderHistoryRow
+		if err := rows.Scan(&i.ReminderSequence, &i.CreatedAt, &i.TeamName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerReminderOrigin = `-- name: IssueTrackerReminderOrigin :one
+SELECT outcome,reason FROM issue_tracker_sync_notifications WHERE incident_id=$1 AND kind IN ('paused','closure','failure') ORDER BY created_at DESC,id DESC LIMIT 1
+`
+
+type IssueTrackerReminderOriginRow struct {
+	Outcome string
+	Reason  string
+}
+
+func (q *Queries) IssueTrackerReminderOrigin(ctx context.Context, db DBTX, incidentID pgtype.UUID) (IssueTrackerReminderOriginRow, error) {
+	row := db.QueryRow(ctx, issueTrackerReminderOrigin, incidentID)
+	var i IssueTrackerReminderOriginRow
+	err := row.Scan(&i.Outcome, &i.Reason)
+	return i, err
+}
+
+const issueTrackerReminderPolicyGet = `-- name: IssueTrackerReminderPolicyGet :one
+SELECT rp.app_id, rp.account_id, rp.enabled, rp.interval_minutes, rp.revision, rp.updated_at FROM issue_tracker_sync_reminder_policies rp JOIN apps a ON a.id=rp.app_id AND a.account_id=rp.account_id
+WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+`
+
+type IssueTrackerReminderPolicyGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerReminderPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerReminderPolicyGetParams) (IssueTrackerSyncReminderPolicy, error) {
+	row := db.QueryRow(ctx, issueTrackerReminderPolicyGet, arg.ID, arg.AccountID)
+	var i IssueTrackerSyncReminderPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.IntervalMinutes,
+		&i.Revision,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueTrackerReminderPolicyPut = `-- name: IssueTrackerReminderPolicyPut :one
+INSERT INTO issue_tracker_sync_reminder_policies(app_id,account_id,enabled,interval_minutes) VALUES($1,$2,$3,$4)
+ON CONFLICT(app_id) DO UPDATE SET account_id=excluded.account_id,enabled=excluded.enabled,interval_minutes=excluded.interval_minutes,revision=issue_tracker_sync_reminder_policies.revision+1,updated_at=clock_timestamp() RETURNING app_id, account_id, enabled, interval_minutes, revision, updated_at
+`
+
+type IssueTrackerReminderPolicyPutParams struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	Enabled         bool
+	IntervalMinutes int32
+}
+
+func (q *Queries) IssueTrackerReminderPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerReminderPolicyPutParams) (IssueTrackerSyncReminderPolicy, error) {
+	row := db.QueryRow(ctx, issueTrackerReminderPolicyPut,
+		arg.AppID,
+		arg.AccountID,
+		arg.Enabled,
+		arg.IntervalMinutes,
+	)
+	var i IssueTrackerSyncReminderPolicy
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.IntervalMinutes,
+		&i.Revision,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueTrackerReminderReceipt = `-- name: IssueTrackerReminderReceipt :exec
+UPDATE issue_tracker_sync_incidents SET reminder_count=$1,last_reminded_at=clock_timestamp(),issue_id=$2,team_id=$3,recipient_account_ids=$4::uuid[]
+WHERE link_id=$5 AND incident_id=$6
+`
+
+type IssueTrackerReminderReceiptParams struct {
+	Sequence     int32
+	IssueID      pgtype.UUID
+	TeamID       pgtype.UUID
+	RecipientIds []pgtype.UUID
+	LinkID       pgtype.UUID
+	IncidentID   pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerReminderReceipt(ctx context.Context, db DBTX, arg IssueTrackerReminderReceiptParams) error {
+	_, err := db.Exec(ctx, issueTrackerReminderReceipt,
+		arg.Sequence,
+		arg.IssueID,
+		arg.TeamID,
+		arg.RecipientIds,
+		arg.LinkID,
+		arg.IncidentID,
+	)
+	return err
 }
 
 const issueTrackerReviewQueue = `-- name: IssueTrackerReviewQueue :many

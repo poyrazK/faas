@@ -60,3 +60,19 @@ func TestTrackerSnoozeShowsActorExpiryAndEscapedReason(t *testing.T) {
 		}
 	}
 }
+
+func TestTrackerReminderHistoryEscapesRoutingNames(t *testing.T) {
+	tmpl, err := template.ParseFS(tmplFS, "templates/issue_tracker_triage.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := IssueTrackerTriageView{Triage: state.IssueTrackerTriage{Reminders: []state.IssueTrackerReminder{{Sequence: 2, CreatedAt: time.Now().UTC(), TeamName: "<script>team</script>"}}}}
+	var out bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&out, "issue_tracker_triage.html", Page{Data: v}); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	if !strings.Contains(body, "Reminder 2") || strings.Contains(body, "<script>") {
+		t.Fatal(body)
+	}
+}

@@ -58889,7 +58889,11 @@ CREATE TABLE public.issue_tracker_sync_incidents (
  announced_kind text NOT NULL DEFAULT '' CHECK(announced_kind IN ('','paused','closure','failure')),
  issue_id uuid,
  team_id uuid,
- recipient_account_ids uuid[] NOT NULL DEFAULT '{}'
+ recipient_account_ids uuid[] NOT NULL DEFAULT '{}',
+ opened_at timestamptz,
+ reminder_count integer NOT NULL DEFAULT 0 CHECK(reminder_count BETWEEN 0 AND 3),
+ last_reminded_at timestamptz,
+ CONSTRAINT issue_tracker_incident_reminder_receipt CHECK((reminder_count=0)=(last_reminded_at IS NULL))
 );
 CREATE TABLE public.issue_tracker_sync_notifications (
  id uuid PRIMARY KEY,
@@ -58898,14 +58902,16 @@ CREATE TABLE public.issue_tracker_sync_notifications (
  account_id uuid NOT NULL,
  issue_id uuid NOT NULL,
  incident_id uuid NOT NULL,
- kind text NOT NULL CHECK(kind IN ('paused','closure','failure','recovered')),
+ kind text NOT NULL CHECK(kind IN ('paused','closure','failure','recovered','reminder')),
  outcome text NOT NULL CHECK(outcome IN ('matched','pending','applied','error','conflict','blocked','disabled')),
  reason text NOT NULL DEFAULT '' CHECK(octet_length(reason)<=128),
  team_id uuid,
  recipient_account_ids uuid[] NOT NULL CHECK(cardinality(recipient_account_ids)>0),
  payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object'),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- UNIQUE(incident_id,kind)
+ reminder_sequence integer NOT NULL DEFAULT 0,
+ CONSTRAINT issue_tracker_notification_reminder_sequence CHECK((kind='reminder' AND reminder_sequence BETWEEN 1 AND 3) OR (kind<>'reminder' AND reminder_sequence=0)),
+ CONSTRAINT issue_tracker_notification_incident_kind_sequence UNIQUE(incident_id,kind,reminder_sequence)
 );
 CREATE INDEX issue_tracker_sync_notifications_page_idx ON public.issue_tracker_sync_notifications(app_id,created_at DESC,id DESC);
 CREATE INDEX issue_tracker_sync_notifications_link_idx ON public.issue_tracker_sync_notifications(link_id,created_at DESC,id DESC);
@@ -58933,4 +58939,13 @@ CREATE TABLE public.issue_tracker_sync_triage_activity (
  reason text NOT NULL DEFAULT '',
  CONSTRAINT issue_tracker_triage_activity_snooze_fields CHECK ((action='snooze')=(snoozed_until IS NOT NULL) AND (action='snooze' OR reason='') AND octet_length(reason)<=512),
  UNIQUE(incident_id,revision)
+);
+
+CREATE TABLE public.issue_tracker_sync_reminder_policies (
+ app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL,
+ enabled boolean NOT NULL DEFAULT false,
+ interval_minutes integer NOT NULL CHECK(interval_minutes BETWEEN 15 AND 10080),
+ revision bigint NOT NULL DEFAULT 1 CHECK(revision>0),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );

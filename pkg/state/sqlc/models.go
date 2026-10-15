@@ -4139,6 +4139,9 @@ type IssueTrackerSyncIncident struct {
 	IssueID             pgtype.UUID
 	TeamID              pgtype.UUID
 	RecipientAccountIds []pgtype.UUID
+	OpenedAt            pgtype.Timestamptz
+	ReminderCount       int32
+	LastRemindedAt      pgtype.Timestamptz
 }
 
 type IssueTrackerSyncNotification struct {
@@ -4155,6 +4158,7 @@ type IssueTrackerSyncNotification struct {
 	RecipientAccountIds []pgtype.UUID
 	Payload             []byte
 	CreatedAt           pgtype.Timestamptz
+	ReminderSequence    int32
 }
 
 type IssueTrackerSyncNotificationPolicy struct {
@@ -4164,6 +4168,15 @@ type IssueTrackerSyncNotificationPolicy struct {
 	Revision         int64
 	FailureThreshold int32
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type IssueTrackerSyncReminderPolicy struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	Enabled         bool
+	IntervalMinutes int32
+	Revision        int64
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type IssueTrackerSyncTriage struct {

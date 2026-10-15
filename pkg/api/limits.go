@@ -10479,6 +10479,11 @@ const (
 
 // Automatic native tracker reconciliation is bounded independently of issue ingestion.
 const (
+	IssueTrackerReminderIntervalDefaultMinutes  = 1440
+	IssueTrackerReminderIntervalMinMinutes      = 15
+	IssueTrackerReminderIntervalMaxMinutes      = 10080
+	IssueTrackerRemindersMax                    = 3
+	IssueTrackerReminderBatch                   = 10
 	IssueTrackerSyncNotificationFailuresDefault = 3
 	IssueTrackerSyncNotificationFailuresMax     = 20
 	IssueTrackerSyncSnoozeMax                   = 7 * 24 * time.Hour

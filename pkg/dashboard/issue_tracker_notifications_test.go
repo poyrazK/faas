@@ -21,7 +21,7 @@ func TestTrackerNotificationInboxSeparatesOwnerControlsAndEscapesEvidence(t *tes
 			t.Fatal(err)
 		}
 		body := out.String()
-		if strings.Contains(body, "<script>") || strings.Contains(body, `name="failure_threshold"`) != owner || !strings.Contains(body, "Sync health and history") {
+		if strings.Contains(body, "<script>") || strings.Contains(body, `name="failure_threshold"`) != owner || strings.Contains(body, `name="interval_minutes"`) != owner || !strings.Contains(body, "Sync health and history") {
 			t.Fatal(owner, body)
 		}
 	}

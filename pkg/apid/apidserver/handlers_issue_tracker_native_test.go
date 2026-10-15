@@ -2833,3 +2833,366 @@ func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.
 		t.Fatal("stale settings form accepted", out.Code)
 	}
 }
+
+func TestNativeIssueTrackerRemindersAreScopedBoundedAndAtomic(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "tracker-reminders")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Reminder", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	full := apidserver.IssueNativeStore(e)
+	st := state.NewPgStore(*e.Pool())
+	org, err := full.CreateOrg(t.Context(), state.Org{Slug: "reminders-" + uuid.NewString()[:8], Name: "Reminders", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := full.CreateAccount(t.Context(), "reminder-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, app.AccountID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = full.AddOrgMember(t.Context(), org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE apps SET org_id=$2 WHERE id=$1", app.ID, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	team, err := st.PutIssueTeam(t.Context(), app.ID, app.AccountID, app.AccountID, "reminders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{app.AccountID, member.ID}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign", AssigneeTeamID: team.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	link, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, accepted.IssueID, app.AccountID, api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: api.IssueTrackerProviderStatus{Provider: "github", ID: "42", URL: link.URL, State: "open"}, Policy: api.IssueTrackerAutoSync{LinkID: link.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "open"}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noticePolicy, err := st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerNotificationPolicy{Enabled: true, FailureThreshold: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := full.CreateAppWebhook(t.Context(), state.AppWebhook{AppID: app.ID, AccountID: app.AccountID, TargetURL: "https://example.com/reminders", Enabled: true, EventFilter: []string{"issue.tracker_sync.attention", "issue.tracker_sync.recovered"}, SecretSealed: []byte("fake-sealed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := func(outcome string) {
+		t.Helper()
+		if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+			t.Fatal(err)
+		}
+		claim, err := st.ClaimIssueTrackerAutoSync(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		claim.Policy.Outcome = outcome
+		claim.Policy.Reason = ""
+		if outcome == "error" {
+			claim.Policy.Reason = "provider_unavailable"
+		}
+		if _, err = st.FinishIssueTrackerAutoSync(t.Context(), claim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inbox := func(actor string) []state.IssueTrackerSyncNotification {
+		t.Helper()
+		p, err := st.ListIssueTrackerSyncNotificationsView(t.Context(), app.ID, app.AccountID, actor, "", "all", state.IssueCursor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.Items
+	}
+	forceDue := func() {
+		t.Helper()
+		if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_sync_incidents SET opened_at=clock_timestamp()-interval '2 days',last_reminded_at=CASE WHEN reminder_count>0 THEN clock_timestamp()-interval '2 days' ELSE NULL END WHERE link_id=$1 AND incident_id IS NOT NULL", link.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_sync_reminder_policies SET updated_at=clock_timestamp()-interval '2 days' WHERE app_id=$1", app.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func() int {
+		t.Helper()
+		var n int
+		if err := (*e.Pool()).QueryRow(t.Context(), "SELECT reminder_count FROM issue_tracker_sync_incidents WHERE link_id=$1", link.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	enqueue := func(want bool) {
+		t.Helper()
+		ok, err := st.EnqueueIssueTrackerReminder(t.Context())
+		if err != nil || ok != want {
+			t.Fatal("enqueue", ok, err, "want", want)
+		}
+	}
+	rp, err := st.GetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID)
+	if err != nil || rp.Enabled || rp.Revision != 0 || rp.IntervalMinutes != api.IssueTrackerReminderIntervalDefaultMinutes {
+		t.Fatal(rp, err)
+	}
+	complete("error")
+	notice := inbox(app.AccountID)[0].ID
+	forceDue()
+	enqueue(false)
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerReminderPolicy{Enabled: true, IntervalMinutes: api.IssueTrackerReminderIntervalMinMinutes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := st.GetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID); err != nil || p.Revision != noticePolicy.Revision {
+		t.Fatal("reminder settings invalidated incident", p, err)
+	}
+	enqueue(false) // Enabling starts a full interval, even for an old incident.
+	if _, err := st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerReminderPolicy{Enabled: true, IntervalMinutes: rp.IntervalMinutes}); err == nil {
+		t.Fatal("stale reminder settings accepted")
+	}
+	if _, err := st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, member.ID, rp); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("member changed reminder settings", err)
+	}
+	if _, err := st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, state.IssueTrackerReminderPolicy{Revision: rp.Revision, IntervalMinutes: api.IssueTrackerReminderIntervalMaxMinutes + 1}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("invalid reminder interval", err)
+	}
+	until := time.Now().Add(time.Hour)
+	if err := st.UpdateIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice, 0, state.IssueTrackerTriageAction{Action: "snooze", SnoozedUntil: &until}); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(false)
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_sync_triage SET snoozed_until=clock_timestamp() WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	enqueue(false) // A full interval follows snooze expiry.
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_sync_triage SET snoozed_until=clock_timestamp()-interval '2 days' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice, 1, "claim"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), `CREATE FUNCTION reject_reminder_outbox() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event='issue.tracker_sync.attention' THEN RAISE EXCEPTION 'outbox unavailable'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_reminder_outbox BEFORE INSERT ON app_webhook_event_outbox FOR EACH ROW EXECUTE FUNCTION reject_reminder_outbox()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnqueueIssueTrackerReminder(t.Context()); err == nil {
+		t.Fatal("reminder acknowledged failed outbox enqueue")
+	}
+	if count() != 0 || len(inbox(app.AccountID)) != 1 {
+		t.Fatal("partial reminder commit")
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "DROP TRIGGER reject_reminder_outbox ON app_webhook_event_outbox; DROP FUNCTION reject_reminder_outbox()"); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		queued bool
+		err    error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() { ok, err := st.EnqueueIssueTrackerReminder(t.Context()); results <- result{ok, err} }()
+	}
+	wins := 0
+	for range 2 {
+		r := <-results
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.queued {
+			wins++
+		}
+	}
+	if wins != 1 || count() != 1 {
+		t.Fatal("duplicate reminder under concurrency", wins, count())
+	}
+	enqueue(false)
+	if p := inbox(member.ID); len(p) != 2 || p[0].Kind != "reminder" || p[0].ReminderSequence != 1 || p[0].TeamID != team.ID {
+		t.Fatal("team reminder routing", p)
+	}
+	if v, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, member.ID, notice); err != nil || len(v.Reminders) != 1 || v.Revision != 2 {
+		t.Fatal("reminder history/claim changed", v, err)
+	}
+	complete("error")
+	if count() != 1 {
+		t.Fatal("automatic checks reset reminder budget")
+	}
+	if _, err := st.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign", AssigneeAccountID: member.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	if err := issuetrackers.EnqueueReminderBatch(t.Context(), st); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 2 {
+		t.Fatal("reminder batch did not enqueue")
+	}
+	if p := inbox(member.ID); p[0].ReminderSequence != 2 || p[0].TeamID != "" {
+		t.Fatal("reminder ignored reassignment", p)
+	}
+	if err := full.RemoveOrgMember(t.Context(), org.ID, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(true)
+	if len(inbox(member.ID)) != 0 {
+		t.Fatal("removed member retained reminder inbox")
+	}
+	if p := inbox(app.AccountID); p[0].ReminderSequence != 3 || p[0].TeamID != "" {
+		t.Fatal("owner fallback", p)
+	}
+	forceDue()
+	enqueue(false)
+	rp.Enabled = false
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rp.Enabled = true
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(false) // Reconfiguration cannot replay the capped incident.
+	complete("matched")
+	enqueue(false)
+	if v, err := st.GetIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, notice); err != nil || v.Active || len(v.Reminders) != api.IssueTrackerRemindersMax {
+		t.Fatal("recovery lost reminder history", v, err)
+	}
+	complete("error")
+	fresh := inbox(app.AccountID)[0].ID
+	if count() != 0 {
+		t.Fatal("new incident inherited reminder budget")
+	}
+	if err := st.ActOnIssueTrackerTriage(t.Context(), app.ID, app.AccountID, app.AccountID, fresh, 0, "acknowledge"); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(false)
+	complete("matched")
+	complete("error")
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE accounts SET plan='free' WHERE id=$1", app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(false)
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE accounts SET plan='pro',status='suspended' WHERE id=$1", app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	enqueue(false)
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE accounts SET status='active',abuse_hold_at=clock_timestamp(),abuse_hold_reason='operator' WHERE id=$1", app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	enqueue(false)
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE accounts SET abuse_hold_at=NULL,abuse_hold_reason=NULL WHERE id=$1", app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	noticePolicy.Enabled = false
+	noticePolicy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, noticePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue(false)
+	noticePolicy.Enabled = true
+	noticePolicy, err = st.SetIssueTrackerNotificationPolicy(t.Context(), app.ID, app.AccountID, noticePolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue(false) // An old incident cannot bypass the notification settings revision.
+	complete("error")
+	forceDue()
+	enqueue(true)
+	rp.Enabled = false
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(false)
+	rp.Enabled = true
+	rp, err = st.SetIssueTrackerReminderPolicy(t.Context(), app.ID, app.AccountID, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue(false) // Re-enabling restarts the waiting interval, without resetting count.
+	if count() != 1 {
+		t.Fatal("reminder opt-out reset count")
+	}
+	pageURL := "/dashboard/apps/" + app.Slug + "/issues/tracker-notifications"
+	req := httptest.NewRequest("GET", pageURL, nil)
+	e.AddAdminSession(t, req)
+	page := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(page, req)
+	var csrf *http.Cookie
+	for _, c := range page.Result().Cookies() {
+		if c.Name == apidserver.DashboardIssueCookie {
+			csrf = c
+		}
+	}
+	if page.Code != 200 || csrf == nil || !strings.Contains(page.Body.String(), "interval_minutes") {
+		t.Fatal("reminder settings page", page.Code, page.Body.String())
+	}
+	post := func(valid bool) *httptest.ResponseRecorder {
+		form := url.Values{"settings_kind": {"reminders"}, "enabled": {"1"}, "expected_revision": {fmt.Sprint(rp.Revision)}, "interval_minutes": {fmt.Sprint(rp.IntervalMinutes)}}
+		if valid {
+			form.Set("csrf_token", csrf.Value)
+		}
+		r := httptest.NewRequest("POST", pageURL, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if valid {
+			r.AddCookie(csrf)
+		}
+		e.AddAdminSession(t, r)
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, r)
+		return out
+	}
+	if out := post(false); out.Code != 400 {
+		t.Fatal("reminder CSRF bypass", out.Code)
+	}
+	if out := post(true); out.Code != 303 {
+		t.Fatal("reminder save", out.Code, out.Body.String())
+	}
+	if out := post(true); out.Code != 409 {
+		t.Fatal("stale reminder form", out.Code)
+	}
+	if _, err := st.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
+	deliveries, _, err := full.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reminderDeliveries := 0
+	ids := map[string]bool{}
+	for _, d := range deliveries {
+		var p map[string]any
+		if err := json.Unmarshal(d.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p["kind"] == "reminder" {
+			reminderDeliveries++
+			id, _ := p["id"].(string)
+			if id == "" || ids[id] || p["health_path"] == nil || p["reminder_sequence"] == nil {
+				t.Fatal("reminder payload/dedup", p)
+			}
+			ids[id] = true
+		}
+	}
+	if reminderDeliveries != 4 {
+		t.Fatal("unexpected reminder delivery count", reminderDeliveries)
+	}
+	if _, err := st.DrainAppWebhookEventOutbox(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := full.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 100, "")
+	if err != nil || len(again) != len(deliveries) {
+		t.Fatal("duplicate reminder fanout", len(again), len(deliveries), err)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE apps SET deleted_at=clock_timestamp() WHERE id=$1", app.ID); err != nil {
+		t.Fatal(err)
+	}
+	forceDue()
+	enqueue(false)
+}

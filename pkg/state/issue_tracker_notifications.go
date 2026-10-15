@@ -11,6 +11,8 @@ import (
 )
 
 type IssueTrackerNotificationStore interface {
+	GetIssueTrackerReminderPolicy(context.Context, string, string) (IssueTrackerReminderPolicy, error)
+	SetIssueTrackerReminderPolicy(context.Context, string, string, IssueTrackerReminderPolicy) (IssueTrackerReminderPolicy, error)
 	UpdateIssueTrackerTriage(context.Context, string, string, string, string, int64, IssueTrackerTriageAction) error
 	ListIssueTrackerSyncNotificationsView(context.Context, string, string, string, string, string, IssueCursor) (IssueTrackerNotificationPage, error)
 	GetIssueTrackerTriage(context.Context, string, string, string, string) (IssueTrackerTriage, error)
@@ -33,6 +35,7 @@ type IssueTrackerNotificationPage struct {
 }
 type IssueTrackerSyncNotification struct {
 	ID, LinkID, IssueID, IssueTitle, Kind, Outcome, Reason, TeamID, TeamName string
+	ReminderSequence                                                         int
 	CreatedAt, SortAt                                                        time.Time
 	Snoozed, Resurfaced                                                      bool
 	SnoozedUntil                                                             *time.Time
@@ -100,6 +103,7 @@ type IssueTrackerTriage struct {
 	Revision                                                             int64
 	Active                                                               bool
 	History                                                              []IssueTrackerTriageActivity
+	Reminders                                                            []IssueTrackerReminder
 	Snoozed, Resurfaced                                                  bool
 	SnoozedUntil                                                         *time.Time
 	SnoozedBy, SnoozedName, SnoozeReason                                 string
@@ -116,4 +120,18 @@ type IssueTrackerTriageAction struct {
 	Action       string
 	SnoozedUntil *time.Time
 	Reason       string
+}
+
+type IssueTrackerReminderPolicy struct {
+	Enabled         bool
+	IntervalMinutes int
+	Revision        int64
+}
+type IssueTrackerReminder struct {
+	Sequence  int
+	CreatedAt time.Time
+	TeamName  string
+}
+type IssueTrackerReminderStore interface {
+	EnqueueIssueTrackerReminder(context.Context) (bool, error)
 }

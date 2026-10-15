@@ -64,6 +64,14 @@ func (s *PgStore) GetIssueTrackerTriage(ctx context.Context, app, owner, actor, 
 	for _, r := range rows {
 		out.History = append(out.History, IssueTrackerTriageActivity{ActorID: issueID(r.ActorID), ActorName: r.ActorName, Action: r.Action, Revision: r.Revision, CreatedAt: r.CreatedAt.Time, SnoozedUntil: trackerSnoozeTime(r.SnoozedUntil), Reason: r.Reason})
 	}
+	reminders, err := q.IssueTrackerReminderHistory(ctx, tx, sqlc.IssueTrackerReminderHistoryParams{AppID: issueUUID(app), OwnerAccountID: issueUUID(owner), ActorAccountID: issueUUID(actor), IncidentID: scope.IncidentID, HistoryLimit: api.IssueTrackerRemindersMax})
+	if err != nil {
+		return out, err
+	}
+	out.Reminders = []IssueTrackerReminder{}
+	for _, v := range reminders {
+		out.Reminders = append(out.Reminders, IssueTrackerReminder{Sequence: int(v.ReminderSequence), CreatedAt: v.CreatedAt.Time, TeamName: v.TeamName})
+	}
 	return out, tx.Commit(ctx)
 }
 

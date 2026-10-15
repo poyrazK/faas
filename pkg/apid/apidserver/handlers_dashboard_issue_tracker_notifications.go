@@ -69,16 +69,22 @@ func (s *server) dashboardTrackerNotificationsHandler(w http.ResponseWriter, r *
 		return
 	}
 	policy := state.IssueTrackerNotificationPolicy{}
+	reminderPolicy := state.IssueTrackerReminderPolicy{}
 	if acct.ID == app.AccountID {
 		policy, err = st.GetIssueTrackerNotificationPolicy(r.Context(), app.ID, app.AccountID)
 		if err != nil {
 			writeIssueError(w, err)
 			return
 		}
+		reminderPolicy, err = st.GetIssueTrackerReminderPolicy(r.Context(), app.ID, app.AccountID)
+		if err != nil {
+			writeNativeIssueTrackerError(w, err)
+			return
+		}
 	}
-	s.renderDashboardTrackerNotifications(w, r, acct, app, team, policy, page)
+	s.renderDashboardTrackerNotifications(w, r, acct, app, team, policy, reminderPolicy, page)
 }
-func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, team string, policy state.IssueTrackerNotificationPolicy, page state.IssueTrackerNotificationPage) {
+func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, team string, policy state.IssueTrackerNotificationPolicy, reminderPolicy state.IssueTrackerReminderPolicy, page state.IssueTrackerNotificationPage) {
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
@@ -86,7 +92,7 @@ func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *h
 	}
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
-	view := dashboard.IssueTrackerNotificationsView{AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
+	view := dashboard.IssueTrackerNotificationsView{AppSlug: app.Slug, CSRF: token, TeamFilter: team, InboxView: r.URL.Query().Get("view"), CanManage: app.AccountID == acct.ID, Policy: policy, ReminderPolicy: reminderPolicy, ReminderIntervalMin: api.IssueTrackerReminderIntervalMinMinutes, ReminderIntervalMax: api.IssueTrackerReminderIntervalMaxMinutes, RemindersMax: api.IssueTrackerRemindersMax, ReminderSaved: r.URL.Query().Get("saved") == "reminders", Items: page.Items, Reasons: map[string]string{}, Saved: r.URL.Query().Get("saved") == "1", FailureThresholdMax: api.IssueTrackerSyncNotificationFailuresMax}
 	for _, item := range page.Items {
 		view.Reasons[item.ID] = dashboard.IssueTrackerSyncReason(item.Reason)
 	}
@@ -123,6 +129,10 @@ func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWri
 		api.WriteProblem(w, api.ErrValidation("invalid notification settings"))
 		return
 	}
+	if r.PostForm.Get("settings_kind") == "reminders" {
+		s.dashboardTrackerReminderPolicy(w, r, acct, st, app)
+		return
+	}
 	revision, e1 := strconv.ParseInt(r.PostForm.Get("expected_revision"), 10, 64)
 	threshold, e2 := strconv.Atoi(r.PostForm.Get("failure_threshold"))
 	if e1 != nil || e2 != nil {
@@ -135,4 +145,19 @@ func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWri
 		return
 	}
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(app.Slug)+"/issues/tracker-notifications?saved=1", http.StatusSeeOther)
+}
+
+func (s *server) dashboardTrackerReminderPolicy(w http.ResponseWriter, r *http.Request, acct state.Account, st state.IssueTrackerNotificationStore, app state.App) {
+	revision, e1 := strconv.ParseInt(r.PostForm.Get("expected_revision"), 10, 64)
+	interval, e2 := strconv.Atoi(r.PostForm.Get("interval_minutes"))
+	if e1 != nil || e2 != nil {
+		api.WriteProblem(w, api.ErrValidation("reload reminder settings"))
+		return
+	}
+	_, err := st.SetIssueTrackerReminderPolicy(r.Context(), app.ID, acct.ID, state.IssueTrackerReminderPolicy{Enabled: r.PostForm.Get("enabled") == "1", Revision: revision, IntervalMinutes: interval})
+	if err != nil {
+		writeNativeIssueTrackerError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(app.Slug)+"/issues/tracker-notifications?saved=reminders", http.StatusSeeOther)
 }

@@ -1593,3 +1593,32 @@ Confirmed recovery or notification settings changes end the active snooze while
 preserving history; a new incident starts unsnoozed. Snoozing changes inbox
 visibility, and leaves issue resolution, claims, acknowledgment, tracker sync and
 app webhook delivery unchanged.
+
+### Remind the team about an unacknowledged tracker incident
+
+In **Tracker sync notifications**, app owners can enable **Unacknowledged incident
+reminders** and choose an interval from 15 minutes to seven days. The default is
+24 hours. Reminders are off by default and require notifications to be enabled.
+Saving reminder settings preserves existing incidents, claims and snoozes.
+Enabling or changing the interval starts a full waiting interval.
+
+An active, unacknowledged incident can generate up to three reminders. Each routes
+to the current eligible assigned team or account, with app-owner fallback.
+**Acknowledge** or confirmed recovery stops future reminders. A claim alone does
+not acknowledge an incident. Snoozes pause reminders; after expiry, a full interval
+passes before another reminder. Manual unsnooze can make an overdue incident
+eligible on the next sweep. Changing reminder settings does not reset the used
+budget; a new incident gets a fresh budget.
+
+Reminders appear in the inbox and in **Reminder history** on the handling page.
+History remains subject to current recipient and team membership checks. A reminder
+records the last reported problem; it does not contact the provider or confirm its
+current state. Subscribed app webhooks receive `issue.tracker_sync.attention` with
+`kind: reminder`, `reminder_sequence`, a stable event ID, and `triage_path` and
+`health_path`. Use the app's webhook delivery history to inspect delivery attempts.
+Consumers should deduplicate transport retries by event ID.
+
+The worker checks due incidents on the maintenance cadence and queues bounded
+batches, so delivery can occur after the selected due time. Opt-out, acknowledgment,
+recovery, app deletion or lost owner entitlement prevents new enqueue. Events
+already queued follow the existing webhook subscription and delivery controls.

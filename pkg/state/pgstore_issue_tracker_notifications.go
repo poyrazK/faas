@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -72,14 +73,14 @@ func pgTrackerSyncNotifications(ctx context.Context, q *sqlc.Queries, tx pgx.Tx,
 	}
 	next, kind := trackerSyncNotificationTransition(prev, IssueTrackerNotificationPolicy{Enabled: true, Revision: setting.Revision, FailureThreshold: int(setting.FailureThreshold)}, r.Policy.Outcome, r.Policy.Reason, r.Policy.PendingState)
 	if kind != "" {
-		if err = pgTrackerSyncNotice(ctx, q, tx, r, prev, &next, kind, int(setting.FailureThreshold)); err != nil {
+		if err = pgTrackerSyncNotice(ctx, q, tx, r, prev, &next, kind, int(setting.FailureThreshold), 0); err != nil {
 			return err
 		}
 	}
 	return q.IssueTrackerIncidentPut(ctx, tx, sqlc.IssueTrackerIncidentPutParams{LinkID: issueUUID(r.Policy.LinkID), SettingsRevision: next.SettingsRevision, Failures: int32(next.Failures), IncidentID: issueUUID(next.ID), AnnouncedKind: next.AnnouncedKind, IssueID: issueUUID(next.IssueID), TeamID: issueUUID(next.TeamID), RecipientAccountIds: trackerNotificationUUIDs(next.Recipients)})
 }
 
-func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r IssueTrackerAutoSyncRecord, prev trackerSyncIncident, next *trackerSyncIncident, kind string, threshold int) error {
+func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r IssueTrackerAutoSyncRecord, prev trackerSyncIncident, next *trackerSyncIncident, kind string, threshold, sequence int) error {
 	target, err := q.IssueTrackerNotificationTarget(ctx, tx, sqlc.IssueTrackerNotificationTargetParams{LinkID: issueUUID(r.Policy.LinkID), AppID: issueUUID(r.AppID), AccountID: issueUUID(r.AccountID)})
 	if err != nil {
 		return mapErr(err)
@@ -115,7 +116,11 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 		}
 	}
 	incidentID, _ := uuid.Parse(route.ID)
-	id := uuid.NewSHA1(incidentID, []byte(kind)).String()
+	dedupKind := kind
+	if sequence > 0 {
+		dedupKind += "/" + strconv.Itoa(sequence)
+	}
+	id := uuid.NewSHA1(incidentID, []byte(dedupKind)).String()
 	event := "issue.tracker_sync.attention"
 	if kind == "recovered" {
 		event = "issue.tracker_sync.recovered"
@@ -123,11 +128,16 @@ func pgTrackerSyncNotice(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, r Issu
 	issueIDNow := issueID(target.ID)
 	issuePath := "/dashboard/apps/" + url.PathEscape(target.Slug) + "/issues?issue=" + url.QueryEscape(issueIDNow)
 	healthPath := "/dashboard/apps/" + url.PathEscape(target.Slug) + "/issues/" + issueIDNow + "/tracker-sync/" + r.Policy.LinkID
-	payload, err := json.Marshal(map[string]any{"id": id, "version": 1, "type": event, "incident_id": route.ID, "kind": kind, "app_id": r.AppID, "issue_id": issueIDNow, "link_id": r.Policy.LinkID, "provider": r.Baseline.Provider, "outcome": r.Policy.Outcome, "reason": r.Policy.Reason, "team_id": route.TeamID, "recipient_account_ids": route.Recipients, "consecutive_failures": next.Failures, "failure_threshold": threshold, "issue_path": issuePath, "health_path": healthPath})
+	payloadBody := map[string]any{"id": id, "version": 1, "type": event, "incident_id": route.ID, "kind": kind, "app_id": r.AppID, "issue_id": issueIDNow, "link_id": r.Policy.LinkID, "provider": r.Baseline.Provider, "outcome": r.Policy.Outcome, "reason": r.Policy.Reason, "team_id": route.TeamID, "recipient_account_ids": route.Recipients, "consecutive_failures": next.Failures, "failure_threshold": threshold, "issue_path": issuePath, "health_path": healthPath}
+	if sequence > 0 {
+		payloadBody["reminder_sequence"] = sequence
+		payloadBody["triage_path"] = "/dashboard/apps/" + url.PathEscape(target.Slug) + "/issues/tracker-notifications/triage/" + id
+	}
+	payload, err := json.Marshal(payloadBody)
 	if err != nil {
 		return err
 	}
-	inserted, err := q.IssueTrackerNotificationInsert(ctx, tx, sqlc.IssueTrackerNotificationInsertParams{ID: issueUUID(id), LinkID: issueUUID(r.Policy.LinkID), AppID: issueUUID(r.AppID), AccountID: issueUUID(r.AccountID), IssueID: target.ID, IncidentID: issueUUID(route.ID), Kind: kind, Outcome: r.Policy.Outcome, Reason: r.Policy.Reason, TeamID: issueUUID(route.TeamID), RecipientAccountIds: trackerNotificationUUIDs(route.Recipients), Payload: payload})
+	inserted, err := q.IssueTrackerNotificationInsert(ctx, tx, sqlc.IssueTrackerNotificationInsertParams{ID: issueUUID(id), LinkID: issueUUID(r.Policy.LinkID), AppID: issueUUID(r.AppID), AccountID: issueUUID(r.AccountID), IssueID: target.ID, IncidentID: issueUUID(route.ID), Kind: kind, Outcome: r.Policy.Outcome, Reason: r.Policy.Reason, TeamID: issueUUID(route.TeamID), RecipientAccountIds: trackerNotificationUUIDs(route.Recipients), Payload: payload, ReminderSequence: int32(sequence)})
 	if err != nil {
 		return err
 	}
@@ -178,7 +188,7 @@ func (s *PgStore) ListIssueTrackerSyncNotificationsView(ctx context.Context, app
 			out.NextCursor = EncodeIssueCursor(IssueCursor{Time: last.SortAt, ID: last.ID, FilterHash: hash})
 			break
 		}
-		out.Items = append(out.Items, IssueTrackerSyncNotification{ID: issueID(r.ID), LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, Kind: r.Kind, Outcome: r.Outcome, Reason: r.Reason, TeamID: issueID(r.TeamID), TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time, SortAt: r.SortAt.Time, Snoozed: r.Snoozed, Resurfaced: r.Resurfaced, SnoozedUntil: trackerSnoozeTime(r.SnoozedUntil), SnoozedBy: issueID(r.SnoozedBy), SnoozedName: r.SnoozedName, SnoozeReason: r.SnoozeReason.String, AcknowledgedBy: issueID(r.AcknowledgedBy), ClaimedBy: issueID(r.ClaimedBy), AcknowledgedName: r.AcknowledgedName, ClaimedName: r.ClaimedName})
+		out.Items = append(out.Items, IssueTrackerSyncNotification{ID: issueID(r.ID), LinkID: issueID(r.LinkID), IssueID: issueID(r.IssueID), IssueTitle: r.IssueTitle, Kind: r.Kind, ReminderSequence: int(r.ReminderSequence), Outcome: r.Outcome, Reason: r.Reason, TeamID: issueID(r.TeamID), TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time, SortAt: r.SortAt.Time, Snoozed: r.Snoozed, Resurfaced: r.Resurfaced, SnoozedUntil: trackerSnoozeTime(r.SnoozedUntil), SnoozedBy: issueID(r.SnoozedBy), SnoozedName: r.SnoozedName, SnoozeReason: r.SnoozeReason.String, AcknowledgedBy: issueID(r.AcknowledgedBy), ClaimedBy: issueID(r.ClaimedBy), AcknowledgedName: r.AcknowledgedName, ClaimedName: r.ClaimedName})
 	}
 	return out, nil
 }
