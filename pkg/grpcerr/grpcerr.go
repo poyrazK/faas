@@ -69,6 +69,8 @@ func codeToGRPC(code string) codes.Code {
 		return codes.NotFound
 	case api.CodeNotImplemented:
 		return codes.Unimplemented
+	case api.CodeGitHubAccountConflict:
+		return codes.AlreadyExists
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted

@@ -1939,7 +1939,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeReleaseReviewChanged:
+	case CodeProfileGateBlocked, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
