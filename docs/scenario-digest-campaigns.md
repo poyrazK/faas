@@ -63,3 +63,56 @@ The output is descriptive and never changes a test verdict or gates CI.
 
 Outputs are written sequentially, Markdown first. A write failure returns a
 nonzero exit status; an earlier successfully written output may remain.
+
+## Opt-in regression policy
+
+The existing comparison command supports an explicit campaign policy mode:
+
+```sh
+gregale test compare --from current.json --baseline previous.json --policy regression-policy.yaml > policy-result.json
+```
+
+Example policy:
+
+```yaml
+schema_version: 1
+fail_new_failures: true
+max_frequency_increase_percentage_points: 10
+min_executed_runs: 5
+on_not_comparable: fail
+on_insufficient_samples: fail
+```
+
+Policies use strict YAML: unknown fields, duplicate fields, multiple documents,
+unsupported versions, and nonfinite or out-of-range limits are errors.
+The version, positive sample minimum, and both handling actions are required.
+Actions are `fail` or `ignore`. The new-failure check defaults to false;
+omitting the frequency limit disables that check.
+
+Exit status is 0 when the policy passes, 2 for policy violations, and 1 for
+invalid options, inputs, or output errors. A versioned JSON result goes to stdout
+and includes all comparisons and violations, with rule names, context,
+measurements, coverage reasons, supporting receipt references, and replay
+commands where available. Optional `--evidence-url` and
+`--baseline-evidence-url` attach HTML report links. Redirect stdout to a
+distinct file: shell redirection happens before Gregale can protect input files.
+
+Frequency limits use percentage points and fail only when the increase is
+strictly greater than the configured limit. New failures and frequency limits
+are evaluated only for comparable groups with sufficient samples on both sides.
+If insufficient samples are ignored, those groups do not trigger regression
+checks. Counts describe first recorded failures, not statistical confidence.
+
+Coverage includes every configuration/scenario/profile/engine/case context in
+either report, even when every run passed. Every context therefore requires
+matching executed coverage on both sides. Missing fingerprints, missing
+configurations, skipped-only contexts, and incomplete assertion/fault coverage
+follow `on_not_comparable`; inadequate nonzero context counts follow
+`on_insufficient_samples`. Coverage and group violations may both describe
+the same missing context. Both reports can contain no failure groups and still
+fail required coverage checks.
+
+Policy mode uses named `--from` and `--baseline` inputs. It does not combine
+with legacy positional comparisons, `--budget`, or legacy output flags.
+Without `--policy`, existing comparison behavior is unchanged. Digest output
+remains informational and continues to return success for recorded test failures.

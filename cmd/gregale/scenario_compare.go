@@ -77,6 +77,11 @@ type testComparisonKey struct {
 }
 
 func cmdTestCompare(args []string) int {
+	for _, argument := range args {
+		if argument == "--policy" || strings.HasPrefix(argument, "--policy=") {
+			return cmdTestCampaignPolicy(args)
+		}
+	}
 	parseArgs := make([]string, 0, len(args))
 	var pathFlagArgs []string
 	pathFlagsSeen := make(map[string]bool)
