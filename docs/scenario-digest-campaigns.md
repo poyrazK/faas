@@ -243,3 +243,69 @@ errors return 1. Use `test compare --policy` when a CI gate is intended.
 JSON redirection must use a distinct destination because the shell opens it
 before Gregale can inspect source files. Existing digest and gate behavior is
 unchanged.
+
+## Explicit required coverage
+
+Observed-context checks cannot detect a critical scenario absent from both
+reports. Declare independent requirements to make that absence a policy failure:
+
+```yaml
+required_coverage:
+  - name: checkout-executed
+    match:
+      scenario: checkout
+      engine: real-vm
+    min_executed_runs: 5
+  - name: checkout-recovery-p95
+    match:
+      scenario: checkout
+      phase: recovery
+      kind: threshold
+      assertion: p95_ms
+    min_executed_runs: 5
+```
+
+Add this section to a version 1 policy alongside its existing global settings.
+Each requirement needs a unique nonempty name, a nonempty scenario selector,
+and its own positive minimum. At most 100 requirements are supported.
+Selectors use the same exact-match syntax as scoped rules. Configuration
+selectors must be lowercase SHA-256 fingerprints. Assertion requirements must
+specify phase, kind, and assertion; named assertion evidence also uses request.
+
+Both reports must meet every requirement. Requirements are checked independently
+for every matching configuration/scenario/profile/engine/case context in either
+report. Counts are never pooled across seeds or contexts. If neither report
+contains a matching context, one failed requirement is emitted using the
+declared selector. A scenario-only requirement requires an executed leaf receipt
+with a recorded fingerprint; status may be passed or failed. Skipped and unknown
+statuses do not count. Explicit requirements cannot be waived by scoped rules,
+`on_not_comparable: ignore`, or `on_insufficient_samples: ignore`.
+
+A nonempty step selector requires exactly one executed staged step; omitting
+step (or selecting an empty step) uses the top-level load. Phase evidence must
+have a unique matching name, positive duration and attributed requests, and
+exercised fault evidence when applicable. Recovery uses its preceding fault
+phase. Assertion coverage checks the raw typed evidence, even when it passed
+or was hidden by an earlier failure. Coverage does not require the assertion
+to pass: regression checks and original test verdicts remain separate.
+
+Supported assertion kind/name pairs are threshold/metric name,
+http_attempts/attempts_per_request, tcp_attempts/attempts_per_request,
+per_request_attempts/max_attempts, recovery/recovery,
+recovery/step_recovery (with request), request_deadline/request_deadlines
+(with request), circuit_breaker/circuit_breaker,
+connection_leaks/connection_leaks, and pool_exhaustion/pool_exhaustion.
+
+JSON and preview expose `required_coverage` results for passing and failing
+requirements, with the minimum, executed and evidence-covered counts, and
+zero-based supporting top-level receipt indexes. Failure violations use
+`explicit_required_coverage` and policy rule `required_coverage/<name>`;
+their nested requirement retains the selector and evidence references.
+JUnit includes those diagnostics through the same policy-failure mapping.
+A passing JUnit gate includes requirement results in system-out.
+
+Lint with both reports shows requirement results and
+`required_coverage_missing` warnings; static lint and single-report lint only
+validate requirement definitions. Preview stays informational; a gated
+comparison returns 2 when any explicit requirement fails. Existing policies
+without `required_coverage` retain their behavior.

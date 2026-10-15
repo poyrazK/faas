@@ -15,6 +15,7 @@ import (
 )
 
 type testCampaignPolicy struct {
+	RequiredCoverage []testCampaignCoverageRequirement `yaml:"required_coverage,omitempty"`
 	Rules []testCampaignScopedRule `yaml:"rules,omitempty"`
 	SchemaVersion         int      `yaml:"schema_version"`
 	FailNewFailures       bool     `yaml:"fail_new_failures"`
@@ -61,10 +62,14 @@ func readTestCampaignPolicy(path string) (testCampaignPolicy, error) {
 	if err := validateTestCampaignScopedRules(policy.Rules); err != nil {
 		return policy, err
 	}
+	if err := validateTestCampaignRequiredCoverage(policy.RequiredCoverage); err != nil {
+		return policy, err
+	}
 	return policy, nil
 }
 
 type testCampaignPolicyViolation struct {
+	Requirement *testCampaignRequiredCoverageResult `json:"requirement,omitempty"`
 	PolicyRule string `json:"policy_rule"`
 	EffectivePolicy *testCampaignPolicySettings `json:"effective_policy,omitempty"`
 	Rule          string                      `json:"rule"`
@@ -77,6 +82,7 @@ type testCampaignPolicyViolation struct {
 }
 
 type testCampaignPolicyResult struct {
+	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
 	Decisions []testCampaignPolicyDecision `json:"decisions"`
 	SchemaVersion int                           `json:"schema_version"`
 	BaselineURL   string                        `json:"baseline_evidence_url,omitempty"`
@@ -217,6 +223,22 @@ func evaluateTestCampaignPolicy(policy testCampaignPolicy, before, after []testR
 		if !duplicate {
 			result.Violations = append(result.Violations, coverage)
 		}
+	}
+	result.RequiredCoverage = evaluateTestCampaignRequiredCoverage(policy, before, after)
+	for _, coverage := range result.RequiredCoverage {
+		if coverage.Passed {
+			continue
+		}
+		settings := testCampaignSettings(policy)
+		settings.MinExecutedRuns = coverage.MinExecutedRuns
+		settings.NotComparable, settings.InsufficientSamples = "fail", "fail"
+		requirement := coverage
+		result.Violations = append(result.Violations, testCampaignPolicyViolation{
+			Rule: "explicit_required_coverage", PolicyRule: "required_coverage/" + coverage.Name,
+			Reason: coverage.Reason, Configuration: coverage.Configuration, Context: coverage.Context,
+			BeforeRuns: coverage.Baseline.CoveredRuns, AfterRuns: coverage.Current.CoveredRuns,
+			EffectivePolicy: &settings, Requirement: &requirement,
+		})
 	}
 	result.Passed = len(result.Violations) == 0
 	return result, nil

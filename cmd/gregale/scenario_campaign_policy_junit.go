@@ -70,13 +70,16 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 		})
 	}
 	if len(suite.Cases) == 0 {
-		decisions, err := json.Marshal(result.Decisions)
+		decisions, err := json.Marshal(struct {
+			Decisions []testCampaignPolicyDecision `json:"decisions"`
+			RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
+		}{result.Decisions, result.RequiredCoverage})
 		if err != nil {
 			return nil, err
 		}
 		suite.Cases = append(suite.Cases, testCampaignJUnitCase{
 			Name: "campaign policy accepted", Classname: "gregale.campaign-policy",
-			Output: "No policy violations. This includes explicitly ignored coverage and sample conditions; it does not assert that all application tests passed. Matched comparison rules: " + string(decisions),
+			Output: "No policy violations. This includes explicitly ignored coverage and sample conditions; it does not assert that all application tests passed. Matched comparison rules and required coverage: " + string(decisions),
 		})
 	}
 	suite.Tests, suite.Failures = len(suite.Cases), len(result.Violations)

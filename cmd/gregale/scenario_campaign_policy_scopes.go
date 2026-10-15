@@ -7,27 +7,27 @@ import (
 )
 
 type testCampaignPolicySelector struct {
-	Configuration *string `yaml:"configuration_sha256,omitempty"`
-	Scenario      *string `yaml:"scenario,omitempty"`
-	Profile       *string `yaml:"profile,omitempty"`
-	Engine        *string `yaml:"engine,omitempty"`
-	Case          *string `yaml:"case,omitempty"`
-	Step          *string `yaml:"step,omitempty"`
-	Phase         *string `yaml:"phase,omitempty"`
-	Kind          *string `yaml:"kind,omitempty"`
-	Assertion     *string `yaml:"assertion,omitempty"`
-	Request       *string `yaml:"request,omitempty"`
+	Configuration *string `yaml:"configuration_sha256,omitempty" json:"configuration_sha256,omitempty"`
+	Scenario      *string `yaml:"scenario,omitempty" json:"scenario,omitempty"`
+	Profile       *string `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Engine        *string `yaml:"engine,omitempty" json:"engine,omitempty"`
+	Case          *string `yaml:"case,omitempty" json:"case,omitempty"`
+	Step          *string `yaml:"step,omitempty" json:"step,omitempty"`
+	Phase         *string `yaml:"phase,omitempty" json:"phase,omitempty"`
+	Kind          *string `yaml:"kind,omitempty" json:"kind,omitempty"`
+	Assertion     *string `yaml:"assertion,omitempty" json:"assertion,omitempty"`
+	Request       *string `yaml:"request,omitempty" json:"request,omitempty"`
 }
 
 type testCampaignScopedRule struct {
-	Name                  string                     `yaml:"name"`
-	Match                 testCampaignPolicySelector `yaml:"match"`
-	FailNewFailures       *bool                      `yaml:"fail_new_failures,omitempty"`
-	MaxFrequencyIncrease  *float64                   `yaml:"max_frequency_increase_percentage_points,omitempty"`
-	DisableFrequencyCheck bool                       `yaml:"disable_frequency_check,omitempty"`
-	MinExecutedRuns       *int                       `yaml:"min_executed_runs,omitempty"`
-	NotComparable         *string                    `yaml:"on_not_comparable,omitempty"`
-	InsufficientSamples   *string                    `yaml:"on_insufficient_samples,omitempty"`
+	Name                  string                     `yaml:"name" json:"name"`
+	Match                 testCampaignPolicySelector `yaml:"match" json:"match"`
+	FailNewFailures       *bool                      `yaml:"fail_new_failures,omitempty" json:"fail_new_failures,omitempty"`
+	MaxFrequencyIncrease  *float64                   `yaml:"max_frequency_increase_percentage_points,omitempty" json:"max_frequency_increase_percentage_points,omitempty"`
+	DisableFrequencyCheck bool                       `yaml:"disable_frequency_check,omitempty" json:"disable_frequency_check,omitempty"`
+	MinExecutedRuns       *int                       `yaml:"min_executed_runs,omitempty" json:"min_executed_runs,omitempty"`
+	NotComparable         *string                    `yaml:"on_not_comparable,omitempty" json:"on_not_comparable,omitempty"`
+	InsufficientSamples   *string                    `yaml:"on_insufficient_samples,omitempty" json:"on_insufficient_samples,omitempty"`
 }
 
 type testCampaignPolicySettings struct {

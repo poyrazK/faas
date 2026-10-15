@@ -22,6 +22,7 @@ type testCampaignPolicyUsage struct {
 }
 
 type testCampaignPolicyInspection struct {
+	RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage,omitempty"`
 	SchemaVersion int                            `json:"schema_version"`
 	Informational bool                           `json:"informational"`
 	ObservationsSupplied bool                    `json:"observations_supplied"`
@@ -67,6 +68,16 @@ func cmdTestPolicy(args []string) int {
 		}
 	}
 	inspection := inspectTestCampaignPolicy(policy, before, after, *from != "")
+	if *baseline != "" {
+		inspection.RequiredCoverage = evaluateTestCampaignRequiredCoverage(policy, before, after)
+		for _, coverage := range inspection.RequiredCoverage {
+			if !coverage.Passed {
+				inspection.Diagnostics = append(inspection.Diagnostics, testCampaignPolicyDiagnostic{
+					Code: "required_coverage_missing", Rule: coverage.Name, Message: coverage.Reason,
+				})
+			}
+		}
+	}
 	if mode == "preview" {
 		result, err := evaluateTestCampaignPolicy(policy, before, after, "", "")
 		if err != nil {
