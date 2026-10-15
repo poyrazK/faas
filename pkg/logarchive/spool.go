@@ -161,11 +161,10 @@ func (s *Spool) CountExisting() {
 	}
 	var paths []string
 	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil || d.IsDir() {
-			return nil
-		}
-		if name := d.Name(); strings.HasSuffix(name, spoolPartialSuffix) || strings.HasSuffix(name, spoolUploadSuffix) {
-			paths = append(paths, path)
+		if walkErr == nil && !d.IsDir() {
+			if name := d.Name(); strings.HasSuffix(name, spoolPartialSuffix) || strings.HasSuffix(name, spoolUploadSuffix) {
+				paths = append(paths, path)
+			}
 		}
 		return nil
 	})
