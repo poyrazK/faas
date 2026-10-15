@@ -183,7 +183,9 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 		appRows = slices.DeleteFunc(appRows, func(app struct {
 			id       string
 			manifest []byte
-		}) bool { return excluded[app.id] })
+		}) bool {
+			return excluded[app.id]
+		})
 	}
 	if activeID != "" && !allowGitOpsReplacement {
 		if err := validateGitOpsReleaseMembersTx(ctx, tx, activeID, byApp); err != nil {

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DeclaredRoute } from './DeclaredRoute.js';
+/**
+ * Review-time snapshot of the scoped routes, consumers, schedule and accepted work affected by retained workload removal.
+ */
 export type EnvironmentWorkloadRetirementImpact = {
   resource: string;
   app_id: string;

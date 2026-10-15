@@ -18,6 +18,11 @@ T = TypeVar("T", bound="EnvironmentWorkloadRetirementImpact")
 
 @_attrs_define
 class EnvironmentWorkloadRetirementImpact:
+    """Review-time snapshot of the scoped routes, consumers, schedule and accepted work affected by retained workload
+    removal.
+
+    """
+
     resource: str
     app_id: UUID
     pending_invocations: int

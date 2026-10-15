@@ -57688,6 +57688,7 @@ components:
       - source
       - runs
     EnvironmentWorkloadRetirementImpact:
+      description: Review-time snapshot of the scoped routes, consumers, schedule and accepted work affected by retained workload removal.
       type: object
       properties:
         resource:
@@ -57789,13 +57790,11 @@ components:
           type: string
           format: date-time
         retired_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
         recovered_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
       required: [id, source_id, resource, app_id, environment_id, revision_id, generation, phase, requested_at]
     EnvironmentWorkloadActivationEvidence:
       type: object
