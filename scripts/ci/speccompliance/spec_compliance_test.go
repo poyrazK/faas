@@ -79,6 +79,7 @@ const (
 	runtimePolicyFile             = "runtime_policy.go"              // app and traffic control-plane convergence status
 	runtimeReleasesFile           = "runtime_releases.go"            // ADR-736 immutable runtime identity and update preview DTOs
 	rolloutDecisionFile           = "rollout_decision.go"            // ADR-1237 explained rollout decisions
+	releaseRollbackFile           = "release_rollback.go"            // ADR-1331 releases that change the database
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -1240,6 +1241,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai.go"), // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
+		filepath.Join(root, "pkg", "api", releaseRollbackFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
