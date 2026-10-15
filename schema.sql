@@ -68011,3 +68011,15 @@ CREATE TABLE hosting_route_publications (
     CHECK ((published_generation > 0) = (published_at IS NOT NULL))
 );
 CREATE INDEX hosting_route_publications_due ON hosting_route_publications(next_attempt_at, site_id);
+
+ALTER TABLE hosting_route_publications
+    ADD COLUMN pending_since timestamptz,
+    ADD COLUMN last_attempt_at timestamptz,
+    ADD COLUMN retry_count bigint NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    ADD COLUMN last_error_code text NOT NULL DEFAULT '' CHECK (last_error_code IN ('', 'origin_unavailable', 'publication_unavailable', 'stale_generation'));
+UPDATE hosting_route_publications SET pending_since = clock_timestamp() WHERE generation > published_generation;
+ALTER TABLE hosting_route_publications
+    ALTER COLUMN pending_since SET DEFAULT clock_timestamp(),
+    ADD CONSTRAINT hosting_route_publications_pending CHECK ((generation > published_generation) = (pending_since IS NOT NULL));
+CREATE INDEX hosting_route_publications_pending_since ON hosting_route_publications(pending_since)
+    WHERE generation > published_generation;

@@ -109,3 +109,27 @@ reads on edge metadata-cache misses (per location), conditional writes on actual
 changes, and about 120 periodic control-plane checks per idle site per 30-day
 month. These are not free operations. No per-site VM, new daemon, listener,
 customer entitlement, or billing model is introduced.
+
+## Publication visibility and qualification
+
+An account-owned internal status endpoint and `sites status` expose accepted
+versus acknowledged generation, continuous pending age, bounded failure code,
+attempt time, and retry schedule. Coalesced mutations retain pending age while
+clearing prior-generation attempt metadata. Older receipts cannot clear newer
+pending intent. Leased sites explicitly report untracked publication. A receipt
+does not assert that every edge location has refreshed; durable responses also
+identify the routing generation used after the normal authorization checks.
+
+Publication/backlog Prometheus metrics use bounded outcomes without tenant or
+resource labels and report observation freshness on database failure. Backlog
+counts exclude periodic repair of already-acknowledged intent. The controller
+reads the indexed pending subset once per pass with a bounded metrics timeout.
+
+The qualification runner can exercise separately opted-in API/database faults,
+publication isolation and coalescing, regional cold/warm observations, and actual
+dedicated process/SQL footprint samples through an explicitly configured pilot
+controller. It requires fault identity, independent bounded restoration, actual
+failed API reads or pending provider retries, edge generation/cache evidence,
+and recovery before claiming those checks. Provider billing and unobserved
+phases stay unqualified. See the
+[operator procedure](../internal-frontend-hosting-qualification.md).

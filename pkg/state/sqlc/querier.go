@@ -1388,6 +1388,7 @@ type Querier interface {
 	HostingReleaseRetire(ctx context.Context, db DBTX, arg HostingReleaseRetireParams) (HostingRelease, error)
 	HostingRetirementAcknowledged(ctx context.Context, db DBTX, arg HostingRetirementAcknowledgedParams) error
 	HostingRouteAcknowledged(ctx context.Context, db DBTX, arg HostingRouteAcknowledgedParams) error
+	HostingRouteBacklog(ctx context.Context, db DBTX) (HostingRouteBacklogRow, error)
 	HostingRouteChanged(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingRouteDue(ctx context.Context, db DBTX, arg HostingRouteDueParams) ([]pgtype.UUID, error)
 	HostingRoutePage(ctx context.Context, db DBTX, arg HostingRoutePageParams) ([]HostingSite, error)

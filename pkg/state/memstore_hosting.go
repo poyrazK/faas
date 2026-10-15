@@ -282,6 +282,10 @@ func (m *MemStore) hostingRouteChanged(site string) int64 {
 	p := m.hostingPublications[site]
 	p.Generation++
 	p.NextAttemptAt = time.Now().UTC()
+	if p.PendingSince.IsZero() {
+		p.PendingSince = p.NextAttemptAt
+	}
+	p.LastAttemptAt, p.RetryCount, p.LastErrorCode = time.Time{}, 0, ""
 	m.hostingPublications[site] = p
 	return p.Generation
 }
@@ -336,7 +340,7 @@ func (m *MemStore) HostingRouteSnapshot(_ context.Context, site string) (Hosting
 	if !ok || !exists || !s.DurableRouting {
 		return HostingRouteSnapshot{}, ErrNotFound
 	}
-	out := HostingRouteSnapshot{Site: s, Generation: p.Generation, PublishedGeneration: p.PublishedGeneration, PublishedAt: p.PublishedAt, Releases: []api.HostingRelease{}}
+	out := hostingPublicationSnapshot(s, p)
 	for _, r := range m.hostingReleases {
 		if r.SiteID == site && r.State != "deleted" {
 			out.Releases = append(out.Releases, api.HostingRelease{ID: r.ID, SiteID: r.SiteID, State: r.State})
@@ -360,6 +364,7 @@ func (m *MemStore) AcknowledgeHostingRoute(_ context.Context, site string, gener
 	}
 	if generation == p.Generation {
 		p.NextAttemptAt = at.Add(api.HostingRouteRepairInterval)
+		p.PendingSince, p.LastAttemptAt, p.RetryCount, p.LastErrorCode = time.Time{}, at.UTC(), 0, ""
 	}
 	m.hostingPublications[site] = p
 	for id, r := range m.hostingReleases {
@@ -372,7 +377,10 @@ func (m *MemStore) AcknowledgeHostingRoute(_ context.Context, site string, gener
 	return nil
 }
 
-func (m *MemStore) RetryHostingRoute(_ context.Context, site string, generation int64, next time.Time) error {
+func (m *MemStore) RetryHostingRoute(_ context.Context, site string, generation int64, at time.Time, code string) error {
+	if generation < 1 || at.IsZero() || !validHostingRouteFailure(code) {
+		return ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.hostingPublications[site]
@@ -380,8 +388,26 @@ func (m *MemStore) RetryHostingRoute(_ context.Context, site string, generation 
 		return ErrNotFound
 	}
 	if generation == p.Generation {
-		p.NextAttemptAt = next
+		p.NextAttemptAt = at.Add(api.HostingRouteRetryInterval)
+		p.LastAttemptAt, p.LastErrorCode = at.UTC(), code
+		p.RetryCount++
 		m.hostingPublications[site] = p
 	}
 	return nil
+}
+
+func (m *MemStore) HostingRouteBacklog(_ context.Context) (HostingRouteBacklog, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out HostingRouteBacklog
+	for _, p := range m.hostingPublications {
+		if p.Generation <= p.PublishedGeneration {
+			continue
+		}
+		out.Pending++
+		if out.OldestPendingAt.IsZero() || p.PendingSince.Before(out.OldestPendingAt) {
+			out.OldestPendingAt = p.PendingSince
+		}
+	}
+	return out, nil
 }

@@ -124,6 +124,21 @@ test("durable suspension and deletion override a warm cache and stale enabled KV
   assert.equal(f.calls.routes, 0);
 });
 
+test("durable generation is reported after routing on GET, HEAD, and revalidation", async () => {
+  const f = fixture();
+  f.release(first, { "index.html": "HTML" });
+  f.durable({ generation: 7 });
+  const response = await f.request();
+  assert.equal(response.headers.get("X-Gregale-Route-Generation"), "7");
+  assert.equal((await f.request("/", { method: "HEAD" })).headers.get("X-Gregale-Route-Generation"), "7");
+  const conditional = await f.request("/", { headers: { "If-None-Match": response.headers.get("ETag") } });
+  assert.equal(conditional.status, 304);
+  assert.equal(conditional.headers.get("X-Gregale-Route-Generation"), "7");
+  f.durable({ generation: 8 });
+  f.advance(60_001);
+  assert.equal((await f.request()).headers.get("X-Gregale-Route-Generation"), "8");
+});
+
 test("invalid durable heads never fall back to enabled KV or cached files", async () => {
   for (const override of [null, { origin_id: "b".repeat(64) }, { generation: 0 }, { deleted: true }, { hostname: "another.example" }, { expires_at: now / 1000 + 120 }]) {
     const f = fixture();

@@ -11274,4 +11274,5 @@ const (
 	HostingRouteCASAttempts              = 3
 	HostingRoutePublishConcurrency       = 4
 	HostingRouteDispatchTimeout          = 30 * time.Second
+	HostingRouteStatusReadTimeout        = 5 * time.Second
 )

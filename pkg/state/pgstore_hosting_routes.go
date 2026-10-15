@@ -15,6 +15,13 @@ func hostingTimestamp(at time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: at.UTC(), Valid: true}
 }
 
+func hostingTime(at pgtype.Timestamptz) time.Time {
+	if at.Valid {
+		return at.Time
+	}
+	return time.Time{}
+}
+
 func bumpHostingRoute(ctx context.Context, db sqlc.DBTX, site pgtype.UUID) (int64, error) {
 	generation, err := sqlc.New().HostingRouteChanged(ctx, db, site)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -85,10 +92,11 @@ func (s *PgStore) HostingRouteSnapshot(ctx context.Context, site string) (Hostin
 	if err != nil {
 		return HostingRouteSnapshot{}, err
 	}
-	out := HostingRouteSnapshot{Site: hostingSiteRow(row), Generation: publication.Generation, PublishedGeneration: publication.PublishedGeneration, Releases: []api.HostingRelease{}}
-	if publication.PublishedAt.Valid {
-		out.PublishedAt = publication.PublishedAt.Time
-	}
+	out := hostingPublicationSnapshot(hostingSiteRow(row), hostingPublication{
+		Generation: publication.Generation, PublishedGeneration: publication.PublishedGeneration,
+		PublishedAt: hostingTime(publication.PublishedAt), PendingSince: hostingTime(publication.PendingSince),
+		NextAttemptAt: hostingTime(publication.NextAttemptAt), LastAttemptAt: hostingTime(publication.LastAttemptAt),
+		RetryCount: publication.RetryCount, LastErrorCode: publication.LastErrorCode})
 	for _, release := range releases {
 		out.Releases = append(out.Releases, api.HostingRelease{ID: uuidString(release.ID), SiteID: uuidString(release.SiteID), State: release.State})
 	}
@@ -126,7 +134,16 @@ func (s *PgStore) AcknowledgeHostingRoute(ctx context.Context, site string, gene
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) RetryHostingRoute(ctx context.Context, site string, generation int64, next time.Time) error {
+func (s *PgStore) RetryHostingRoute(ctx context.Context, site string, generation int64, at time.Time, code string) error {
+	if generation < 1 || at.IsZero() || !validHostingRouteFailure(code) {
+		return ErrInvalidArgument
+	}
 	id, _ := parsePgUUID(site)
-	return sqlc.New().HostingRouteRetry(ctx, s.pool, sqlc.HostingRouteRetryParams{SiteID: id, Generation: generation, NextAttemptAt: hostingTimestamp(next)})
+	return sqlc.New().HostingRouteRetry(ctx, s.pool, sqlc.HostingRouteRetryParams{SiteID: id, Generation: generation,
+		NextAttemptAt: hostingTimestamp(at.Add(api.HostingRouteRetryInterval)), AttemptedAt: hostingTimestamp(at), ErrorCode: code})
+}
+
+func (s *PgStore) HostingRouteBacklog(ctx context.Context) (HostingRouteBacklog, error) {
+	row, err := sqlc.New().HostingRouteBacklog(ctx, s.pool)
+	return HostingRouteBacklog{Pending: row.Pending, OldestPendingAt: hostingTime(row.OldestPendingAt)}, err
 }

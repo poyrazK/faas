@@ -23,3 +23,7 @@ Successful file GETs report `X-Gregale-Cache: HIT` or `MISS`. This describes the
 Worker's file cache, after identity/routing checks, and is used by live
 qualification. HEAD, conditional 304, and error responses do not claim a cache
 hit. `X-Gregale-Release` identifies the immutable release serving a response.
+Durable responses also report `X-Gregale-Route-Generation` on GET, HEAD, and
+conditional revalidation. The value is evaluated after authorization/routing,
+including when file bytes come from cache, and supports
+[outage and regional qualification](../../../docs/internal-frontend-hosting-qualification.md).

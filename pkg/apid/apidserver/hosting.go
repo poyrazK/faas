@@ -77,7 +77,7 @@ func (s *server) runHostingReconciler(ctx context.Context) {
 	ticker := time.NewTicker(api.HostingReconcileInterval)
 	defer ticker.Stop()
 	for {
-		reconciler := hostingapi.Reconciler{Store: store, Artifacts: s.hostingConfig.Artifacts, LeasedRoutes: s.hostingConfig.Routes, DurableRoutes: s.hostingConfig.Artifacts, AdmissionEnabled: host.HostingEnabled, Log: s.log}
+		reconciler := hostingapi.Reconciler{Store: store, Artifacts: s.hostingConfig.Artifacts, LeasedRoutes: s.hostingConfig.Routes, DurableRoutes: s.hostingConfig.Artifacts, AdmissionEnabled: host.HostingEnabled, Log: s.log, Metrics: s.hostingMetrics}
 		if err := reconciler.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("hosting reconciliation failed")
 		}

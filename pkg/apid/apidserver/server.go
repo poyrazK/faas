@@ -68,6 +68,7 @@ import (
 // live socket-dialed client.
 type server struct {
 	hostingConfig                          *hosting.Config
+	hostingMetrics                         *hostingapi.Metrics
 	hosting                                hostingapi.Service
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
 	profileBackend                         profiling.Backend
@@ -537,8 +538,12 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops == nil {
 		s.devLoopMetrics = nil
+		s.hostingMetrics = nil
 	} else if s.devLoopMetrics == nil || s.devLoopMetrics.Registry() != ops.Registry() {
 		s.devLoopMetrics = devloop.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops != nil && (s.hostingMetrics == nil || s.hostingMetrics.Registry() != ops.Registry()) {
+		s.hostingMetrics = hostingapi.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
@@ -1303,6 +1308,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/internal/hosting/sites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListSites)))))
 	mux.HandleFunc("POST /v1/internal/hosting/sites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.Require(s.idempotent(s.hosting.CreateSite)))))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetSite)))))
+	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetStatus)))))
 	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.DeleteSite)))))
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/suspension", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.Require(s.idempotent(s.hosting.SetSuspended)))))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListReleases)))))

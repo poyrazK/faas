@@ -4080,6 +4080,10 @@ type HostingRoutePublication struct {
 	PublishedGeneration int64
 	PublishedAt         pgtype.Timestamptz
 	NextAttemptAt       pgtype.Timestamptz
+	PendingSince        pgtype.Timestamptz
+	LastAttemptAt       pgtype.Timestamptz
+	RetryCount          int64
+	LastErrorCode       string
 }
 
 type HostingSite struct {

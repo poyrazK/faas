@@ -298,7 +298,11 @@ const hostingRouteAcknowledged = `-- name: HostingRouteAcknowledged :exec
 UPDATE hosting_route_publications SET
  published_at = CASE WHEN published_generation < $1::bigint THEN $2::timestamptz ELSE published_at END,
  published_generation = GREATEST(published_generation, $1::bigint),
- next_attempt_at = CASE WHEN generation = $1::bigint THEN $3::timestamptz ELSE next_attempt_at END
+ next_attempt_at = CASE WHEN generation = $1::bigint THEN $3::timestamptz ELSE next_attempt_at END,
+ pending_since = CASE WHEN generation = $1::bigint THEN NULL ELSE pending_since END,
+ last_attempt_at = CASE WHEN generation = $1::bigint THEN $2::timestamptz ELSE last_attempt_at END,
+ retry_count = CASE WHEN generation = $1::bigint THEN 0 ELSE retry_count END,
+ last_error_code = CASE WHEN generation = $1::bigint THEN '' ELSE last_error_code END
 WHERE site_id = $4::uuid AND published_generation <= $1::bigint
 `
 
@@ -319,11 +323,29 @@ func (q *Queries) HostingRouteAcknowledged(ctx context.Context, db DBTX, arg Hos
 	return err
 }
 
+const hostingRouteBacklog = `-- name: HostingRouteBacklog :one
+SELECT count(*)::bigint AS pending, min(pending_since)::timestamptz AS oldest_pending_at
+FROM hosting_route_publications WHERE generation > published_generation
+`
+
+type HostingRouteBacklogRow struct {
+	Pending         int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+func (q *Queries) HostingRouteBacklog(ctx context.Context, db DBTX) (HostingRouteBacklogRow, error) {
+	row := db.QueryRow(ctx, hostingRouteBacklog)
+	var i HostingRouteBacklogRow
+	err := row.Scan(&i.Pending, &i.OldestPendingAt)
+	return i, err
+}
+
 const hostingRouteChanged = `-- name: HostingRouteChanged :one
 INSERT INTO hosting_route_publications(site_id)
 SELECT id FROM hosting_sites WHERE id = $1::uuid AND durable_routing
 ON CONFLICT (site_id) DO UPDATE SET generation = hosting_route_publications.generation + 1,
- next_attempt_at = clock_timestamp() RETURNING generation
+ next_attempt_at = clock_timestamp(), pending_since = COALESCE(hosting_route_publications.pending_since, clock_timestamp()),
+ last_attempt_at = NULL, retry_count = 0, last_error_code = '' RETURNING generation
 `
 
 func (q *Queries) HostingRouteChanged(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error) {
@@ -408,7 +430,7 @@ func (q *Queries) HostingRoutePage(ctx context.Context, db DBTX, arg HostingRout
 }
 
 const hostingRoutePublicationGet = `-- name: HostingRoutePublicationGet :one
-SELECT site_id, generation, published_generation, published_at, next_attempt_at FROM hosting_route_publications WHERE site_id = $1::uuid
+SELECT site_id, generation, published_generation, published_at, next_attempt_at, pending_since, last_attempt_at, retry_count, last_error_code FROM hosting_route_publications WHERE site_id = $1::uuid
 `
 
 func (q *Queries) HostingRoutePublicationGet(ctx context.Context, db DBTX, siteID pgtype.UUID) (HostingRoutePublication, error) {
@@ -420,12 +442,16 @@ func (q *Queries) HostingRoutePublicationGet(ctx context.Context, db DBTX, siteI
 		&i.PublishedGeneration,
 		&i.PublishedAt,
 		&i.NextAttemptAt,
+		&i.PendingSince,
+		&i.LastAttemptAt,
+		&i.RetryCount,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const hostingRoutePublicationLock = `-- name: HostingRoutePublicationLock :one
-SELECT site_id, generation, published_generation, published_at, next_attempt_at FROM hosting_route_publications WHERE site_id = $1::uuid FOR UPDATE
+SELECT site_id, generation, published_generation, published_at, next_attempt_at, pending_since, last_attempt_at, retry_count, last_error_code FROM hosting_route_publications WHERE site_id = $1::uuid FOR UPDATE
 `
 
 func (q *Queries) HostingRoutePublicationLock(ctx context.Context, db DBTX, siteID pgtype.UUID) (HostingRoutePublication, error) {
@@ -437,23 +463,36 @@ func (q *Queries) HostingRoutePublicationLock(ctx context.Context, db DBTX, site
 		&i.PublishedGeneration,
 		&i.PublishedAt,
 		&i.NextAttemptAt,
+		&i.PendingSince,
+		&i.LastAttemptAt,
+		&i.RetryCount,
+		&i.LastErrorCode,
 	)
 	return i, err
 }
 
 const hostingRouteRetry = `-- name: HostingRouteRetry :exec
-UPDATE hosting_route_publications SET next_attempt_at = $1::timestamptz
-WHERE site_id = $2::uuid AND generation = $3::bigint
+UPDATE hosting_route_publications SET next_attempt_at = $1::timestamptz,
+ last_attempt_at = $2::timestamptz, retry_count = retry_count + 1, last_error_code = $3::text
+WHERE site_id = $4::uuid AND generation = $5::bigint
 `
 
 type HostingRouteRetryParams struct {
 	NextAttemptAt pgtype.Timestamptz
+	AttemptedAt   pgtype.Timestamptz
+	ErrorCode     string
 	SiteID        pgtype.UUID
 	Generation    int64
 }
 
 func (q *Queries) HostingRouteRetry(ctx context.Context, db DBTX, arg HostingRouteRetryParams) error {
-	_, err := db.Exec(ctx, hostingRouteRetry, arg.NextAttemptAt, arg.SiteID, arg.Generation)
+	_, err := db.Exec(ctx, hostingRouteRetry,
+		arg.NextAttemptAt,
+		arg.AttemptedAt,
+		arg.ErrorCode,
+		arg.SiteID,
+		arg.Generation,
+	)
 	return err
 }
 

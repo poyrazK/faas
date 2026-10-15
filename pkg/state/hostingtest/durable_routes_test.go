@@ -54,7 +54,7 @@ func durableLifecycle(t *testing.T, store hostingTestStore) {
 	if err = store.AcknowledgeHostingRoute(t.Context(), site.ID, 2, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.RetryHostingRoute(t.Context(), site.ID, 2, time.Now().Add(24*time.Hour)); err != nil {
+	if err = store.RetryHostingRoute(t.Context(), site.ID, 2, time.Now().Add(24*time.Hour), api.HostingRouteErrorProvider); err != nil {
 		t.Fatal(err)
 	}
 	due, err := store.ListDueHostingRoutePublications(t.Context(), time.Now().Add(time.Second), api.HostingRoutePageSize)

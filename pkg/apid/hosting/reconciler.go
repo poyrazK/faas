@@ -23,6 +23,7 @@ type Reconciler struct {
 	LeasedRoutes, DurableRoutes artifacts.RoutePublisher
 	AdmissionEnabled            func() bool
 	Log                         *slog.Logger
+	Metrics                     *Metrics
 	Now                         func() time.Time
 }
 
@@ -33,7 +34,16 @@ func (r Reconciler) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (r Reconciler) RunOnce(ctx context.Context) error {
+func (r Reconciler) RunOnce(ctx context.Context) (resultErr error) {
+	defer func() {
+		r.Metrics.observePass(resultErr, ctx.Err() != nil, r.now())
+		if r.Metrics != nil {
+			readCtx, cancel := context.WithTimeout(ctx, api.HostingRouteStatusReadTimeout)
+			defer cancel()
+			backlog, err := r.Store.HostingRouteBacklog(readCtx)
+			r.Metrics.observeBacklog(backlog, err, r.now())
+		}
+	}()
 	// Due work persists across process restarts. An individual failed site must
 	// not prevent publication or cleanup for other accounts.
 	var failures []error
@@ -44,13 +54,17 @@ func (r Reconciler) RunOnce(ctx context.Context) error {
 	var publications errgroup.Group
 	publications.SetLimit(api.HostingRoutePublishConcurrency)
 	dispatchCtx, cancel := context.WithTimeout(ctx, api.HostingRouteDispatchTimeout)
+	deadline, _ := dispatchCtx.Deadline()
 	for _, id := range ids {
-		if dispatchCtx.Err() != nil {
+		if dispatchCtx.Err() != nil || !time.Now().Before(deadline) {
 			break
 		}
 		publications.Go(func() error {
 			if dispatchCtx.Err() != nil {
 				return dispatchCtx.Err()
+			}
+			if !time.Now().Before(deadline) {
+				return context.DeadlineExceeded
 			}
 			return r.publish(dispatchCtx, ctx, id)
 		})
@@ -85,7 +99,10 @@ func (r Reconciler) publish(ctx, receiptCtx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	started, outcome := time.Now(), api.HostingRouteErrorProvider
+	defer func() { r.Metrics.observePublication(outcome, time.Since(started)) }()
 	if r.DurableRoutes == nil || snapshot.Site.OriginID != r.Artifacts.ID() {
+		outcome = api.HostingRouteErrorOrigin
 		err = errors.New("durable hosting origin is unavailable")
 	} else {
 		publishCtx, cancel := context.WithTimeout(ctx, api.HostingStorageTimeout)
@@ -93,14 +110,22 @@ func (r Reconciler) publish(ctx, receiptCtx context.Context, id string) error {
 		cancel()
 	}
 	if err != nil {
+		if errors.Is(err, artifacts.ErrStaleRoute) {
+			outcome = api.HostingRouteErrorStale
+		}
 		if r.Log != nil {
 			r.Log.Warn("hosting route publication pending", "site_id", id, "generation", snapshot.Generation)
 		}
 		// A dispatch deadline must not discard the persistent retry schedule.
-		retryErr := r.Store.RetryHostingRoute(receiptCtx, id, snapshot.Generation, r.now().Add(api.HostingRouteRetryInterval))
+		retryErr := r.Store.RetryHostingRoute(receiptCtx, id, snapshot.Generation, r.now(), outcome)
 		return errors.Join(err, retryErr)
 	}
-	return r.Store.AcknowledgeHostingRoute(receiptCtx, id, snapshot.Generation, r.now())
+	err = r.Store.AcknowledgeHostingRoute(receiptCtx, id, snapshot.Generation, r.now())
+	outcome = "published"
+	if err != nil {
+		outcome = "receipt_unavailable"
+	}
+	return err
 }
 
 func (r Reconciler) reconcileSite(ctx context.Context, site api.HostingSite) error {

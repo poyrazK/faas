@@ -75,6 +75,7 @@ export FAAS_FRONTEND_HOSTING_ENABLED=1
 gregale sites create --name storefront --project shop --environment production
 gregale sites deploy --site SITE_UUID --path ./dist --spa
 gregale sites releases --site SITE_UUID
+gregale sites status --site SITE_UUID
 gregale sites rollback --site SITE_UUID --release RELEASE_UUID
 gregale sites retire --site SITE_UUID --release UNUSED_RELEASE_UUID
 gregale sites delete --site SITE_UUID
@@ -184,6 +185,60 @@ artifact cleanup and edge denial, and turn off the new Worker switch. The down
 migration rejects live durable rows. Restoring provider/database snapshots
 independently or deleting terminal heads needs a separate recovery procedure.
 
+## Publication status and monitoring
+
+`gregale sites status --site SITE_UUID` calls the operator-only, account-owned
+`GET /v1/internal/hosting/sites/{site}/status` endpoint. It returns the current
+`site` intent and a separate `publication` object:
+
+- `pending`: `generation` exceeds `published_generation`. Deployment or traffic
+  changes are committed but the latest route has not been acknowledged.
+- `published`: both generations match. R2 accepted or verified the head. Edge
+  metadata can still need up to 60 seconds to refresh; this is not a global
+  serving-health check.
+- `untracked`: the site uses leased routing, which has no durable publication
+  receipt. No successful edge publication is inferred for it.
+
+The object includes `published_at`, `pending_since`, `last_attempt_at`,
+`next_attempt_at`, `retry_count`, and a bounded `last_error_code` where present.
+`origin_unavailable` indicates backend configuration mismatch or absence;
+`publication_unavailable` indicates a retryable provider failure;
+`stale_generation` requires inspecting a newer/conflicting provider head and
+the recovery history. Preserve terminal heads. Provider response bodies, URLs,
+and tokens never appear in this status.
+
+New intent clears its predecessor's attempt/error fields while preserving the
+age of continuously pending work. An older acknowledgement cannot clear newer
+pending intent. A failed six-hour repair of an already-published generation can
+show an error while its state stays `published`. Repair reads update the last
+attempt time without changing the original publication timestamp.
+
+Apply the publication-status migration and upgrade all writers/controllers
+before admitting durable changes. For an existing internal durable pilot,
+pause the old controller during that migration and resume with the upgraded
+binary; its static delivery can continue. Pending work present at the metadata
+migration starts its age measurement at migration time.
+
+The private apid Prometheus registry exposes these metrics, without site,
+account, release, hostname, or raw-error labels:
+
+| Metric suffix after `apid_` | Meaning |
+|---|---|
+| `hosting_route_pending` | Sites whose latest durable generation lacks an acknowledgement |
+| `hosting_route_oldest_pending_seconds` | Continuously pending age at the latest observation |
+| `hosting_route_backlog_available` | Latest backlog read succeeded (`1`) or is unavailable/unobserved (`0`) |
+| `hosting_route_backlog_observed_unixtime` | Time of the latest successful backlog observation |
+| `hosting_route_publication_attempts_total{outcome}` | Publication/verification attempts, including unchanged repair reads |
+| `hosting_route_publication_duration_seconds{outcome}` | Attempt duration through provider acknowledgement |
+| `hosting_reconcile_passes_total{outcome}` | Successful, failed, or canceled controller passes |
+| `hosting_reconcile_last_success_unixtime` | Latest successful full pass |
+
+Check availability and observation freshness before interpreting backlog
+gauges; failed reads preserve previous values. Counters measure attempts, not
+R2 PUT charges. Configure pilot monitoring for sustained pending work, repeated
+publication failures, and stale reconciliation. Metrics do not enable hosting
+admission or provision resources.
+
 ## Portable checks
 
 ```bash
@@ -278,3 +333,8 @@ not a global latency percentile or origin-residency guarantee. Reports explicitl
 list untested API/control-plane outages, regional load, and an omitted Worker
 switch. They never qualify public launch. Leased sites retain short routing
 leases; customer billing and domain onboarding remain pilot boundaries in both modes.
+
+Use the [outage and regional qualification procedure](internal-frontend-hosting-qualification.md)
+to enable explicit API/database fault checks, publication retry recovery, actual
+cold/warm measurements, and optional dedicated control-plane resource snapshots.
+These phases remain unqualified unless their observations complete.

@@ -8,6 +8,12 @@ import (
 
 const hostingAPIPath = "/v1/internal/hosting/sites"
 
+func (c *Client) GetHostingSiteStatus(ctx context.Context, site string) (HostingSiteStatus, error) {
+	var out HostingSiteStatus
+	err := c.do(ctx, http.MethodGet, hostingSitePath(site)+"/status", nil, &out)
+	return out, err
+}
+
 func (c *Client) SetHostingSiteSuspended(ctx context.Context, site string, req SetHostingSuspendedRequest) (HostingSite, error) {
 	var out HostingSite
 	err := c.do(ctx, http.MethodPut, hostingSitePath(site)+"/suspension", req, &out)

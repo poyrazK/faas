@@ -43,22 +43,45 @@ type HostingStore interface {
 	ListDueHostingRoutePublications(context.Context, time.Time, int) ([]string, error)
 	HostingRouteSnapshot(context.Context, string) (HostingRouteSnapshot, error)
 	AcknowledgeHostingRoute(context.Context, string, int64, time.Time) error
-	RetryHostingRoute(context.Context, string, int64, time.Time) error
+	RetryHostingRoute(context.Context, string, int64, time.Time, string) error
+	HostingRouteBacklog(context.Context) (HostingRouteBacklog, error)
 }
 
 // A site and its ready-release set must be read from the same transaction as
 // their generation. The per-site row is a coalescing transactional outbox.
 type HostingRouteSnapshot struct {
-	Site                api.HostingSite
-	Releases            []api.HostingRelease
-	Generation          int64
-	PublishedGeneration int64
-	PublishedAt         time.Time
+	Site                                       api.HostingSite
+	Releases                                   []api.HostingRelease
+	Generation                                 int64
+	PublishedGeneration                        int64
+	PublishedAt                                time.Time
+	PendingSince, NextAttemptAt, LastAttemptAt time.Time
+	RetryCount                                 int64
+	LastErrorCode                              string
+}
+
+type HostingRouteBacklog struct {
+	Pending         int64
+	OldestPendingAt time.Time
 }
 
 type hostingPublication struct {
 	Generation, PublishedGeneration int64
 	PublishedAt, NextAttemptAt      time.Time
+	PendingSince, LastAttemptAt     time.Time
+	RetryCount                      int64
+	LastErrorCode                   string
+}
+
+func validHostingRouteFailure(code string) bool {
+	return code == api.HostingRouteErrorOrigin || code == api.HostingRouteErrorProvider || code == api.HostingRouteErrorStale
+}
+
+func hostingPublicationSnapshot(site api.HostingSite, p hostingPublication) HostingRouteSnapshot {
+	return HostingRouteSnapshot{Site: site, Generation: p.Generation, PublishedGeneration: p.PublishedGeneration,
+		PublishedAt: p.PublishedAt, PendingSince: p.PendingSince, NextAttemptAt: p.NextAttemptAt,
+		LastAttemptAt: p.LastAttemptAt, RetryCount: p.RetryCount, LastErrorCode: p.LastErrorCode,
+		Releases: []api.HostingRelease{}}
 }
 
 func validHostingSite(s api.HostingSite) bool {

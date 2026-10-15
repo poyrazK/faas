@@ -508,6 +508,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "create", Short: "Create an internal site", Flags: []cliFlag{{Name: "name", Value: "NAME"}, {Name: "project", Value: "PROJECT"}, {Name: "environment", Value: "ENV"}}},
 			{Name: "list", Short: "List owned internal sites"},
+			{Name: "status", Short: "Inspect intent, publication, and pending retries", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 			{Name: "deploy", Short: "Publish a prebuilt static directory", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}}},
 			{Name: "releases", Short: "List releases", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 			{Name: "rollback", Short: "Promote a retained ready release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},

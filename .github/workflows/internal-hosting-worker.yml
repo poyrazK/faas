@@ -4,6 +4,7 @@ on:
     paths:
       - deploy/cloudflare/hosting-worker/**
       - scripts/ops/internal-frontend-hosting-qualification.py
+      - scripts/ops/internal_frontend_hosting_probes.py
       - scripts/ci/test_internal_frontend_hosting_qualification.py
       - pkg/api/limits.go
       - .github/workflows/internal-hosting-worker.yml
@@ -12,6 +13,7 @@ on:
     paths:
       - deploy/cloudflare/hosting-worker/**
       - scripts/ops/internal-frontend-hosting-qualification.py
+      - scripts/ops/internal_frontend_hosting_probes.py
       - scripts/ci/test_internal_frontend_hosting_qualification.py
       - .github/workflows/internal-hosting-worker.yml
 permissions:

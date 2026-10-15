@@ -23,7 +23,7 @@ func TestHostingRoutesDefaultOffAndOperatorOnly(t *testing.T) {
 			root := "/v1/internal/hosting/sites"
 			site := root + "/11111111-1111-4111-8111-111111111111"
 			release := site + "/releases/22222222-2222-4222-8222-222222222222"
-			for _, route := range []struct{ method, path string }{{"GET", root}, {"POST", root}, {"GET", site}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
+			for _, route := range []struct{ method, path string }{{"GET", root}, {"POST", root}, {"GET", site}, {"GET", site + "/status"}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
 				response := env.Do(t, route.method, route.path, map[string]any{}, nil)
 				want := 503
 				code := "frontend_hosting_disabled"

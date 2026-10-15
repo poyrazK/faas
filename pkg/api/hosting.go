@@ -2,6 +2,31 @@ package api
 
 import "time"
 
+const (
+	HostingRouteErrorOrigin   = "origin_unavailable"
+	HostingRouteErrorProvider = "publication_unavailable"
+	HostingRouteErrorStale    = "stale_generation"
+)
+
+// HostingSiteStatus reports accepted intent and provider publication separately.
+// Published routing is not a claim that every edge location has observed it.
+type HostingSiteStatus struct {
+	Site        HostingSite              `json:"site"`
+	Publication HostingPublicationStatus `json:"publication"`
+}
+
+type HostingPublicationStatus struct {
+	State               string     `json:"state"`
+	Generation          int64      `json:"generation,omitempty"`
+	PublishedGeneration int64      `json:"published_generation,omitempty"`
+	PublishedAt         *time.Time `json:"published_at,omitempty"`
+	PendingSince        *time.Time `json:"pending_since,omitempty"`
+	NextAttemptAt       *time.Time `json:"next_attempt_at,omitempty"`
+	LastAttemptAt       *time.Time `json:"last_attempt_at,omitempty"`
+	RetryCount          int64      `json:"retry_count"`
+	LastErrorCode       string     `json:"last_error_code,omitempty"`
+}
+
 // HostingManifest describes an already-built static site, never source code.
 type HostingManifest struct {
 	Files       []HostingFile `json:"files"`

@@ -39,6 +39,7 @@ func TestHostingStores(t *testing.T) {
 			t.Run("durable_cleanup", func(t *testing.T) { durableEmptySiteCleanup(t, store) })
 			t.Run("durable_release_cleanup", func(t *testing.T) { durableReleaseCleanup(t, store) })
 			t.Run("durable_snapshot_concurrency", func(t *testing.T) { durableSnapshotConcurrency(t, store) })
+			t.Run("publication_status", func(t *testing.T) { publicationStatusLifecycle(t, store) })
 		})
 	}
 }

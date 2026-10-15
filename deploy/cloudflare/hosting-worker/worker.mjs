@@ -167,6 +167,7 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
     "Cache-Control": "private, max-age=0, must-revalidate", "X-Content-Type-Options": "nosniff",
     "X-Gregale-Release": release, "Referrer-Policy": "strict-origin-when-cross-origin",
   });
+  if (route.version === 2) headers.set("X-Gregale-Route-Generation", String(route.generation));
   // The browser revalidates internal content; the shared edge cache remains
   // usable only behind fresh identity and routing checks on every request.
   if (request.headers.get("If-None-Match") === etag) {

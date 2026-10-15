@@ -75,15 +75,53 @@ class LiveFixture(MODULE.Qualification):
         self.orphan = orphan
         self.scanned = []
         self.durable = durable
+        self.fault = None
+        self.serving_site = None
+        self.generation = self.published_generation = 0
+        self.control_calls = []
+        self.elapsed = 0.0
+        self.probe_clock = lambda: self.elapsed
+        self.probe_sleep = lambda seconds: setattr(self, 'elapsed', self.elapsed + seconds)
+
+    def route_changed(self):
+        self.generation += 1
+        if self.fault != 'publication':
+            self.published_generation = self.generation
+            self.serving_site = deepcopy(self.live_site)
+
+    def control(self, action, mode='', run_id='', duration=0):
+        import time
+        self.control_calls.append((action, mode))
+        if action == 'enter':
+            self.fault = mode
+        if action == 'leave':
+            self.fault = None
+            self.published_generation = self.generation
+            self.serving_site = deepcopy(self.live_site)
+        return {'version': 1, 'api_origin': self.api_url, 'account_id': ACCOUNT,
+                'origin_id': self.deployment['origin_id'], 'worker_name': self.deployment['worker_name'],
+                'dedicated': True, 'modes': ['api', 'database', 'publication'], 'mode': mode,
+                'capabilities': ['resource_profile'], 'sampled_at': time.time(), 'apid_instance_id': 'fixture-apid-1',
+                'resources': {'apid_cpu_seconds_total': self.elapsed + 1.5, 'apid_resident_memory_bytes': 16 * 1024 * 1024,
+                              'hosting_database_bytes': 8192 + len(self.releases) * 128},
+                'run_id': run_id, 'automatic_restore_at': time.time() + duration + 120,
+                'fault_active': self.fault == mode if mode else False, 'api_running': self.fault != 'api'}
 
     def preflight(self):
         self.deployment = deployment()
         self.deployment['durable_routing_enabled'] = self.durable
         self.api_url = 'https://api.platform.example'
+        self.prepare_probes()
         self.checked('preflight')
 
     def cli(self, *args, **kwargs):
         verb = args[1]
+        if verb == 'status':
+            return {'site': deepcopy(self.live_site), 'publication': {
+                'state': 'pending' if self.generation > self.published_generation else 'published',
+                'generation': self.generation, 'published_generation': self.published_generation,
+                'retry_count': 1 if self.fault == 'publication' else 0,
+                'last_error_code': 'publication_unavailable' if self.fault == 'publication' else ''}}
         if verb == 'create':
             self.live_site = {'id': SITE, 'account_id': ACCOUNT, 'hostname': SITE + '.hosting.example',
                               'origin_id': self.deployment['origin_id'], 'revision': 1, 'active_release_id': '',
@@ -112,6 +150,7 @@ class LiveFixture(MODULE.Qualification):
             self.published.clear()
         else:
             raise AssertionError('unexpected CLI verb')
+        self.route_changed()
         return deepcopy(self.live_site)
 
     def new_release(self, manifest):
@@ -120,7 +159,11 @@ class LiveFixture(MODULE.Qualification):
         self.releases[rid] = release
         return release
 
-    def api_response(self, method, suffix='', value=None):
+    def api_response(self, method, suffix='', value=None, **kwargs):
+        if self.fault == 'api':
+            raise MODULE.Failure('HTTPS request failed; verify connectivity and credentials separately')
+        if self.fault == 'database':
+            return 503, {}, b'{}'
         def response(status, value):
             return status, {}, json.dumps(value).encode()
         conflict = response(409, {'code': 'hosting_release_conflict'})
@@ -135,6 +178,7 @@ class LiveFixture(MODULE.Qualification):
             if value['expected_revision'] != self.live_site['revision'] or release['state'] != 'ready':
                 return conflict
             self.live_site.update(active_release_id=release['id'], revision=self.live_site['revision'] + 1)
+            self.route_changed()
             return response(202, self.live_site)
         rid = suffix.split('/')[3]
         release = self.releases[rid]
@@ -155,11 +199,13 @@ class LiveFixture(MODULE.Qualification):
                     return response(400, {'code': 'validation_failed'})
                 self.published.setdefault((rid, file['path']), body)
             release['state'] = 'ready'
+            self.route_changed()
             return response(200, release)
         if method == 'DELETE':
             if self.live_site['active_release_id'] == rid:
                 return conflict
             release['state'] = 'retiring'
+            self.route_changed()
             return response(202, release)
         raise AssertionError('unexpected API request')
 
@@ -173,7 +219,7 @@ class LiveFixture(MODULE.Qualification):
             return problem(302, 'login')
         if self.deleted or self.live_site.get('suspended'):
             return problem(503, 'hosting_route_unavailable')
-        rid = self.live_site['active_release_id']
+        rid = self.serving_site['active_release_id']
         name = path.lstrip('/')
         pinned = name.startswith('_gregale/releases/')
         if pinned:
@@ -194,6 +240,8 @@ class LiveFixture(MODULE.Qualification):
         body = self.published[rid, name]
         received = {'etag': f'"sha256:{MODULE.digest(body)}"', 'x-gregale-release': rid,
                     'cache-control': 'private, max-age=0, must-revalidate', 'cf-ray': 'fixture-IAD'}
+        if self.durable:
+            received['x-gregale-route-generation'] = str(self.published_generation)
         if (headers or {}).get('If-None-Match') == received['etag']:
             return 304, received, b''
         if method == 'HEAD':
@@ -215,6 +263,182 @@ class LiveFixture(MODULE.Qualification):
 
 
 class HostingQualificationTests(unittest.TestCase):
+    def probe_options(self, root):
+        args = options(root)
+        args.outage_controller = root / 'controller'
+        args.outage_controller.write_text('#!/bin/sh\nexit 1\n')
+        args.outage_controller.chmod(0o700)
+        args.check_control_plane_outages = True
+        args.check_publication_recovery = True
+        args.edge_samples = 3
+        args.runner_region = 'eu-test'
+        return args
+
+    def test_outages_recovery_and_regional_probes_require_actual_evidence(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(self.probe_options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            self.assertTrue(fixture.run())
+            for name in ('api_control_plane_outage', 'database_control_plane_outage', 'publication_retry_recovery'):
+                self.assertIn(name, fixture.report['checks'])
+                self.assertNotIn(name, fixture.report['not_run'])
+            self.assertGreaterEqual(fixture.report['checks']['api_control_plane_outage']['duration_seconds'], 1200)
+            self.assertGreaterEqual(fixture.report['checks']['database_control_plane_outage']['duration_seconds'], 1200)
+            self.assertEqual(fixture.report['outage_recovery']['status'], 'restored')
+            self.assertEqual(fixture.report['checks']['regional_edge_observations']['locations'], ['IAD'])
+            self.assertIn('control_plane_resource_profile', fixture.report['not_run'])
+            self.assertIn('provider_usage_billing', fixture.report['not_run'])
+            self.assertEqual([mode for action, mode in fixture.control_calls if action == 'leave'], ['api', 'database', 'publication'])
+            self.assertNotIn('SECRET', fixture.args.evidence.read_text())
+
+    def test_interrupted_outage_restores_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(self.probe_options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.edge
+            def interrupt(path='/', **kwargs):
+                if fixture.fault == 'api' and path.startswith('/_gregale/releases/'):
+                    raise KeyboardInterrupt
+                return original(path, **kwargs)
+            fixture.edge = interrupt
+            self.assertFalse(fixture.run())
+            self.assertEqual(fixture.report['outage_recovery']['status'], 'restored')
+            self.assertEqual(fixture.report['cleanup']['status'], 'passed')
+            self.assertNotIn('api_control_plane_outage', fixture.report['checks'])
+
+    def test_resource_profile_uses_validated_snapshots_without_inventing_usage(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            args = self.probe_options(Path(directory))
+            args.resource_profile = True
+            fixture = LiveFixture(args, durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            self.assertTrue(fixture.run())
+            profile = fixture.report['resource_profile']
+            self.assertEqual(profile['status'], 'passed')
+            self.assertGreaterEqual(profile['apid_cpu_seconds_delta'], 2400)
+            self.assertEqual(profile['samples'][-1]['apid_resident_memory_bytes'], 16 * 1024 * 1024)
+            self.assertNotIn('control_plane_resource_profile', fixture.report['not_run'])
+            self.assertIn('provider_usage_billing', fixture.report['not_run'])
+
+    def test_resource_counter_reset_does_not_produce_cpu_cost(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            args = self.probe_options(Path(directory))
+            args.resource_profile = True
+            fixture = LiveFixture(args, durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.control
+            snapshots = 0
+            def reset(*args, **kwargs):
+                nonlocal snapshots
+                value = original(*args, **kwargs)
+                if args[0] == 'snapshot':
+                    snapshots += 1
+                    value['apid_instance_id'] = 'instance-' + str(snapshots)
+                return value
+            fixture.control = reset
+            self.assertTrue(fixture.run())
+            self.assertNotIn('apid_cpu_seconds_delta', fixture.report['resource_profile'])
+            self.assertIn('cross_restart_cpu_accounting', fixture.report['not_run'])
+
+    def test_invalid_resource_observation_does_not_qualify(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            args = self.probe_options(Path(directory))
+            args.resource_profile = True
+            fixture = LiveFixture(args, durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.control
+            def invalid(*args, **kwargs):
+                value = original(*args, **kwargs)
+                value['resources']['apid_cpu_seconds_total'] = float('nan')
+                return value
+            fixture.control = invalid
+            self.assertFalse(fixture.run())
+            self.assertIn('control_plane_resource_profile', fixture.report['not_run'])
+            self.assertNotIn('control_plane_resource_profile', fixture.report['checks'])
+
+    def test_outage_without_watchdog_is_refused_and_restored(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(self.probe_options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.control
+            def no_watchdog(*args, **kwargs):
+                value = original(*args, **kwargs)
+                value.pop('automatic_restore_at', None)
+                return value
+            fixture.control = no_watchdog
+            self.assertFalse(fixture.run())
+            self.assertEqual(fixture.report['outage_recovery']['status'], 'restored')
+            self.assertEqual(fixture.report['cleanup']['status'], 'passed')
+            self.assertNotIn('api_control_plane_outage', fixture.report['checks'])
+
+    def test_lost_restoration_response_is_retried_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(self.probe_options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.control
+            lost = False
+            def lose_response(*args, **kwargs):
+                nonlocal lost
+                value = original(*args, **kwargs)
+                if args[0] == 'leave' and not lost:
+                    lost = True
+                    raise MODULE.Failure('Qualification command unavailable or timed out')
+                return value
+            fixture.control = lose_response
+            self.assertFalse(fixture.run())
+            self.assertEqual([mode for action, mode in fixture.control_calls if action == 'leave'], ['api', 'api'])
+            self.assertEqual(fixture.report['outage_recovery']['status'], 'restored')
+            self.assertEqual(fixture.report['cleanup']['status'], 'passed')
+            self.assertNotIn('api_control_plane_outage', fixture.report['checks'])
+
+    def test_successful_api_read_cannot_qualify_an_outage(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(self.probe_options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.api_response
+            def reachable(*args, **kwargs):
+                if fixture.fault == 'api':
+                    return 200, {}, json.dumps(fixture.live_site).encode()
+                return original(*args, **kwargs)
+            fixture.api_response = reachable
+            self.assertFalse(fixture.run())
+            self.assertEqual(fixture.report['outage_recovery']['status'], 'restored')
+            self.assertNotIn('api_control_plane_outage', fixture.report['checks'])
+
+    def test_already_cached_asset_cannot_qualify_as_cold(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(self.probe_options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            original = fixture.edge
+            def cached(path='/', **kwargs):
+                status, headers, body = original(path, **kwargs)
+                if path.startswith('/_gregale/releases/'):
+                    headers['x-gregale-cache'] = 'HIT'
+                return status, headers, body
+            fixture.edge = cached
+            self.assertFalse(fixture.run())
+            self.assertNotIn('regional_edge_observations', fixture.report['checks'])
+
+
+    def test_controller_protocol_filters_credentials_and_rejects_foreign_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.probe_options(Path(directory))
+            fixture = MODULE.Qualification(args, env={'FAAS_TOKEN': 'SECRET-API', 'HOSTING_QUAL_ACCESS_TOKEN': 'SECRET-ACCESS',
+                                                      'AWS_SECRET_ACCESS_KEY': 'SECRET-AWS', 'SSH_AUTH_SOCK': '/run/agent'})
+            fixture.api_url, fixture.deployment = 'https://api.platform.example', deployment()
+            identity = {'version': 1, 'api_origin': fixture.api_url, 'account_id': ACCOUNT,
+                        'origin_id': fixture.deployment['origin_id'], 'worker_name': fixture.deployment['worker_name']}
+            captured = []
+            def execute(command, env, **kwargs):
+                captured.append((command, env))
+                return SimpleNamespace(stdout=json.dumps(identity).encode())
+            fixture.probe_execute = execute
+            fixture.control('describe')
+            self.assertEqual(captured[0][1], {'SSH_AUTH_SOCK': '/run/agent'})
+            identity['api_origin'] = 'https://production.example'
+            with self.assertRaises(MODULE.Failure):
+                fixture.control('describe')
+
     def test_durable_lifecycle_checks_suspension_and_resume(self):
         with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
             fixture = LiveFixture(options(Path(directory)), durable=True)

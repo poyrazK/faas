@@ -65,6 +65,25 @@ func TestSitesCommandDefaultOff(t *testing.T) {
 	}
 }
 
+func TestSitesStatusUsesAuthenticatedReadEndpoint(t *testing.T) {
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/internal/hosting/sites/11111111-1111-4111-8111-111111111111/status" || r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("incorrect status request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.HostingSiteStatus{Publication: api.HostingPublicationStatus{State: "pending", Generation: 3, PublishedGeneration: 2}})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	if code := cmdSites([]string{"status", "--site", "11111111-1111-4111-8111-111111111111"}); code != 0 || calls != 1 {
+		t.Fatalf("status command=%d calls=%d", code, calls)
+	}
+}
+
 func TestSitesSuspensionUsesCurrentRevision(t *testing.T) {
 	for _, verb := range []string{"suspend", "resume"} {
 		t.Run(verb, func(t *testing.T) {

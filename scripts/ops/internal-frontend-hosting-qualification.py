@@ -10,12 +10,16 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from internal_frontend_hosting_probes import PilotProbes
 
 ROOT = Path(__file__).resolve().parents[2]
 API_PATH = '/v1/internal/hosting/sites'
@@ -191,7 +195,7 @@ def manifest(files):
     ]}
 
 
-class Qualification:
+class Qualification(PilotProbes):
     def __init__(self, args, env=None, http=None):
         self.args = args
         self.env = dict(os.environ if env is None else env)
@@ -199,9 +203,18 @@ class Qualification:
         self.infrastructure = Infrastructure(args.terraform, args.infrastructure, self.env)
         self.site = None
         self.deployment = None
+        for name, default in {'outage_controller': None, 'check_control_plane_outages': False,
+                              'check_publication_recovery': False, 'outage_duration': 1200,
+                              'outage_interval': 30, 'edge_samples': 0, 'runner_region': '', 'resource_profile': False}.items():
+            if not hasattr(args, name):
+                setattr(args, name, default)
+        self.configure_probes(require, decode_json, execute, Failure)
+        self.probe_digest, self.probe_uuid = digest, UUID
         self.report = {'version': 1, 'scope': 'internal-static-frontend-hosting', 'status': 'running',
                        'started_at': utc_now(), 'checks': {}, 'public_launch_qualified': False,
-                       'not_run': ['api_control_plane_outage', 'regional_latency_and_load']}
+                       'not_run': ['api_control_plane_outage', 'database_control_plane_outage',
+                                   'regional_latency_and_load', 'publication_retry_recovery',
+                                   'provider_usage_billing', 'control_plane_resource_profile']}
         if not args.check_worker_switch:
             self.report['not_run'].append('worker_deployment_switch')
 
@@ -235,13 +248,13 @@ class Qualification:
                 'Site response changed account, hostname, identity, revision, routing mode, or storage placement')
         return value
 
-    def api_response(self, method, suffix='', value=None):
+    def api_response(self, method, suffix='', value=None, *, timeout=180):
         body = None if value is None else json.dumps(value).encode()
         headers = {'Authorization': 'Bearer ' + self.env['FAAS_TOKEN'], 'Content-Type': 'application/json'}
         if method not in ('GET', 'HEAD'):
             headers['Idempotency-Key'] = str(uuid.uuid4())
         return self.http.request(method, self.api_url + API_PATH + suffix,
-                                 headers, body, timeout=180)
+                                 headers, body, timeout=timeout)
 
     def api(self, method, suffix='', value=None, status=200, code=None):
         actual, _, body = self.api_response(method, suffix, value)
@@ -370,6 +383,7 @@ class Qualification:
         require(UUID.fullmatch(self.args.account) is not None, 'An expected disposable qualification account UUID is required')
         account = self.cli('whoami')
         require(account.get('id') == self.args.account, 'Authenticated account differs from the expected qualification account')
+        self.prepare_probes()
         if self.args.check_worker_switch:
             self.infrastructure.check_clean()
         self.report['deployment'] = {k: self.deployment[k] for k in ('account_id', 'hosting_domain', 'bucket', 'origin_id', 'worker_name', 'worker_sha256')}
@@ -469,6 +483,8 @@ class Qualification:
         require(created.get('name') == self.report['site_name'] and created.get('environment') == self.args.environment,
                 'Created site did not match the disposable qualification name and environment')
         self.site = self.accept_site(created, sid)
+        require(not (self.args.check_control_plane_outages or self.args.check_publication_recovery or self.args.edge_samples) or created['durable_routing'],
+                'Outage and regional probes require a newly created durable site')
         self.report['routing_mode'] = 'durable' if created.get('durable_routing') is True else 'leased'
         require(not created.get('durable_routing') or self.deployment.get('durable_routing_enabled') is True,
                 'The API created a durable site but the Worker durable-routing switch is disabled')
@@ -516,6 +532,12 @@ class Qualification:
             self.site = rolled_back
             self.checked('rollback', **self.expect_file('/', first, old['index.html']))
             if self.site.get('durable_routing'):
+                if self.args.edge_samples:
+                    self.edge_observations(first, old['index.html'])
+                if self.args.check_control_plane_outages:
+                    self.control_plane_outages(first, old['index.html'])
+                if self.args.check_publication_recovery:
+                    self.publication_recovery(first, second, old['index.html'])
                 self.check_suspension(first, old['index.html'])
             if self.args.check_worker_switch:
                 self.check_switch(first, old['index.html'])
@@ -585,6 +607,8 @@ class Qualification:
         self.save()
         try:
             self.preflight()
+            if self.args.resource_profile:
+                self.resource_snapshot('before')
             self.exercise()
             self.report['status'] = 'passed'
         except Failure as error:
@@ -599,11 +623,24 @@ class Qualification:
             self.report['failure'] = 'Qualification did not complete; inspect the last successful check and configured services'
         finally:
             try:
+                self.restore_outage()
+            except (Failure, OSError, ValueError, KeyError, TypeError):
+                self.report['status'] = 'failed'
+                self.report['outage_recovery']['status'] = 'failed'
+                self.report['outage_recovery']['action'] = 'Restore the recorded fault with the dedicated pilot controller before continuing'
+            try:
                 self.cleanup()
             except (Failure, OSError, ValueError, KeyError, TypeError):
                 self.report['status'] = 'failed'
                 self.report['cleanup'] = {'status': 'failed', 'site_id': self.site.get('id') if self.site else None,
                                           'action': 'Retire/delete the recorded qualification site and verify both storage prefixes'}
+            if self.args.resource_profile and self.report.get('resource_profile'):
+                try:
+                    self.resource_snapshot('after_cleanup')
+                    self.finish_resource_profile()
+                except (Failure, OSError, ValueError, KeyError, TypeError):
+                    self.report['status'] = 'failed'
+                    self.report['resource_profile']['status'] = 'failed'
             self.report['finished_at'] = utc_now()
             self.save()
         return self.report['status'] == 'passed'
@@ -622,9 +659,21 @@ def main():
     parser.add_argument('--edge-timeout', type=int, default=240)
     parser.add_argument('--cleanup-timeout', type=int, default=900, help='Must cover the nine-minute-thirty-second retirement grace')
     parser.add_argument('--check-worker-switch', action='store_true', help='Temporarily disable/restore this dedicated pilot Worker; affects every site on it')
+    parser.add_argument('--outage-controller', type=Path, help='Absolute path to an operator-owned isolated-pilot fault controller')
+    parser.add_argument('--resource-profile', action='store_true', help='Record dedicated apid CPU/RAM and hosting SQL relation bytes through the pilot controller')
+    parser.add_argument('--check-control-plane-outages', action='store_true', help='Verify separate API and database isolation outages; requires a dedicated pilot')
+    parser.add_argument('--check-publication-recovery', action='store_true', help='Verify pending/coalesced intent while only apid publication is blocked')
+    parser.add_argument('--outage-duration', type=int, default=1200, help='Seconds per API/database fault, minimum twenty minutes')
+    parser.add_argument('--outage-interval', type=int, default=30, help='Seconds between bounded warm/cold outage probes')
+    parser.add_argument('--edge-samples', type=int, default=0, help='Up to 100 unique cold assets, each followed by a repeat request')
+    parser.add_argument('--runner-region', default='', help='Operator-supplied runner location label; observed Cloudflare locations are recorded separately')
     args = parser.parse_args()
     if args.edge_timeout <= 0 or args.cleanup_timeout <= 0:
         parser.error('timeouts must be positive')
+    if not 1200 <= args.outage_duration <= 3600 or not 5 <= args.outage_interval <= 60:
+        parser.error('outages must last 1200..3600 seconds with a 5..60 second probe interval')
+    if not 0 <= args.edge_samples <= 100 or (args.edge_samples and re.fullmatch(r'[a-z0-9][a-z0-9-]{0,47}', args.runner_region) is None):
+        parser.error('regional probes require 1..100 samples and a bounded runner-region label')
     try:
         def interrupted(signum, frame):
             raise KeyboardInterrupt

@@ -91,7 +91,8 @@ AND status = 'active' AND durable_routing AND revision = sqlc.arg(expected_revis
 INSERT INTO hosting_route_publications(site_id)
 SELECT id FROM hosting_sites WHERE id = sqlc.arg(site_id)::uuid AND durable_routing
 ON CONFLICT (site_id) DO UPDATE SET generation = hosting_route_publications.generation + 1,
- next_attempt_at = clock_timestamp() RETURNING generation;
+ next_attempt_at = clock_timestamp(), pending_since = COALESCE(hosting_route_publications.pending_since, clock_timestamp()),
+ last_attempt_at = NULL, retry_count = 0, last_error_code = '' RETURNING generation;
 
 -- name: HostingRouteDue :many
 SELECT site_id FROM hosting_route_publications
@@ -116,7 +117,11 @@ SELECT * FROM hosting_route_publications WHERE site_id = sqlc.arg(site_id)::uuid
 UPDATE hosting_route_publications SET
  published_at = CASE WHEN published_generation < sqlc.arg(generation)::bigint THEN sqlc.arg(published_at)::timestamptz ELSE published_at END,
  published_generation = GREATEST(published_generation, sqlc.arg(generation)::bigint),
- next_attempt_at = CASE WHEN generation = sqlc.arg(generation)::bigint THEN sqlc.arg(next_attempt_at)::timestamptz ELSE next_attempt_at END
+ next_attempt_at = CASE WHEN generation = sqlc.arg(generation)::bigint THEN sqlc.arg(next_attempt_at)::timestamptz ELSE next_attempt_at END,
+ pending_since = CASE WHEN generation = sqlc.arg(generation)::bigint THEN NULL ELSE pending_since END,
+ last_attempt_at = CASE WHEN generation = sqlc.arg(generation)::bigint THEN sqlc.arg(published_at)::timestamptz ELSE last_attempt_at END,
+ retry_count = CASE WHEN generation = sqlc.arg(generation)::bigint THEN 0 ELSE retry_count END,
+ last_error_code = CASE WHEN generation = sqlc.arg(generation)::bigint THEN '' ELSE last_error_code END
 WHERE site_id = sqlc.arg(site_id)::uuid AND published_generation <= sqlc.arg(generation)::bigint;
 
 -- name: HostingRetirementAcknowledged :exec
@@ -125,5 +130,10 @@ WHERE site_id = sqlc.arg(site_id)::uuid AND state = 'retiring' AND retirement_ge
 AND retirement_generation <= sqlc.arg(generation)::bigint AND retirement_published_at IS NULL;
 
 -- name: HostingRouteRetry :exec
-UPDATE hosting_route_publications SET next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+UPDATE hosting_route_publications SET next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz,
+ last_attempt_at = sqlc.arg(attempted_at)::timestamptz, retry_count = retry_count + 1, last_error_code = sqlc.arg(error_code)::text
 WHERE site_id = sqlc.arg(site_id)::uuid AND generation = sqlc.arg(generation)::bigint;
+
+-- name: HostingRouteBacklog :one
+SELECT count(*)::bigint AS pending, min(pending_since)::timestamptz AS oldest_pending_at
+FROM hosting_route_publications WHERE generation > published_generation;
