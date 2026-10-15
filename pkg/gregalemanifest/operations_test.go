@@ -358,3 +358,28 @@ func TestOperationMilestoneSourceBundle(t *testing.T) {
 		}
 	}
 }
+
+// ADR-1194: approval steps name their approver in the source manifest.
+func TestOperationManifestApprovals(t *testing.T) {
+	yamlSource := "workflows:\n  - name: refund-chain\n    steps:\n      - name: validate\n        path: /validate\n      - name: review\n        wait_for_callback: true\n        timeout: 1h\n        depends_on: [validate]\n      - name: finish\n        path: /finish\n        depends_on: [review]\n" +
+		"operations:\n  - name: refund\n    workflow: refund-chain\n    method: POST\n    path: /refunds\n    owner: platform_tenant\n    input_schema: in.json\n    output_schema: out.json\n    progress_stages: [validate, review, finish]\n    approvals:\n      - step: review\n        approver: customer\n"
+	m, err := ParseBytes([]byte(yamlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResolveOperations("refunds", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`{"type":"object"}`), nil }); err != nil {
+		t.Fatal(err)
+	}
+	got := m.ResolvedOperations[0].Approvals
+	if len(got) != 1 || got[0] != (api.OperationApprovalSpec{Step: "review", Approver: api.OperationApproverCustomer}) {
+		t.Fatalf("approvals lost: %+v", got)
+	}
+	tomlSource := "[[operations]]\nname = 'refund'\nmethod = 'POST'\npath = '/refunds'\nowner = 'platform_tenant'\ninput_schema = 'in.json'\noutput_schema = 'out.json'\nprogress_stages = ['validate']\n[[operations.approvals]]\nstep = 'review'\napprover = 'account'\n"
+	tm, err := ParseTOMLBytes([]byte(tomlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec := tm.Operations[0].specification(); len(spec.Approvals) != 1 || spec.Approvals[0].Approver != api.OperationApproverAccount {
+		t.Fatalf("toml approvals lost: %+v", spec.Approvals)
+	}
+}

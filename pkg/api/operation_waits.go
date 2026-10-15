@@ -22,8 +22,8 @@ const (
 // OperationApprovalSpec declares that a workflow callback step is an approval
 // decided by the account or by the operation's customer.
 type OperationApprovalSpec struct {
-	Step     string `json:"step" yaml:"step"`
-	Approver string `json:"approver" yaml:"approver"`
+	Step     string `json:"step" yaml:"step" toml:"step"`
+	Approver string `json:"approver" yaml:"approver" toml:"approver"`
 }
 
 // OperationWaitingState describes why a waiting operation holds no execution.
