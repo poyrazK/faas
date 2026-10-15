@@ -7252,6 +7252,18 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_log_exports",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attributes",
+      "created_at",
+      "id",
+      "line"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_price_entries",
     "columns": [
       "cache_write_millicents_per_mtok",
@@ -7353,6 +7365,37 @@
       "route_id",
       "status",
       "ttfb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_route_canaries",
+    "columns": [
+      "decided_at",
+      "max_error_rate_increase",
+      "max_latency_increase_percent",
+      "min_calls",
+      "percent",
+      "position",
+      "reason",
+      "route_id",
+      "started_at",
+      "state",
+      "window_minutes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_route_target_minutes",
+    "columns": [
+      "calls",
+      "cost_millicents",
+      "errors",
+      "minute",
+      "position",
+      "route_id",
+      "ttfb_calls",
+      "ttfb_ms_total"
     ],
     "kind": "operational"
   },
@@ -7509,6 +7552,13 @@
       "ai_content_secret",
       "ai_daily_cost_limit_millicents",
       "ai_daily_token_limit",
+      "ai_log_export",
+      "ai_moderation_action",
+      "ai_moderation_categories",
+      "ai_moderation_integration_id",
+      "ai_moderation_kind",
+      "ai_moderation_model",
+      "ai_moderation_on_error",
       "ai_monthly_cost_limit_millicents",
       "ai_provider",
       "ai_request_log_content",

@@ -6230,6 +6230,15 @@ type OutboundAiBudgetAlert struct {
 	EndUser          pgtype.Text
 }
 
+type OutboundAiLogExport struct {
+	ID         int64
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	Line       string
+	Attributes []byte
+}
+
 type OutboundAiPriceEntry struct {
 	PriceListID                    pgtype.UUID
 	ModelPrefix                    string
@@ -6326,11 +6335,36 @@ type OutboundAiRoute struct {
 	Format    string
 }
 
+type OutboundAiRouteCanary struct {
+	RouteID                   pgtype.UUID
+	Position                  int16
+	Percent                   int16
+	MaxErrorRateIncrease      int16
+	MaxLatencyIncreasePercent pgtype.Int4
+	MinCalls                  int32
+	WindowMinutes             int16
+	State                     string
+	Reason                    pgtype.Text
+	StartedAt                 pgtype.Timestamptz
+	DecidedAt                 pgtype.Timestamptz
+}
+
 type OutboundAiRouteTarget struct {
 	RouteID       pgtype.UUID
 	Position      int16
 	IntegrationID pgtype.UUID
 	Model         pgtype.Text
+}
+
+type OutboundAiRouteTargetMinute struct {
+	RouteID        pgtype.UUID
+	Position       int16
+	Minute         pgtype.Timestamptz
+	Calls          int64
+	Errors         int64
+	TtfbCalls      int64
+	TtfbMsTotal    int64
+	CostMillicents int64
 }
 
 type OutboundAiSettlement struct {
@@ -6434,6 +6468,13 @@ type OutboundIntegration struct {
 	AiContentIban                  string
 	AiContentSecret                string
 	AiContentBlockedTerms          []string
+	AiLogExport                    bool
+	AiModerationAction             string
+	AiModerationKind               pgtype.Text
+	AiModerationIntegrationID      pgtype.UUID
+	AiModerationModel              pgtype.Text
+	AiModerationCategories         []string
+	AiModerationOnError            string
 }
 
 type OutboundIntegrationApp struct {
