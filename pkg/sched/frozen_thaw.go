@@ -71,8 +71,9 @@ func unconfirmedThawWork(req ThawRequest, result ThawResult) error {
 	return nil
 }
 
-// frozenCandidates lists the deployment's frozen rows, newest first. Rows
-// whose shape no longer matches the app are parked.
+// frozenCandidates lists the deployment's frozen rows, newest first, with
+// the wake's preferred instance (WithPreferredInstance) ahead of the rest.
+// Rows whose shape no longer matches the app are parked.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]state.Instance, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -99,6 +100,16 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 		}
 		return out[i].LastRequestAt.After(out[j].LastRequestAt)
 	})
+	// A session pinned to one of these VMs thaws its own first.
+	if preferred := PreferredInstanceFromContext(ctx); preferred != "" {
+		for i, ins := range out {
+			if ins.ID == preferred {
+				copy(out[1:i+1], out[:i])
+				out[0] = ins
+				break
+			}
+		}
+	}
 	return out, nil
 }
 

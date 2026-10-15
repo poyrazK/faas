@@ -25,6 +25,29 @@ func TestSessionAffinityCookieRoundTripAndAppBinding(t *testing.T) {
 	}
 }
 
+// adr: 1151 — a wake for a session pinned to an instance carries that
+// instance as the thaw hint, so a frozen VM's session thaws its own VM.
+func TestWakeCarriesSessionAffinityHint(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	backend.mu.Lock()
+	backend.app.SessionAffinity = true
+	appID := backend.app.ID
+	backend.mu.Unlock()
+	value, err := h.sessionAffinityCookieValue(appID, "i-frozen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionAffinityCookieName, Value: value})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	backend.mu.Lock()
+	got := backend.lastAdmitPreferred
+	backend.mu.Unlock()
+	if got != "i-frozen" {
+		t.Fatalf("wake hint = %q, want the session's instance i-frozen", got)
+	}
+}
+
 func TestPGBackendPickForInstanceFallsBackWhenStale(t *testing.T) {
 	sched := NewFakeScheduler("node-1")
 	b := NewPGBackend(nil, sched, nil)

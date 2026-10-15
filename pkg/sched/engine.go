@@ -638,6 +638,9 @@ type Engine struct {
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
 	frozenTier atomic.Bool
+	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
+	// from functions to request-mode apps.
+	frozenTierApps atomic.Bool
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.

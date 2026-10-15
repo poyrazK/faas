@@ -6851,6 +6851,9 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		// A thaw prefers the frozen instance this session is pinned to
+		// (ADR-1151): its in-memory state is why the app keeps affinity.
+		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
 		var cancelWakePage context.CancelFunc
 		showWakePage := acceptsWakePage(r)
 		if showWakePage {

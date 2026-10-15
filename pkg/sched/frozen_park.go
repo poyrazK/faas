@@ -73,9 +73,7 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string,
 	if err != nil {
 		return "", err
 	}
-	// The first release covers function apps that serve HTTP, woken as
-	// ordinary instances outside private networks (quiet pause's rule).
-	if quietPauseAfterMS(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) == 0 || app.Status != state.AppActive {
+	if app.Status != state.AppActive || !e.frozenTierAllows(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) {
 		return "ineligible", nil
 	}
 	if ins.RAMMB != app.RAMMB || e.runtimeConfigStale(ctx, ins) {
