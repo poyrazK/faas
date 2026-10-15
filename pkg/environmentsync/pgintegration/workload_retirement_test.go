@@ -3,6 +3,7 @@ package pgintegration_test
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -173,6 +175,69 @@ func TestPgEnvironmentGitOpsRetirementHistorySurvivesCleanupAttempts(t *testing.
 		if blocked, err := store.EnvironmentWorkloadAdmissionRetired(t.Context(), original.AppID, lease.Source.EnvironmentSlug); err != nil || !blocked {
 			t.Fatalf("%s cleanup reopened admission: %t %v", attempt.name, blocked, err)
 		}
+	}
+}
+
+func TestPgEnvironmentGitOpsRetirementReplayPreservesRetainedRecovery(t *testing.T) {
+	for _, phase := range []string{"retired", "recovering"} {
+		t.Run(phase, func(t *testing.T) {
+			pool := pgtest.OpenMigrated(t)
+			store := state.NewPgStore(pool)
+			lease, original := retireEmptyEnvironment(t, store)
+			if phase == "recovering" {
+				lease = beginRetainedRecovery(t, store, lease, original)
+			}
+			before, err := store.ListEnvironmentGitOpsWorkloadRetirements(t.Context(), lease.Source.AccountID, lease.Source.ID)
+			if err != nil || len(before) != 1 || before[0].Phase != phase {
+				t.Fatalf("retained fixture: %+v %v", before, err)
+			}
+			// A later migration may refine a guard. Replaying this earlier Up
+			// must retain that definition as well as the populated journal.
+			if _, err := pool.Exec(t.Context(), `CREATE OR REPLACE FUNCTION environment_workload_retirement_gateway_roster() RETURNS text[] LANGUAGE sql STABLE AS $$
+ -- Later guard refinement retained across ledger replay.
+ SELECT ARRAY(SELECT name FROM compute_nodes WHERE active AND role IN ('compute-only','compute-node')
+  AND nullif(btrim(gateway_target_url),'') IS NOT NULL ORDER BY name)
+$$`); err != nil {
+				t.Fatal(err)
+			}
+			const guardQuery = `SELECT pg_get_functiondef('environment_workload_retirement_gateway_roster()'::regprocedure)`
+			var beforeGuard string
+			if err := pool.QueryRow(t.Context(), guardQuery).Scan(&beforeGuard); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if tag, err := pool.Exec(t.Context(), `DELETE FROM goose_db_version WHERE version_id=20261015094302001`); err != nil || tag.RowsAffected() != 1 {
+					t.Fatalf("remove exact retirement ledger entry: %v %v", tag, err)
+				}
+				if err := db.MigrateUp(t.Context(), pool); err != nil {
+					t.Fatal("replay retirement migration", err)
+				}
+				after, err := store.ListEnvironmentGitOpsWorkloadRetirements(t.Context(), lease.Source.AccountID, lease.Source.ID)
+				if err != nil || !reflect.DeepEqual(before, after) {
+					t.Fatalf("replay changed retained recovery evidence: %+v %v", after, err)
+				}
+				var afterGuard string
+				if err := pool.QueryRow(t.Context(), guardQuery).Scan(&afterGuard); err != nil || beforeGuard != afterGuard {
+					t.Fatalf("replay replaced a later guard refinement: %v", err)
+				}
+				if blocked, err := store.EnvironmentWorkloadAdmissionRetired(t.Context(), original.AppID, "production"); err != nil || !blocked {
+					t.Fatalf("replay reopened admission: %t %v", blocked, err)
+				}
+				var rejected *pgconn.PgError
+				if _, err := pool.Exec(t.Context(), `DELETE FROM environment_workload_retirements WHERE id=$1`, original.ID); !errors.As(err, &rejected) || rejected.Code != "23514" {
+					t.Fatalf("replay removed the retention guard: %v", err)
+				}
+			}
+			app, err := store.AppByID(t.Context(), original.AppID)
+			if err != nil {
+				t.Fatal("replay lost the retained app", err)
+			}
+			assertVariable(t, store, lease.Source, app, "production", "MODE", "production")
+			assertVariable(t, store, lease.Source, app, "staging", "MODE", "staging")
+			if phase == "retired" {
+				beginRetainedRecovery(t, store, lease, original)
+			}
+		})
 	}
 }
 

@@ -1,5 +1,11 @@
 -- ADR-1331: preserve original workload identities through scoped retirement.
 -- +goose Up
+-- This Up is transactional. Its final source-lifecycle trigger marks completion.
+-- Ledger replay must preserve retained records and later guard refinements.
+-- +goose StatementBegin
+DO $workload_retirement_replay$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='environment_git_sources'::regclass
+  AND tgname='zz_workload_retirement_source_lifecycle' AND NOT tgisinternal) THEN RETURN; END IF;
 CREATE TABLE environment_workload_retirements (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
@@ -40,16 +46,13 @@ CREATE INDEX environment_workload_retirements_source ON environment_workload_ret
 
 -- The durable fence survives source suspension, detach and controller lease
 -- expiry. Admission uses physical scoped identity, never a caller's Git ref.
--- +goose StatementBegin
 CREATE FUNCTION environment_workload_admission_retired(application uuid, deployment_scope text) RETURNS boolean
  LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM environment_workload_retirements r
   JOIN project_environments e ON e.id=r.environment_id
   WHERE r.app_id=application AND e.slug=CASE WHEN coalesce(deployment_scope,'') IN ('','default') THEN 'production' ELSE deployment_scope END AND r.phase IN ('retiring','retired','recovering'))
 $$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE FUNCTION guard_environment_workload_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE src environment_git_sources%ROWTYPE; rev environment_desired_revisions%ROWTYPE; token text; original_app uuid;
 BEGIN
@@ -159,25 +162,19 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER guard_environment_workload_retirement BEFORE INSERT OR UPDATE OR DELETE
  ON environment_workload_retirements FOR EACH ROW EXECUTE FUNCTION guard_environment_workload_retirement();
 
 
--- +goose StatementBegin
 CREATE FUNCTION environment_workload_retirement_gateway_roster() RETURNS text[] LANGUAGE sql STABLE AS $$
  SELECT ARRAY(SELECT name FROM compute_nodes WHERE active AND role IN ('compute-only','compute-node')
   AND nullif(btrim(gateway_target_url),'') IS NOT NULL ORDER BY name)
 $$;
--- +goose StatementEnd
--- +goose StatementBegin
 CREATE FUNCTION environment_workload_retirement_routes_withdrawn(r environment_workload_retirements) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT (r).route_deployment_id IS NULL OR ((r).route_generation>0 AND cardinality((r).expected_gateways)>0
   AND (r).expected_gateways=environment_workload_retirement_gateway_roster()
   AND (r).expected_gateways <@ (r).acknowledged_gateways)
 $$;
--- +goose StatementEnd
--- +goose StatementBegin
 CREATE FUNCTION environment_workload_retirement_drained(r environment_workload_retirements) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT environment_workload_retirement_routes_withdrawn(r)
  AND ((r).job_id IS NULL OR EXISTS(SELECT 1 FROM jobs j WHERE j.id=(r).job_id AND j.status IN ('paused','deleted')))
@@ -194,10 +191,8 @@ CREATE FUNCTION environment_workload_retirement_drained(r environment_workload_r
   WHERE consumer.queue_binding_id=ANY((r).queue_binding_ids) AND receipt.state='claimed' AND receipt.claim_expires_at>clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs j ON j.id=t.run_id WHERE j.job_id=(r).job_id AND t.status='claimed')
 $$;
--- +goose StatementEnd
 -- The activation token is set only inside the qualified graph publication
 -- transaction. Empty membership has no replacement workload to qualify.
--- +goose StatementBegin
 CREATE FUNCTION environment_workload_retirement_cutover_authorized(r environment_workload_retirements) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT nullif(current_setting('gregale.gitops_activation',true),'')=nullif(current_setting('gregale.gitops_lease',true),'')
  AND EXISTS(SELECT 1 FROM active_environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
@@ -215,11 +210,9 @@ CREATE FUNCTION environment_workload_retirement_cutover_authorized(r environment
        WHERE rs.project_id=s.project_id AND rs.environment_slug=e.slug AND rs.active AND rm.app_id=(m->>'app_id')::uuid
         AND m->'retained_deployments' ? d.id::text AND d.status='live' AND NOT d.environment_workload_held) END)))))
 $$;
--- +goose StatementEnd
 -- No public promotion, revision pin, cold wake, queue claim or manual Job run
 -- may reopen a retired physical app/environment lane. Qualification executions
 -- remain governed by their existing exact attempt guard during recovery.
--- +goose StatementBegin
 CREATE FUNCTION guard_retired_workload_execution() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE application uuid; environment uuid; scope text; linked_job uuid; r environment_workload_retirements%ROWTYPE; d deployments%ROWTYPE;
 BEGIN
@@ -265,7 +258,6 @@ BEGIN
  END IF;
  RAISE EXCEPTION 'workload execution is retired in this environment' USING ERRCODE='23514',CONSTRAINT='environment_workload_retired';
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON instances FOR EACH ROW EXECUTE FUNCTION guard_retired_workload_execution();
 CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON deployments FOR EACH ROW EXECUTE FUNCTION guard_retired_workload_execution();
 CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON invocations FOR EACH ROW EXECUTE FUNCTION guard_retired_workload_execution();
@@ -273,7 +265,6 @@ CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON trigger_
 CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT ON job_runs FOR EACH ROW EXECUTE FUNCTION guard_retired_workload_execution();
 CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON job_tasks FOR EACH ROW EXECUTE FUNCTION guard_retired_workload_execution();
 
--- +goose StatementBegin
 CREATE FUNCTION environment_workload_retirement_drain_authorized(d deployments) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM environment_workload_retirements r JOIN active_environment_git_sources s ON s.id=r.source_id
   JOIN environment_gitops_jobs j ON j.source_id=s.id JOIN project_environments e ON e.id=r.environment_id
@@ -281,9 +272,7 @@ CREATE FUNCTION environment_workload_retirement_drain_authorized(d deployments) 
    AND environment_workload_retirement_routes_withdrawn(r) AND j.desired_generation=s.generation AND j.claimed_generation=s.generation
    AND j.lease_until>clock_timestamp() AND j.lease_token=current_setting('gregale.gitops_lease',true))
 $$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION guard_environment_workload_candidate() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
@@ -395,9 +384,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $_$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION guard_environment_workload_instance() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -476,10 +463,8 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 
 
--- +goose StatementBegin
 CREATE FUNCTION guard_workload_retirement_source_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM environment_workload_retirements r WHERE r.source_id=OLD.id AND r.phase NOT IN ('recovered','cancelled')) AND
@@ -492,20 +477,15 @@ BEGIN
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;RETURN NEW;
 END $$;
--- +goose StatementEnd
-CREATE TRIGGER zz_workload_retirement_source_lifecycle BEFORE UPDATE OR DELETE ON environment_git_sources
-FOR EACH ROW EXECUTE FUNCTION guard_workload_retirement_source_lifecycle();
 
 
--- +goose StatementBegin
+
 CREATE FUNCTION environment_workload_retirement_withdrawal_authorized(d deployments) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM environment_workload_retirements r JOIN project_environments e ON e.id=r.environment_id
   WHERE r.phase='retiring' AND r.app_id=(d).app_id AND e.slug=(d).scope AND (d).id=ANY(r.deployment_ids)
    AND environment_workload_retirement_cutover_authorized(r))
 $$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION guard_environment_workload_serving_traffic() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -520,7 +500,6 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 
 
 -- Retained removal keeps the original code identities beyond ordinary release
@@ -533,6 +512,11 @@ CREATE OR REPLACE VIEW durable_work_retained_deployment_refs AS
  JOIN apps a ON a.id=r.app_id AND a.status<>'deleted'
  CROSS JOIN LATERAL unnest(r.deployment_ids) original(deployment_id)
  WHERE r.phase IN ('planned','retiring','retired','recovering');
+
+CREATE TRIGGER zz_workload_retirement_source_lifecycle BEFORE UPDATE OR DELETE ON environment_git_sources
+FOR EACH ROW EXECUTE FUNCTION guard_workload_retirement_source_lifecycle();
+END $workload_retirement_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- Forward-only: removing an active retirement fence could reopen retained work.
