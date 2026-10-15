@@ -98,7 +98,30 @@ func newPrivateTCPImageFixture(t *testing.T) *privateTCPImageFixture {
 		t.Fatalf("internal service %s has no service address (index %d)", f.service.Slug, index)
 	}
 	f.address = address.String()
+	// Park both apps while the harness daemons still run: a VM left running
+	// when the harness stops vmmd outlives the test, and leakcheck reports
+	// its jail. Cleanups run last-in first-out, so this runs first.
+	t.Cleanup(func() {
+		for _, app := range []state.App{f.caller, f.service} {
+			f.parkAtCleanup(t, app)
+		}
+	})
 	return f
+}
+
+// parkAtCleanup is park without failing the test: a park that does not
+// finish is logged, and run.sh's leakcheck still reports any VM left behind.
+func (f *privateTCPImageFixture) parkAtCleanup(t *testing.T, app state.App) {
+	t.Helper()
+	if raw, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+app.Slug+"/park", nil); status/100 != 2 {
+		t.Logf("cleanup: park %s: status=%d body=%s", app.Slug, status, raw)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if _, err := e2etest.WaitForAppParked(ctx, t, f.pool, app.ID, 40*time.Second); err != nil {
+		t.Logf("cleanup: %s not parked: %v", app.Slug, err)
+	}
 }
 
 func (f *privateTCPImageFixture) deploy(t *testing.T, ctx context.Context, create api.CreateAppRequest, image string) state.App {
