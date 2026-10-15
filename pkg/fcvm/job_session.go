@@ -12,7 +12,7 @@ import (
 // instance id.
 var ErrJobSessionInstanceNotFound = errors.New("fcvm: interactive job instance is not live")
 
-// ExecuteInteractiveJob runs ADR-1164's one session against a live
+// ExecuteInteractiveJob runs ADR-1330's one session against a live
 // interactive job guest. Unlike an app task it never tears the VM down: the
 // guest reports the job exit and powers off, and the job exit path destroys
 // the VM.

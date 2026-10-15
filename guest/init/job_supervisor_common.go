@@ -87,7 +87,7 @@ type JobManifest struct {
 	StartHeld           bool              `json:"start_held,omitempty"`
 	VsockJobExitPort    int               `json:"vsock_job_exit_port,omitempty"`
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
-	// Interactive mirrors pkg/fcvm/job_vmm.go::JobInteractive (ADR-1164).
+	// Interactive mirrors pkg/fcvm/job_vmm.go::JobInteractive (ADR-1330).
 	Interactive *JobInteractive `json:"interactive,omitempty"`
 }
 

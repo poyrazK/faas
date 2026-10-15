@@ -72,7 +72,7 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	detach := fs.Bool("detach", false, "queue the run and print its id without waiting")
 	fs.BoolVar(detach, "d", false, "shorthand for --detach")
 	var interactive, tty, both bool
-	fs.BoolVar(&interactive, "interactive", false, "attach stdin and run until the command exits (ADR-1164)")
+	fs.BoolVar(&interactive, "interactive", false, "attach stdin and run until the command exits (ADR-1330)")
 	fs.BoolVar(&interactive, "i", false, "shorthand for --interactive")
 	fs.BoolVar(&tty, "tty", false, "give the command a terminal; requires --interactive")
 	fs.BoolVar(&tty, "t", false, "shorthand for --tty")
@@ -169,7 +169,7 @@ func startImageRun(ctx context.Context, client *api.Client, req api.CreateImageR
 	}
 }
 
-// runInteractiveImage is `gregale run -it --image` (ADR-1164): create the
+// runInteractiveImage is `gregale run -it --image` (ADR-1330): create the
 // run, attach to its task once the VM is up, and relay the session. The exit
 // code is the command's. Leaving before the session starts cancels the run.
 func runInteractiveImage(ctx context.Context, client *api.Client, req api.CreateImageRunRequest) int {

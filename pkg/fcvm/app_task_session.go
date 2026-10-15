@@ -16,7 +16,7 @@ const (
 	appTaskDialStep    = 20 * time.Millisecond
 	appTaskDialTimeout = 200 * time.Millisecond
 	// jobSessionDialWindow covers a job guest that is still booting when its
-	// client attaches (ADR-1164): vmmd registers the session before guest-init
+	// client attaches (ADR-1330): vmmd registers the session before guest-init
 	// listens.
 	jobSessionDialWindow = 30 * time.Second
 )
@@ -117,7 +117,7 @@ func (v *JailerVMM) DialAppTask(ctx context.Context, lease Lease) (*AppTaskSessi
 }
 
 // JobSessionDialer connects to an interactive job guest's session port
-// (ADR-1164). The session never destroys the VM: the job exit path does.
+// (ADR-1330). The session never destroys the VM: the job exit path does.
 type JobSessionDialer interface {
 	DialJobSession(context.Context, Lease) (*AppTaskSession, error)
 }

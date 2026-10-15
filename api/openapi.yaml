@@ -27564,7 +27564,7 @@ paths:
         set) and `args` replaces the image CMD. Runs, logs and cancellation
         use `/v1/jobs/{job}/runs`. Free accounts get 402
         `jobs_not_allowed`; the route returns 404 until the operator sets
-        `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1164) the 201
+        `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
         response carries a one-time `attach` credential for
         `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
         for Idempotency-Key replay.
@@ -28176,7 +28176,7 @@ paths:
       operationId: attachJobTask
       summary: Attach to an interactive image run's task (WebSocket).
       description: |
-        ADR-1164. Served by the compute gateway, not apid. The session uses
+        ADR-1330. Served by the compute gateway, not apid. The session uses
         the interactive app-task wire contract (ADR-1037): the account
         credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
         image run's create response, and the `gregale-app-task-attach-v1`
@@ -77508,7 +77508,7 @@ components:
           description: "always re-pulls a cached image so a moved tag is resolved again."
         interactive:
           type: boolean
-          description: "ADR-1164: hold the command until one client attaches to the run's task. The run has no retries and timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501."
+          description: "ADR-1330: hold the command until one client attaches to the run's task. The run has no retries and timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501."
         tty:
           type: boolean
           description: "Give the interactive command a pseudo-terminal. Requires interactive."
@@ -77530,7 +77530,7 @@ components:
           description: "The resolved argv the task runs."
         attach:
           $ref: '#/components/schemas/AppTaskAttachInfo'
-          description: "One-time attach credential of an interactive run (ADR-1164), returned only by the response that created the run."
+          description: "One-time attach credential of an interactive run (ADR-1330), returned only by the response that created the run."
     JobResponse:
       description: "Wire projection of state.Job."
       type: object

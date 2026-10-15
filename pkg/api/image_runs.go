@@ -54,7 +54,7 @@ type CreateImageRunRequest struct {
 	// Pull is "missing" (default) or "always".
 	Pull string `json:"pull,omitempty"`
 	// Interactive holds the command until one client attaches to the run's
-	// task (ADR-1164); TTY gives it a pseudo-terminal. TTY requires
+	// task (ADR-1330); TTY gives it a pseudo-terminal. TTY requires
 	// Interactive.
 	Interactive bool `json:"interactive,omitempty"`
 	TTY         bool `json:"tty,omitempty"`
@@ -62,7 +62,7 @@ type CreateImageRunRequest struct {
 
 const (
 	// ImageRunAttachTimeoutSec is how long an interactive run's VM waits for
-	// its client to attach (ADR-1164).
+	// its client to attach (ADR-1330).
 	ImageRunAttachTimeoutSec = 60
 	// ImageRunInteractiveMaxTimeoutSec is the session limit of an
 	// interactive run.
@@ -80,7 +80,7 @@ type ImageRunResponse struct {
 	ImageDigest string   `json:"image_digest,omitempty"`
 	RunID       string   `json:"run_id,omitempty"`
 	Command     []string `json:"command,omitempty"`
-	// Attach is the one-time credential of an interactive run (ADR-1164),
+	// Attach is the one-time credential of an interactive run (ADR-1330),
 	// returned only in the response that created the run.
 	Attach *AppTaskAttachInfo `json:"attach,omitempty"`
 }

@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-1164: interactive image runs. A row exists exactly for runs admitted as
+-- ADR-1330: interactive image runs. A row exists exactly for runs admitted as
 -- interactive; it is inserted in the same transaction as the run, so schedd
 -- never claims an interactive task without seeing it. An interactive run has
 -- one task. Only the SHA-256 digest of the one-time attach token is stored;

@@ -1,4 +1,4 @@
-// adr: 1164
+// adr: 1330
 
 package vmmdgrpc_test
 
@@ -19,7 +19,7 @@ import (
 )
 
 // interactiveJobVMM boots job VMs with a complete runtime identity and runs
-// ADR-1164 sessions: stdin is echoed back as stdout, stdin close returns
+// ADR-1330 sessions: stdin is echoed back as stdout, stdin close returns
 // result (or err).
 type interactiveJobVMM struct {
 	*fakeVMM

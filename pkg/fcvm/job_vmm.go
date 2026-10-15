@@ -83,13 +83,13 @@ type JobManifest struct {
 	StartHeld           bool              `json:"start_held,omitempty"`
 	VsockJobExitPort    int               `json:"vsock_job_exit_port,omitempty"`
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
-	// Interactive is set only for an interactive image run (ADR-1164). A
+	// Interactive is set only for an interactive image run (ADR-1330). A
 	// guest-init that predates it rejects the unknown field and fails the
 	// task rather than running the command without stdin.
 	Interactive *JobInteractive `json:"interactive,omitempty"`
 }
 
-// JobInteractive is ADR-1164's guest contract: the supervisor accepts one
+// JobInteractive is ADR-1330's guest contract: the supervisor accepts one
 // session on the app-task session port within the attach window, then runs
 // the job command with the session's terminal or pipes as its stdio.
 type JobInteractive struct {

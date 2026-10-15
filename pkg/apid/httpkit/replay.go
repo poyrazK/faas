@@ -9,7 +9,7 @@ type IdempotentReplaySkipper interface {
 }
 
 // SkipIdempotentReplay marks a response that carries a one-time credential,
-// such as an interactive session's attach token (ADR-1037, ADR-1164), so the
+// such as an interactive session's attach token (ADR-1037, ADR-1330), so the
 // Idempotency-Key layer never stores it: storing it would keep the plaintext
 // token and hand it to every retry. A retry with the key runs the operation
 // again. Wrappers that expose Unwrap are followed; without the recorder in

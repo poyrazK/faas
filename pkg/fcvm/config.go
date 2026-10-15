@@ -361,7 +361,7 @@ type JobColdBootSpec struct {
 	AccountID string
 	RunID     string
 	TaskIndex int
-	// Interactive holds the command until one client attaches (ADR-1164).
+	// Interactive holds the command until one client attaches (ADR-1330).
 	Interactive *JobInteractive
 }
 

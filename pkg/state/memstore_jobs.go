@@ -1837,7 +1837,7 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	} else if !m.exclusiveJobRunCurrentLocked(run) {
 		return exclusivework.ErrStaleOwner
 	}
-	// ADR-1164: a retry would run the command again with no client attached.
+	// ADR-1330: a retry would run the command again with no client attached.
 	if _, interactive := m.jobRunAttach[runID]; interactive {
 		return ErrConflict
 	}

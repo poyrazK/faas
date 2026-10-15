@@ -394,7 +394,7 @@ type server struct {
 	// (ADR-1161, FAAS_IMAGE_RUNS).
 	imageRunsEnabled bool
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
-	// (ADR-1164, FAAS_INTERACTIVE_IMAGE_RUNS).
+	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
 	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
@@ -806,7 +806,7 @@ func (s *server) WithImageRunsEnabled(enabled bool) *server {
 }
 
 // WithInteractiveImageRunsEnabled attaches the interactive image-run gate
-// (ADR-1164).
+// (ADR-1330).
 func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
 	s.interactiveImageRunsEnabled = enabled
 	return s
@@ -4840,7 +4840,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 // cached 404 did the same: `gregale deliver` to a webhook registered after
 // the first attempt kept answering "no webhook registered" (H10-54). A 501
 // is an operator gate that is not enabled yet (interactive sessions,
-// ADR-1037 and ADR-1164); it clears when the operator enables it.
+// ADR-1037 and ADR-1330); it clears when the operator enables it.
 func idempotencyReplayable(status int) bool {
 	switch status {
 	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound,

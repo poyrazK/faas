@@ -107,7 +107,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1164. Served by the compute gateway, not apid. The session uses
+     ADR-1330. Served by the compute gateway, not apid. The session uses
     the interactive app-task wire contract (ADR-1037): the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
@@ -156,7 +156,7 @@ def sync(
 ) -> Any | Problem | None:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1164. Served by the compute gateway, not apid. The session uses
+     ADR-1330. Served by the compute gateway, not apid. The session uses
     the interactive app-task wire contract (ADR-1037): the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
@@ -200,7 +200,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1164. Served by the compute gateway, not apid. The session uses
+     ADR-1330. Served by the compute gateway, not apid. The session uses
     the interactive app-task wire contract (ADR-1037): the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
@@ -247,7 +247,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1164. Served by the compute gateway, not apid. The session uses
+     ADR-1330. Served by the compute gateway, not apid. The session uses
     the interactive app-task wire contract (ADR-1037): the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`

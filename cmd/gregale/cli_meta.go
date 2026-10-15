@@ -3593,7 +3593,7 @@ var cliCommands = []cliCommand{
 		},
 		Flags: []cliFlag{
 			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161)", Value: "REF"},
-			{Name: "interactive", Short: "with --image, attach stdin and relay the session until the command exits (-i; ADR-1164)"},
+			{Name: "interactive", Short: "with --image, attach stdin and relay the session until the command exits (-i; ADR-1330)"},
 			{Name: "tty", Short: "with --image --interactive, give the command a terminal (-t; -it for both)"},
 			{Name: "entrypoint", Short: "with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute", Value: "CMD|FILE"},
 			{Name: "env", Short: "with --image, KEY=VALUE environment variable (repeatable; -e)", Value: "KEY=VALUE"},

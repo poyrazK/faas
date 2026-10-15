@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// JobRunAttach is an interactive image run's session (ADR-1164). Only the
+// JobRunAttach is an interactive image run's session (ADR-1330). Only the
 // SHA-256 digest of the one-time attach token is ever stored.
 type JobRunAttach struct {
 	TTY              bool

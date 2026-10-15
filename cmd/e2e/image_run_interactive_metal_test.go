@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
-// adr: 1164
+// adr: 1330
 // TestInteractiveImageRunMetal attaches to interactive image runs through the
 // public edge on real VMs: a pipes session relays stdin and output and ends
 // with the command's exit code, which also reaches the task row; a TTY

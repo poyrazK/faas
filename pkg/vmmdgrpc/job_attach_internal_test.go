@@ -1,8 +1,9 @@
-// adr: 1164
+// adr: 1330
 
 package vmmdgrpc
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"reflect"
@@ -111,7 +112,7 @@ func TestServeInteractiveJobExpiresUnclaimedRendezvous(t *testing.T) {
 	go func() {
 		defer close(done)
 		// jobVMM is never reached when nobody claims the rendezvous.
-		s.serveInteractiveJob(nil, "job-1", entry, &fcvm.JobInteractive{AttachTimeoutSec: 1}, 30)
+		s.serveInteractiveJob(context.Background(), nil, "job-1", entry, &fcvm.JobInteractive{AttachTimeoutSec: 1}, 30)
 	}()
 	select {
 	case <-done:

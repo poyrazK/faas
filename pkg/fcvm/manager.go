@@ -462,7 +462,7 @@ type Instance struct {
 	// the scheduler publishes runtime identity and calls ReleaseJobStart.
 	JobStartGateEnabled bool
 	// JobInteractive marks a Job whose guest holds its command for one
-	// attached session (ADR-1164).
+	// attached session (ADR-1330).
 	JobInteractive bool
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
@@ -4141,7 +4141,7 @@ type JobBootRequest struct {
 	TaskTimeoutSec   int
 	StartHeld        bool
 	LeaseToken       string
-	// Interactive holds the command until one client attaches (ADR-1164).
+	// Interactive holds the command until one client attaches (ADR-1330).
 	Interactive *JobInteractive
 }
 

@@ -168,7 +168,7 @@ func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 func TestParseImageRunArgsInteractiveFlags(t *testing.T) {
 	cases := map[string]struct {
 		args             []string
@@ -273,7 +273,7 @@ func writeAttachProblem(w http.ResponseWriter, status int, detail string) {
 	_, _ = fmt.Fprintf(w, `{"detail":%q,"status":%d}`, detail, status)
 }
 
-// adr: 1164
+// adr: 1330
 func TestRunInteractiveImageRelaysSessionAndExitCode(t *testing.T) {
 	fake := &interactiveImageRunServer{t: t}
 	fake.attach = func(w http.ResponseWriter, r *http.Request, attempt int) {
@@ -338,7 +338,7 @@ func TestRunInteractiveImageRelaysSessionAndExitCode(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 func TestRunInteractiveImageCancelsWhenItCannotAttach(t *testing.T) {
 	cases := map[string]int{
 		"old gateway":     http.StatusNotFound,

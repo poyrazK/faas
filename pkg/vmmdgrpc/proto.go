@@ -113,7 +113,7 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 	}, nil
 }
 
-// jobInteractiveFromProto validates ADR-1164's attach contract. The token
+// jobInteractiveFromProto validates ADR-1330's attach contract. The token
 // digest stays in vmmd's rendezvous; only the TTY flag and the attach window
 // reach the guest.
 func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteractive, *api.Problem) {

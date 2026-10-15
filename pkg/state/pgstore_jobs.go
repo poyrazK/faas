@@ -1028,7 +1028,7 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 	if source.FinishedAt == nil {
 		return JobRun{}, nil, ErrConflict
 	}
-	// An interactive run (ADR-1164) is not replayed: a replay would run the
+	// An interactive run (ADR-1330) is not replayed: a replay would run the
 	// command again with no client attached.
 	var interactive bool
 	if err := tx.QueryRow(ctx, `select exists(select 1 from job_run_attach_sessions where run_id = $1::uuid)`,
@@ -2043,7 +2043,7 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
 		return err
 	}
-	// ADR-1164: a retry would run the command again with no client attached.
+	// ADR-1330: a retry would run the command again with no client attached.
 	var interactive bool
 	if err := tx.QueryRow(ctx, `select exists(select 1 from job_run_attach_sessions where run_id = $1::uuid)`,
 		runID).Scan(&interactive); err != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1164
+// adr: 1330
 // testJobRunAttach pins interactive image-run sessions: the session row is
 // written with its run and only for a plain one-task run with no retries, the
 // attach target is found only through its own account and job name and is

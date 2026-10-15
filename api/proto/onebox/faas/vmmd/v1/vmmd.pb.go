@@ -2805,7 +2805,7 @@ type JobColdBootRequest struct {
 	// and stages them into this task's private writable layer before boot.
 	// Plaintext is never carried through schedd or this RPC.
 	SealedEnv []*SealedSecret `protobuf:"bytes,17,rep,name=sealed_env,json=sealedEnv,proto3" json:"sealed_env,omitempty"`
-	// Present only for an interactive image run (ADR-1164): the guest holds the
+	// Present only for an interactive image run (ADR-1330): the guest holds the
 	// command until one client attaches through AttachAppTask with the token
 	// whose digest is given here.
 	Interactive   *JobInteractiveAttach `protobuf:"bytes,18,opt,name=interactive,proto3" json:"interactive,omitempty"`
@@ -2969,7 +2969,7 @@ func (x *JobColdBootRequest) GetInteractive() *JobInteractiveAttach {
 	return nil
 }
 
-// JobInteractiveAttach is ADR-1164's per-task attach contract.
+// JobInteractiveAttach is ADR-1330's per-task attach contract.
 type JobInteractiveAttach struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Tty               bool                   `protobuf:"varint,1,opt,name=tty,proto3" json:"tty,omitempty"`
@@ -3044,7 +3044,7 @@ type JobColdBootResponse struct {
 	// Echoes the distinct held-start RPC contract. The caller validates this
 	// before it publishes the instance as runnable.
 	StartHeld bool `protobuf:"varint,6,opt,name=start_held,json=startHeld,proto3" json:"start_held,omitempty"`
-	// Echoes JobColdBootRequest.interactive (ADR-1164). A vmmd that predates it
+	// Echoes JobColdBootRequest.interactive (ADR-1330). A vmmd that predates it
 	// leaves this false, and schedd fails the task instead of running the
 	// command without stdin.
 	Interactive   bool `protobuf:"varint,7,opt,name=interactive,proto3" json:"interactive,omitempty"`

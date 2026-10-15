@@ -158,7 +158,7 @@ func TestIdempotent_GateRefusalIsNotReplayed(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 // TestIdempotent_OneTimeCredentialIsNotReplayed — an interactive session's
 // create response carries a one-time attach token. Storing it would put the
 // plaintext token in the idempotency table and hand the same token to every
@@ -197,7 +197,7 @@ func TestIdempotent_OneTimeCredentialIsNotReplayed(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 // TestIdempotent_NoStoreHeaderAloneIsStillReplayed — many handlers send
 // Cache-Control: no-store only to keep HTTP caches away. Their keyed
 // mutations must still replay, or a retry would run them twice.

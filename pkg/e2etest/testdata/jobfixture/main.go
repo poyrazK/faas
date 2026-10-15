@@ -78,7 +78,7 @@ func main() {
 	}
 }
 
-// runInteractive (ADR-1164) reports whether stdin is a terminal, echoes each
+// runInteractive (ADR-1330) reports whether stdin is a terminal, echoes each
 // stdin line as "got:<line>", and exits with N on "exit N" (0 at EOF).
 func runInteractive() int {
 	info, err := os.Stdin.Stat()

@@ -1,4 +1,4 @@
-// adr: 1164
+// adr: 1330
 
 package sched
 
@@ -18,7 +18,7 @@ import (
 )
 
 // interactiveJobVMM records the boot spec and echoes the interactive
-// contract unless it models a vmmd that predates ADR-1164.
+// contract unless it models a vmmd that predates ADR-1330.
 type interactiveJobVMM struct {
 	ignoresInteractive bool
 	spec               JobVmmSpec

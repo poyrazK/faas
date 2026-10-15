@@ -17,7 +17,7 @@ type unwrappingWriter struct{ http.ResponseWriter }
 
 func (u unwrappingWriter) Unwrap() http.ResponseWriter { return u.ResponseWriter }
 
-// adr: 1164
+// adr: 1330
 func TestSkipIdempotentReplayFindsTheRecorder(t *testing.T) {
 	direct := &replayRecorder{ResponseWriter: httptest.NewRecorder()}
 	SkipIdempotentReplay(direct)

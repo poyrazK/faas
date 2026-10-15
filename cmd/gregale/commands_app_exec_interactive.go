@@ -135,7 +135,7 @@ func dialAppTaskAttach(ctx context.Context, client *api.Client, _ string, task a
 	return dialAttach(ctx, client, *task.Attach, tty, stdin)
 }
 
-// dialAttach opens an attach WebSocket (ADR-1037, ADR-1164). 409 means the
+// dialAttach opens an attach WebSocket (ADR-1037, ADR-1330). 409 means the
 // VM is still starting and is retried until ctx ends; anything else is
 // final.
 func dialAttach(ctx context.Context, client *api.Client, attach api.AppTaskAttachInfo, tty bool, stdin *os.File) (*websocket.Conn, error) {

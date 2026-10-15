@@ -224,7 +224,7 @@ type AppTaskInteractiveVMMAPI interface {
 	ExecuteInteractiveAppTask(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
 }
 
-// JobInteractiveVMMAPI runs ADR-1164's attached session against a live
+// JobInteractiveVMMAPI runs ADR-1330's attached session against a live
 // interactive job guest without tearing the VM down.
 type JobInteractiveVMMAPI interface {
 	ExecuteInteractiveJob(context.Context, string, apptaskproto.Request, <-chan apptaskproto.InputEvent, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
@@ -805,7 +805,7 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		return nil, grpcerr.ToStatus(problem)
 	}
 	if attach != nil {
-		go s.serveInteractiveJob(interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
+		go s.serveInteractiveJob(context.WithoutCancel(ctx), interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
 	}
 	return &vmmdpb.JobColdBootResponse{
 		Instance:    inst.Lease.Instance,
@@ -836,7 +836,7 @@ func jobBootContractProblem(inst *fcvm.Instance, startHeld bool) *api.Problem {
 	return nil
 }
 
-// registerInteractiveJob checks that this vmmd can serve ADR-1164's session
+// registerInteractiveJob checks that this vmmd can serve ADR-1330's session
 // and registers the instance's rendezvous before the VM boots. Errors are
 // gRPC statuses: a duplicate registration is AlreadyExists, which a Problem's
 // validation code would flatten to InvalidArgument.

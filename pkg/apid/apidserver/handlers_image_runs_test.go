@@ -55,7 +55,7 @@ func TestImageRunRouteIsGatedAndRunnerJobsAreManaged(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 // TestInteractiveImageRunGateAndToken drives POST /v1/image-runs through the
 // routed handler: interactive runs need their own gate, a refusal by that
 // gate is not replayed once it is enabled, and every created run hands out a

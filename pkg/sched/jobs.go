@@ -438,7 +438,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd held-start mismatch: requested=%t returned=%t", startHeld, out.StartHeld)
 	}
 	if out.Interactive != (interactive != nil) {
-		// A vmmd that predates ADR-1164 boots the command without stdin.
+		// A vmmd that predates ADR-1330 boots the command without stdin.
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 			"job_vmm_interactive_unsupported", "this node cannot run interactive sessions yet; start the run again after the platform update")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd interactive mismatch: requested=%t returned=%t", interactive != nil, out.Interactive)
@@ -1245,7 +1245,7 @@ type JobVmmSpec struct {
 	BaseKey          string
 	VcpuCount        int
 	// Interactive holds the guest command until one client attaches
-	// (ADR-1164). Only the token digest is carried.
+	// (ADR-1330). Only the token digest is carried.
 	Interactive *state.JobRunAttach
 }
 

@@ -30874,7 +30874,7 @@ type JobRunAttachSessionRow struct {
 	AttachTimeoutS    int32
 }
 
-// ADR-1164: an interactive image run's session, read by schedd at dispatch.
+// ADR-1330: an interactive image run's session, read by schedd at dispatch.
 func (q *Queries) JobRunAttachSession(ctx context.Context, db DBTX, runID pgtype.UUID) (JobRunAttachSessionRow, error) {
 	row := db.QueryRow(ctx, jobRunAttachSession, runID)
 	var i JobRunAttachSessionRow
@@ -30915,7 +30915,7 @@ type JobTaskAttachTargetRow struct {
 	NodeID        string
 }
 
-// ADR-1164: the interactive job task an attach reaches, scoped to the account
+// ADR-1330: the interactive job task an attach reaches, scoped to the account
 // and job name, with the state and node of its current instance (if any).
 func (q *Queries) JobTaskAttachTarget(ctx context.Context, db DBTX, arg JobTaskAttachTargetParams) (JobTaskAttachTargetRow, error) {
 	row := db.QueryRow(ctx, jobTaskAttachTarget,

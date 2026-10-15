@@ -41,7 +41,7 @@ type Store interface {
 }
 
 // InteractiveEnvGate is the apid operator gate for interactive image runs
-// (ADR-1164), on top of EnvGate.
+// (ADR-1330), on top of EnvGate.
 const InteractiveEnvGate = "FAAS_INTERACTIVE_IMAGE_RUNS"
 
 // InteractiveEnabledFromEnv reports whether the operator enabled
@@ -53,7 +53,7 @@ func InteractiveEnabledFromEnv(getenv func(string) string) bool {
 // Handler serves POST /v1/image-runs.
 type Handler struct {
 	Enabled bool
-	// InteractiveEnabled admits `interactive: true` (ADR-1164).
+	// InteractiveEnabled admits `interactive: true` (ADR-1330).
 	InteractiveEnabled bool
 	// Store is nil when the configured store cannot hold runner jobs.
 	Store  Store
@@ -267,7 +267,7 @@ func validateArgv(field string, argv *[]string) *api.Problem {
 	return nil
 }
 
-// validateInteractive applies ADR-1164: a tty needs an interactive run, and
+// validateInteractive applies ADR-1330: a tty needs an interactive run, and
 // the task timeout is the session limit.
 func validateInteractive(body api.CreateImageRunRequest, timeoutSec int) *api.Problem {
 	if body.TTY && !body.Interactive {

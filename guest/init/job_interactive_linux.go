@@ -2,7 +2,7 @@
 
 package main
 
-// Interactive image runs (ADR-1164): the job command waits for one session
+// Interactive image runs (ADR-1330): the job command waits for one session
 // on the app-task session port, then runs with the session's terminal or
 // pipes as its stdio. The job supervisor still owns the task timeout, host
 // cancellation and the exit receipt; the session's terminal result carries

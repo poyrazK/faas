@@ -96,7 +96,7 @@ func IsAppTaskAttachPath(p string) bool {
 }
 
 // JobTaskAttachPath is the gateway endpoint for one interactive image run's
-// task (ADR-1164). The session uses this file's wire contract.
+// task (ADR-1330). The session uses this file's wire contract.
 func JobTaskAttachPath(jobName, runID string, taskIndex int) string {
 	return "/v1/jobs/" + url.PathEscape(jobName) + "/runs/" + url.PathEscape(runID) +
 		"/tasks/" + strconv.Itoa(taskIndex) + "/attach"

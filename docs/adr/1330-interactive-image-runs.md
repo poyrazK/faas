@@ -1,4 +1,4 @@
-# ADR-1164 · Interactive image runs (`gregale run -it --image`)
+# ADR-1330 · Interactive image runs (`gregale run -it --image`)
 
 - **Status:** accepted for an operator-gated preview
 - **Date:** 2026-10-15

@@ -1,7 +1,7 @@
 package main
 
 // JobTaskAttachHandler owns `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach`
-// (ADR-1164): the attach of an interactive image run's task. It resolves the
+// (ADR-1330): the attach of an interactive image run's task. It resolves the
 // task through the job name in the caller's account, then opens the session
 // exactly as for an interactive app task (ADR-1037).
 

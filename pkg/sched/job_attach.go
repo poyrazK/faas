@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// jobRunAttach returns an interactive image run's session (ADR-1164), or nil
+// jobRunAttach returns an interactive image run's session (ADR-1330), or nil
 // for an ordinary run. A store that cannot hold sessions cannot have admitted
 // an interactive run.
 func (e *Engine) jobRunAttach(ctx context.Context, runID string) (*state.JobRunAttach, error) {

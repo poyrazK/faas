@@ -210,7 +210,7 @@ func (hs *harness) postRaw(body any) *httptest.ResponseRecorder {
 	return rec
 }
 
-// adr: 1164
+// adr: 1330
 func TestCreateInteractiveRejectsBeforeTouchingState(t *testing.T) {
 	cases := map[string]struct {
 		disableInteractive bool
@@ -238,7 +238,7 @@ func TestCreateInteractiveRejectsBeforeTouchingState(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 func TestCreateInteractiveReturnsOneTimeAttach(t *testing.T) {
 	for name, tty := range map[string]bool{"pipes": false, "tty": true} {
 		t.Run(name, func(t *testing.T) {
@@ -295,7 +295,7 @@ func TestCreateInteractiveReturnsOneTimeAttach(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 func TestCreateOrdinaryRunHasNoAttach(t *testing.T) {
 	hs := newHarness(t, api.PlanPro)
 	hs.h.InteractiveEnabled = true

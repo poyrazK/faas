@@ -394,7 +394,7 @@ func TestIsComputeOwnedGatewayPath(t *testing.T) {
 		// ADR-1163 live job task output; the stored copy stays on apid.
 		{path: "/v1/jobs/nightly/runs/5f0c/tasks/0/logs/stream", want: true},
 		{path: "/v1/jobs/nightly/runs/5f0c/tasks/0/logs", want: false},
-		// ADR-1037 / ADR-1164 interactive attach.
+		// ADR-1037 / ADR-1330 interactive attach.
 		{path: "/v1/apps/api/tasks/6f9619ff/attach", want: true},
 		{path: "/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach", want: true},
 		{path: "/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach/x", want: false},

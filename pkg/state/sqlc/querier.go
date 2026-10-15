@@ -1702,9 +1702,9 @@ type Querier interface {
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)
 	IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg IssueUpsertImpactAlertPolicyParams) error
 	JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error)
-	// ADR-1164: an interactive image run's session, read by schedd at dispatch.
+	// ADR-1330: an interactive image run's session, read by schedd at dispatch.
 	JobRunAttachSession(ctx context.Context, db DBTX, runID pgtype.UUID) (JobRunAttachSessionRow, error)
-	// ADR-1164: the interactive job task an attach reaches, scoped to the account
+	// ADR-1330: the interactive job task an attach reaches, scoped to the account
 	// and job name, with the state and node of its current instance (if any).
 	JobTaskAttachTarget(ctx context.Context, db DBTX, arg JobTaskAttachTargetParams) (JobTaskAttachTargetRow, error)
 	// ADR-1163: the job task a live log stream follows, scoped to the account

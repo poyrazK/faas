@@ -347,7 +347,7 @@ while the command runs (ADR-1163).
 ### Interactive image runs
 
 `gregale run -it --image IMAGE [ARG...]` attaches your terminal to the
-command, the way `docker run -it` does (ADR-1164):
+command, the way `docker run -it` does (ADR-1330):
 
 ```sh
 gregale run -it --image alpine sh

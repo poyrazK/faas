@@ -10520,7 +10520,7 @@ Run untrusted code in an isolated disposable microVM, or one command from an OCI
 | Flag | Meaning | |
 |---|---|---|
 | `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
-| `--interactive` | with --image, attach stdin and relay the session until the command exits (-i; ADR-1164) |  |
+| `--interactive` | with --image, attach stdin and relay the session until the command exits (-i; ADR-1330) |  |
 | `--tty` | with --image --interactive, give the command a terminal (-t; -it for both) |  |
 | `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
 | `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |

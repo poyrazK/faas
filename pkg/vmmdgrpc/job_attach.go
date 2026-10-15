@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// Interactive image runs (ADR-1164). JobColdBoot registers ADR-1037's
+// Interactive image runs (ADR-1330). JobColdBoot registers ADR-1037's
 // single-use rendezvous for the job instance before the VM boots, so the
 // instance is attachable by the time schedd publishes it as running. The
 // first valid AttachAppTask for the instance starts the session: vmmd dials
@@ -35,8 +35,9 @@ var jobInteractiveRendezvousSlack = 60 * time.Second
 var jobSessionCommand = []string{"job"}
 
 // serveInteractiveJob waits for the run's one client and relays its session.
-// It returns when the session ends or the rendezvous expires unclaimed.
-func (s *Server) serveInteractiveJob(jobVMM JobInteractiveVMMAPI, instance string, entry *pendingAppTaskAttach, in *fcvm.JobInteractive, taskTimeoutSec int) {
+// It returns when the session ends or the rendezvous expires unclaimed. ctx
+// carries request values only: the session outlives the JobColdBoot call.
+func (s *Server) serveInteractiveJob(ctx context.Context, jobVMM JobInteractiveVMMAPI, instance string, entry *pendingAppTaskAttach, in *fcvm.JobInteractive, taskTimeoutSec int) {
 	timer := time.NewTimer(time.Duration(in.AttachTimeoutSec)*time.Second + jobInteractiveRendezvousSlack)
 	defer timer.Stop()
 	var client *appTaskAttachClient
@@ -50,7 +51,7 @@ func (s *Server) serveInteractiveJob(jobVMM JobInteractiveVMMAPI, instance strin
 	}
 	defer close(client.done)
 
-	sessionCtx, cancelSession := context.WithTimeout(context.Background(),
+	sessionCtx, cancelSession := context.WithTimeout(ctx,
 		time.Duration(taskTimeoutSec)*time.Second+jobInteractiveSessionSlack)
 	defer cancelSession()
 	clientCtx := client.stream.Context()

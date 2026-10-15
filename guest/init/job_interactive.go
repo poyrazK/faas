@@ -1,6 +1,6 @@
 package main
 
-// Build-tag-free half of interactive image runs (ADR-1164): how the session
+// Build-tag-free half of interactive image runs (ADR-1330): how the session
 // maps onto the job supervisor's signals and exit receipt. The listener and
 // stdio live in job_interactive_linux.go.
 

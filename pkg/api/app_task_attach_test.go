@@ -82,7 +82,7 @@ func TestIsAppTaskAttachPath(t *testing.T) {
 	}
 }
 
-// adr: 1164
+// adr: 1330
 func TestIsJobTaskAttachPath(t *testing.T) {
 	for path, want := range map[string]bool{
 		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach":         true,
