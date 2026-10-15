@@ -314,6 +314,12 @@ func cmdTest(args []string) int {
 }
 
 func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
+	if len(args) > 0 && args[0] == "digest" {
+		if chaosOverride != nil {
+			return printErr("Invalid digest options", errors.New("digest cannot override chaos"))
+		}
+		return cmdTestDigest(args[1:])
+	}
 	if len(args) > 0 && args[0] == "recovery-trend" {
 		if chaosOverride != nil {
 			return printErr("Invalid trend options", errors.New("recovery trends cannot override chaos"))

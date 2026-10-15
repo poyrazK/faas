@@ -2110,6 +2110,57 @@ canonical JSON-array string signature (or `unavailable`). Saved groups are
 ignored on decode and regenerated from raw receipts. Grouping changes no verdict
 and performs no new test execution.
 
+### Markdown CI failure digest
+
+Generate a compact job-summary artifact from an existing JSON report:
+
+```sh
+gregale test digest --from results.json --markdown digest.md
+# Optional: point to the matching rendered HTML report:
+gregale test digest --from results.json --markdown digest.md \
+  --limit 5 --evidence-url https://reports.example.test/results.html
+```
+
+The offline command reuses the report's raw receipts and derived failure groups;
+it does not need platform credentials, provision workloads, rerun tests, or
+publish anything. It returns zero when digest generation succeeds, even if the
+source contains failed tests. Keep the original test command as the CI gate.
+
+The Markdown shows top-level receipt statuses, the most frequent structured
+assertion groups, context-specific failed/executed counts, worst observed values
+with their associated limits, affected runs and supported replay commands.
+Other recorded failures and cleanup errors have separate sections. Cleanup-only
+failures are not invented assertion groups. Tolerated child failures remain
+descriptive and do not change a passing parent verdict.
+
+`--limit` defaults to 5 and accepts 1–20 groups. Each group displays up to three
+occurrences; each other-failure/cleanup section displays up to ten findings.
+Omissions are explicit. Descriptive fields are limited to 256 Unicode characters,
+controls become spaces, and Markdown/HTML metacharacters are escaped. Replay
+commands are never silently shortened: oversized commands or commands with
+control characters are omitted. Full evidence remains in the original report.
+
+`--evidence-url` accepts an HTTPS URL without credentials, query or fragment,
+and links to the matching HTML report's top-level receipt anchors. Supply an
+actual rendered HTML URL, not an artifact ZIP URL. Without it, the digest names
+the original top-level receipt index. Source/output aliases, including hard
+links, are rejected. Existing report input size limits apply.
+
+For GitHub Actions, append the generated Markdown after the test step, including
+on test failure:
+
+```yaml
+- name: Summarize Gregale results
+  if: always()
+  run: |
+    gregale test digest --from results.json --markdown digest.md
+    cat digest.md >> "$GITHUB_STEP_SUMMARY"
+```
+
+This example assumes the preceding test step wrote `results.json`. It preserves
+that step's failure status. Replay path placeholders still need the original
+JSON report and scenario manifest.
+
 ### Recovery regressions between CI runs
 
 Set a recovery regression budget on a resilience scenario:
