@@ -205,3 +205,75 @@ func TestStoreFailoverOnlyFromASyncedStandby(t *testing.T) {
 		})
 	}
 }
+
+// Both stores turn replication on with a standby node placed like
+// Place's, refuse to turn it off while the standby runs, and owe the
+// primary's slot until it is recorded dropped.
+func TestStoreResizeChangesReplication(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx, at := factory(t), context.Background(), time.Now()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 4 << 30, Lifecycle: NodeActive})
+			placed, err := s.Place(ctx, newVM(1<<30, 384))
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := placed.DatabaseID
+			if err := s.Transition(ctx, id, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			production := Shape{VcpuCount: 2, MemMiB: 768, VolumeBytes: 2 << 30, Replicated: true}
+			if err := s.Resize(ctx, id, production, at); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("replication without a second node = %v, want ErrNoCapacity", err)
+			}
+			seedNodes(t, s, Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 3 << 30, Lifecycle: NodeActive})
+			if err := s.Resize(ctx, id, production, at); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := s.Get(ctx, id)
+			if !got.Replicated || got.StandbyNode != "db-b" || got.StandbySynced || got.DropStandbySlot || !got.ResizePending || got.VolumeBytes != 2<<30 {
+				t.Fatalf("after turning replication on: %+v", got)
+			}
+			// The standby's 2 GiB counts on db-b now: after db-a's last 2 GiB
+			// go, no node has room for another 2 GiB.
+			if next, err := s.Place(ctx, newVM(2<<30, 384)); err != nil || next.NodeID != "db-a" {
+				t.Fatalf("placement = %+v, %v; want db-a", next, err)
+			}
+			if _, err := s.Place(ctx, newVM(2<<30, 384)); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("placement over the standby's volume = %v, want ErrNoCapacity", err)
+			}
+			if err := s.FinishResize(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AdmitWake(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimStandby(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			standalone := Shape{VcpuCount: 1, MemMiB: 384, VolumeBytes: 2 << 30}
+			if err := s.Resize(ctx, id, standalone, at); !errors.Is(err, ErrConflict) {
+				t.Fatalf("turning replication off with the standby running = %v, want ErrConflict", err)
+			}
+			if err := s.ReleaseStandby(ctx, id, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Resize(ctx, id, standalone, at); err != nil {
+				t.Fatal(err)
+			}
+			got, _ = s.Get(ctx, id)
+			if got.Replicated || got.StandbyNode != "" || got.StandbySynced || !got.DropStandbySlot {
+				t.Fatalf("after turning replication off: %+v", got)
+			}
+			if err := s.ClearStandbySlotDrop(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ = s.Get(ctx, id); got.DropStandbySlot {
+				t.Fatalf("slot drop still owed: %+v", got)
+			}
+		})
+	}
+}

@@ -329,6 +329,15 @@ func TestResizeDatabaseRelaysTheShape(t *testing.T) {
 	if err != nil || f.shape != (dbsched.Shape{VcpuCount: 2, MemMiB: 1024, VolumeBytes: 4 << 30}) || rt.GetVcpuCount() != 2 || !rt.GetResizePending() {
 		t.Fatalf("resize = %v, %v (shape %+v)", rt, err, f.shape)
 	}
+	// Unset replication keeps the database's; set, it is relayed.
+	f.vm.Replicated = true
+	if _, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 2048, VolumeBytes: 4 << 30}); err != nil || !f.shape.Replicated {
+		t.Fatalf("resize without replication = %v (shape %+v); want it kept on", err, f.shape)
+	}
+	off := false
+	if _, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 1024, VolumeBytes: 4 << 30, Replicated: &off}); err != nil || f.shape.Replicated {
+		t.Fatalf("resize with replication off = %v (shape %+v)", err, f.shape)
+	}
 	f.err = dbsched.ErrNoCapacity
 	if _, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 1024, VolumeBytes: 4 << 30}); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("no capacity = %v", err)

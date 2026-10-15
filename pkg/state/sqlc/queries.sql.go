@@ -5349,6 +5349,18 @@ func (q *Queries) ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const clearDatabaseStandbySlotDrop = `-- name: ClearDatabaseStandbySlotDrop :execrows
+UPDATE database_vms SET drop_standby_slot = false WHERE database_id = $1
+`
+
+func (q *Queries) ClearDatabaseStandbySlotDrop(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, clearDatabaseStandbySlotDrop, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearInstanceRuntimeConfigReceipt = `-- name: ClearInstanceRuntimeConfigReceipt :exec
 DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 `
@@ -17608,7 +17620,7 @@ const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17643,6 +17655,7 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.StandbyRunning,
 		&i.StandbySynced,
 		&i.PromotePending,
+		&i.DropStandbySlot,
 	)
 	return i, err
 }
@@ -30637,7 +30650,7 @@ const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30678,6 +30691,7 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.StandbyRunning,
 			&i.StandbySynced,
 			&i.PromotePending,
+			&i.DropStandbySlot,
 		); err != nil {
 			return nil, err
 		}
@@ -66039,22 +66053,33 @@ func (q *Queries) ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID 
 const resizeDatabaseVM = `-- name: ResizeDatabaseVM :execrows
 UPDATE database_vms
 SET vcpu_count = $1, mem_mib = $2, volume_bytes = $3,
+    replicated = $4::boolean, standby_node = $5,
+    standby_synced = standby_synced AND $4::boolean,
+    drop_standby_slot = $6::boolean,
     resize_pending = true
-WHERE database_id = $4 AND state IN ('parked', 'running')
+WHERE database_id = $7 AND state IN ('parked', 'running')
 `
 
 type ResizeDatabaseVMParams struct {
-	VcpuCount   int32
-	MemMib      int32
-	VolumeBytes int64
-	DatabaseID  pgtype.UUID
+	VcpuCount       int32
+	MemMib          int32
+	VolumeBytes     int64
+	Replicated      bool
+	StandbyNode     pgtype.Text
+	DropStandbySlot bool
+	DatabaseID      pgtype.UUID
 }
 
+// Records a new shape. Turning replication on names the standby node;
+// turning it off (its standby already retired) owes the primary's slot.
 func (q *Queries) ResizeDatabaseVM(ctx context.Context, db DBTX, arg ResizeDatabaseVMParams) (int64, error) {
 	result, err := db.Exec(ctx, resizeDatabaseVM,
 		arg.VcpuCount,
 		arg.MemMib,
 		arg.VolumeBytes,
+		arg.Replicated,
+		arg.StandbyNode,
+		arg.DropStandbySlot,
 		arg.DatabaseID,
 	)
 	if err != nil {

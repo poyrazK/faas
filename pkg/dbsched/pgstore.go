@@ -81,7 +81,7 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
 		Replicated: r.Replicated, StandbyNode: r.StandbyNode.String, StandbyRunning: r.StandbyRunning, StandbySynced: r.StandbySynced,
-		PromotePending: r.PromotePending,
+		PromotePending: r.PromotePending, DropStandbySlot: r.DropStandbySlot,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
@@ -486,8 +486,17 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
 			return VM{}, err
 		}
+		var standby string
+		if shape.Replicated && !vm.Replicated {
+			if standby, err = s.placeStandby(ctx, tx, vm, shape.VolumeBytes); err != nil {
+				return VM{}, err
+			}
+		}
+		next := vm
+		replicationChange(&next, shape, standby)
 		n, err := s.q.ResizeDatabaseVM(ctx, tx, sqlc.ResizeDatabaseVMParams{
 			VcpuCount: int32(shape.VcpuCount), MemMib: int32(shape.MemMiB), VolumeBytes: shape.VolumeBytes, DatabaseID: key,
+			Replicated: next.Replicated, StandbyNode: pgtype.Text{String: next.StandbyNode, Valid: next.StandbyNode != ""}, DropStandbySlot: next.DropStandbySlot,
 		})
 		if err != nil {
 			return VM{}, fmt.Errorf("dbsched: resize %s: %w", id, err)
@@ -506,6 +515,44 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		return VM{}, nil
 	})
 	return err
+}
+
+// placeStandby picks a standby node for vm with a volume of volumeBytes
+// and locks it, rechecking its volume capacity under the lock.
+func (s *PgStore) placeStandby(ctx context.Context, tx pgx.Tx, vm VM, volumeBytes int64) (string, error) {
+	nodes, err := s.Nodes(ctx)
+	if err != nil {
+		return "", err
+	}
+	usage, err := s.usage(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	sized := vm
+	sized.VolumeBytes = volumeBytes
+	standby, ok := pickStandby(nodes, usage, sized, vm.NodeID)
+	if !ok {
+		return "", ErrNoCapacity
+	}
+	if err := s.lockNodes(ctx, tx, standby); err != nil {
+		return "", err
+	}
+	if usage, err = s.usage(ctx, tx); err != nil {
+		return "", err
+	}
+	if standby.VolumeCapacityBytes-usage[standby.ID].volumeBytes < volumeBytes {
+		return "", ErrNoCapacity
+	}
+	return standby.ID, nil
+}
+
+func (s *PgStore) ClearStandbySlotDrop(ctx context.Context, id string) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.ClearDatabaseStandbySlotDrop(ctx, s.pool, key)
+	return s.changed(ctx, s.pool, id, n, err)
 }
 
 func (s *PgStore) FinishResize(ctx context.Context, id string) error {

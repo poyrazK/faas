@@ -368,8 +368,9 @@ type ScheddClient interface {
 	// also after it was deleted (ADR-1027). apid only.
 	DatabaseUsage(ctx context.Context, in *DatabaseUsageRequest, opts ...grpc.CallOption) (*DatabaseUsageResponse, error)
 	// ResizeDatabase changes a database's VM shape and grows its volume
-	// (never shrinks it). A running database restarts on the new shape.
-	// Repeating the request resumes an interrupted resize. apid only.
+	// (never shrinks it), and turns its synchronous standby on or off
+	// (the production class). A running database restarts on the new
+	// shape. Repeating the request resumes an interrupted resize. apid only.
 	ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 	// ImportDatabase starts copying another PostgreSQL database into an
 	// empty database of this one (ADR-1027 migration off Neon), waking it.
@@ -1030,8 +1031,9 @@ type ScheddServer interface {
 	// also after it was deleted (ADR-1027). apid only.
 	DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error)
 	// ResizeDatabase changes a database's VM shape and grows its volume
-	// (never shrinks it). A running database restarts on the new shape.
-	// Repeating the request resumes an interrupted resize. apid only.
+	// (never shrinks it), and turns its synchronous standby on or off
+	// (the production class). A running database restarts on the new
+	// shape. Repeating the request resumes an interrupted resize. apid only.
 	ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error)
 	// ImportDatabase starts copying another PostgreSQL database into an
 	// empty database of this one (ADR-1027 migration off Neon), waking it.

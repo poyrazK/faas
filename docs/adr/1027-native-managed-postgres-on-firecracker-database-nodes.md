@@ -1101,15 +1101,53 @@ handlers:
 - In the guest and runtime test the seed took 4 s, a seeded standby
   resumes in 2.2 s, and a promotion takes 0.5 s.
 
+**Changing class to or from production.** A resize carries whether the
+database keeps a standby (`ResizeDatabaseRequest.replicated`; unset keeps
+it). The class change is therefore one schedd step, and the record never
+shows a shape that matches no class.
+
+- **Joining production.** The resize places the standby node as placement
+  does: another active node offering the major, with room for the
+  volume. Without one it is refused (`ErrNoCapacity`) and nothing changes.
+  A running database restarts on the new shape, and its standby copies the
+  primary and turns synchronous in the background. A parked one gets its
+  standby at its next wake.
+- **Leaving production.** The standby is retired before the record
+  changes:
+  1. a running database stops cleanly, primary first, so the standby
+     holds every commit to the end;
+  2. the standby is marked not synchronized, and its VM stops;
+  3. its volume is discarded. A standby node that is unavailable or gone
+     leaves the volume to the orphan sweep.
+  4. The record turns replication off and notes that the primary still
+     holds the standby's replication slot (`drop_standby_slot`).
+
+  Left alone, that slot would keep WAL up to a quarter of the volume. The
+  standby monitor drops it once the primary runs (replication `off`, which
+  drops only an inactive slot), and clears the note when the primary
+  reports none. Joining production again before then reuses the slot.
+- **Driver.** `Update` now moves between any classes; it refused moves
+  into and out of production before.
+- **Evidence.** Both stores' contract test covers:
+  - placing the standby and counting its volume on its node;
+  - refusing to drop replication while the standby runs;
+  - the owed slot.
+
+  Scheduler tests cover the ordering (primary, then standby, then volume)
+  and leaving production while parked. On metal (two nodes, vmmd's gRPC
+  handlers), joining production took 7.6 s: restart, standby copy,
+  synchronous. A commit then waited for the standby. Leaving took 3.2 s:
+  restart, standby VM and volume gone. Once the monitor ran, the primary
+  had no replication slot, and all 2,000 rows survived.
+
 Not yet done:
 
 - **Standby metering.** The standby's vCPUs and volume are allocated but
   not metered. Whether production is priced as two VMs or carried in its
   class price is an owner decision against the financial model.
-- **Changing class to or from production.** It is unsupported: the
-  standby is not an in-place resize. Resizing a production database grows
-  the standby's volume at its next attach, but the standby node's volume
-  capacity is not checked at resize time.
+- **Storage resize of a production database** grows the standby's volume
+  at its next attach, but the standby node's volume capacity is not
+  checked at resize time.
 - **Parked databases fail over only through the operator's lost-node
   mark.** Automatic failover covers running databases, whose primaries the
   monitor probes.

@@ -197,9 +197,17 @@ func (s *Server) ResizeDatabase(ctx context.Context, req *scheddpb.ResizeDatabas
 	if err != nil {
 		return nil, err
 	}
-	vm, err := d.Resize(ctx, req.GetDatabaseId(), dbsched.Shape{
-		VcpuCount: int(req.GetVcpuCount()), MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(),
-	})
+	shape := dbsched.Shape{VcpuCount: int(req.GetVcpuCount()), MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes()}
+	if req.Replicated != nil {
+		shape.Replicated = req.GetReplicated()
+	} else {
+		cur, err := d.Get(ctx, req.GetDatabaseId())
+		if err != nil {
+			return nil, s.databaseStatus("resize", err)
+		}
+		shape.Replicated = cur.Replicated
+	}
+	vm, err := d.Resize(ctx, req.GetDatabaseId(), shape)
 	if err != nil {
 		return nil, s.databaseStatus("resize", err)
 	}

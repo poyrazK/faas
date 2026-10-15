@@ -18480,14 +18480,14 @@ GROUP BY n.id ORDER BY n.id;
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -18570,10 +18570,18 @@ DELETE FROM database_usage
 WHERE ended_at < sqlc.arg(before) OR (meter = 'egress' AND started_at < sqlc.arg(before));
 
 -- name: ResizeDatabaseVM :execrows
+-- Records a new shape. Turning replication on names the standby node;
+-- turning it off (its standby already retired) owes the primary's slot.
 UPDATE database_vms
 SET vcpu_count = sqlc.arg(vcpu_count), mem_mib = sqlc.arg(mem_mib), volume_bytes = sqlc.arg(volume_bytes),
+    replicated = sqlc.arg(replicated)::boolean, standby_node = sqlc.narg(standby_node),
+    standby_synced = standby_synced AND sqlc.arg(replicated)::boolean,
+    drop_standby_slot = sqlc.arg(drop_standby_slot)::boolean,
     resize_pending = true
 WHERE database_id = sqlc.arg(database_id) AND state IN ('parked', 'running');
+
+-- name: ClearDatabaseStandbySlotDrop :execrows
+UPDATE database_vms SET drop_standby_slot = false WHERE database_id = sqlc.arg(database_id);
 
 -- name: FinishDatabaseVMResize :execrows
 UPDATE database_vms SET resize_pending = false WHERE database_id = sqlc.arg(database_id);

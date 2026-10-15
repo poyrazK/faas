@@ -113,6 +113,9 @@ func (f *fakeScheduler) ResizeDatabase(_ context.Context, in *scheddpb.ResizeDat
 		return nil, status.Error(codes.InvalidArgument, "dbsched: a volume cannot shrink")
 	}
 	rt.VcpuCount, rt.MemMib, rt.VolumeBytes, rt.ResizePending = in.GetVcpuCount(), in.GetMemMib(), in.GetVolumeBytes(), f.resizePending
+	if in.Replicated != nil {
+		rt.Replicated = in.GetReplicated()
+	}
 	return rt, nil
 }
 
@@ -979,7 +982,8 @@ func TestDescribeFactoryReadsCapabilitiesAndReachesNothing(t *testing.T) {
 
 // The production class runs a synchronous standby on a second node: schedd
 // is asked for a replicated database, and the class reads back from it.
-// Gaining or losing the standby is not an in-place resize.
+// Leaving or joining the class resizes in place and turns the standby off
+// or on in the same request.
 func TestProductionClassIsReplicated(t *testing.T) {
 	p, sched, _ := newTestProvider(t)
 	ctx := context.Background()
@@ -997,8 +1001,15 @@ func TestProductionClassIsReplicated(t *testing.T) {
 	}
 	burstable := spec
 	burstable.Class = managedpostgres.ClassBurstable
-	if _, err := p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: spec, Spec: burstable}); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Fatalf("production to burstable = %v, want ErrUnsupported", err)
+	obs, err = p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: spec, Spec: burstable})
+	last := sched.resizes[len(sched.resizes)-1]
+	if err != nil || obs.Spec.Class != managedpostgres.ClassBurstable || last.Replicated == nil || last.GetReplicated() || last.GetMemMib() != 1024 {
+		t.Fatalf("production to burstable = %+v, %v (schedd got %+v)", obs.Spec, err, last)
+	}
+	obs, err = p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: burstable, Spec: spec})
+	last = sched.resizes[len(sched.resizes)-1]
+	if err != nil || obs.Spec.Class != managedpostgres.ClassProduction || !last.GetReplicated() || last.GetMemMib() != 2048 {
+		t.Fatalf("burstable to production = %+v, %v (schedd got %+v)", obs.Spec, err, last)
 	}
 	if !slices.Contains(p.Capabilities().ServiceClasses, managedpostgres.ClassProduction) {
 		t.Fatal("capabilities omit the production class")

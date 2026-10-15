@@ -274,6 +274,9 @@ func (s *Scheduler) CheckStandbys(ctx context.Context) (int, error) {
 	}
 	dropped := 0
 	for _, vm := range vms {
+		if vm.DropStandbySlot && vm.State == StateRunning {
+			s.dropStandbySlot(ctx, vm, byID[vm.NodeID])
+		}
 		if !vm.Replicated {
 			continue
 		}
@@ -374,6 +377,26 @@ func (s *Scheduler) dropStandby(ctx context.Context, vm VM, primary, standby Nod
 	s.attachTried.Delete(id)
 	s.log.Warn("dbsched: standby dropped; the primary runs asynchronous until it attaches again", "database_id", id, "standby_node", cur.StandbyNode, "node_gone", replace)
 	return true
+}
+
+// dropStandbySlot drops the replication slot a primary kept for a
+// standby it no longer has, once the primary runs: the slot would hold WAL
+// up to a quarter of the volume. Replication off drops only an inactive
+// slot, so the mark is cleared only once the primary reports none.
+func (s *Scheduler) dropStandbySlot(ctx context.Context, vm VM, primary Node) {
+	if _, err := s.vmm.Replication(ctx, primary, vm.DatabaseID, dbguest.ReplicationOff, ""); err != nil {
+		s.log.Warn("dbsched: drop a retired standby's slot", "database_id", vm.DatabaseID, "err", err)
+		return
+	}
+	status, err := s.vmm.Replication(ctx, primary, vm.DatabaseID, "", "")
+	if err != nil || status.Mode != dbguest.ReplicationOff {
+		return
+	}
+	if err := s.store.ClearStandbySlotDrop(ctx, vm.DatabaseID); err != nil {
+		s.log.Warn("dbsched: record a retired standby's slot dropped", "database_id", vm.DatabaseID, "err", err)
+		return
+	}
+	s.log.Info("dbsched: retired standby's slot dropped", "database_id", vm.DatabaseID)
 }
 
 // standbyNodeArg is the replication control's standby node for mode.

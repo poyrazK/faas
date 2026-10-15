@@ -336,8 +336,9 @@ service Schedd {
   // also after it was deleted (ADR-1027). apid only.
   rpc DatabaseUsage(DatabaseUsageRequest) returns (DatabaseUsageResponse);
   // ResizeDatabase changes a database's VM shape and grows its volume
-  // (never shrinks it). A running database restarts on the new shape.
-  // Repeating the request resumes an interrupted resize. apid only.
+  // (never shrinks it), and turns its synchronous standby on or off
+  // (the production class). A running database restarts on the new
+  // shape. Repeating the request resumes an interrupted resize. apid only.
   rpc ResizeDatabase(ResizeDatabaseRequest) returns (DatabaseRuntime);
   // ImportDatabase starts copying another PostgreSQL database into an
   // empty database of this one (ADR-1027 migration off Neon), waking it.
@@ -1299,6 +1300,9 @@ message ResizeDatabaseRequest {
   int32 vcpu_count = 2;
   int32 mem_mib = 3;
   int64 volume_bytes = 4;
+  // Whether the database keeps a synchronous standby; unset keeps the
+  // current setting.
+  optional bool replicated = 5;
 }
 
 // TouchDatabaseRequest keeps field 1 of DatabaseRef, so a DatabaseRef is

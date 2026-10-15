@@ -244,6 +244,7 @@ type Querier interface {
 	// lease it without dispatching it and block its actual broker delivery.
 	ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg ClaimTriggerRecordsByItemsParams) ([]ClaimTriggerRecordsByItemsRow, error)
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
+	ClearDatabaseStandbySlotDrop(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
@@ -3209,6 +3210,8 @@ type Querier interface {
 	ResetRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error
 	ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	// Records a new shape. Turning replication on names the standby node;
+	// turning it off (its standby already retired) owes the primary's slot.
 	ResizeDatabaseVM(ctx context.Context, db DBTX, arg ResizeDatabaseVMParams) (int64, error)
 	ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, arg ResolveEnvironmentFieldOwnershipScopeParams) (ResolveEnvironmentFieldOwnershipScopeRow, error)
 	ResolveExclusiveWebhookEffectTarget(ctx context.Context, db DBTX, arg ResolveExclusiveWebhookEffectTargetParams) (string, error)

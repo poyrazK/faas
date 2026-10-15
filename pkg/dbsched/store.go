@@ -109,12 +109,15 @@ type VM struct {
 	// acknowledged commit and may be promoted; it is cleared before a
 	// primary may commit without waiting for its standby. PromotePending:
 	// the volume on NodeID is a standby promoted while parked; its next
-	// boot promotes it onto a new timeline.
-	Replicated     bool
-	StandbyNode    string
-	StandbyRunning bool
-	StandbySynced  bool
-	PromotePending bool
+	// boot promotes it onto a new timeline. DropStandbySlot: replication
+	// was turned off and the primary still holds the standby's slot, which
+	// the standby monitor drops once the primary runs.
+	Replicated      bool
+	StandbyNode     string
+	StandbyRunning  bool
+	StandbySynced   bool
+	PromotePending  bool
+	DropStandbySlot bool
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.
 	RestoreUntilEnd bool
@@ -186,7 +189,13 @@ type Store interface {
 	// it pending, if the node fits it (volume capacity, and RAM while the
 	// VM is active). The same shape again is a no-op; a smaller volume is
 	// ErrInvalid. The storage ledger moves to the new volume size.
+	// Turning replication on places the standby as Place does (else
+	// ErrNoCapacity); turning it off needs the standby retired (stopped,
+	// its volume gone; else ErrConflict) and owes the primary's slot
+	// (DropStandbySlot).
 	Resize(ctx context.Context, id string, shape Shape, at time.Time) error
+	// ClearStandbySlotDrop records the primary's standby slot dropped.
+	ClearStandbySlotDrop(ctx context.Context, id string) error
 	// FinishResize clears the pending mark once the VM runs on the shape.
 	FinishResize(ctx context.Context, id string) error
 	// BeginMove marks a parked database moving to target, or to the active
@@ -237,15 +246,17 @@ type Store interface {
 	FinishPromotion(ctx context.Context, id string) error
 }
 
-// Shape is a database VM's size and volume.
+// Shape is a database VM's size and volume, and whether it keeps a
+// synchronous standby (the production class).
 type Shape struct {
 	VcpuCount   int
 	MemMiB      int
 	VolumeBytes int64
+	Replicated  bool
 }
 
 func (vm VM) shape() Shape {
-	return Shape{VcpuCount: vm.VcpuCount, MemMiB: vm.MemMiB, VolumeBytes: vm.VolumeBytes}
+	return Shape{VcpuCount: vm.VcpuCount, MemMiB: vm.MemMiB, VolumeBytes: vm.VolumeBytes, Replicated: vm.Replicated}
 }
 
 // resizeFits checks a new shape against the node: the volume growth must
@@ -272,7 +283,21 @@ func checkResize(vm VM, shape Shape) error {
 	if shape.VolumeBytes < vm.VolumeBytes {
 		return fmt.Errorf("%w: a volume cannot shrink", ErrInvalid)
 	}
+	if vm.Replicated && !shape.Replicated && vm.StandbyRunning {
+		return fmt.Errorf("%w: the standby still runs", ErrConflict)
+	}
 	return nil
+}
+
+// replicationChange applies a resize's replication to vm: the standby node
+// when it turns on, the owed slot when it turns off.
+func replicationChange(vm *VM, shape Shape, standby string) {
+	switch {
+	case shape.Replicated && !vm.Replicated:
+		vm.Replicated, vm.StandbyNode, vm.StandbySynced, vm.DropStandbySlot = true, standby, false, false
+	case !shape.Replicated && vm.Replicated:
+		vm.Replicated, vm.StandbyNode, vm.StandbySynced, vm.DropStandbySlot = false, "", false, true
+	}
 }
 
 // activeStates hold RAM on their node.

@@ -1939,6 +1939,7 @@ type DatabaseVm struct {
 	StandbyRunning       bool
 	StandbySynced        bool
 	PromotePending       bool
+	DropStandbySlot      bool
 }
 
 type DeadLetterEvent struct {

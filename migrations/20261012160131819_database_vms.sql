@@ -81,12 +81,15 @@ CREATE TABLE IF NOT EXISTS database_vms (
     -- commit, so it may be promoted; schedd clears it before a primary
     -- may commit without waiting for its standby. promote_pending: the
     -- volume on node_id is a standby promoted while parked (a failover);
-    -- its next boot promotes it onto a new timeline.
+    -- its next boot promotes it onto a new timeline. drop_standby_slot:
+    -- the database stopped being replicated, and its primary still holds
+    -- the standby's replication slot until it next runs.
     replicated boolean NOT NULL DEFAULT false,
     standby_node text REFERENCES database_nodes (id),
     standby_running boolean NOT NULL DEFAULT false,
     standby_synced boolean NOT NULL DEFAULT false,
     promote_pending boolean NOT NULL DEFAULT false,
+    drop_standby_slot boolean NOT NULL DEFAULT false,
     CONSTRAINT database_vms_restore_lineage
         CHECK ((restore_source IS NULL) = (restore_target IS NULL)
             AND restore_source IS DISTINCT FROM database_id),
@@ -97,7 +100,8 @@ CREATE TABLE IF NOT EXISTS database_vms (
         CHECK ((standby_node IS NULL OR (replicated AND standby_node <> node_id))
             AND (NOT standby_running OR standby_node IS NOT NULL)
             AND (NOT standby_synced OR standby_node IS NOT NULL)
-            AND (move_node IS NULL OR standby_node IS NULL OR move_node <> standby_node))
+            AND (move_node IS NULL OR standby_node IS NULL OR move_node <> standby_node)
+            AND NOT (drop_standby_slot AND replicated))
 );
 
 CREATE INDEX IF NOT EXISTS database_vms_node_state_idx

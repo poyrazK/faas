@@ -365,16 +365,44 @@ func (m *MemStore) Resize(_ context.Context, id string, shape Shape, at time.Tim
 	if !ok {
 		return ErrNodeUnavailable
 	}
-	if err := resizeFits(node, m.usageLocked()[node.ID], vm, shape); err != nil {
+	usage := m.usageLocked()
+	if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
 		return err
 	}
+	var standby string
+	if shape.Replicated && !vm.Replicated {
+		nodes := make([]Node, 0, len(m.nodes))
+		for _, n := range m.nodes {
+			nodes = append(nodes, n)
+		}
+		sized := vm
+		sized.VolumeBytes = shape.VolumeBytes
+		picked, ok := pickStandby(nodes, usage, sized, vm.NodeID)
+		if !ok {
+			return ErrNoCapacity
+		}
+		standby = picked.ID
+	}
 	grew := shape.VolumeBytes != vm.VolumeBytes
+	replicationChange(&vm, shape, standby)
 	vm.VcpuCount, vm.MemMiB, vm.VolumeBytes, vm.ResizePending = shape.VcpuCount, shape.MemMiB, shape.VolumeBytes, true
 	m.vms[id] = vm
 	if grew {
 		m.closeLocked(id, MeterStorage, at)
 		m.openLocked(id, MeterStorage, shape.VolumeBytes, at)
 	}
+	return nil
+}
+
+func (m *MemStore) ClearStandbySlotDrop(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	vm.DropStandbySlot = false
+	m.vms[id] = vm
 	return nil
 }
 

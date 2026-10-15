@@ -233,3 +233,77 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// adr: 1027 — a database joins the production class and leaves it again
+// on real VMs: the standby attaches and turns synchronous after the
+// resize; leaving stops the database, the standby and removes its volume,
+// and once the primary runs again its slot for the standby is gone. No
+// row is lost either way.
+func TestMetalProductionClassChange(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	}
+	bucket := &dbarchive.FileRemote{Dir: filepath.Join(workdir, "ccbucket")}
+	t.Cleanup(func() { _ = os.RemoveAll(bucket.Dir) })
+	a := newMetalNode(t, workdir, map[int]string{17: base}, "ca", 20<<30, &rangeLeaser{next: fcvm.MaxSlots - 40}, bucket)
+	b := newMetalNode(t, workdir, map[int]string{17: base}, "cb", 10<<30, &rangeLeaser{next: fcvm.MaxSlots - 60}, bucket)
+	store := NewMemStore()
+	seedNodes(t, store, a.node, b.node)
+	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	})
+	t.Cleanup(func() { _ = vmm.Close() })
+	s := New(store, vmm, Config{IdleTimeout: time.Hour, ReadyTimeout: time.Minute, SharedArchive: true, StandbySeedTimeout: 5 * time.Minute}, nil)
+	t.Cleanup(s.standbyWG.Wait)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	id, password := uuid.NewString(), uuid.NewString()
+	t.Cleanup(func() { _ = s.Delete(context.Background(), id) })
+	if vm, err := s.Provision(ctx, ProvisionRequest{DatabaseID: id, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30}); err != nil || vm.NodeID != "ca" {
+		t.Fatalf("provision = %+v, %v", vm, err)
+	}
+	for _, sql := range []string{"CREATE ROLE app LOGIN PASSWORD '" + password + "'", "CREATE DATABASE app OWNER app"} {
+		if resp, err := s.Admin(ctx, id, sql); err != nil || resp.Error != "" {
+			t.Fatalf("admin: %+v %v", resp, err)
+		}
+	}
+	query(ctx, t, a.rt, id, password, "CREATE TABLE kept(v text); INSERT INTO kept SELECT 'standalone' FROM generate_series(1, 1000)")
+
+	started := time.Now()
+	vm, err := s.Resize(ctx, id, Shape{VcpuCount: 1, MemMiB: 512, VolumeBytes: 1 << 30, Replicated: true})
+	if err != nil || !vm.Replicated || vm.StandbyNode != "cb" || vm.State != StateRunning {
+		t.Fatalf("into production = %+v, %v", vm, err)
+	}
+	s.standbyWG.Wait()
+	joined := time.Since(started)
+	if got, _ := store.Get(ctx, id); !got.StandbySynced || !b.rt.Running(id) {
+		t.Fatalf("after joining production: %+v (standby running %v)", got, b.rt.Running(id))
+	}
+	// A commit now waits for the standby.
+	query(ctx, t, a.rt, id, password, "INSERT INTO kept SELECT 'replicated' FROM generate_series(1, 1000)")
+
+	started = time.Now()
+	vm, err = s.Resize(ctx, id, Shape{VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30})
+	if err != nil || vm.Replicated || vm.StandbyNode != "" || vm.State != StateRunning || !vm.DropStandbySlot {
+		t.Fatalf("out of production = %+v, %v", vm, err)
+	}
+	left := time.Since(started)
+	if b.rt.Running(id) || fileExists(b.rt.VolumePath(id)) {
+		t.Fatalf("the standby survived leaving production (running %v)", b.rt.Running(id))
+	}
+	if _, err := s.CheckStandbys(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.Get(ctx, id); got.DropStandbySlot {
+		t.Fatalf("the slot drop is still owed: %+v", got)
+	}
+	if n := query(ctx, t, a.rt, id, password, "SELECT count(*)::text FROM pg_replication_slots"); n != "0" {
+		t.Fatalf("%s replication slots left on the primary", n)
+	}
+	if n := query(ctx, t, a.rt, id, password, "SELECT count(*)::text FROM kept"); n != "2000" {
+		t.Fatalf("%s rows after the class changes; want 2000", n)
+	}
+	t.Logf("into production (restart, standby copy, synchronous) %v; out of production (restart, standby retired) %v",
+		joined.Round(time.Millisecond), left.Round(time.Millisecond))
+}

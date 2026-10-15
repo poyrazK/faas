@@ -364,6 +364,9 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 // grows. A class or storage change resizes the VM through schedd, which
 // restarts a running database on the new shape; the observation stays
 // pending until that is done, and repeating the request resumes it.
+// Moving into the production class gives the database a synchronous
+// standby on another node, which attaches once it runs; moving out
+// retires the standby.
 // Turning always-on on leaves a parked database to schedd's keep-warm
 // sweep, so the observation may still be suspended for one sweep.
 func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
@@ -378,11 +381,6 @@ func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	// A class change resizes the VM in place; gaining or losing a standby
-	// is not a resize.
-	if p.cfg.Classes[req.Spec.Class].replicated != p.cfg.Classes[req.PreviousSpec.Class].replicated {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
-	}
 	id := resourceUUID(req.ResourceID)
 	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: id, AlwaysOn: !req.Spec.ScaleToZero})
 	if err != nil {
@@ -392,6 +390,7 @@ func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest
 		shape := p.cfg.Classes[req.Spec.Class]
 		rt, err = p.scheduler.ResizeDatabase(ctx, &scheddpb.ResizeDatabaseRequest{
 			DatabaseId: id, VcpuCount: int32(shape.vcpus), MemMib: int32(shape.memMiB), VolumeBytes: req.Spec.StorageLimitBytes,
+			Replicated: &shape.replicated,
 		})
 		if err != nil {
 			return managedpostgres.ObservedDatabase{}, providerError(err)

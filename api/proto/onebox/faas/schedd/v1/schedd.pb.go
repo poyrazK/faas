@@ -3958,11 +3958,14 @@ func (x *DatabaseImportProgress) GetSourceMajor() int32 {
 }
 
 type ResizeDatabaseRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DatabaseId    string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
-	VcpuCount     int32                  `protobuf:"varint,2,opt,name=vcpu_count,json=vcpuCount,proto3" json:"vcpu_count,omitempty"`
-	MemMib        int32                  `protobuf:"varint,3,opt,name=mem_mib,json=memMib,proto3" json:"mem_mib,omitempty"`
-	VolumeBytes   int64                  `protobuf:"varint,4,opt,name=volume_bytes,json=volumeBytes,proto3" json:"volume_bytes,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseId  string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
+	VcpuCount   int32                  `protobuf:"varint,2,opt,name=vcpu_count,json=vcpuCount,proto3" json:"vcpu_count,omitempty"`
+	MemMib      int32                  `protobuf:"varint,3,opt,name=mem_mib,json=memMib,proto3" json:"mem_mib,omitempty"`
+	VolumeBytes int64                  `protobuf:"varint,4,opt,name=volume_bytes,json=volumeBytes,proto3" json:"volume_bytes,omitempty"`
+	// Whether the database keeps a synchronous standby; unset keeps the
+	// current setting.
+	Replicated    *bool `protobuf:"varint,5,opt,name=replicated,proto3,oneof" json:"replicated,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4023,6 +4026,13 @@ func (x *ResizeDatabaseRequest) GetVolumeBytes() int64 {
 		return x.VolumeBytes
 	}
 	return 0
+}
+
+func (x *ResizeDatabaseRequest) GetReplicated() bool {
+	if x != nil && x.Replicated != nil {
+		return *x.Replicated
+	}
+	return false
 }
 
 // TouchDatabaseRequest keeps field 1 of DatabaseRef, so a DatabaseRef is
@@ -4706,14 +4716,18 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"started_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12!\n" +
-	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\"\x93\x01\n" +
+	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\"\xc7\x01\n" +
 	"\x15ResizeDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1d\n" +
 	"\n" +
 	"vcpu_count\x18\x02 \x01(\x05R\tvcpuCount\x12\x17\n" +
 	"\amem_mib\x18\x03 \x01(\x05R\x06memMib\x12!\n" +
-	"\fvolume_bytes\x18\x04 \x01(\x03R\vvolumeBytes\"Z\n" +
+	"\fvolume_bytes\x18\x04 \x01(\x03R\vvolumeBytes\x12#\n" +
+	"\n" +
+	"replicated\x18\x05 \x01(\bH\x00R\n" +
+	"replicated\x88\x01\x01B\r\n" +
+	"\v_replicated\"Z\n" +
 	"\x14TouchDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12!\n" +
@@ -4969,6 +4983,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_init() {
 		return
 	}
 	file_onebox_faas_schedd_v1_schedd_proto_msgTypes[21].OneofWrappers = []any{}
+	file_onebox_faas_schedd_v1_schedd_proto_msgTypes[45].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
