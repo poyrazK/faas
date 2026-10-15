@@ -85,6 +85,10 @@ func (s *server) dashboardIssueTrackerSyncForAccount(w http.ResponseWriter, r *h
 		return
 	}
 	r.SetPathValue("link_id", r.PostForm.Get("link_id"))
+	if action == "pull" {
+		s.dashboardTrackerInboundPull(w, r, acct)
+		return
+	}
 	if action == "preview" {
 		s.dashboardTrackerSyncPreview(w, r, acct)
 		return
@@ -184,6 +188,10 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may inspect provider sync"))
 		return
 	}
+	guard, ok := s.dashboardTrackerInboundGuard(w, r, app)
+	if !ok {
+		return
+	}
 	row, err := store.GetIssueTrackerAutoSync(r.Context(), app.ID, app.AccountID, r.PathValue("issue_id"), r.PathValue("link_id"))
 	if err != nil {
 		writeNativeIssueTrackerError(w, err)
@@ -192,6 +200,9 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 	view := dashboard.IssueTrackerSyncPreview{AppSlug: app.Slug, IssueID: r.PathValue("issue_id"), LinkID: r.PathValue("link_id"), CSRF: r.PostForm.Get("csrf_token"), Provider: r.PostForm.Get("provider"), Policy: row.Policy}
 	snapshot, catalog, inbound, ok := s.observeDashboardTrackerPreview(w, r, acct, app, row, &view)
 	if !ok {
+		return
+	}
+	if !s.finishDashboardInboundPreview(w, r, app, row, guard, inbound, &view) {
 		return
 	}
 	view.SourceState = inbound.SourceState

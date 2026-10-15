@@ -750,6 +750,10 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 }
 
 func actOnIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, id, actor string, in api.IssueActionRequest, now time.Time) (api.Issue, error) {
+	return actOnIssueTxDetails(ctx, q, tx, app, id, actor, in, now, nil)
+}
+
+func actOnIssueTxDetails(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, id, actor string, in api.IssueActionRequest, now time.Time, details map[string]string) (api.Issue, error) {
 	canonical, err := q.IssueCanonicalID(ctx, tx, sqlc.IssueCanonicalIDParams{AppID: issueUUID(app), ID: issueUUID(id)})
 	if err != nil {
 		return api.Issue{}, mapErr(err)
@@ -770,7 +774,9 @@ func actOnIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, id, acto
 		return issueRow(row), nil
 	}
 	p := sqlc.IssueUpdateActionParams{ID: row.ID, State: row.State, Assignee: row.AssigneeAccountID, AssigneeTeamID: row.AssigneeTeamID, ResolvedAt: row.ResolvedAt, FixedDeploymentID: row.FixedDeploymentID, FixedDeploymentCreatedAt: row.FixedDeploymentCreatedAt, IgnoredUntil: row.IgnoredUntil}
-	details := map[string]string{}
+	if details == nil {
+		details = map[string]string{}
+	}
 	action := ""
 	switch in.Action {
 	case "assign":

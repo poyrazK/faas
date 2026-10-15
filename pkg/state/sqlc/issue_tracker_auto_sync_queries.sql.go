@@ -270,3 +270,125 @@ func (q *Queries) IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg 
 	)
 	return i, err
 }
+
+const issueTrackerInboundApplied = `-- name: IssueTrackerInboundApplied :exec
+UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,baseline=$2,source_state=$3,outcome='disabled',reason='',pending_state='',claim_id=NULL,claim_until=NULL,last_checked_at=now(),updated_at=now() WHERE link_id=$1
+`
+
+type IssueTrackerInboundAppliedParams struct {
+	LinkID      pgtype.UUID
+	Baseline    []byte
+	SourceState string
+}
+
+func (q *Queries) IssueTrackerInboundApplied(ctx context.Context, db DBTX, arg IssueTrackerInboundAppliedParams) error {
+	_, err := db.Exec(ctx, issueTrackerInboundApplied, arg.LinkID, arg.Baseline, arg.SourceState)
+	return err
+}
+
+const issueTrackerInboundDeployments = `-- name: IssueTrackerInboundDeployments :many
+SELECT d.id,d.commit_sha,d.created_at FROM deployments d JOIN apps a ON a.id=d.app_id
+JOIN issue_group_rollups i ON i.app_id=a.id AND i.id=$1
+WHERE a.id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
+AND (i.environment='application' OR EXISTS (
+ SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+ WHERE rm.app_id=a.id AND rm.deployment_id=d.id AND rs.environment_slug=i.environment AND rs.account_id=a.account_id))
+ORDER BY d.created_at DESC,d.id DESC LIMIT $4
+`
+
+type IssueTrackerInboundDeploymentsParams struct {
+	IssueID   pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	PageLimit int32
+}
+
+type IssueTrackerInboundDeploymentsRow struct {
+	ID        pgtype.UUID
+	CommitSha pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) IssueTrackerInboundDeployments(ctx context.Context, db DBTX, arg IssueTrackerInboundDeploymentsParams) ([]IssueTrackerInboundDeploymentsRow, error) {
+	rows, err := db.Query(ctx, issueTrackerInboundDeployments,
+		arg.IssueID,
+		arg.AppID,
+		arg.AccountID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerInboundDeploymentsRow{}
+	for rows.Next() {
+		var i IssueTrackerInboundDeploymentsRow
+		if err := rows.Scan(&i.ID, &i.CommitSha, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueTrackerInboundGuard = `-- name: IssueTrackerInboundGuard :one
+SELECT g.revision FROM issue_tracker_inbound_guards g JOIN apps a ON a.id=g.app_id
+WHERE g.app_id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+`
+
+type IssueTrackerInboundGuardParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) IssueTrackerInboundGuard(ctx context.Context, db DBTX, arg IssueTrackerInboundGuardParams) (int64, error) {
+	row := db.QueryRow(ctx, issueTrackerInboundGuard, arg.AppID, arg.AccountID)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
+}
+
+const issueTrackerInboundGuardLock = `-- name: IssueTrackerInboundGuardLock :one
+SELECT revision FROM issue_tracker_inbound_guards WHERE app_id=$1 FOR UPDATE
+`
+
+func (q *Queries) IssueTrackerInboundGuardLock(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, issueTrackerInboundGuardLock, appID)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
+}
+
+const issueTrackerInboundPolicyLock = `-- name: IssueTrackerInboundPolicyLock :one
+SELECT linear_open_state_id, linear_resolved_state_id, link_id, app_id, account_id, source_issue_id, enabled, revision, binding_fingerprint, baseline, source_state, pending_state, outcome, reason, claim_id, claim_until, last_checked_at, next_check_at, updated_at FROM issue_tracker_auto_sync WHERE link_id=$1 FOR UPDATE
+`
+
+func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error) {
+	row := db.QueryRow(ctx, issueTrackerInboundPolicyLock, linkID)
+	var i IssueTrackerAutoSync
+	err := row.Scan(
+		&i.LinearOpenStateID,
+		&i.LinearResolvedStateID,
+		&i.LinkID,
+		&i.AppID,
+		&i.AccountID,
+		&i.SourceIssueID,
+		&i.Enabled,
+		&i.Revision,
+		&i.BindingFingerprint,
+		&i.Baseline,
+		&i.SourceState,
+		&i.PendingState,
+		&i.Outcome,
+		&i.Reason,
+		&i.ClaimID,
+		&i.ClaimUntil,
+		&i.LastCheckedAt,
+		&i.NextCheckAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

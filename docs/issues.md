@@ -1377,3 +1377,28 @@ This preview does not apply inbound changes, enable inbound sync, resume a pause
 policy or advance its baseline. No matching baseline means review and alignment
 are needed first. Automatic inbound application remains a follow-up; it needs an
 atomic local snapshot check, deployment evidence and explicit per-link opt-in.
+
+### Apply a reviewed inbound change
+
+Owners can use **Pull open into Gregale and pause sync** or **Pull resolved into
+Gregale and pause sync** from the tracker review. A resolution requires selecting
+the deployment that fixes the issue. The picker shows recent deployments in the
+same app and environment; selection is your assertion of a fix, not evidence
+inferred from closing the provider ticket. Reopening needs no deployment.
+
+Gregale rereads GitHub or Linear before applying. A durable intent revision rejects
+stale previews, including edits that change a lifecycle away and back. Assignment,
+grouping, reference, connection or sync-policy edits also require another preview.
+Unconfirmed outbound writes and active sync checks block a pull. Normal occurrence
+counter updates do not invalidate the review; a regression or a newly created
+issue group does. The revision is shared by the app, so another issue's triage edit
+can also require refreshing the preview.
+
+The local lifecycle action, fixing-deployment evidence, tracker audit metadata,
+baseline update and outbound pause commit together. A failed or duplicate
+submission cannot partially apply them. Review the now-aligned lifecycle to
+re-enable outbound sync. A provider edit immediately after the final read can
+require another review; Gregale cannot transact across the provider and its own
+database. If the response is interrupted, refresh the issue and policy to check
+whether the transaction committed before preparing another pull. Automatic inbound
+syncing remains disabled.

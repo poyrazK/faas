@@ -58597,3 +58597,167 @@ ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
 
 ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
     ADD CONSTRAINT issue_tracker_linear_oauth_flows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_inbound_bump(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_tracker_inbound_bump() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target uuid;
+BEGIN
+ IF TG_TABLE_NAME = 'apps' THEN
+  target := NEW.id;
+ ELSIF TG_TABLE_NAME = 'issue_tracker_links' THEN
+  IF TG_OP = 'DELETE' THEN
+   SELECT app_id INTO target FROM app_issues WHERE id=OLD.issue_id;
+  ELSE
+   SELECT app_id INTO target FROM app_issues WHERE id=NEW.issue_id;
+  END IF;
+ ELSIF TG_OP = 'DELETE' THEN
+  target := OLD.app_id;
+ ELSE
+  target := NEW.app_id;
+ END IF;
+ INSERT INTO issue_tracker_inbound_guards(app_id) SELECT target WHERE EXISTS(SELECT 1 FROM apps WHERE id=target)
+ ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1;
+ RETURN NULL;
+END $$;
+
+--
+-- Name: issue_tracker_inbound_install_bump(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_tracker_inbound_install_bump() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO issue_tracker_inbound_guards(app_id)
+ SELECT id FROM apps WHERE
+  (TG_OP <> 'INSERT' AND github_install_id=OLD.installation_id AND github_install_account_id=OLD.account_id) OR
+  (TG_OP <> 'DELETE' AND github_install_id=NEW.installation_id AND github_install_account_id=NEW.account_id)
+ ORDER BY id
+ ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1;
+ RETURN NULL;
+END $$;
+
+--
+-- Name: issue_tracker_inbound_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_inbound_guards (
+    app_id uuid NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT issue_tracker_inbound_guards_revision_check CHECK ((revision > 0))
+);
+
+--
+-- Name: issue_tracker_inbound_guards issue_tracker_inbound_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_inbound_guards
+    ADD CONSTRAINT issue_tracker_inbound_guards_pkey PRIMARY KEY (app_id);
+
+--
+-- Name: apps issue_inbound_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_app AFTER UPDATE ON public.apps FOR EACH ROW WHEN ((((((((((old.account_id IS DISTINCT FROM new.account_id) OR (old.status IS DISTINCT FROM new.status)) OR (old.deleted_at IS DISTINCT FROM new.deleted_at)) OR (old.github_install_id IS DISTINCT FROM new.github_install_id)) OR (old.github_repo_full_name IS DISTINCT FROM new.github_repo_full_name)) OR (old.github_owner_id IS DISTINCT FROM new.github_owner_id)) OR (old.github_repo_id IS DISTINCT FROM new.github_repo_id)) OR (old.github_install_binding_id IS DISTINCT FROM new.github_install_binding_id)) OR (old.github_install_account_id IS DISTINCT FROM new.github_install_account_id))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_group_links issue_inbound_group; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_group AFTER INSERT OR DELETE OR UPDATE ON public.issue_group_links FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: github_installations issue_inbound_install_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_install_delete AFTER DELETE ON public.github_installations FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_install_bump();
+
+--
+-- Name: github_installations issue_inbound_install_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_install_insert AFTER INSERT ON public.github_installations FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_install_bump();
+
+--
+-- Name: github_installations issue_inbound_install_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_install_update AFTER UPDATE ON public.github_installations FOR EACH ROW WHEN ((((old.account_id IS DISTINCT FROM new.account_id) OR (old.installation_id IS DISTINCT FROM new.installation_id)) OR (old.org_id IS DISTINCT FROM new.org_id))) EXECUTE FUNCTION public.issue_tracker_inbound_install_bump();
+
+--
+-- Name: app_issues issue_inbound_intent_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_intent_delete AFTER DELETE ON public.app_issues FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: app_issues issue_inbound_intent_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_intent_insert AFTER INSERT ON public.app_issues FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: app_issues issue_inbound_intent_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_intent_update AFTER UPDATE ON public.app_issues FOR EACH ROW WHEN ((((((((((((old.state IS DISTINCT FROM new.state) OR (old.assignee_account_id IS DISTINCT FROM new.assignee_account_id)) OR (old.assignee_team_id IS DISTINCT FROM new.assignee_team_id)) OR (old.resolved_at IS DISTINCT FROM new.resolved_at)) OR (old.fixed_deployment_id IS DISTINCT FROM new.fixed_deployment_id)) OR (old.fixed_deployment_created_at IS DISTINCT FROM new.fixed_deployment_created_at)) OR (old.ignored_until IS DISTINCT FROM new.ignored_until)) OR (old.fingerprint IS DISTINCT FROM new.fingerprint)) OR (old.grouping_version IS DISTINCT FROM new.grouping_version)) OR (old.environment IS DISTINCT FROM new.environment)) OR (old.split_source_issue_id IS DISTINCT FROM new.split_source_issue_id))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_linear_connections issue_inbound_linear_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_linear_delete AFTER DELETE ON public.issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_linear_connections issue_inbound_linear_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_linear_insert AFTER INSERT ON public.issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_linear_connections issue_inbound_linear_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_linear_update AFTER UPDATE ON public.issue_tracker_linear_connections FOR EACH ROW WHEN (((((((((old.revision IS DISTINCT FROM new.revision) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.connected IS DISTINCT FROM new.connected)) OR (old.workspace_id IS DISTINCT FROM new.workspace_id)) OR (old.team_id IS DISTINCT FROM new.team_id)) OR (old.viewer_id IS DISTINCT FROM new.viewer_id)) OR (old.auth_method IS DISTINCT FROM new.auth_method)) OR ((old.oauth_status = ANY (ARRAY['reconnect_required'::text, 'revoking'::text])) IS DISTINCT FROM (new.oauth_status = ANY (ARRAY['reconnect_required'::text, 'revoking'::text]))))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_links issue_inbound_links; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_links AFTER INSERT OR DELETE OR UPDATE ON public.issue_tracker_links FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_auto_sync issue_inbound_policy_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_policy_delete AFTER DELETE ON public.issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_auto_sync issue_inbound_policy_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_policy_insert AFTER INSERT ON public.issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_auto_sync issue_inbound_policy_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_policy_update AFTER UPDATE ON public.issue_tracker_auto_sync FOR EACH ROW WHEN (((((((((((old.revision IS DISTINCT FROM new.revision) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.source_issue_id IS DISTINCT FROM new.source_issue_id)) OR (old.binding_fingerprint IS DISTINCT FROM new.binding_fingerprint)) OR (old.baseline IS DISTINCT FROM new.baseline)) OR (old.source_state IS DISTINCT FROM new.source_state)) OR (old.pending_state IS DISTINCT FROM new.pending_state)) OR (old.outcome IS DISTINCT FROM new.outcome)) OR (old.reason IS DISTINCT FROM new.reason)) OR (old.claim_id IS DISTINCT FROM new.claim_id))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_split_rules issue_inbound_rules; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_rules AFTER INSERT OR DELETE OR UPDATE ON public.issue_split_rules FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+--
+-- Name: issue_tracker_inbound_guards issue_tracker_inbound_guards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_inbound_guards
+    ADD CONSTRAINT issue_tracker_inbound_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

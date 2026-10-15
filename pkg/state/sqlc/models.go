@@ -4052,6 +4052,11 @@ type IssueTrackerCallbackDiagnostic struct {
 	LastRejectedAt     pgtype.Timestamptz
 }
 
+type IssueTrackerInboundGuard struct {
+	AppID    pgtype.UUID
+	Revision int64
+}
+
 type IssueTrackerLinearConnection struct {
 	AppID                pgtype.UUID
 	AccountID            pgtype.UUID

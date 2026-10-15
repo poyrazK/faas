@@ -3,6 +3,7 @@ package dashboard
 import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // IssueTrackerSyncPreview is an owner-requested provider observation. ExpectedJSON
@@ -10,6 +11,9 @@ import (
 type IssueTrackerSyncPreview struct {
 	AppSlug, IssueID, LinkID, CSRF, Provider, SourceState, ExpectedJSON string
 	InboundOutcome, InboundReason                                       string
+	InboundGuardRevision                                                int64
+	CanPull                                                             bool
+	FixingDeployments                                                   []state.IssueTrackerFixingDeployment
 	Status                                                              api.IssueTrackerProviderStatus
 	Policy                                                              api.IssueTrackerAutoSync
 	Aligned                                                             bool

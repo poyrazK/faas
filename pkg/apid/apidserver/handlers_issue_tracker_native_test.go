@@ -637,6 +637,7 @@ type nativeLinearLifecycleFake struct {
 	workflowErr   bool
 	workflows     []issuetracker.LinearWorkflowState
 	workflowReads int
+	readHook      func()
 }
 
 func (p *nativeLinearLifecycleFake) ListLinearWorkflowStates(_ context.Context, token, team string) ([]issuetracker.LinearWorkflowState, error) {
@@ -654,6 +655,9 @@ func (p *nativeLinearLifecycleFake) VerifyLinearWorkflowState(_ context.Context,
 }
 func (p *nativeLinearLifecycleFake) ReadStatus(_ context.Context, _ string, token string) (issuetracker.Status, error) {
 	p.reads++
+	if p.readHook != nil {
+		p.readHook()
+	}
 	if token != "lin_api_secret" {
 		return issuetracker.Status{}, errors.New("wrong credential")
 	}
@@ -981,6 +985,103 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	if denied.Code != 404 {
 		t.Fatal("cross-app reference exposed", denied.Code)
 	}
+
+	// Restore a connection and an aligned baseline for explicit inbound review.
+	connection.Set("expected_revision", "2")
+	if out := post("/linear-connection", connection, true); out.Code != 303 {
+		t.Fatal("reconnect", out.Code, out.Body.String())
+	}
+	provider.status.State, provider.status.StateID = "open", open
+	preview = post("/tracker-sync", previewForm(), true)
+	enable.Set("expected_revision", "2")
+	enable.Set("expected", expected(preview))
+	if out := post("/tracker-sync", enable, true); out.Code != 303 {
+		t.Fatal("enable inbound fixture", out.Code, out.Body.String())
+	}
+	provider.status.State, provider.status.StateID = "resolved", resolved
+	pullForm := func() url.Values {
+		reviewed := post("/tracker-sync", previewForm(), true)
+		if reviewed.Code != 200 || !strings.Contains(reviewed.Body.String(), `name="fixed_deployment_id"`) || !strings.Contains(reviewed.Body.String(), dep.ID) {
+			t.Fatal("deployment picker missing", reviewed.Code, reviewed.Body.String())
+		}
+		guard := regexp.MustCompile(`name="inbound_guard_revision" value="([0-9]+)"`).FindStringSubmatch(reviewed.Body.String())
+		if len(guard) != 2 {
+			t.Fatal("guard missing", reviewed.Body.String())
+		}
+		return url.Values{"action": {"pull"}, "provider": {"linear"}, "link_id": {link.ID}, "expected_revision": {"3"}, "inbound_guard_revision": {guard[1]}, "expected": {expected(reviewed)}, "fixed_deployment_id": {dep.ID}}
+	}
+	pull := pullForm()
+	if out := post("/tracker-sync", pull, false); out.Code != 400 {
+		t.Fatal("pull bypassed CSRF", out.Code)
+	}
+	pull.Del("fixed_deployment_id")
+	if out := post("/tracker-sync", pull, true); out.Code != 400 {
+		t.Fatal("resolution lacked deployment", out.Code)
+	}
+	pull.Set("fixed_deployment_id", dep.ID)
+	// Change away and back *during* the fresh provider read. Lifecycle strings
+	// and group fingerprints match again; only the durable guard detects this.
+	provider.readHook = func() {
+		provider.readHook = nil
+		apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", issuePath+"/actions", api.IssueActionRequest{Action: "resolve", FixedDeploymentID: dep.ID}, nil), 200)
+		apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", issuePath+"/actions", api.IssueActionRequest{Action: "reopen"}, nil), 200)
+	}
+	if out := post("/tracker-sync", pull, true); out.Code != 409 {
+		t.Fatal("ABA during provider read applied", out.Code, out.Body.String())
+	}
+	pull = pullForm()
+	provider.status.State, provider.status.StateID = "open", open
+	if out := post("/tracker-sync", pull, true); out.Code != 409 {
+		t.Fatal("changed provider applied", out.Code)
+	}
+	provider.status.State, provider.status.StateID = "resolved", resolved
+	foreignDep := apidserver.IssueSeedDeployment(t, e, other, 1)
+	pull = pullForm()
+	pull.Set("fixed_deployment_id", foreignDep.ID)
+	if out := post("/tracker-sync", pull, true); out.Code != 404 {
+		t.Fatal("foreign deployment applied", out.Code, out.Body.String())
+	}
+	pull.Set("fixed_deployment_id", dep.ID)
+	// A repeated occurrence changes counters without invalidating intent.
+	apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "DashboardSync", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	if out := post("/tracker-sync", pull, true); out.Code != 303 || provider.writes != 1 {
+		t.Fatal("pull failed or wrote provider", out.Code, out.Body.String())
+	}
+	if out := post("/tracker-sync", pull, true); out.Code != 409 {
+		t.Fatal("pull replay accepted", out.Code)
+	}
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", issuePath+"/tracker-links/"+link.ID+"/auto-sync", nil, nil), 200)
+	if policy.Enabled || policy.Revision != 4 || policy.ProviderState != "resolved" || policy.SourceState != "resolved" {
+		t.Fatal("pull did not atomically align and pause", policy)
+	}
+	detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", issuePath, nil, nil), 200)
+	audited := false
+	for _, a := range detail.Activity {
+		if a.Action == "resolved" && a.Details["tracker_direction"] == "pull" && a.Details["tracker_link_id"] == link.ID && a.Details["fixed_deployment_id"] == dep.ID {
+			audited = true
+		}
+	}
+	if !audited || detail.Issue.State != "resolved" {
+		t.Fatal("pull audit missing", detail.Activity)
+	}
+	// Re-enable only after explicit alignment review, then pull a reopening.
+	preview = post("/tracker-sync", previewForm(), true)
+	enable.Set("expected_revision", "4")
+	enable.Set("source_state", "resolved")
+	enable.Set("expected", expected(preview))
+	if out := post("/tracker-sync", enable, true); out.Code != 303 {
+		t.Fatal("reenable after pull", out.Code, out.Body.String())
+	}
+	provider.status.State, provider.status.StateID = "open", open
+	reopenedPreview := post("/tracker-sync", previewForm(), true)
+	guard := regexp.MustCompile(`name="inbound_guard_revision" value="([0-9]+)"`).FindStringSubmatch(reopenedPreview.Body.String())
+	if len(guard) != 2 {
+		t.Fatal("reopen preview unavailable", reopenedPreview.Body.String())
+	}
+	reopening := url.Values{"action": {"pull"}, "provider": {"linear"}, "link_id": {link.ID}, "expected_revision": {"5"}, "inbound_guard_revision": {guard[1]}, "expected": {expected(reopenedPreview)}}
+	if out := post("/tracker-sync", reopening, true); out.Code != 303 || provider.writes != 1 {
+		t.Fatal("reopen pull failed", out.Code, out.Body.String())
+	}
 }
 
 // adr: 1221
@@ -1235,4 +1336,128 @@ func TestNativeIssueGitHubCallbacksOnlyWakeOwnedActiveReferences(t *testing.T) {
 		t.Fatal("partial GitHub binding reported configured", h, err)
 	}
 
+}
+
+// adr: 1225
+func TestNativeIssueInboundStoreIsAtomicAndScopesDeployment(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "inbound-atomic")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "AtomicPull", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	path := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", path+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://github.com/owner/repo/issues/42"}, nil), 200)
+	store := state.NewPgStore(*e.Pool())
+	baseline := api.IssueTrackerProviderStatus{Provider: "github", URL: link.URL, ID: "42", State: "open"}
+	r, err := store.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: baseline, Policy: api.IssueTrackerAutoSync{LinkID: link.ID, Enabled: true, SourceIssueID: accepted.IssueID, SourceState: "open"}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := func() int64 {
+		v, err := store.GetIssueTrackerInboundGuard(t.Context(), app.ID, app.AccountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	observed := baseline
+	observed.State = "resolved"
+	in := state.IssueTrackerInboundApply{Record: r, GuardRevision: guard(), Observed: observed, FixedDeploymentID: dep.ID, Now: time.Now().UTC()}
+
+	if _, err := store.GetIssueTrackerInboundGuard(t.Context(), app.ID, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("foreign owner read intent fence", err)
+	}
+	// Assignment away and back is local intent even though lifecycle stays open.
+	if _, err := store.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign", AssigneeAccountID: app.AccountID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActOnIssue(t.Context(), app.ID, accepted.IssueID, app.AccountID, api.IssueActionRequest{Action: "assign"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyIssueTrackerInbound(t.Context(), in); err == nil {
+		t.Fatal("assignment intent overwritten")
+	}
+	in.GuardRevision = guard()
+	// Source identity, policy and its baseline remain intact after failed actions.
+	other := apidserver.SeedPGApp(t, e, "inbound-other")
+	otherDep := apidserver.IssueSeedDeployment(t, e, other, 1)
+	in.FixedDeploymentID = otherDep.ID
+	if _, err := store.ApplyIssueTrackerInbound(t.Context(), in); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("foreign deployment accepted", err)
+	}
+	in.FixedDeploymentID = dep.ID
+	unchanged, err := store.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil || unchanged.Policy.Revision != 1 || !unchanged.Policy.Enabled || guard() != in.GuardRevision {
+		t.Fatal("failed action changed baseline or intent", unchanged, err)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE app_issues SET environment='staging' WHERE id=$1", accepted.IssueID); err != nil {
+		t.Fatal(err)
+	}
+	in.GuardRevision = guard()
+	choices, err := store.ListIssueTrackerInboundDeployments(t.Context(), app.ID, app.AccountID, accepted.IssueID)
+	if err != nil || len(choices) != 0 {
+		t.Fatal("unreleased staging deployment offered", choices, err)
+	}
+	if _, err := store.ApplyIssueTrackerInbound(t.Context(), in); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("cross-environment resolution accepted", err)
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE app_issues SET environment='application' WHERE id=$1", accepted.IssueID); err != nil {
+		t.Fatal(err)
+	}
+	in.GuardRevision = guard()
+	// A worker owns the policy: even a caller with the latest intent fence cannot
+	// apply until its lease has ended and its pending outcome is understood.
+	claim := uuid.NewString()
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET claim_id=$2,claim_until=now()+interval '1 minute' WHERE link_id=$1", link.ID, claim); err != nil {
+		t.Fatal(err)
+	}
+	in.GuardRevision = guard()
+	if _, err := store.ApplyIssueTrackerInbound(t.Context(), in); err == nil {
+		t.Fatal("active worker overwritten")
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET claim_id=NULL,claim_until=NULL,pending_state='resolved',outcome='pending' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	in.GuardRevision = guard()
+	if _, err := store.ApplyIssueTrackerInbound(t.Context(), in); err == nil {
+		t.Fatal("pending outbound write overwritten")
+	}
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET pending_state='',outcome='matched' WHERE link_id=$1", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	in.GuardRevision = guard()
+	// Concurrent duplicate submissions: exactly one action/baseline commit wins.
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { <-start; _, err := store.ApplyIssueTrackerInbound(context.Background(), in); results <- err }()
+	}
+	close(start)
+	successes := 0
+	for range 2 {
+		if err := <-results; err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatal("duplicate pull commits", successes)
+	}
+	detail, err := store.GetIssueDetail(t.Context(), app.ID, accepted.IssueID, time.Now().Add(-time.Hour), time.Now(), state.IssueDetailCursors{})
+	if err != nil || detail.Issue.State != "resolved" || detail.Issue.FixedDeploymentID != dep.ID {
+		t.Fatal(detail, err)
+	}
+	count := 0
+	for _, a := range detail.Activity {
+		if a.Details["tracker_direction"] == "pull" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatal("duplicate/missing atomic audit", count)
+	}
+	final, err := store.GetIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+	if err != nil || final.Policy.Enabled || final.Policy.Revision != 2 || final.Baseline != observed {
+		t.Fatal(final, err)
+	}
 }
