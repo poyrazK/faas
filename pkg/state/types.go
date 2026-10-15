@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"maps"
 	"net/netip"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -2317,6 +2317,12 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// Admission metadata only: checked under the parent lock, never persisted.
+	ExpectedReview      *api.AppReleaseReview `json:"-"`
+	ReviewedRolloutMode string                `json:"-"`
+	StagedReview        *api.AppReleaseReview `json:"-"`
+	// ReviewedSettings is resolved by apid, then frozen on first named staging.
+	ReviewedSettings *ProjectEnvironmentWorkloadSettings `json:"-"`
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
 	// GitOps candidate. It remains attached after activation so serving runtime
 	// configuration is preserved; it is internal metadata, never a receipt.
@@ -3813,6 +3819,7 @@ const (
 	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
 	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
+	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3874,6 +3881,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueImpactThresholdReached,
 	AppWebhookEventRecoveryPollingStatus, AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -6211,12 +6219,12 @@ type UpdateAppParams struct {
 	// an app during a deploy rollback or a billing investigation.
 	MaintenanceMode    *bool
 	SetMaintenanceMode bool
-	// RequireSigned (issue #472 / ADR-054) gates OCI image deploys
-	// on a valid cosign signature from a trusted publisher. SetRequireSigned
+	// RequireSigned (ADR-054, ADR-435) gates OCI image deploys and source-build
+	// publication on an explicitly approved publisher. SetRequireSigned
 	// distinguishes "unset" (don't touch) from "explicit false"
 	// (opt out of signature enforcement). Admin-only via PATCH
-	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source-tarball
-	// deploys are unaffected.
+	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source builds need
+	// the separately configured build publisher, never implicit platform trust.
 	RequireSigned    *bool
 	SetRequireSigned bool
 	// SecurityPolicy controls the deploy-time posture guard. It is an
@@ -6486,10 +6494,13 @@ type Snapshot struct {
 	// test fixtures that bypass the storage contract. Wake sends
 	// StorageKey on the wire; vmmd resolves it through the
 	// configured StorageBackend.
-	StorageKey    string
-	Stale         bool
-	DeletePending bool
-	CreatedAt     time.Time
+	StorageKey string
+	// ApplicationStandardCaptureToken identifies immutable, published capture
+	// history. Empty means legacy cache data; this reference is not restore authority.
+	ApplicationStandardCaptureToken string
+	Stale                           bool
+	DeletePending                   bool
+	CreatedAt                       time.Time
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -9142,6 +9153,7 @@ const (
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
 // is age/X25519 ciphertext and is never returned by the API.
 type AppLogDrain struct {
+	StandardBinding  *ApplicationStandardLogDrainBinding `json:"-"`
 	ID               string
 	AppID            string
 	AccountID        string

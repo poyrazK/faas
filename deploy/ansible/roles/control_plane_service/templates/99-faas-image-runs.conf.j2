@@ -1,0 +1,3 @@
+# Managed by Ansible (control_plane_service). Local edits are overwritten.
+[Service]
+Environment=FAAS_IMAGE_RUNS={{ (faas_image_runs_enabled | bool) | ternary('1', '0') }}

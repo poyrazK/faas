@@ -2,6 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FaaSClient, ProjectsService } from '../src/index.js';
 
+test('GitOps candidate plan keeps read-only observation metadata', async () => {
+  const sha = 'a'.repeat(40);
+  const client = new FaaSClient('https://api.example.test', {
+    token: 'token',
+    fetch: async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      assert.equal(url, 'https://api.example.test/v1/projects/shop/environments/staging/gitops/plan');
+      assert.equal(init?.method, 'POST');
+      assert.deepEqual(JSON.parse(String(init?.body)), { commit_sha: sha });
+      return Response.json({ source_id: 'source', provider: 'github', project: 'shop', environment: 'staging', observed_at: '2026-10-13T00:00:00Z',
+        read_only: true, values_redacted: true, plan: { manager: 'source', revision: `candidate:${sha}`, commit_sha: sha, generation: 0,
+          observed_version: 7, desired_digest: 'b'.repeat(64), plan_hash: 'c'.repeat(64), changes: [], blocking_reasons: [] } });
+    },
+  });
+  try {
+    const preview = await ProjectsService.previewEnvironmentGitPlan({ slug: 'shop', environment: 'staging', requestBody: { commit_sha: sha } });
+    assert.equal(preview.read_only, true);
+    assert.equal(preview.values_redacted, true);
+    assert.equal(preview.plan.generation, 0);
+    assert.equal(preview.plan.observed_version, 7);
+  } finally {
+    client.uninstall();
+  }
+});
+
 test('GitOps services preserve reviewed authority and override identity', async () => {
   const sha = 'a'.repeat(40), digest = 'b'.repeat(64);
   const calls: Array<{ url: string; method: string; body: unknown; headers: Headers }> = [];

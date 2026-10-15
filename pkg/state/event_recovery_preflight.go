@@ -116,6 +116,7 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 			if !ok {
 				reason = "unknown"
 			} else {
+				limits.EventDeliveries.PerConsumer = effectiveEventConsumerCapacity(limits.EventDeliveries.PerConsumer, int(item.MaxPendingDeliveries))
 				scope = eventCapacityScope(limits.EventDeliveries, item.ConsumerCount, item.AppCount, item.AccountCount)
 				if scope != "" {
 					reason = "capacity"
@@ -238,7 +239,11 @@ func (m *MemStore) preflightItemLocked(job *memEventRecoveryJob, item memEventRe
 		}
 	}
 	if slot, tracked := m.eventDeliverySlots[parent.ID]; tracked {
-		scope := eventCapacityScope(capacity.limits, capacity.consumers[slot.SubscriptionID], capacity.app, capacity.account)
+		limits := capacity.limits
+		if c := m.eventSubscriptionControls[canonicalMemUUID(slot.SubscriptionID)]; c != nil && sameMemUUID(c.AccountID, slot.AccountID) && sameMemUUID(c.AppID, slot.AppID) {
+			limits.PerConsumer = effectiveEventConsumerCapacity(limits.PerConsumer, c.MaxPendingDeliveries)
+		}
+		scope := eventCapacityScope(limits, capacity.consumers[slot.SubscriptionID], capacity.app, capacity.account)
 		if scope != "" {
 			return "capacity", scope, nil
 		}

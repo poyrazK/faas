@@ -142,7 +142,7 @@ func cmdWebhooksList(args []string) int {
 func cmdWebhooksAdd(args []string) int {
 	fs := newFlagSet("webhooks-add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	target := fs.String("target-url", "", "HTTPS target URL (required)")
+	target := fs.String("target-url", "", "http(s) target URL (required; https recommended)")
 	secret := fs.String("secret", "", "HMAC-SHA256 secret (optional; auto-minted if empty)")
 	var events multiFlag
 	fs.Var(&events, "event", "event name (repeat for multiple); empty = standard events; select app.health.changed explicitly")

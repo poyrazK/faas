@@ -431,8 +431,12 @@ func (s *Shipper) PurgeOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return count, fmt.Errorf("logarchive: purge: %w", err)
 	}
-	if count > 0 {
-		s.log.Info("logarchive.purged", "files", count, "retention_days", s.cfg.RetentionDays)
+	dirs := 0
+	if s.spool != nil {
+		dirs = s.spool.PruneEmptyDirs()
+	}
+	if count > 0 || dirs > 0 {
+		s.log.Info("logarchive.purged", "files", count, "empty_dirs", dirs, "retention_days", s.cfg.RetentionDays)
 	}
 	return count, nil
 }

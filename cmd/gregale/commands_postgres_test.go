@@ -199,10 +199,15 @@ func TestRunDispatchesPostgresJSON(t *testing.T) {
 
 func TestRunDispatchesPostgresBindingRotateJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/bindings/binding-1" {
+			// The pre-rotate read that lets the CLI adopt a lost response.
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":1,"state":"ready"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/postgres/bindings/binding-1/rotate" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
 	}))
 	defer srv.Close()
@@ -227,10 +232,15 @@ func TestRunDispatchesPostgresBindingRotateJSON(t *testing.T) {
 
 func TestCmdPostgresBindingsRotateHumanOutput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/bindings/binding-1" {
+			// The pre-rotate read that lets the CLI adopt a lost response.
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":1,"state":"ready"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/postgres/bindings/binding-1/rotate" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","credential_generation":2,"rotation_pending":true,"state":"ready"}`))
 	}))
 	defer srv.Close()
@@ -322,8 +332,8 @@ func TestCmdPostgresBindingsRotateWaitTimeoutReturnsPendingJSON(t *testing.T) {
 	if !got.RotationPending || got.ID != "binding-1" {
 		t.Fatalf("latest binding = %+v, want pending binding state", got)
 	}
-	if reads != 0 {
-		t.Fatalf("status reads = %d, want no poll before timeout", reads)
+	if reads != 1 {
+		t.Fatalf("status reads = %d, want only the pre-rotate read and no poll before timeout", reads)
 	}
 	if !strings.Contains(stderr.String(), "timed out after 10ms") {
 		t.Fatalf("stderr = %q, want timeout detail", stderr.String())

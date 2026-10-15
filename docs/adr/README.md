@@ -216,6 +216,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
+| 595 | [Versioned inherited application standards](595-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
+
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
 | 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
@@ -493,14 +495,54 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 | 1140 | [Pull leases for worker queue consumers](1140-worker-queue-pull-leases.md) | accepted | `POST /v1/apps/{slug}/queues/{queue}/leases[:ack\|:nack\|:extend]` with fenced receipts and the `queues:consume` scope or a `gregale:queues` workload token, long-poll `wait_seconds` and up to 100 messages per lease, for workers without an HTTP listener; a worker holding leases ranks busy at scale-in |
+| 1141 | [Workload-identity trust provisioning](1141-workload-identity-trust-provisioning.md) | accepted | `gregalectl workload-identity init\|rotate\|status` writes the cluster RSA key, key id and JWKS; `faas_workload_identity_source_dir` installs the key on compute nodes (vmmd drop-in) and the JWKS for apid (`workload_jwks_path`, the fallback for Flags and Operations); `vmmd_workload_identity_tokens_total` and `FaasWorkloadIdentityNotConfigured` |
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
+| 1151 | [Existing consumer execution coverage reconciliation](1151-existing-consumer-execution-reconciliation.md) | accepted | Durable forward-only collection requests; conservative lineage blockers and future-window SLO eligibility |
+| 1152 | [Authoritative legacy event execution lineage repair](1152-authoritative-event-execution-lineage-repair.md) | accepted | Bounded restart-safe receipt scans associate provable roots without reconstructing historical outcomes |
+| 1153 | [Inspectable lineage cases and guarded retries](1153-inspectable-lineage-cases-and-guarded-retries.md) | accepted | Retained reason-coded cases, scoped pagination and revision-fenced idempotent reevaluation |
+| 1154 | [Bounded bulk lineage retries](1154-bounded-bulk-lineage-retries.md) | accepted | Reviewed fixed selections, durable per-case checkpoints and guarded retry results |
+| 1155 | [Cancellable bulk lineage retries](1155-cancellable-bulk-lineage-retries.md) | accepted | Job-lock cancellation, original-creation guards and preserved per-case results |
+| 1156 | [Retained lineage diagnostic backfill](1156-retained-lineage-diagnostic-backfill.md) | accepted | Bounded insert-only diagnostic scans, independent durable cursors and guarded rescan requests |
+| 1157 | [Lineage diagnostic scan controls](1157-lineage-diagnostic-scan-controls.md) | accepted | Coverage-lock pause, resume and cancellation with original-incarnation guards and preserved progress |
+| 1158 | [Retained lineage retry job discovery](1158-retained-lineage-retry-job-discovery.md) | accepted | Scoped live pagination, status-filtered summaries and retained job identity discovery |
+| 1159 | [Scope-bound lineage retry files](1159-scope-bound-lineage-retry-files.md) | accepted | Versioned target UUIDs, source provenance and guarded CLI submission with raw-file compatibility |
+| 1160 | [Pausable bulk lineage retries](1160-pausable-bulk-lineage-retries.md) | accepted | Original-incarnation pause/resume, preserved progress and unfinished-work diagnostic gates |
+| 1161 | [Idempotent bulk lineage control receipts](1161-idempotent-bulk-lineage-control-receipts.md) | accepted | Atomic UUID-keyed acknowledgments, bounded metadata history and no repeated state transition |
+| 1162 | [Idempotent bulk lineage cancellation receipts](1162-idempotent-bulk-lineage-cancellation-receipts.md) | accepted | Cancellation shares atomic command receipts, terminal acknowledgments and bounded history |
+| 1163 | [Trusted lineage control actor attribution](1163-trusted-lineage-control-actor-attribution.md) | accepted | Immutable server-derived account or credential identity in retained command receipts |
+| 1164 | [Filtered lineage control history](1164-filtered-lineage-control-history.md) | accepted | Exact action and original actor filters before sequence pagination |
+| 1165 | [Guarded lineage control-history export](1165-guarded-lineage-control-history-export.md) | accepted | Bounded observed receipt snapshots in private artifacts with atomic no-overwrite publication |
+| 1166 | [Offline lineage control-history inspection](1166-offline-lineage-control-history-inspection.md) | accepted | Strict local artifact validation, actor summaries and guarded receipt comparisons |
+| 1167 | [Retained lineage retry-job health](1167-retained-lineage-retry-job-health.md) | accepted | Scoped active-job inactivity and retention diagnostics with explicit progress evidence |
+| 1168 | [Lineage retry-job watch alerts](1168-lineage-retry-job-watch-alerts.md) | accepted | Opt-in durable stalled, retention-risk and paused-backlog lifecycle conditions |
+| 1169 | [Paginated lineage retry-job attention](1169-paginated-lineage-retry-job-attention.md) | accepted | Live warning-filtered pages beyond health samples with creation guards and progress metadata |
+| 1170 | [Reviewed lineage batch-control plans](1170-reviewed-lineage-batch-control-plans.md) | accepted | Fixed scoped commands with independent receipt-verified results and safe repeats |
+| 1171 | [Lineage batch-control plan preflight](1171-lineage-batch-control-plan-preflight.md) | accepted | Read-only guarded readiness and existing command acknowledgments before fixed-plan apply |
+| 1172 | [Durable lineage control execution reports](1172-durable-lineage-control-execution-reports.md) | accepted | Synced command intents and receipt-checked resume into a fresh private report |
+| 1173 | [Read-only lineage control report reconciliation](1173-read-only-lineage-control-report-reconciliation.md) | accepted | Resolve fixed commands from retained server receipts without submitting controls |
+| 1174 | [Configurable subscription delivery capacity](1174-configurable-subscription-delivery-capacity.md) | accepted | Lower per-consumer live-delivery ceilings shared by routing and replay without exceeding plan caps |
+| 1175 | [Subscription capacity-pressure diagnostics](1175-subscription-capacity-pressure-diagnostics.md) | accepted | Read-only scope usage, effective ceilings and waiting acceptance ages from a complete pressure snapshot |
+| 1176 | [Guarded subscription capacity preview](1176-guarded-subscription-capacity-preview.md) | accepted | Read-only proposal validation and projected consumer/shared capacity from fresh scoped evidence |
+| 1177 | [Guarded subscription capacity apply](1177-guarded-subscription-capacity-apply.md) | accepted | Atomically compare reviewed saved capacity and locked plan allowance before applying changes |
+| 1178 | [Idempotent subscription capacity commands](1178-idempotent-subscription-capacity-commands.md) | accepted | Retained successful capacity acknowledgments and safe repeats with fixed command UUIDs |
+| 1179 | [Read-only capacity-command evidence](1179-read-only-capacity-command-evidence.md) | accepted | Inspect original capacity acknowledgments using read authorization |
+| 1180 | [Paginated capacity-command history](1180-paginated-capacity-command-history.md) | accepted | Discover retained original command evidence with scoped read-only pagination |
+| 1181 | [Capacity-command receipt budget diagnostics](1181-capacity-command-receipt-budget-diagnostics.md) | accepted | Advisory retained receipt usage and earliest expiry in status and capacity preview |
+| 1182 | [Capacity-command receipt-budget watch alerts](1182-capacity-command-receipt-budget-watch-alerts.md) | accepted | Opt-in sustained full-budget alerts using existing lifecycle and checkpoint machinery |
+| 1183 | [Capacity-command receipt-budget early warnings](1183-capacity-command-receipt-budget-early-warnings.md) | accepted | Opt-in sustained low remaining-slot warnings before receipt quota exhaustion |
+| 1184 | [Receipt-budget warning recovery hysteresis](1184-receipt-budget-warning-recovery-hysteresis.md) | accepted | Separate recovery boundaries and sustained fresh recovery with versioned checkpoints |
+| 1185 | [Receipt-budget watcher confirmation progress](1185-receipt-budget-watcher-confirmation-progress.md) | accepted | Local fresh-sample and duration diagnostics separate from checkpoint evidence |
+| 1186 | [Application event delivery-attempt context](1186-application-event-delivery-attempt-context.md) | accepted | Authoritative transient attempt counters and replay lineage with validated SDK context |
 | 1161 | [Image runs (`gregale run --image`)](1161-image-runs.md) | accepted for an operator-gated preview | One-task Job runs against a cached per-image `image_run` runner job; Docker ENTRYPOINT/CMD rules; `api.ImageRunCachedImages`; gate `FAAS_IMAGE_RUNS` |
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
+| 1330 | [Interactive image runs (`gregale run -it --image`)](1330-interactive-image-runs.md) | accepted for an operator-gated preview | The job guest holds its command until one client attaches over ADR-1037's token, WebSocket and `AttachAppTask` transport; the job supervisor keeps timeout, cancellation and exit receipt; gate `FAAS_INTERACTIVE_IMAGE_RUNS` |
 | 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
+| 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
+| 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -694,6 +736,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-977: Opt-in service wake-ahead along measured edges](977-service-wake-ahead.md) — wake the services a waking app is measured to call, below a 60% residency guard, through the ordinary wake path (amends ADR-196)
 - [ADR-978: Route priority for the warm-capacity queue](978-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
 - [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
+- [ADR-1187: Route awake report](1187-route-awake-report.md) — which routes keep a scale-to-zero app awake, what removing each would save, and edge-cache or polling suggestions
+- [ADR-1188: Learned cacheability](1188-learned-cacheability.md) — compare anonymous GET bodies with the previous response per URL to measure whether a route is safe to cache, and for how long
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -970,6 +1014,49 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+
+- [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
+- [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)
+
+- [ADR-1239: Native browser authorization and durable management MCP connections](1239-management-mcp-browser-login-and-durability.md)
+- [ADR-1240: Management MCP environment consent and real-client CI](1240-management-mcp-environments-and-client-ci.md)
+- [ADR-1241: Reviewed named-environment staging and scoped health](1241-management-mcp-named-staging-and-scoped-health.md)
+- [ADR-1242: Human browser approval for management MCP promotions](1242-management-mcp-browser-promotion-approval.md)
+- [ADR-1243: Reviewed Git source staging through management MCP](1243-management-mcp-reviewed-git-source.md)
+
+- [ADR-1244: Native service and worker rollouts through management MCP](1244-management-mcp-native-workload-rollouts.md)
+
+- [ADR-1245: Environment-attributed management MCP observations](1245-management-mcp-scoped-telemetry.md)
+
+- [ADR-1246: Reviewed native source rollouts through management MCP](1246-management-mcp-native-source-rollouts.md)
+
+- [ADR-1247: Retained GitHub source rollback through management MCP](1247-management-mcp-retained-source-rollback.md)
+
+- [ADR-1248: Current environment route-budget observations](1248-management-mcp-scoped-route-budgets.md)
+
+- [ADR-1249: Bounded passive management MCP rollout watch](1249-management-mcp-rollout-watch.md)
+
+- [ADR-1250: Consent-scoped management MCP resources and prompts](1250-management-mcp-context-resources-prompts.md)
+
+- [ADR-1251: Read-only management MCP preflight](1251-management-mcp-preflight.md)
+
+- [ADR-1252: Independent advisory environment route budgets](1252-environment-route-budgets.md)
+
+- [ADR-1253: Bounded management MCP rollout progress](1253-management-mcp-rollout-progress.md)
+
+- [ADR-1254: Consent-scoped management MCP resource subscriptions](1254-management-mcp-resource-subscriptions.md)
+
+- [ADR-1255: Consent-scoped management MCP argument completion](1255-management-mcp-argument-completion.md)
+
+- [ADR-1256: Bounded management MCP request admission](1256-management-mcp-request-admission.md)
+
+- [ADR-1257: Private aggregate management MCP telemetry](1257-management-mcp-operational-telemetry.md)
+
+- [ADR-1258: Graceful management MCP drain and journal cleanup](1258-management-mcp-graceful-drain.md)
+
+- [ADR-1259: Owner-protected management MCP connection controls](1259-management-mcp-local-connection-controls.md)
+
+- [ADR-1260: Authorization-bounded management MCP request leases](1260-management-mcp-authorization-request-leases.md)
 
 - [ADR-1115: Issue occurrence split preview](1115-issue-occurrence-split-preview.md)
 

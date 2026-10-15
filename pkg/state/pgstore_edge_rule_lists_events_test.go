@@ -124,6 +124,22 @@ func TestPgStore_EdgeRuleEvents(t *testing.T) {
 	if err != nil || len(logged) != 1 {
 		t.Fatalf("logged = %+v, %v", logged, err)
 	}
+	// ADR-831 amendment 5: WAF detail survives the per-row array encoding;
+	// events without it read back empty.
+	if err := s.RecordEdgeRuleEvents(ctx, []state.EdgeRuleEvent{{
+		RuleID: rule.ID, AppID: app, OccurredAt: base, Outcome: state.EdgeRuleEventBlocked, Method: "GET", Path: "/login",
+		WAFRuleIDs: []int{913100, 942100}, WAFCategories: []string{"scanner", "sqli"}, WAFScore: 10,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: app, Outcome: state.EdgeRuleEventBlocked, Since: base.Add(-time.Hour), Limit: 10})
+	if err != nil || len(blocked) != 1 || blocked[0].WAFScore != 10 ||
+		len(blocked[0].WAFRuleIDs) != 2 || blocked[0].WAFRuleIDs[1] != 942100 || len(blocked[0].WAFCategories) != 2 || blocked[0].WAFCategories[0] != "scanner" {
+		t.Fatalf("blocked = %+v, %v", blocked, err)
+	}
+	if logged[0].WAFRuleIDs != nil || logged[0].WAFCategories != nil || logged[0].WAFScore != 0 {
+		t.Fatalf("plain event carries WAF detail: %+v", logged[0])
+	}
 	n, err := s.PruneEdgeRuleEvents(ctx, base.Add(-state.EdgeRuleEventRetention))
 	if err != nil || n != 1 {
 		t.Fatalf("pruned %d, %v; want 1", n, err)

@@ -21,6 +21,120 @@ import (
 	"time"
 )
 
+// Application standards preview safeguards, independent of billing quotas.
+const (
+	ApplicationStandardMaxDefinitionBytes             = 64 << 10
+	ApplicationStandardMaxResourceNameBytes           = 128
+	ApplicationStandardMaxDestinationURLBytes         = 2048
+	ApplicationStandardMaxSealedCredentialBytes       = 8192
+	ApplicationStandardMaxPublisherKeyBytes           = 1024
+	ApplicationStandardMaxSetEntries                  = 64
+	ApplicationStandardMaxLayers                      = 64
+	ApplicationStandardMaxDescriptionBytes            = 512
+	ApplicationStandardLogReceiptTimeout              = 2 * time.Second
+	ApplicationStandardLogInventoryFreshness          = 90 * time.Second
+	ApplicationStandardLogHealthFreshness             = 90 * time.Second
+	ApplicationStandardMaxLogHealthEvent        int64 = 9223372036854775807
+	ApplicationStandardEgressFreshness                = 90 * time.Second
+	ApplicationStandardEgressBatchLimit               = 500
+	ApplicationStandardMaxLogSequence           int64 = 9223372036854775807
+	ApplicationStandardMaxActiveExceptions            = 64
+	ApplicationStandardMaxExceptionTTL                = 30 * 24 * time.Hour
+	ApplicationStandardMaxRolloutBatch                = 100
+	ApplicationStandardReviewTTL                      = 30 * time.Minute
+	ApplicationStandardWorkerLease                    = 30 * time.Second
+	ApplicationStandardWorkerInterval                 = 5 * time.Second
+	ApplicationStandardObservationInterval            = 5 * time.Second
+	ApplicationStandardRuntimeRefreshWakeDelay        = 5 * time.Second
+	ApplicationStandardWorkerPassTimeout              = 10 * time.Second
+	ApplicationStandardWorkerReleaseTimeout           = 2 * time.Second
+	ApplicationStandardWorkerPassLimit                = 16
+	ApplicationStandardBlockedRetry                   = 30 * time.Second
+	ApplicationStandardMaxWorkerOwnerBytes            = 128
+	ApplicationStandardApprovalLockAttempts           = 6
+	ApplicationStandardApprovalLockRetry              = 20 * time.Millisecond
+	ApplicationStandardMaxListPage                    = 100
+	ApplicationStandardMaxVersion               int64 = 9007199254740991
+)
+
+// Native application-standard boot grants are separate from worker leases.
+// The TTL covers the maximum 300-second startup plus restore/fallback and
+// transport; a grant never supplies consumer observation.
+const (
+	ApplicationStandardRuntimeAdmissionTTL         = 10 * time.Minute
+	ApplicationStandardRuntimeAdmissionClockSkew   = 5 * time.Second
+	ApplicationStandardRuntimeAdmissionReplayLimit = 10000
+	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
+	// Instance admission takes its runtime fences without waiting, so peer
+	// transitions of one app or deployment report busy. These bound the replay
+	// of that rolled-back transaction: exponential from LockRetry, capped at
+	// LockMaxBackoff, under a second in all.
+	ApplicationStandardRuntimeLockAttempts   = 10
+	ApplicationStandardRuntimeLockRetry      = 5 * time.Millisecond
+	ApplicationStandardRuntimeLockMaxBackoff = 160 * time.Millisecond
+	// Bounded full streams for measured native snapshot lineage. This is a
+	// safety ceiling, not a tenant memory or disk entitlement.
+	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
+	ApplicationStandardSnapshotMaxFCVersionBytes       = 128
+)
+
+// Private artifact scans are fresh evidence about one retained producer.
+const (
+	ApplicationStandardArtifactScanTTL        = 5 * time.Minute
+	ApplicationStandardArtifactScanRenewEvery = 2 * time.Minute
+	ApplicationStandardScannerDBMaxAge        = 30 * 24 * time.Hour
+	ApplicationStandardArtifactScanTimeout    = 5 * time.Minute
+	ApplicationStandardScanMaxReportBytes     = 8 << 20
+	ApplicationStandardScanMaxOutputBytes     = 16 << 20
+	ApplicationStandardScanMaxErrorBytes      = 64 << 10
+	ApplicationStandardScanMaxFindings        = 100000
+	ApplicationStandardScanMaxMetadataBytes   = 256
+	ApplicationStandardScanMaxPathBytes       = 4096
+	ApplicationStandardScanMaxPaths           = 128
+	// Safety bounds for a complete filesystem projection handed to Grype.
+	// These are separate from the tenant's rootfs/disk entitlements.
+	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
+	ApplicationStandardRuntimeScanMaxEntries               = 1_000_000
+	ApplicationStandardRuntimeScanMaxManifestBytes         = 64 << 20
+	ApplicationStandardRuntimeScanMaxSymlinkHops           = 40
+	ApplicationStandardRuntimeScanDirectoryReadBatch       = 512
+)
+
+// Source-build OCI verification bounds the intermediate image, including its
+// builder base. Final app layers still obey the creating account's plan limit.
+const (
+	LocalOCIMaxIndexBytes                   int64 = 1 << 20
+	LocalOCIMaxManifestBytes                int64 = 8 << 20
+	LocalOCIMaxConfigBytes                  int64 = 16 << 20
+	LocalOCIMaxArchiveBytes                 int64 = (16 << 30) + (32 << 20)
+	LocalOCIMaxCompressedLayerBytes         int64 = 16 << 30
+	LocalOCIMaxUncompressedLayerBytes       int64 = 64 << 30
+	LocalOCIMaxLayers                             = 1024
+	BuildExportMaxPublicationPayloadBytes         = 8 << 10
+	BuildExportMaxPublicationSignatureBytes       = 80
+	BuildExportPublicationVerificationTTL         = 24 * time.Hour
+)
+
+// Registry image verification bounds both retained metadata and consumed layers.
+// Signature attachment bounds cover the supported keyed simple-signing format.
+// Final converted app layers remain subject to the creating account's plan.
+const (
+	OCIManifestMaxBytes                       int64 = 8 << 20
+	OCIConfigMaxBytes                         int64 = 1 << 20
+	OCIImageMaxLayers                               = 1024
+	OCIImageMaxCompressedLayerBytes           int64 = 16 << 30
+	OCIImageMaxUncompressedLayerBytes         int64 = 64 << 30
+	ApplicationStandardBaseMaxArtifactBytes   int64 = 16 << 30
+	ApplicationStandardBaseMaxStorageKeyBytes       = 512
+	ApplicationStandardBaseMaxPathBytes             = 2048
+	ImageSignatureMaxManifestBytes            int64 = 1 << 20
+	ImageSignatureMaxPayloadBytes             int64 = 64 << 10
+	ImageSignatureMaxEntries                        = 64
+	ImageSignatureMaxDERBytes                       = 80
+	ImageSignatureMaxJSONDepth                      = 32
+	ImageSignatureVerificationTTL                   = 24 * time.Hour
+)
+
 // Business condition evidence is bounded independently of milestone payload bytes.
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
@@ -486,6 +600,10 @@ const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 // Bound completed report history while retaining recent diagnostic evidence.
 const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
 const EnvironmentGitOpsReportRunsMaxPerSource = 1000
+
+// Bounded, value-free customer notification payloads and durable deduplication.
+const EnvironmentGitOpsNotificationDetailsMax = 100
+const EnvironmentGitOpsNotificationStateBytes = 2048
 
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
@@ -1505,9 +1623,67 @@ type EventStorageLimits struct {
 	RetainedBytes  int64 `json:"retained_bytes"`
 }
 
+// ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1320).
+// Ceilings tighten the operator safety policy (ObjectStoragePolicy) and are
+// the plan's hard stop; allowances are usage included in the plan and removed
+// before month-close pricing. A zero field changes nothing: the operator
+// policy applies unchanged and no usage is included.
+type ObjectStoragePlanLimits struct {
+	MaxAccountBytes       int64
+	MaxMonthlyRequests    int64
+	MaxMonthlyEgressBytes int64
+	// IncludedBytes is average stored bytes over a billing month of
+	// ObjectStorageBillingHoursPerMonth hours.
+	IncludedBytes       int64
+	IncludedRequests    int64
+	IncludedEgressBytes int64
+}
+
+// ObjectStorageBillingHoursPerMonth is the conventional month used to price
+// stored byte-hours as GiB-months and to convert IncludedBytes.
+const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// Policy returns the operator safety policy tightened by the plan's ceilings.
+// The tighter positive value wins; a zero plan ceiling keeps the operator's.
+// No bucket may exceed the account, so the bucket cap follows a tighter
+// account ceiling and a valid operator policy stays valid.
+func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePolicy {
+	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
+	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
+	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
+	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	return p
+}
+
+// Allowance returns the plan's included usage in month-close billing units.
+func (l ObjectStoragePlanLimits) Allowance() ObjectStorageAllowance {
+	storedByteHours := MaxObjectStoragePolicyValue
+	if l.IncludedBytes <= MaxObjectStoragePolicyValue/ObjectStorageBillingHoursPerMonth {
+		storedByteHours = max(l.IncludedBytes, 0) * ObjectStorageBillingHoursPerMonth
+	}
+	return ObjectStorageAllowance{
+		StoredByteHours: storedByteHours,
+		Requests:        min(max(l.IncludedRequests, 0), MaxObjectStoragePolicyValue),
+		EgressBytes:     min(max(l.IncludedEgressBytes, 0), MaxObjectStoragePolicyValue),
+	}
+}
+
+func tighterObjectStorageLimit(operator, plan int64) int64 {
+	if plan <= 0 {
+		return operator
+	}
+	if operator <= 0 {
+		return plan
+	}
+	return min(operator, plan)
+}
+
 type Limits struct {
-	Profiling       ProfilingLimits
-	EventStorage    EventStorageLimits
+	Profiling    ProfilingLimits
+	EventStorage EventStorageLimits
+	// ObjectStorage is the plan's object-storage ceilings and allowances
+	// (ADR-1320). Every plan currently leaves it zero.
+	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
 	Plan            Plan
@@ -8843,8 +9019,12 @@ const (
 	// operator incident inbox. The inbox composes several already-bounded
 	// read paths, so its page stays small enough for a terminal or console
 	// poll while leaving the larger fleet list caps unchanged.
-	ObsIncidentLimitDefault = 50
-	ObsIncidentLimitMax     = 200
+	ObsIncidentLimitDefault  = 50
+	ObsIncidentLimitMax      = 200
+	ObsIncidentStuckAfter    = 5 * time.Minute
+	ObsOverviewTopN          = 5
+	ObsOverviewAuditWindow   = 24 * time.Hour
+	ObsOverviewFailureWindow = time.Hour
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.
@@ -9881,6 +10061,49 @@ const (
 	RouteAdviceMaxCriticalRoutes = 3
 )
 
+// RouteAwake bounds the awake-time report (ADR-1187): which routes keep a
+// scale-to-zero app awake. It reads the busiest RouteAwakeMaxRoutes routes
+// (the rest are one "other routes" bucket) over at most the plan's request
+// telemetry retention.
+const (
+	RouteAwakeDefaultSince = 7 * 24 * time.Hour
+	RouteAwakeMaxRoutes    = 10
+	// A route is called periodically when it was called in at least
+	// RouteAwakePeriodicMinMinutes distinct minutes and at least
+	// RouteAwakePeriodicMinShare of the gaps between those minutes are within
+	// one minute of the median gap.
+	RouteAwakePeriodicMinMinutes = 60
+	RouteAwakePeriodicMinShare   = 0.8
+	// A suggestion is made only for a route whose removal would park the app
+	// for at least this share of its attributed awake time.
+	RouteAwakeSuggestMinSavedShare = 0.1
+	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
+	// requests on the route.
+	RouteAwakeCacheMinAnonymousShare = 0.9
+)
+
+// RouteContent bounds learned cacheability (ADR-1188). Each gateway
+// remembers the last anonymous GET body hash for at most
+// RouteContentObserverMaxURLs URLs. Outcomes are bucketed by
+// RouteContentWindows, which are also the max-ages the advisor can propose.
+// A max-age is safe when at least RouteContentMinRepeats responses fell inside
+// it, at least RouteContentMinBandRepeats of them were seen at that spacing
+// (longer than the next shorter window), and at most
+// RouteContentMaxStaleShare of them had changed; the advisor
+// withholds a cache suggestion when more than RouteContentUnsafeStaleShare of
+// the repeats within the shortest window had changed, or when more than
+// RouteContentMaxUncacheableShare of observed responses could not be stored.
+var RouteContentWindows = []time.Duration{time.Minute, 5 * time.Minute, time.Hour}
+
+const (
+	RouteContentObserverMaxURLs     = 50_000
+	RouteContentMinRepeats          = 50
+	RouteContentMinBandRepeats      = 10
+	RouteContentMaxStaleShare       = 0.01
+	RouteContentUnsafeStaleShare    = 0.05
+	RouteContentMaxUncacheableShare = 0.5
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.
@@ -10363,6 +10586,20 @@ const (
 	AuthImportBatch    = 100
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
+	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a
+	// standby key and previous keys whose tokens have not yet expired.
+	AuthMaxSigningKeys = 4
+	// AuthKeyChangeWait bounds how long `gregale auth keys` waits for the
+	// restarted Auth app to publish a key change.
+	AuthKeyChangeWait = 5 * time.Minute
+	// AuthPasswordMinLength bounds the configurable minimum password length:
+	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
+	AuthPasswordMinLengthFloor   = 6
+	AuthPasswordMinLengthCeiling = 72
+	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
+	// provider credentials; Apple's client secret is a signed JWT.
+	AuthProviderClientIDMaxBytes = 512
+	AuthProviderSecretMaxBytes   = 4096
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.
@@ -10932,6 +11169,58 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Bounded scheduler work for legacy execution-ledger reconciliation.
+const EventExecutionReconciliationBatch = 100
+
+const EventExecutionLineageRepairBatch = 100
+
+const EventExecutionLineageCasesPageDefault = 50
+const EventExecutionLineageCasesPageMax = 200
+
+// Bulk lineage retries persist a bounded fixed selection and evaluate at most this many cases per sweep.
+const EventExecutionLineageRetryJobMaxCases = 200
+const EventExecutionLineageRetryJobBatch = 100
+const EventExecutionLineageRetryJobBodyMaxBytes = 65536
+const EventExecutionLineageRetryReasonMaxBytes = 128
+
+// Diagnostic lineage case backfills share a global bounded receipt budget per sweep.
+const EventExecutionLineageCaseBackfillBatch = 100
+
+// Retained bulk lineage retry job discovery is bounded independently of case selections.
+const EventExecutionLineageRetryJobsPageDefault = 50
+const EventExecutionLineageRetryJobsPageMax = 200
+const EventExecutionLineageRetryJobsCursorMaxBytes = 128
+
+// Control receipts live until the parent retry job expires; repeated command IDs spend no new slot.
+const EventExecutionLineageRetryControlMaxReceipts = 128
+const EventExecutionLineageRetryControlPageDefault = 50
+const EventExecutionLineageRetryControlPageMax = 200
+
+// Local control-history artifacts contain bounded receipt metadata, not event payloads.
+const EventExecutionLineageRetryControlExportMaxBytes = 256 * 1024
+
+// Retry-job health is bounded separately from retained execution roots and windows.
+const EventExecutionLineageRetryHealthJobsMax = 500
+const EventExecutionLineageRetryHealthSampleMax = 10
+const EventExecutionLineageRetryInactivityWarning = 15 * time.Minute
+const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour
+
+// Reviewed CLI control plans are fixed selections, independent of health sampling.
+const EventExecutionLineageControlPlanMaxJobs = 200
+const EventExecutionLineageControlPlanMaxBytes = 128 * 1024
+const EventExecutionLineageControlReportMaxBytes = 1024 * 1024
+
+// Capacity command evidence is bounded independently of delivery slots.
+const EventSubscriptionCapacityCommandPageDefault = 25
+const EventSubscriptionCapacityCommandPageMax = 100
+const EventSubscriptionCapacityCommandCursorMaxBytes = 512
+
+const EventSubscriptionCapacityCommandMaxReceipts = 128
+const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second
+const EventSubscriptionCapacityCommandRecoverySustainDefault = 30 * time.Second
+const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
+const EventSubscriptionCapacityCommandPruneBatch = 500
 
 // WorkflowInitialRecoveryReviewLifetime bounds first-recovery approval freshness.
 const WorkflowInitialRecoveryReviewLifetime = EventRecoveryJobLifetime

@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { fingerprint, generate } from './type-render.mjs'
+import { fingerprint, generate, generateValidators } from './type-render.mjs'
 export { fingerprint, generate } from './type-render.mjs'
 import { pathToFileURL } from 'node:url'
 import { databaseURL, schemaNames, limits } from './config.mjs'
@@ -134,7 +134,7 @@ export function viewOrigins(action) {
   } catch { return [] }
 }
 
-export function viewRelationships(columns, relationships, views) {
+export function viewRelationships(columns, relationships, views, exposedSchemas=null) {
   const readable = new Map(columns.filter(c => c.id && c.number).map(c => [`${c.id}:${c.number}`, c]))
   const origins = new Map(), projected = new Map()
   for (const view of views) for (const origin of viewOrigins(view.action)) {
@@ -162,8 +162,8 @@ export function viewRelationships(columns, relationships, views) {
   function candidates(schema, relation, names) {
     const keys = names.map(name => columns.find(c => c.schema === schema && c.relation === relation && c.name === name)).map(c => c && `${c.id}:${c.number}`)
     if (keys.some(key => !key)) return []
-    const result = [{ schema, relation, columns: names }]
-    for (const view of views.filter(v => v.schema === schema)) {
+    const result = !exposedSchemas||exposedSchemas.includes(schema)?[{ schema, relation, columns: names }]:[]
+    for (const view of views.filter(v => exposedSchemas?exposedSchemas.includes(v.schema):v.schema === schema)) {
       const options = keys.map(key => projected.get(view.id).get(key))
       if (options.some(names => !names?.length)) continue
       let combinations = [[]]
@@ -171,7 +171,7 @@ export function viewRelationships(columns, relationships, views) {
         if (combinations.length * names.length > limits.relations) throw new Error('Too many inferred view relationships')
         combinations = combinations.flatMap(prefix => names.map(name => [...prefix, name]))
       }
-      result.push(...combinations.map(columns => ({ schema, relation: view.relation, columns })))
+      result.push(...combinations.map(columns => ({ schema:view.schema, relation: view.relation, columns })))
       if (result.length > limits.relations) throw new Error('Too many inferred view relationships')
     }
     return result
@@ -181,7 +181,8 @@ export function viewRelationships(columns, relationships, views) {
     if (r.schema !== r.referenced_schema) continue
     const sources = candidates(r.schema, r.relation, r.columns), targets = candidates(r.referenced_schema, r.referenced_relation, r.referenced_columns)
     for (const source of sources) for (const target of targets) {
-      if (source.relation === r.relation && target.relation === r.referenced_relation) continue
+      if (source.schema===r.schema && source.relation === r.relation && target.schema===r.referenced_schema && target.relation === r.referenced_relation) continue
+      if(source.schema!==target.schema)continue
       inferred.push({ ...r, schema: source.schema, relation: source.relation, columns: source.columns, referenced_schema: target.schema, referenced_relation: target.relation, referenced_columns: target.columns })
       if (inferred.length + relationships.length > limits.relations) throw new Error('Too many inferred view relationships')
     }
@@ -224,15 +225,64 @@ export async function computedPermissionBlockers(client, schemas, role, snapshot
 }
 
 export async function inspect(connection, schemas) {
+  return (await inspectBundle(connection, schemas)).snapshot
+}
+
+export async function inspectBundle(connection, schemas, { validators = false } = {}) {
   const client = new pg.Client({ connectionString: databaseURL(connection), connectionTimeoutMillis: limits.queryMs, query_timeout: limits.queryMs })
   await client.connect()
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
     await client.query("SELECT set_config('statement_timeout',$1,true)", [String(limits.queryMs)])
     const snapshot = await inspectClient(client, schemas)
+    const metadata = validators ? await inspectInputMetadata(client, schemas, snapshot) : []
     await client.query('COMMIT')
-    return snapshot
+    return { snapshot, metadata }
   } finally { await client.end() }
+}
+
+// Only structural metadata is exported, never CHECK expressions or SQL bodies.
+export async function inspectInputMetadata(client, schemas, snapshot) {
+  const rows = (await client.query(`SELECT n.nspname AS schema,c.relname AS relation,a.attname AS name,
+    t.typname AS type,t.typtype='d' AS domain,a.atttypmod AS typmod,
+    EXISTS(SELECT 1 FROM pg_constraint x WHERE x.conrelid=c.oid AND x.contype='c') AS checks
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    JOIN pg_attribute a ON a.attrelid=c.oid JOIN pg_type t ON t.oid=a.atttypid
+    WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped
+    AND has_schema_privilege(n.oid,'USAGE') AND has_column_privilege(c.oid,a.attnum,'SELECT')
+    ORDER BY n.nspname,c.relname,a.attnum LIMIT ${limits.columns + 1}`, [schemas])).rows
+  if (rows.length > limits.columns) throw new Error('Schema exceeds input metadata limits')
+  return rows.filter(c => snapshot.tables.some(t => t.schema === c.schema && t.name === c.relation && t.columns.some(f => f.name === c.name)))
+}
+
+export async function inspectRowMetadata(client, schemas, snapshot) {
+  const rows = (await client.query(`SELECT n.nspname AS schema,c.relname AS relation,
+    ARRAY(SELECT a.attname::text FROM unnest(p.conkey) WITH ORDINALITY k(num,seq)
+      JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num ORDER BY k.seq) AS columns,
+    ARRAY(SELECT tn.nspname||'.'||t.typname FROM unnest(p.conkey) WITH ORDINALITY k(num,seq)
+      JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace tn ON tn.oid=t.typnamespace ORDER BY k.seq) AS types,
+    ARRAY(SELECT a.attname::text FROM pg_attribute a JOIN pg_type t ON t.oid=a.atttypid
+      JOIN pg_namespace tn ON tn.oid=t.typnamespace WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+      AND a.attnotnull AND tn.nspname='pg_catalog' AND t.typname IN ('int2','int4','int8')
+      AND col_description(c.oid,a.attnum)='@gregale:version'
+      AND EXISTS(SELECT 1 FROM pg_trigger g WHERE g.tgrelid=c.oid AND NOT g.tgisinternal AND g.tgenabled IN ('O','A')
+        AND (g.tgtype::int & 19)=19 AND cardinality(g.tgattr::smallint[])=0 AND g.tgqual IS NULL)
+      ORDER BY a.attnum) AS versions
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    LEFT JOIN pg_constraint p ON p.conrelid=c.oid AND p.contype='p'
+    WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p') AND has_schema_privilege(n.oid,'USAGE')
+    ORDER BY n.nspname,c.relname LIMIT ${limits.relations + 1}`, [schemas])).rows
+  if(rows.length>limits.relations) throw new Error('Too many row metadata relations')
+  const safe=new Set(['int2','int4','int8','oid','bool','text','varchar','bpchar','uuid','date','timestamp','timestamptz','time','timetz'].map(name=>'pg_catalog.'+name))
+  for(const row of rows){
+    const table=snapshot.tables.find(table=>!table.view&&table.schema===row.schema&&table.name===row.relation)
+    if(!table)continue
+    if(row.columns.length&&row.columns.length<=16&&row.columns.every(name=>table.columns.some(c=>c.name===name&&!c.nullable)))
+      table.primary_key={columns:row.columns,filterable:row.types.every(type=>safe.has(type))&&row.columns.every(name=>table.columns.some(c=>c.name===name&&['string','number','boolean'].includes(c.type)))}
+    if(row.versions.length===1&&table.primary_key&&!table.primary_key.columns.includes(row.versions[0])&&table.columns.some(c=>c.name===row.versions[0]&&c.type==='number'&&!c.nullable))
+      table.concurrency={column:row.versions[0],kind:'integer_version'}
+  }
+  snapshot.version=4
 }
 
 export async function inspectClient(client, schemas, { includeUnexecutable = false, privilegeRole = null } = {}) {
@@ -246,8 +296,17 @@ export async function inspectClient(client, schemas, { includeUnexecutable = fal
   if (columns.length + composites.length > limits.columns) throw new Error('Schema exceeds generation limits')
   const views = (await client.query(viewsQuery, [schemas])).rows
   if (views.length > limits.relations || views.some(v => v.action === null)) throw new Error('View lineage exceeds generation limits')
-  const snapshot = normalize(columns, types, [...relations, ...viewRelationships(columns, relations, views)], schemas, functions, composites)
+  // Private base columns may contribute FK lineage only when individually readable;
+  // they never enter the exposed contract or generated table types.
+  const baseIDs=[...new Set(views.flatMap(view=>viewOrigins(view.action).map(origin=>origin.id)).filter(id=>!columns.some(column=>column.id===id)))]
+  if(baseIDs.length>limits.relations)throw new Error('Too many private view origins')
+  const privateColumns=baseIDs.length?(await client.query(columnsQuery.replace('n.nspname=ANY($1::text[])',"c.oid=ANY($1::oid[]) AND c.relkind IN ('r','p')"),[baseIDs])).rows:[]
+  const privateRelations=baseIDs.length?(await client.query(relationsQuery.replace('n.nspname=ANY($1::text[]) AND rn.nspname=ANY($1::text[])','c.oid=ANY($1::oid[]) AND rc.oid=ANY($1::oid[])').replaceAll('has_table_privilege','has_any_column_privilege'),[baseIDs])).rows:[]
+  if(columns.length+privateColumns.length>limits.columns||relations.length+privateRelations.length>limits.relations)throw new Error('Private view lineage exceeds generation limits')
+  const inferred=viewRelationships([...columns,...privateColumns],[...relations,...privateRelations],views,schemas)
+  const snapshot = normalize(columns, types, [...relations, ...inferred], schemas, functions, composites)
   if (!includeUnexecutable && (await computedPermissionBlockers(client, schemas, privilegeRole, snapshot)).length) throw new Error('Unapproved computed relationship execution; revoke serving-role grants and PUBLIC execution or approve a supported signature')
+  await inspectRowMetadata(client, schemas, snapshot)
   return snapshot
 }
 
@@ -355,8 +414,10 @@ export function normalize(columns, types, relationships, schemas, functions = []
 }
 
 export async function main(env = process.env) {
-  const snapshot = await inspect(env.DATABASE_URL, schemaNames(env.DATA_API_SCHEMAS))
-  const output = process.argv.includes('--snapshot') ? JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n' : generate(snapshot)
+  const validators = process.argv.includes('--validators')
+  if (validators && process.argv.includes('--snapshot')) throw new Error('Validators and snapshots are separate outputs')
+  const { snapshot, metadata } = await inspectBundle(env.DATABASE_URL, schemaNames(env.DATA_API_SCHEMAS), { validators })
+  const output = process.argv.includes('--snapshot') ? JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n' : validators ? generateValidators(snapshot, metadata) : generate(snapshot)
   if (Buffer.byteLength(output) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
   process.stdout.write(output)
 }

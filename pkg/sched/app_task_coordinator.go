@@ -296,7 +296,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		} else if errors.Is(restoreErr, state.ErrManagedPostgresAdmissionFenced) {
 			code, message = appTaskCutoverFailureCode, appTaskCutoverFailureMessage
 		}
-		c.log.Warn("schedd: app task restore failed", "task_id", task.ID, "error_class", appTaskErrorClass(restoreErr))
+		c.log.Warn("schedd: app task restore failed", "task_id", task.ID, "error_class", appTaskErrorClass(restoreErr),
+			"stage", appTaskFailureStage(restoreErr), "grpc_code", appTaskGRPCCode(restoreErr))
 		return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, code, message), c.now().UTC())
 	}
 

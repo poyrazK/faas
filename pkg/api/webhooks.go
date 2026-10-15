@@ -127,9 +127,11 @@ var AllowedAppWebhookEvents = []string{
 }
 
 // Account receivers intentionally cannot use the app-level all-events
-// wildcard. Their filter is a non-empty subset of these release events.
+// wildcard. Their filter is a non-empty subset of these account release and
+// environment events.
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+	"environment.gitops.changed",
 }
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
@@ -412,7 +414,7 @@ type UpdateAppWebhookRequest struct {
 }
 
 // Account routes use the same write fields but require a non-empty subset of
-// release events. Keeping separate DTOs makes that contract explicit in the
+// account events. Keeping separate DTOs makes that contract explicit in the
 // OpenAPI and typed clients.
 type CreateAccountReleaseWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`

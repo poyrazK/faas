@@ -2206,10 +2206,20 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 
 	prev := d.TrafficPercent
 	var updated state.Deployment
+	if req.ExpectedReview != nil && (req.TrafficPercent != 100 || req.ExpectedServingDeploymentID == nil || req.ExpectedReview.AppID != app.ID || req.ExpectedReview.Scope != d.Scope || req.ExpectedReview.EnvironmentID == "") {
+		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
+		return
+	}
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		var writeErr error
-		if req.ExpectedServingDeploymentID != nil {
+		if req.ExpectedReview != nil {
+			store, ok := s.store.(state.ReviewedTrafficStore)
+			if !ok {
+				return state.ErrReleaseReviewChanged
+			}
+			updated, writeErr = store.UpdateDeploymentTrafficReviewed(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID, *req.ExpectedReview)
+		} else if req.ExpectedServingDeploymentID != nil {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
 		} else {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
@@ -2221,6 +2231,9 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -3898,8 +3911,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if !validCron(req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
+	if problem := cronScheduleProblem(req.Schedule); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	timezone, err := normalizeCronTimezone(req.Timezone)
@@ -4084,9 +4097,11 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if req.Schedule != nil && !validCron(*req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
-		return
+	if req.Schedule != nil {
+		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var timezone string
 	if req.Timezone != nil {
@@ -5880,6 +5895,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 		len(d.OverrideReadinessProbe) > 0 ||
 		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
+		StagedReview:      d.StagedReview,
 		PromotionHold:     promotionHold,
 		WorkerDrain:       workerDrain,
 		StageState:        append(json.RawMessage(nil), d.StageState...),
@@ -6803,12 +6819,12 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		usage := state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now)
-		charges, err := s.objectStorage.ChargeForUsage(usage)
+		charges, err := s.objectStorage.ChargeForUsage(usage, api.MustLimitsFor(acct.Plan).ObjectStorage.Allowance())
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, acct.Plan)
 		out.ObjectStorage = &objectStorage
 	}
 
@@ -7119,10 +7135,20 @@ func keyPrefixFromHash(hash []byte) string {
 	return api.APIKeyPrefix + hex.EncodeToString(hash)[:12]
 }
 
-// validCron uses the exact parser schedd uses, keeping direct and project
-// cron admission on the same five-field grammar.
-func validCron(s string) bool {
-	return cronexpr.Validate(s) == nil
+// cronScheduleProblem uses the exact parser schedd uses, keeping direct and
+// project cron admission on the same five-field grammar, and says why a
+// schedule is invalid with the parser's reason ("end of range (61) above
+// maximum (59): 61", "never fires"). The handlers used to answer "expected
+// 5-field cron expression" for every bad schedule, which read wrong for
+// five-field input (H10-68).
+func cronScheduleProblem(s string) *api.Problem {
+	err := cronexpr.Validate(s)
+	if err == nil {
+		return nil
+	}
+	reason := strings.TrimPrefix(err.Error(), cronexpr.ErrInvalidSchedule.Error())
+	reason = strings.ReplaceAll(strings.TrimLeft(reason, ":\n "), "\n", "; ")
+	return api.ErrCronInvalid("expected a 5-field cron expression (m h dom mon dow): " + reason)
 }
 
 // streamDeploymentLogs serves the build log for a deployment as a
@@ -7272,8 +7298,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
+			// Every terminal status ends the stream. Cancelled and
+			// superseded rows used to keep it open until the 10-min
+			// backstop, so a waiting `gregale deploy` sat on a
+			// cancelled build for minutes (H10-48).
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
-				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
+				if d2.Status == state.DeployLive || d2.Status.IsTerminal() {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
 					if flusher != nil {

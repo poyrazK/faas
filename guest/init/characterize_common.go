@@ -51,14 +51,30 @@ const procNetInodeColumn = 9
 // platform with a temp-file fixture — the linux-only thing is the
 // path passed in.
 func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, bool) {
+	port, addr, ok, _ := scanListeningFileFor(path, owned, 0)
+	return port, addr, ok
+}
+
+// scanListeningFileFor returns the owned LISTEN entry on port want when there
+// is one, else the first owned LISTEN entry; exact reports the former. An app
+// with a second listener (a raw TCP or metrics port) used to be characterized
+// on whichever socket /proc listed first, and portnorm then redirected the
+// expected HTTP port to that listener (H10-56).
+func scanListeningFileFor(path string, owned map[uint64]struct{}, want int) (port int, addr string, ok, exact bool) {
 	sockets := scanListenSockets(path, owned)
 	if len(sockets) == 0 {
-		return 0, "", false
+		return 0, "", false, false
 	}
-	first := sockets[0]
+	pick := sockets[0]
+	for _, socket := range sockets {
+		if want > 0 && socket.Port == want {
+			pick, exact = socket, true
+			break
+		}
+	}
 	// JoinHostPort brackets IPv6 ("[::1]:5173"), which the host's
 	// loopback check (pkg/fcvm loopbackBindProblem) can parse.
-	return first.Port, net.JoinHostPort(first.IP.String(), strconv.Itoa(first.Port)), true
+	return pick.Port, net.JoinHostPort(pick.IP.String(), strconv.Itoa(pick.Port)), true, exact
 }
 
 // listenSocket is one LISTEN socket of the app's process tree.
@@ -202,9 +218,9 @@ func truncateLog(s string, n int) string {
 // on linux. On non-linux builds, pid > 0 always returns
 // (0, "", false) — there is no /proc to walk, and the caller
 // polls until deadline.
-func probeListening(pid int) (int, string, bool) {
+func probeListening(pid, want int) (int, string, bool) {
 	if pid <= 0 {
 		return 0, "", false
 	}
-	return probeListeningLinux(pid)
+	return probeListeningLinux(pid, want)
 }

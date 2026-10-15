@@ -192,6 +192,7 @@ func Run(t *testing.T, open Open) {
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"job_task_log_target_is_scoped_and_tracks_the_instance", testJobTaskLogTarget},
+		{"job_run_attach_session_is_atomic_scoped_and_never_replayed", testJobRunAttach},
 		{"image_run_runner_jobs_are_cached_hidden_and_evicted", testImageRunJobs},
 		{"exclusive_operation_work_history_is_account_scoped", testExclusiveOperationWorkHistory},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},

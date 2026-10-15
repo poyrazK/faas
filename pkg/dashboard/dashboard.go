@@ -133,6 +133,7 @@ type EnvironmentGitOpsData struct {
 	CSRFToken               string
 	Status                  *api.EnvironmentGitOpsStatusResponse
 	Review                  *api.PreviewEnvironmentGitRevisionResponse
+	PlanPreview             *api.PreviewEnvironmentGitPlanResponse
 	Definition              string
 	Adoption                *api.EnvironmentGitOpsPlan
 	Runs                    []EnvironmentGitOpsRunView
@@ -1039,6 +1040,8 @@ type EdgeRuleEventPageItem struct {
 	Country    string
 	UserAgent  string
 	RequestID  string
+	// WAF summarizes a kind=waf detection (categories, CRS rules, score).
+	WAF string
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only

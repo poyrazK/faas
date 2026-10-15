@@ -1,0 +1,70 @@
+package state
+
+// adr: 435. Called under m.mu, before recording or comparing a native capture.
+
+func (m *MemStore) runtimeArtifactIdentityLocked(app App, dep Deployment) (*deploymentRuntimeArtifactIdentity, error) {
+	retained := m.hasSourceRootfsLocked(dep.ID)
+	for _, producer := range m.deploymentRegistryRootfs {
+		retained = retained || sameStandardUUID(producer.Input.DeploymentID, dep.ID)
+	}
+	if !retained {
+		return nil, nil
+	}
+	names, err := artifactScanWorkloads(dep.Sidecars)
+	if err != nil {
+		return nil, err
+	}
+	in := deploymentRuntimeArtifactIdentity{Format: "gregale.runtime-artifact-input.v1", AccountID: canonicalStandardUUID(app.AccountID), OrgID: registryCanonicalOrg(app.OrgID), AppID: canonicalStandardUUID(app.ID), DeploymentID: canonicalStandardUUID(dep.ID), Scope: dep.Scope}
+	bases := map[string]bool{}
+	for _, name := range names {
+		artifact, err := m.runtimeCaptureArtifactLocked(app, dep, name)
+		if err != nil {
+			return nil, err
+		}
+		in.Artifacts = append(in.Artifacts, artifact)
+		if id := artifact.BaseProducerID; id != "" && !bases[id] {
+			base, ok := m.baseImageProducers[id]
+			if !ok || m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != id || base.InputHash != artifact.BaseInputHash || validateBaseImageProducer(base) != nil {
+				return nil, ErrApplicationStandardRuntimeStale
+			}
+			in.Artifacts, bases[id] = append(in.Artifacts, runtimeArtifactFromBaseProducer(base)), true
+		}
+	}
+	in, _, err = prepareRuntimeArtifactIdentity(in)
+	return &in, err
+}
+
+func (m *MemStore) runtimeCaptureArtifactLocked(app App, dep Deployment, name string) (DeploymentRuntimeArtifact, error) {
+	if name == "" && m.hasSourceRootfsLocked(dep.ID) {
+		root, err := m.sourceRuntimeCaptureRootLocked(app, dep)
+		return runtimeArtifactFromSourceRootfs(root), err
+	}
+	root, err := m.runtimeArtifactRootLocked(app, dep, name)
+	if err != nil {
+		return DeploymentRuntimeArtifact{}, err
+	}
+	if id := root.Input.BaseProducerID; id != "" {
+		if err := checkRegistryRuntimeDefaultBase(root.Input, m.baseImageProducers[id], app.Runtime); err != nil {
+			return DeploymentRuntimeArtifact{}, err
+		}
+	}
+	return runtimeArtifactFromRootfs(root), nil
+}
+
+func (m *MemStore) runtimeArtifactRootLocked(app App, dep Deployment, name string) (DeploymentRegistryRootfs, error) {
+	id := m.deploymentRegistryRootfsCurrent[canonicalStandardUUID(dep.ID)+"\x00"+name]
+	root, ok := m.deploymentRegistryRootfs[id]
+	parent, exists := m.deploymentRegistryVerifications[root.Input.RegistryVerificationID]
+	if !ok || !exists || validateRegistryRootfsStored(root) != nil || validateRegistryVerification(parent) != nil {
+		return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
+	}
+	in := root.Input
+	if !sameStandardUUID(in.AccountID, app.AccountID) || in.OrgID != registryCanonicalOrg(app.OrgID) || !sameStandardUUID(in.AppID, app.ID) || !sameStandardUUID(in.DeploymentID, dep.ID) || in.WorkloadName != name || checkRegistryVerificationOwner(parent.Input, app, dep) != nil {
+		return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
+	}
+	layer := m.deploymentSidecarLayers[dep.ID+"\x00"+name]
+	if !registryRootfsMatchesMetadata(root, dep, layer, parent) {
+		return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
+	}
+	return root, nil
+}

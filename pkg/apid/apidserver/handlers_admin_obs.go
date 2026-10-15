@@ -41,6 +41,7 @@ package apidserver
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -66,13 +67,6 @@ const obsHeartbeatsSinceDefault = 30 * time.Minute
 // ObsAdminWindowMaxHours; any longer is clamped and the
 // response sets since_clamped=true.
 const obsHeartbeatsSinceMax = 24 * time.Hour
-
-// PR #1 intentionally does NOT declare the obsOverviewRateLimitTopN /
-// obsOverviewFailuresTopN / obsOverviewFailuresWindow /
-// obsOverviewAuditWindow constants yet — the audit_log scan that
-// powers those tiles ships in PR #3 (ADR-091 §3.4 / §3.5). When
-// PR #3 lands, hoist the constants from the wire-shape comments
-// in pkg/api/obs.go so the lint-gate `unused` check accepts them.
 
 // obsHeartbeatsLimitDefault / obsHeartbeatsLimitMax bound the
 // ?limit= query on the per-node heartbeat endpoint. The cap
@@ -110,15 +104,15 @@ func (s *server) obsOverview(w http.ResponseWriter, r *http.Request, acct state.
 	// point-in-time; the operator UI re-polls every 30s.
 	totals.InstancesLive, totals.InstancesWaking = summariseInstances(snapshot.instances)
 	totals.NodesActive, totals.NodesInactive = summariseNodes(snapshot.nodes)
-	topRL := summariseTopRateLimited(r, now)
-	failures := summariseRecentFailures(r, now)
+	totals.OrgsTotal = snapshot.activity.OrgsTotal
+	totals.AuditEvents24h = snapshot.activity.AuditEvents24h
 	writeJSON(w, http.StatusOK, api.ObsOverviewResponse{
 		GeneratedAt:               now,
 		Totals:                    totals,
 		BetaFunnel14d:             summariseBetaFunnel(now, snapshot.accounts, snapshot.apps, snapshot.deployments, snapshot.firstSuccessByAcct),
-		TopRateLimitedAccounts24h: topRL,
+		TopRateLimitedAccounts24h: snapshot.rateLimited,
 		NodeHealth:                toNodeHealthRows(snapshot.nodes, now),
-		RecentFailures1h:          failures,
+		RecentFailures1h:          summariseRecentFailures(snapshot.activity.Failures),
 	})
 }
 
@@ -150,7 +144,11 @@ func (s *server) obsListTenants(w http.ResponseWriter, r *http.Request, acct sta
 	filtered := filterTenantRows(r, rows)
 	cursor := r.URL.Query().Get("cursor")
 	out, nextCursor := paginateTenantRows(filtered, cursor, limit)
-	items := projectTenantList(r.Context(), s.store, out, includePII)
+	items, err := projectTenantList(r.Context(), s.store, out, includePII)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load tenant summaries"))
+		return
+	}
 	writeJSON(w, http.StatusOK, api.ObsTenantListResponse{
 		Items:      items,
 		NextCursor: nextCursor,
@@ -182,7 +180,12 @@ func (s *server) obsGetTenant(w http.ResponseWriter, r *http.Request, acct state
 			"Account not found", err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, buildTenantDetail(r.Context(), s.store, target, includePII))
+	detail, err := buildTenantDetail(r.Context(), s.store, target, includePII)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load tenant detail"))
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 // obsListNodes handles GET /v1/admin/obs/nodes. Mirrors
@@ -209,6 +212,15 @@ func (s *server) obsListNodes(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	includeInactive := r.URL.Query().Get("include_inactive") == "1"
+	offset := 0
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		var err error
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid cursor", "cursor must be a value returned as next_cursor"))
+			return
+		}
+	}
 	ctx := r.Context()
 	rows, err := s.store.ListComputeNodes(ctx, includeInactive)
 	if err != nil {
@@ -253,7 +265,7 @@ func (s *server) obsListNodes(w http.ResponseWriter, r *http.Request, acct state
 			hbStats = hr.hb
 		}
 	}
-	items, nextCursor := paginateNodes(rows, limit, liveStats, hbStats)
+	items, nextCursor := paginateNodes(rows, limit, liveStats, hbStats, offset)
 	writeJSON(w, http.StatusOK, api.ObsNodeListResponse{
 		Items:      items,
 		NextCursor: nextCursor,
@@ -536,16 +548,17 @@ func (s *server) obsNodeWakeLatency(w http.ResponseWriter, r *http.Request, acct
 	now := time.Now().UTC()
 	if s.promqlClient == nil {
 		writeJSON(w, http.StatusOK, api.ObsNodeWakeLatencyResponse{
-			Window: window,
-			AsOf:   now,
+			Window:    window,
+			AsOf:      now,
+			Quantiles: []api.ObsWakeLatencyQuantile{},
 		})
 		return
 	}
-	// Per-node buckets: one QueryBuckets call returns
-	// map[node_id]map[le]cum. PromQL aggregates by node_id so we
+	// Per-node buckets: one QueryGrouped call returns
+	// map[node_id]map[le]cum. Increase yields sample counts in the window; we
 	// don't have to iterate per node.
-	nodeBuckets, err := s.promqlClient.QueryBuckets(r.Context(),
-		fmt.Sprintf(`sum by (node_id, le)(rate(gateway_wake_latency_seconds_by_node_bucket{node_id!="__unknown"}[%s]))`, window))
+	nodeBuckets, err := s.promqlClient.QueryGrouped(r.Context(),
+		fmt.Sprintf(`sum by (node_id, le)(increase(gateway_wake_latency_seconds_by_node_bucket{node_id!="__unknown"}[%s]))`, window), "node_id", "le")
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not evaluate per-node wake latency"))
 		return
@@ -575,8 +588,8 @@ func (s *server) obsNodeWakeLatency(w http.ResponseWriter, r *http.Request, acct
 	for nodeID, buckets := range nodeBuckets {
 		var sampleCount int64
 		for _, cum := range buckets {
-			if int64(cum) > sampleCount {
-				sampleCount = int64(cum)
+			if int64(math.Round(cum)) > sampleCount {
+				sampleCount = int64(math.Round(cum))
 			}
 		}
 		out = append(out, api.ObsWakeLatencyQuantile{
@@ -593,9 +606,10 @@ func (s *server) obsNodeWakeLatency(w http.ResponseWriter, r *http.Request, acct
 	// alphabetically in the dashboard tile).
 	sort.Slice(out, func(i, j int) bool { return out[i].NodeName < out[j].NodeName })
 	writeJSON(w, http.StatusOK, api.ObsNodeWakeLatencyResponse{
-		Window:     window,
-		Quantiles:  out,
-		FleetP95MS: appmetrics.SafeFloat(fleetV),
-		AsOf:       now,
+		Window:              window,
+		Quantiles:           out,
+		FleetP95MS:          appmetrics.SafeFloat(fleetV),
+		AsOf:                now,
+		PrometheusAvailable: true,
 	})
 }

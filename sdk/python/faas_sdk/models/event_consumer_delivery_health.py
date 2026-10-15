@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.event_consumer_capacity_pressure import EventConsumerCapacityPressure
     from ..models.event_consumer_capacity_waits import EventConsumerCapacityWaits
     from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
     from ..models.event_consumer_health import EventConsumerHealth
@@ -41,6 +42,11 @@ class EventConsumerDeliveryHealth:
     pending_sample: EventConsumerPendingSample
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""
+    capacity_pressure: EventConsumerCapacityPressure | Unset = UNSET
+    """Read-only current live slot usage and effective capacity waiting reasons from one owned subscription
+    snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after
+    capacity drains. Age is since event acceptance, not continuous capacity-wait duration. No capacity reservation
+    or delivery-order guarantee."""
     waiting_reasons: EventConsumerWaitingReasons | Unset = UNSET
     """Complete mutually exclusive effective waiting reasons across retained pending application recipients in the
     backlog snapshot. Counts sum to pending_recipients when complete, independently of recipient pagination. Missing
@@ -61,6 +67,10 @@ class EventConsumerDeliveryHealth:
 
         pending_sample = self.pending_sample.to_dict()
 
+        capacity_pressure: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.capacity_pressure, Unset):
+            capacity_pressure = self.capacity_pressure.to_dict()
+
         waiting_reasons: dict[str, Any] | Unset = UNSET
         if not isinstance(self.waiting_reasons, Unset):
             waiting_reasons = self.waiting_reasons.to_dict()
@@ -80,6 +90,8 @@ class EventConsumerDeliveryHealth:
                 "pending_sample": pending_sample,
             }
         )
+        if capacity_pressure is not UNSET:
+            field_dict["capacity_pressure"] = capacity_pressure
         if waiting_reasons is not UNSET:
             field_dict["waiting_reasons"] = waiting_reasons
         if capacity_waits is not UNSET:
@@ -89,6 +101,7 @@ class EventConsumerDeliveryHealth:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_consumer_capacity_pressure import EventConsumerCapacityPressure
         from ..models.event_consumer_capacity_waits import EventConsumerCapacityWaits
         from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
         from ..models.event_consumer_health import EventConsumerHealth
@@ -105,6 +118,13 @@ class EventConsumerDeliveryHealth:
         execution = EventConsumerExecutionHealth.from_dict(d.pop("execution"))
 
         pending_sample = EventConsumerPendingSample.from_dict(d.pop("pending_sample"))
+
+        _capacity_pressure = d.pop("capacity_pressure", UNSET)
+        capacity_pressure: EventConsumerCapacityPressure | Unset
+        if isinstance(_capacity_pressure, Unset):
+            capacity_pressure = UNSET
+        else:
+            capacity_pressure = EventConsumerCapacityPressure.from_dict(_capacity_pressure)
 
         _waiting_reasons = d.pop("waiting_reasons", UNSET)
         waiting_reasons: EventConsumerWaitingReasons | Unset
@@ -126,6 +146,7 @@ class EventConsumerDeliveryHealth:
             routing=routing,
             execution=execution,
             pending_sample=pending_sample,
+            capacity_pressure=capacity_pressure,
             waiting_reasons=waiting_reasons,
             capacity_waits=capacity_waits,
         )

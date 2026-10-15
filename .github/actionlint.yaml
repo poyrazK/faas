@@ -14,3 +14,4 @@ self-hosted-runner:
     - gregale-bridge-acceptance
     - gregale-data-api-staging
     - gregale-profiling-acceptance
+    - gregale-scenario-acceptance

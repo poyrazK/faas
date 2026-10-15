@@ -59,6 +59,9 @@ func normalizeLogsSince(raw, source string, now time.Time) (string, error) {
 			}
 			return lookback.String(), nil
 		}
+		if !timestamp.Before(now) {
+			return "", fmt.Errorf("--since timestamp must be in the past")
+		}
 		return timestamp.UTC().Format(time.RFC3339Nano), nil
 	}
 
@@ -206,6 +209,10 @@ func emitHTTPLogQueryEvents(events []api.LogQueryEvent) int {
 	if jsonOutput {
 		return jsonOut(writeNDJSON(events))
 	}
+	if len(events) == 0 {
+		_, _ = fmt.Fprintln(osStderr, "No HTTP requests matched these filters.")
+		return 0
+	}
 	for _, event := range events {
 		renderHTTPLogQueryEvent(osStdout, event)
 	}
@@ -309,4 +316,14 @@ func renderHTTPLogQueryEvent(w io.Writer, event api.LogQueryEvent) {
 		_, _ = fmt.Fprint(w, " cold_boot=true")
 	}
 	_, _ = fmt.Fprintln(w)
+}
+
+// validateHTTPLogRoute rejects a bare path for --route. Request telemetry
+// stores route labels as "METHOD /path" and the filter is an exact match, so
+// "/orders" matched nothing and the command printed nothing (H10-44).
+func validateHTTPLogRoute(route string) error {
+	if !strings.HasPrefix(route, "/") {
+		return nil
+	}
+	return fmt.Errorf("--route matches a route label with its method, such as \"GET %s\" or \"POST %s\"", route, route)
 }

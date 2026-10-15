@@ -3,7 +3,9 @@ package imagerun_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -193,5 +195,119 @@ func TestCreateReportsFullCacheAndManagedNames(t *testing.T) {
 	}
 	if status, _, body := hs.post(api.CreateImageRunRequest{Image: "taken"}); status != http.StatusConflict || !strings.Contains(body, api.CodeImageRunManaged) {
 		t.Fatalf("name collision = %d %s", status, body)
+	}
+}
+
+// postRaw returns the recorder so tests can read headers.
+func (hs *harness) postRaw(body any) *httptest.ResponseRecorder {
+	hs.t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		hs.t.Fatalf("marshal: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	hs.h.Create(rec, httptest.NewRequest(http.MethodPost, "/v1/image-runs", bytes.NewReader(raw)), hs.acct)
+	return rec
+}
+
+// adr: 1330
+func TestCreateInteractiveRejectsBeforeTouchingState(t *testing.T) {
+	cases := map[string]struct {
+		disableInteractive bool
+		body               api.CreateImageRunRequest
+		status             int
+		code               string
+	}{
+		"interactive gate off": {disableInteractive: true, body: api.CreateImageRunRequest{Image: "alpine", Interactive: true}, status: http.StatusNotImplemented, code: api.CodeNotImplemented},
+		"tty gate off":         {disableInteractive: true, body: api.CreateImageRunRequest{Image: "alpine", Interactive: true, TTY: true}, status: http.StatusNotImplemented, code: api.CodeNotImplemented},
+		"tty without -i":       {body: api.CreateImageRunRequest{Image: "alpine", TTY: true}, status: http.StatusBadRequest, code: api.CodeValidation},
+		"tty without -i gated": {disableInteractive: true, body: api.CreateImageRunRequest{Image: "alpine", TTY: true}, status: http.StatusBadRequest, code: api.CodeValidation},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			hs := newHarness(t, api.PlanPro)
+			hs.h.InteractiveEnabled = !tc.disableInteractive
+			status, resp, body := hs.post(tc.body)
+			if status != tc.status || !strings.Contains(body, `"code":"`+tc.code+`"`) || resp.Attach != nil {
+				t.Fatalf("status=%d body=%s; want %d %s", status, body, tc.status, tc.code)
+			}
+			if jobs, _ := hs.store.JobListByAccount(context.Background(), hs.acct.ID, 10, 0); len(jobs) != 0 || len(hs.notified) != 0 {
+				t.Fatalf("rejected request touched state: jobs=%v notified=%v", jobs, hs.notified)
+			}
+		})
+	}
+}
+
+// adr: 1330
+func TestCreateInteractiveReturnsOneTimeAttach(t *testing.T) {
+	for name, tty := range map[string]bool{"pipes": false, "tty": true} {
+		t.Run(name, func(t *testing.T) {
+			hs := newHarness(t, api.PlanPro)
+			hs.h.InteractiveEnabled = true
+			req := api.CreateImageRunRequest{Image: "alpine", Interactive: true, TTY: tty, Args: strs("sh")}
+
+			rec := hs.postRaw(req)
+			var pulling api.ImageRunResponse
+			_ = json.Unmarshal(rec.Body.Bytes(), &pulling)
+			if rec.Code != http.StatusAccepted || pulling.Attach != nil || strings.Contains(rec.Body.String(), `"attach"`) ||
+				rec.Header().Get("Cache-Control") == "no-store" {
+				t.Fatalf("pulling response = %d %s headers=%v; want 202 without attach", rec.Code, rec.Body.String(), rec.Header())
+			}
+			hs.materialize(pulling.Job, nil, []string{"sh"})
+
+			rec = hs.postRaw(req)
+			var queued api.ImageRunResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil || rec.Code != http.StatusCreated {
+				t.Fatalf("queue = %d %s (%v)", rec.Code, rec.Body.String(), err)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			attach := queued.Attach
+			if attach == nil || len(attach.Token) < 40 || attach.Subprotocol != api.AppTaskAttachSubprotocol ||
+				attach.Path != "/v1/jobs/"+queued.Job+"/runs/"+queued.RunID+"/tasks/0/attach" {
+				t.Fatalf("attach = %+v (run %s job %s)", attach, queued.RunID, queued.Job)
+			}
+			session, err := hs.store.JobRunAttachSession(context.Background(), queued.RunID)
+			if err != nil {
+				t.Fatalf("JobRunAttachSession: %v", err)
+			}
+			digest := sha256.Sum256([]byte(attach.Token))
+			if !bytes.Equal(session.TokenSHA256, digest[:]) || session.TTY != tty || session.AttachTimeoutSec != api.ImageRunAttachTimeoutSec {
+				t.Fatalf("session = %+v; want digest of the token, tty=%v, window %d", session, tty, api.ImageRunAttachTimeoutSec)
+			}
+			run, err := hs.store.JobRunGetByID(context.Background(), queued.RunID)
+			if err != nil {
+				t.Fatalf("JobRunGet: %v", err)
+			}
+			if run.Tasks != 1 || run.RetryMax == nil || *run.RetryMax != 0 {
+				t.Fatalf("run = %+v; want one task without retries", run)
+			}
+
+			// A second interactive run gets its own credential.
+			rec = hs.postRaw(req)
+			var again api.ImageRunResponse
+			_ = json.Unmarshal(rec.Body.Bytes(), &again)
+			if rec.Code != http.StatusCreated || again.Attach == nil || again.Attach.Token == attach.Token || again.RunID == queued.RunID {
+				t.Fatalf("second run = %d %s; want a fresh run and credential", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// adr: 1330
+func TestCreateOrdinaryRunHasNoAttach(t *testing.T) {
+	hs := newHarness(t, api.PlanPro)
+	hs.h.InteractiveEnabled = true
+	_, pulling, _ := hs.post(api.CreateImageRunRequest{Image: "alpine", Args: strs("true")})
+	hs.materialize(pulling.Job, nil, nil)
+	rec := hs.postRaw(api.CreateImageRunRequest{Image: "alpine", Args: strs("true")})
+	var queued api.ImageRunResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &queued)
+	if rec.Code != http.StatusCreated || queued.Attach != nil || rec.Header().Get("Cache-Control") == "no-store" {
+		t.Fatalf("ordinary run = %d %s headers=%v", rec.Code, rec.Body.String(), rec.Header())
+	}
+	if _, err := hs.store.JobRunAttachSession(context.Background(), queued.RunID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ordinary run has a session: %v", err)
 	}
 }

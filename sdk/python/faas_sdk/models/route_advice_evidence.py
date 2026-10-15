@@ -7,6 +7,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.route_advice_evidence_safe_max_age_seconds import (
+    RouteAdviceEvidenceSafeMaxAgeSeconds,
+    check_route_advice_evidence_safe_max_age_seconds,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="RouteAdviceEvidence")
@@ -27,6 +31,19 @@ class RouteAdviceEvidence:
     top_consumer_requests: int | Unset = UNSET
     top_consumer_peak_per_minute: int | Unset = UNSET
     next_consumer_peak_per_minute: int | Unset = UNSET
+    content_observed: int | Unset = UNSET
+    """Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache
+    suggestions only."""
+    content_repeats: int | Unset = UNSET
+    """Observed responses identical to the previous one for their URL within the longest content window (1 h)."""
+    content_changes: int | Unset = UNSET
+    """Observed responses that differed from the previous one for their URL within the longest content window."""
+    content_uncacheable: int | Unset = UNSET
+    """Observed responses the edge cache could not store (Set-Cookie, Cache-Control no-store or private, Vary, or
+    size)."""
+    safe_max_age_seconds: RouteAdviceEvidenceSafeMaxAgeSeconds | Unset = UNSET
+    """Longest cache lifetime at which the observed repeats would have served at most 1% stale bodies; absent until
+    enough repeats are measured."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +71,18 @@ class RouteAdviceEvidence:
 
         next_consumer_peak_per_minute = self.next_consumer_peak_per_minute
 
+        content_observed = self.content_observed
+
+        content_repeats = self.content_repeats
+
+        content_changes = self.content_changes
+
+        content_uncacheable = self.content_uncacheable
+
+        safe_max_age_seconds: int | Unset = UNSET
+        if not isinstance(self.safe_max_age_seconds, Unset):
+            safe_max_age_seconds = self.safe_max_age_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -76,6 +105,16 @@ class RouteAdviceEvidence:
             field_dict["top_consumer_peak_per_minute"] = top_consumer_peak_per_minute
         if next_consumer_peak_per_minute is not UNSET:
             field_dict["next_consumer_peak_per_minute"] = next_consumer_peak_per_minute
+        if content_observed is not UNSET:
+            field_dict["content_observed"] = content_observed
+        if content_repeats is not UNSET:
+            field_dict["content_repeats"] = content_repeats
+        if content_changes is not UNSET:
+            field_dict["content_changes"] = content_changes
+        if content_uncacheable is not UNSET:
+            field_dict["content_uncacheable"] = content_uncacheable
+        if safe_max_age_seconds is not UNSET:
+            field_dict["safe_max_age_seconds"] = safe_max_age_seconds
 
         return field_dict
 
@@ -109,6 +148,21 @@ class RouteAdviceEvidence:
 
         next_consumer_peak_per_minute = d.pop("next_consumer_peak_per_minute", UNSET)
 
+        content_observed = d.pop("content_observed", UNSET)
+
+        content_repeats = d.pop("content_repeats", UNSET)
+
+        content_changes = d.pop("content_changes", UNSET)
+
+        content_uncacheable = d.pop("content_uncacheable", UNSET)
+
+        _safe_max_age_seconds = d.pop("safe_max_age_seconds", UNSET)
+        safe_max_age_seconds: RouteAdviceEvidenceSafeMaxAgeSeconds | Unset
+        if isinstance(_safe_max_age_seconds, Unset):
+            safe_max_age_seconds = UNSET
+        else:
+            safe_max_age_seconds = check_route_advice_evidence_safe_max_age_seconds(_safe_max_age_seconds)
+
         route_advice_evidence = cls(
             requests=requests,
             anonymous_requests=anonymous_requests,
@@ -121,6 +175,11 @@ class RouteAdviceEvidence:
             top_consumer_requests=top_consumer_requests,
             top_consumer_peak_per_minute=top_consumer_peak_per_minute,
             next_consumer_peak_per_minute=next_consumer_peak_per_minute,
+            content_observed=content_observed,
+            content_repeats=content_repeats,
+            content_changes=content_changes,
+            content_uncacheable=content_uncacheable,
+            safe_max_age_seconds=safe_max_age_seconds,
         )
 
         route_advice_evidence.additional_properties = d

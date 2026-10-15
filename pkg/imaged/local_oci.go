@@ -28,23 +28,29 @@ import (
 // has an equivalent streaming abstraction; source builds need the same shape
 // without pretending a host-local tarball is a registry reference.
 type localOCIIndex struct {
-	Manifests []oci.Descriptor `json:"manifests"`
+	SchemaVersion int              `json:"schemaVersion"`
+	MediaType     string           `json:"mediaType"`
+	Manifests     []oci.Descriptor `json:"manifests"`
 }
-
-// Bound local layer extraction so a malformed archive cannot consume an
-// unbounded amount of disk while imaged copies a builderd artifact.
-const maxLocalOCILayerBytes = 16 << 30
 
 // Scale is the largest public plan and permits a 2 GiB app layer. Keep the
 // filter bounded to that same ceiling before rootfs assembly applies the
 // account-specific, usually smaller limit.
 const maxFunctionAppUncompressedBytes int64 = 2 << 30
 
-// loadLocalOCIArchive opens a builderd-produced OCI layout tarball, extracts
-// its gzip-compressed layer blobs to temporary files, and parses the image
-// config. The returned readers are ordered bottom-to-top and remain valid
-// until cleanup is called.
+// loadLocalOCIArchive verifies a builderd-produced OCI content chain before
+// exposing its gzip layers or config. The returned readers are ordered
+// bottom-to-top and remain valid until cleanup is called.
 func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
+	return loadLocalOCIArchiveContext(context.Background(), archivePath)
+}
+
+func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
+	archive, err := openLocalOCIArchive(archivePath)
+	if err != nil {
+		return oci.Config{}, nil, func() {}, err
+	}
+	defer func() { _ = archive.Close() }()
 	tmpDir, err := os.MkdirTemp("", "faas-local-oci-")
 	if err != nil {
 		return oci.Config{}, nil, func() {}, fmt.Errorf("create local OCI tempdir: %w", err)
@@ -61,7 +67,7 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 		return oci.Config{}, nil, func() {}, err
 	}
 
-	indexBytes, err := readLocalOCIEntry(archivePath, "index.json", 1<<20)
+	indexBytes, err := readLocalOCIEntryFrom(ctx, archive, "index.json", api.LocalOCIMaxIndexBytes)
 	if err != nil {
 		return fail(fmt.Errorf("read OCI index: %w", err))
 	}
@@ -72,11 +78,10 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	if len(index.Manifests) != 1 {
 		return fail(fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests)))
 	}
-	manifestName, err := localOCIBlobName(index.Manifests[0].Digest)
-	if err != nil {
-		return fail(fmt.Errorf("OCI manifest digest: %w", err))
+	if index.SchemaVersion != 2 || (index.MediaType != "" && index.MediaType != "application/vnd.oci.image.index.v1+json") {
+		return fail(errors.New("unsupported OCI index format"))
 	}
-	manifestBytes, err := readLocalOCIEntry(archivePath, manifestName, 8<<20)
+	manifestBytes, err := readLocalOCIDescriptor(ctx, archive, index.Manifests[0], api.LocalOCIMaxManifestBytes)
 	if err != nil {
 		return fail(fmt.Errorf("read OCI manifest: %w", err))
 	}
@@ -84,17 +89,10 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return fail(fmt.Errorf("decode OCI manifest: %w", err))
 	}
-	configName, err := localOCIBlobName(manifest.Config.Digest)
-	if err != nil {
-		return fail(fmt.Errorf("OCI config digest: %w", err))
+	if err := validateLocalOCIManifest(index.Manifests[0], manifest); err != nil {
+		return fail(err)
 	}
-	layerNames := make(map[string]int, len(manifest.Layers))
-	for i, layer := range manifest.Layers {
-		name, err := localOCIBlobName(layer.Digest)
-		if err != nil {
-			return fail(fmt.Errorf("OCI layer %d digest: %w", i, err))
-		}
-		layerNames[name] = i
+	for i := range manifest.Layers {
 		f, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.gz", i)))
 		if err != nil {
 			return fail(fmt.Errorf("create OCI layer %d: %w", i, err))
@@ -102,7 +100,7 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 		layerFiles = append(layerFiles, f)
 	}
 
-	configBytes, err := extractLocalOCIBlobs(archivePath, configName, layerNames, layerFiles)
+	configBytes, err := extractVerifiedLocalOCIBlobs(ctx, archive, manifest, layerFiles)
 	if err != nil {
 		return fail(err)
 	}
@@ -112,6 +110,9 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	}
 	if len(manifest.Layers) != len(config.DiffIDs) {
 		return fail(fmt.Errorf("OCI layer count mismatch: manifest=%d config=%d", len(manifest.Layers), len(config.DiffIDs)))
+	}
+	if err := verifyLocalOCIDiffIDs(ctx, layerFiles, config.DiffIDs, api.LocalOCIMaxUncompressedLayerBytes); err != nil {
+		return fail(err)
 	}
 	for i, f := range layerFiles {
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -136,7 +137,7 @@ func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePat
 }
 
 func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, archivePath, recordedRef string) ([]io.Reader, string, func(), error) {
-	config, layers, cleanup, err := loadLocalOCIArchive(archivePath)
+	config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, archivePath)
 	if err != nil {
 		return nil, "", func() {}, fmt.Errorf("load built OCI image: %w", err)
 	}
@@ -439,88 +440,12 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 }
 
 func readLocalOCIEntry(archivePath, name string, maxBytes int64) ([]byte, error) {
-	// archivePath is an internal builderd output selected from the deployment
-	// row, not a customer-supplied path crossing the host boundary.
-	//nolint:forbidigo // the local OCI reader must open this vetted artifact.
-	f, err := os.Open(archivePath)
+	f, err := openLocalOCIArchive(archivePath)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	tr := tar.NewReader(f)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if hdr.Name != name {
-			continue
-		}
-		limited := io.LimitReader(tr, maxBytes+1)
-		data, err := io.ReadAll(limited)
-		if err != nil {
-			return nil, err
-		}
-		if int64(len(data)) > maxBytes {
-			return nil, fmt.Errorf("entry %q exceeds %d bytes", name, maxBytes)
-		}
-		return data, nil
-	}
-	return nil, fmt.Errorf("entry %q not found", name)
-}
-
-func extractLocalOCIBlobs(archivePath, configName string, layerNames map[string]int, layerFiles []*os.File) ([]byte, error) {
-	// archivePath is an internal builderd output selected from the deployment
-	// row, not a customer-supplied path crossing the host boundary.
-	//nolint:forbidigo // the local OCI reader must open this vetted artifact.
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	tr := tar.NewReader(f)
-	var configBytes []byte
-	seenLayers := make([]bool, len(layerFiles))
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if hdr.Name == configName {
-			configBytes, err = io.ReadAll(io.LimitReader(tr, 16<<20))
-		} else if i, ok := layerNames[hdr.Name]; ok {
-			if seenLayers[i] {
-				return nil, fmt.Errorf("duplicate OCI layer entry %q", hdr.Name)
-			}
-			var copied int64
-			copied, err = io.Copy(layerFiles[i], io.LimitReader(tr, maxLocalOCILayerBytes+1))
-			if err == nil && copied > maxLocalOCILayerBytes {
-				err = fmt.Errorf("OCI layer %q exceeds %d bytes", hdr.Name, maxLocalOCILayerBytes)
-			}
-			seenLayers[i] = true
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(configBytes) == 0 {
-		return nil, fmt.Errorf("OCI config entry %q not found", configName)
-	}
-	for i, seen := range seenLayers {
-		if !seen {
-			return nil, fmt.Errorf("OCI layer %d was not found", i)
-		}
-		if err := layerFiles[i].Sync(); err != nil {
-			return nil, fmt.Errorf("sync OCI layer %d: %w", i, err)
-		}
-	}
-	return configBytes, nil
+	return readLocalOCIEntryFrom(context.Background(), f, name, maxBytes)
 }
 
 func localOCIBlobName(digest string) (string, error) {
@@ -532,6 +457,9 @@ func localOCIBlobName(digest string) (string, error) {
 	if len(hexPart) != 64 {
 		return "", fmt.Errorf("invalid digest %q", digest)
 	}
+	if hexPart != strings.ToLower(hexPart) {
+		return "", fmt.Errorf("noncanonical digest %q", digest)
+	}
 	if _, err := hex.DecodeString(hexPart); err != nil {
 		return "", fmt.Errorf("invalid digest %q: %w", digest, err)
 	}
@@ -541,9 +469,10 @@ func localOCIBlobName(digest string) (string, error) {
 // buildLocalOCIAppLayer converts a source-build OCI tarball into the app's
 // bootable drive1. Source-built apps do not have a registry reference or a
 // platform-runtime prefix to feed through the registry two-drive path, so all
-// layers from this trusted local artifact are applied here.
-func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep *state.Deployment, acct state.Account) error {
-	digest, err := localOCIManifestDigest(dep.RootfsPath)
+// layers from this content-verified local artifact are applied here. Content
+// verification alone does not establish an approved publisher's identity.
+func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep *state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
+	digest, err := localOCIManifestDigestContext(ctx, dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: verify source build digest: %w", err)
 	}
@@ -551,11 +480,15 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if !ok {
 		return fmt.Errorf("imaged: source build digest store is unavailable")
 	}
-	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, dep.RootfsPath, digest); err != nil {
+	exportPath := dep.RootfsPath
+	if source != nil && source.ExportPath != "" {
+		exportPath = source.ExportPath
+	}
+	if err := pins.PinDeploymentBuildDigest(ctx, dep.ID, exportPath, digest); err != nil {
 		return fmt.Errorf("imaged: pin source build digest: %w", err)
 	}
 	dep.ImageDigest = digest
-	config, layers, cleanup, err := loadLocalOCIArchive(dep.RootfsPath)
+	config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: load built OCI image: %w", err)
 	}
@@ -603,18 +536,15 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+	if err := h.publishSourceRootfs(ctx, app, *dep, appsKey, result, source); err != nil {
 		return fmt.Errorf("imaged: stamp local OCI rootfs: %w", err)
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
 		return err
 	}
 	h.log.Info("imaged: build local OCI app layer", "app", app.Slug, "bytes", result.ContentBytes)
-	// production-us hunt #8: only registry-image deploys built companion
-	// layers (buildImageLayer). A source deploy with companions built its
-	// app layer here and then failed at snapshot prime with "sidecar
-	// \"heartbeat\" has no built layer". Build them here too, with the same
-	// fail-on-secret posture as the image path.
+	// Source deployments with companions need the same build and secret-scan
+	// gate as registry-image deployments before snapshot prime can consume them.
 	scFindings, err := h.buildSidecarLayers(ctx, app, *dep, acct)
 	if err != nil {
 		return err

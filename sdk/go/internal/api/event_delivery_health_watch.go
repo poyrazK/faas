@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +18,15 @@ type EventDeliveryHealthWatchOptions struct {
 	Interval, Timeout, MaxAge                              time.Duration
 	OldestPending, Paused, CircuitBlocked, CapacityBlocked time.Duration
 	Retrying, DeadLetters                                  int64
+	LineageStalled, LineageRetentionRisk                   int64
+	LineagePaused                                          time.Duration
+	ReceiptBudgetFull                                      time.Duration
+	// ReceiptBudgetRemaining warns below this many slots; zero disables it.
+	ReceiptBudgetRemaining  int
+	ReceiptBudgetLowSustain time.Duration
+	// Recovery is opt-in. Its remaining-slot threshold must be at least the warning threshold.
+	ReceiptBudgetRecoveryRemaining int
+	ReceiptBudgetRecoverySustain   time.Duration
 	// WaitingReasonCounts and WaitingReasonDurations select known pending reasons.
 	WaitingReasonCounts    map[string]int64
 	WaitingReasonDurations map[string]time.Duration
@@ -31,32 +39,37 @@ type EventDeliveryHealthWatchOptions struct {
 }
 
 type EventDeliveryHealthAlert struct {
-	AppID          string    `json:"app_id"`
-	SubscriptionID string    `json:"subscription_id"`
-	Sequence       uint64    `json:"sequence"`
-	IncidentID     string    `json:"incident_id"`
-	Metric         string    `json:"metric"`
-	Transition     string    `json:"transition"`
-	Reason         string    `json:"reason"`
-	At             time.Time `json:"at"`
-	Value          float64   `json:"value"`
-	Threshold      float64   `json:"threshold"`
-	MinimumSamples int64     `json:"minimum_samples,omitempty"`
-	SustainSeconds float64   `json:"sustain_seconds,omitempty"`
+	RecoveryThreshold      float64   `json:"recovery_threshold,omitempty"`
+	RecoverySustainSeconds float64   `json:"recovery_sustain_seconds,omitempty"`
+	AppID                  string    `json:"app_id"`
+	SubscriptionID         string    `json:"subscription_id"`
+	Sequence               uint64    `json:"sequence"`
+	IncidentID             string    `json:"incident_id"`
+	Metric                 string    `json:"metric"`
+	Transition             string    `json:"transition"`
+	Reason                 string    `json:"reason"`
+	At                     time.Time `json:"at"`
+	Value                  float64   `json:"value"`
+	Threshold              float64   `json:"threshold"`
+	MinimumSamples         int64     `json:"minimum_samples,omitempty"`
+	SustainSeconds         float64   `json:"sustain_seconds,omitempty"`
 }
 
 type EventDeliveryHealthCondition struct {
-	Metric         string    `json:"metric"`
-	State          string    `json:"state"`
-	Value          float64   `json:"value"`
-	Threshold      float64   `json:"threshold"`
-	IncidentID     string    `json:"incident_id,omitempty"`
-	ObservedAt     time.Time `json:"observed_at"`
-	MinimumSamples int64     `json:"minimum_samples,omitempty"`
-	SustainSeconds float64   `json:"sustain_seconds,omitempty"`
+	RecoveryThreshold      float64   `json:"recovery_threshold,omitempty"`
+	RecoverySustainSeconds float64   `json:"recovery_sustain_seconds,omitempty"`
+	Metric                 string    `json:"metric"`
+	State                  string    `json:"state"`
+	Value                  float64   `json:"value"`
+	Threshold              float64   `json:"threshold"`
+	IncidentID             string    `json:"incident_id,omitempty"`
+	ObservedAt             time.Time `json:"observed_at"`
+	MinimumSamples         int64     `json:"minimum_samples,omitempty"`
+	SustainSeconds         float64   `json:"sustain_seconds,omitempty"`
 }
 
 type EventDeliveryHealthWatchResult struct {
+	Confirmations  []EventDeliveryHealthConfirmation   `json:"confirmations,omitempty"`
 	Checkpoint     *EventDeliveryHealthCheckpoint      `json:"checkpoint,omitempty"`
 	SLO            []EventDeliveryHealthSLOObservation `json:"slo,omitempty"`
 	reserved       int
@@ -78,6 +91,10 @@ type deliveryHealthCondition struct {
 	samples                      int
 	sustained                    bool
 	resuming                     bool
+	recoveryFirst                time.Time
+	recoverySamples              int
+	confirmationLossReason       string
+	confirmationLossAt           time.Time
 }
 
 func (o EventDeliveryHealthWatchOptions) validate() error {
@@ -91,18 +108,25 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 		return ErrValidation("invalid delivery health watch interval, timeout or max age")
 	}
 	enabled := false
-	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked} {
+	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused, o.ReceiptBudgetFull} {
 		if d < 0 || d > EventDeliveryHealthWatchThresholdMax || (d > 0 && d < EventDeliveryHealthWatchThresholdMin) {
 			return ErrValidation("invalid delivery health duration threshold")
 		}
 		enabled = enabled || d > 0
 	}
-	for _, n := range []int64{o.Retrying, o.DeadLetters} {
+	for _, n := range []int64{o.Retrying, o.DeadLetters, o.LineageStalled, o.LineageRetentionRisk} {
 		if n < 0 || n > EventDeliveryHealthWatchCountMax {
 			return ErrValidation("invalid delivery health count threshold")
 		}
 		enabled = enabled || n > 0
 	}
+	if o.ReceiptBudgetRemaining < 0 || o.ReceiptBudgetRemaining > EventSubscriptionCapacityCommandMaxReceipts || o.ReceiptBudgetLowSustain < 0 || o.ReceiptBudgetLowSustain > EventDeliveryHealthWatchThresholdMax || (o.ReceiptBudgetLowSustain > 0 && o.ReceiptBudgetLowSustain < EventDeliveryHealthWatchThresholdMin) || (o.ReceiptBudgetRemaining == 0 && o.ReceiptBudgetLowSustain != 0) {
+		return ErrValidation("invalid receipt budget remaining-slot threshold or sustain duration")
+	}
+	if o.ReceiptBudgetRecoveryRemaining < 0 || o.ReceiptBudgetRecoveryRemaining > EventSubscriptionCapacityCommandMaxReceipts || (o.ReceiptBudgetRecoveryRemaining > 0 && o.ReceiptBudgetRecoveryRemaining < o.ReceiptBudgetRemaining) || o.ReceiptBudgetRecoverySustain < 0 || o.ReceiptBudgetRecoverySustain > EventDeliveryHealthWatchThresholdMax || (o.ReceiptBudgetRecoverySustain > 0 && o.ReceiptBudgetRecoverySustain < EventDeliveryHealthWatchThresholdMin) || (o.ReceiptBudgetRemaining == 0 && (o.ReceiptBudgetRecoveryRemaining != 0 || o.ReceiptBudgetRecoverySustain != 0)) {
+		return ErrValidation("invalid receipt budget recovery threshold or sustain duration")
+	}
+	enabled = enabled || o.ReceiptBudgetRemaining > 0
 	known := NewEventPendingWaitingReasonCounts()
 	for reason, n := range o.WaitingReasonCounts {
 		if _, ok := known[reason]; !ok || n <= 0 || n > EventDeliveryHealthWatchCountMax {
@@ -141,10 +165,36 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 		{"paused_seconds", o.Paused.Seconds(), false},
 		{"circuit_blocked_seconds", o.CircuitBlocked.Seconds(), true},
 		{"capacity_blocked_seconds", o.CapacityBlocked.Seconds(), true},
+		{"lineage_retry_stalled_jobs", float64(o.LineageStalled), false},
+		{"lineage_retry_retention_risk_jobs", float64(o.LineageRetentionRisk), false},
+		{"lineage_retry_paused_seconds", o.LineagePaused.Seconds(), true},
+		{"capacity_command_receipt_budget_full_seconds", o.ReceiptBudgetFull.Seconds(), true},
 	} {
 		if v.threshold > 0 {
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, State: "unknown", Threshold: v.threshold}, sustained: v.sustained})
 		}
+	}
+	if o.ReceiptBudgetRemaining > 0 {
+		sustain := o.ReceiptBudgetLowSustain
+		if sustain == 0 {
+			sustain = EventSubscriptionCapacityCommandLowSustainDefault
+		}
+		// Existing lifecycle comparisons are upper-bound breaches. Express remaining
+		// slots below N as retained receipts at least limit-N+1, preserving raw usage.
+		condition := &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "capacity_command_receipt_budget_used_slots", State: "unknown", Threshold: float64(EventSubscriptionCapacityCommandMaxReceipts - o.ReceiptBudgetRemaining + 1), MinimumSamples: 2, SustainSeconds: sustain.Seconds()}}
+		if o.ReceiptBudgetRecoveryRemaining > 0 || o.ReceiptBudgetRecoverySustain > 0 {
+			remaining := o.ReceiptBudgetRecoveryRemaining
+			if remaining == 0 {
+				remaining = o.ReceiptBudgetRemaining
+			}
+			recovery := o.ReceiptBudgetRecoverySustain
+			if recovery == 0 {
+				recovery = EventSubscriptionCapacityCommandRecoverySustainDefault
+			}
+			condition.RecoveryThreshold = float64(EventSubscriptionCapacityCommandMaxReceipts - remaining)
+			condition.RecoverySustainSeconds = recovery.Seconds()
+		}
+		out = append(out, condition)
 	}
 	reasons := make([]string, 0, len(NewEventPendingWaitingReasonCounts()))
 	for reason := range NewEventPendingWaitingReasonCounts() {
@@ -191,6 +241,12 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 	conditions := newDeliveryHealthConditions(o)
 	if o.DurableAlerts {
 		out.Checkpoint = &EventDeliveryHealthCheckpoint{Version: 1, App: app, SubscriptionID: out.SubscriptionID, Window: o.Window, Pending: []EventDeliveryHealthAlert{}}
+		for _, condition := range conditions {
+			if condition.RecoverySustainSeconds > 0 {
+				out.Checkpoint.Version = 2
+				break
+			}
+		}
 	}
 	if err := restoreDeliveryHealthCheckpoint(&out, conditions, app, o); err != nil {
 		out.StopReason = "validation_failure"
@@ -284,9 +340,13 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 
 func collectDeliveryHealthConditions(out *EventDeliveryHealthWatchResult, conditions []*deliveryHealthCondition) {
 	out.Conditions = make([]EventDeliveryHealthCondition, 0, len(conditions))
+	out.Confirmations = nil
 	for _, condition := range conditions {
 		condition.ObservedAt = condition.observedAt
 		out.Conditions = append(out.Conditions, condition.EventDeliveryHealthCondition)
+		if condition.Metric == "capacity_command_receipt_budget_used_slots" || condition.Metric == "capacity_command_receipt_budget_full_seconds" {
+			out.Confirmations = append(out.Confirmations, deliveryHealthReceiptBudgetConfirmation(condition, out.queueFull))
+		}
 	}
 	if out.Checkpoint != nil {
 		out.Checkpoint.AppID = out.AppID
@@ -312,14 +372,14 @@ func deliveryHealthProgress(o EventDeliveryHealthWatchOptions, out EventDelivery
 }
 
 func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, value float64, valid bool, observed, now time.Time, maxAge time.Duration) {
-	valid = valid && !observed.IsZero() && !observed.After(now) && now.Sub(observed) <= maxAge && !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
+	failure := deliveryHealthConfirmationFailure(value, valid, observed, now, maxAge, c.observedAt)
 	gap := !c.localLast.IsZero() && now.Sub(c.localLast) > maxAge
-	monotonic := c.observedAt.IsZero() || observed.After(c.observedAt)
 	if gap {
 		loseDeliveryHealthConfirmation(out, c, now, "sample_gap")
 	}
-	if !valid || !monotonic {
+	if failure != "" {
 		loseDeliveryHealthConfirmation(out, c, now, "evidence_unavailable")
+		c.confirmationLossReason = failure
 		return
 	}
 	c.observedAt, c.localLast = observed, now
@@ -338,6 +398,10 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 		}
 	}
 	c.Value = value
+	if c.Metric == "capacity_command_receipt_budget_used_slots" && c.RecoverySustainSeconds > 0 {
+		updateDeliveryHealthReceiptBudgetRecovery(out, c, value, now)
+		return
+	}
 	breached := value >= c.Threshold && (!c.sustained || c.samples >= 2)
 	if c.SustainSeconds > 0 {
 		breached = updateDeliveryHealthSLOSustain(c, value, now)
@@ -370,6 +434,8 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 }
 
 func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, reason string) {
+	c.confirmationLossReason = reason
+	c.confirmationLossAt = now.UTC()
 	if c.State == "firing" || c.resuming {
 		out.Sequence++
 		appendDeliveryHealthAlert(out, c, now, "confirmation_lost", reason)
@@ -377,10 +443,11 @@ func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deli
 	c.resuming = false
 	c.State, c.IncidentID, c.Value = "unknown", "", 0
 	c.first, c.localLast, c.samples = time.Time{}, time.Time{}, 0
+	c.recoveryFirst, c.recoverySamples = time.Time{}, 0
 }
 
 func appendDeliveryHealthAlert(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, transition, reason string) {
-	alert := EventDeliveryHealthAlert{AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold, MinimumSamples: c.MinimumSamples, SustainSeconds: c.SustainSeconds}
+	alert := EventDeliveryHealthAlert{RecoveryThreshold: c.RecoveryThreshold, RecoverySustainSeconds: c.RecoverySustainSeconds, AppID: out.AppID, SubscriptionID: out.SubscriptionID, Sequence: out.Sequence, IncidentID: c.IncidentID, Metric: c.Metric, Transition: transition, Reason: reason, At: now.UTC(), Value: c.Value, Threshold: c.Threshold, MinimumSamples: c.MinimumSamples, SustainSeconds: c.SustainSeconds}
 	out.Alerts = append(out.Alerts, alert)
 	if out.Checkpoint != nil {
 		out.Checkpoint.Pending = append(out.Checkpoint.Pending, alert)
@@ -418,3 +485,9 @@ const EventDeliveryHealthSLOPercentageMax = 100.0
 const EventExecutionLedgerRetention = 30 * 24 * time.Hour
 const EventExecutionLedgerPruneBatchDefault = 500
 const EventExecutionLedgerPruneBatchMax = 5000
+
+const EventSubscriptionCapacityCommandMaxReceipts = 128
+
+const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second
+
+const EventSubscriptionCapacityCommandRecoverySustainDefault = 30 * time.Second

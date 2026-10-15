@@ -19,7 +19,8 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		DesiredDigest: desired.Digest, ObservedVersion: observed.Version,
 		Changes: []Change{}, BlockingReasons: []string{},
 	}
-	if options.Manager == "" || options.Revision == "" || options.Generation <= 0 || observed.Version < 0 {
+	if options.Manager == "" || options.Revision == "" || options.Generation < 0 || (options.Generation == 0 && !options.Preview) || observed.Version < 0 ||
+		(options.Preview && !strings.HasPrefix(options.Revision, "candidate:")) {
 		return plan, fmt.Errorf("plan needs an authenticated manager, revision, positive generation, and observed version")
 	}
 	// Recompile instead of trusting a caller-provided field list or digest.

@@ -1,0 +1,7 @@
+[Service]
+# ADR-1141 cluster workload-identity signing key; see roles/vmmd_service/tasks/workload_identity.yml.
+Environment=FAAS_WORKLOAD_IDENTITY_KEY_PATH={{ faas_workload_identity_key_path }}
+Environment=FAAS_WORKLOAD_IDENTITY_KEY_ID={{ faas_workload_identity_key_id }}
+{% if faas_workload_identity_issuer | length > 0 %}
+Environment=FAAS_WORKLOAD_IDENTITY_ISSUER={{ faas_workload_identity_issuer }}
+{% endif %}
