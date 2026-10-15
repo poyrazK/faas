@@ -254,7 +254,7 @@ test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated p
 	@$(MAKE) check-state-coverage COVERFILE=$(COVERAGE_DIR)/state.out
 
 .PHONY: check-state-coverage
-check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
+check-state-coverage: ## Assert exact pkg/state package coverage ≥ STATE_EXACT_FLOOR (.claude/ci/coverage_floor.py) from existing profile (default: coverage/cover.out) without re-running tests
 	@COVERFILE="$${COVERFILE:-$(COVERAGE_DIR)/cover.out}" ; \
 	test -f "$$COVERFILE" || (echo "Coverage file $$COVERFILE not found — run tests with -coverprofile first" ; exit 1) ; \
 	python3 .claude/ci/coverage_floor.py --state-only "$$COVERFILE"
