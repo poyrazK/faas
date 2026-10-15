@@ -9,6 +9,7 @@ import (
 // contains only the credential-free native snapshot and is escaped by templates.
 type IssueTrackerSyncPreview struct {
 	AppSlug, IssueID, LinkID, CSRF, Provider, SourceState, ExpectedJSON string
+	InboundOutcome, InboundReason                                       string
 	Status                                                              api.IssueTrackerProviderStatus
 	Policy                                                              api.IssueTrackerAutoSync
 	Aligned                                                             bool
@@ -70,4 +71,36 @@ func (v *IssueTrackerSyncPreview) SetLinearWorkflowChoices(catalog []issuetracke
 	}
 	v.CanEnable = v.Aligned && len(v.OpenWorkflows) > 0 && len(v.ResolvedWorkflows) > 0
 	v.CanPush = v.CanPush && len(v.PushWorkflows) > 0
+}
+
+// IssueTrackerInboundReason describes a read-only assessment, not permission to apply it.
+func IssueTrackerInboundReason(reason string) string {
+	switch reason {
+	case "binding_changed":
+		return "The saved baseline belongs to a different connection or issue group, or no baseline exists. Align and review automatic sync first."
+	case "outbound_pending":
+		return "A Gregale write is unconfirmed. Resolve its outcome before considering an inbound change."
+	case "policy_disabled":
+		return "Automatic sync is disabled. Align and review a baseline before considering inbound changes."
+	case "policy_requires_review":
+		return "The policy is paused for another conflict or access problem. Resolve it before considering inbound changes."
+	case "state_unsupported":
+		return "Ignored or unsupported lifecycles require manual triage."
+	case "provider_identity_changed":
+		return "The provider ticket identity differs from the saved baseline. Review the reference and connection."
+	case "source_changed":
+		return "Gregale changed since the saved baseline. Review both sides; the provider must not overwrite this local change."
+	case "provider_unchanged":
+		return "The provider still matches the saved baseline. There is no inbound change."
+	case "workflow_unmapped":
+		return "The Linear workflow is outside this policy's selected mapping. Review the workflow before synchronizing."
+	case "lifecycle_unchanged":
+		return "The provider workflow changed within the same lifecycle. No Gregale lifecycle change is needed."
+	case "provider_reopened":
+		return "The provider reopened the ticket while Gregale still matches the saved baseline. Reopening is an inbound candidate."
+	case "fixing_deployment_required":
+		return "The provider resolved the ticket while Gregale still matches the saved baseline. Resolution requires an explicitly selected fixing deployment in this app and environment."
+	default:
+		return "Review both lifecycles before considering an inbound change."
+	}
 }

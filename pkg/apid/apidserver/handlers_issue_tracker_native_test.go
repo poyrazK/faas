@@ -932,6 +932,17 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	if saved.Code != 200 || !strings.Contains(saved.Body.String(), "Configured open workflow: <strong>In progress</strong>") || !strings.Contains(saved.Body.String(), "<strong>Done</strong>") {
 		t.Fatal("stored workflow names missing", saved.Code, saved.Body.String())
 	}
+
+	provider.status.State, provider.status.StateID = "resolved", resolved
+	inbound := post("/tracker-sync", previewForm(), true)
+	if inbound.Code != 200 || !strings.Contains(inbound.Body.String(), "Inbound sync preview") || !strings.Contains(inbound.Body.String(), "needs_deployment") || !strings.Contains(inbound.Body.String(), "explicitly selected fixing deployment") || provider.writes != 1 {
+		t.Fatal("inbound resolution assessment missing or wrote provider", inbound.Code, inbound.Body.String())
+	}
+	inboundPolicy := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", issuePath+"/tracker-links/"+link.ID+"/auto-sync", nil, nil), 200)
+	if inboundPolicy.Revision != 1 || !inboundPolicy.Enabled || inboundPolicy.ProviderState != "open" {
+		t.Fatal("preview changed policy", inboundPolicy)
+	}
+	provider.status.State, provider.status.StateID = "open", open
 	if out := post("/tracker-sync", enable, true); out.Code != 409 {
 		t.Fatal("stale policy form accepted", out.Code)
 	}

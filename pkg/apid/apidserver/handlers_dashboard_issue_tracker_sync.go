@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -189,52 +190,54 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	view := dashboard.IssueTrackerSyncPreview{AppSlug: app.Slug, IssueID: r.PathValue("issue_id"), LinkID: r.PathValue("link_id"), CSRF: r.PostForm.Get("csrf_token"), Provider: r.PostForm.Get("provider"), Policy: row.Policy}
+	snapshot, catalog, inbound, ok := s.observeDashboardTrackerPreview(w, r, acct, app, row, &view)
+	if !ok {
+		return
+	}
+	view.SourceState = inbound.SourceState
+	view.InboundOutcome = inbound.Outcome
+	view.InboundReason = dashboard.IssueTrackerInboundReason(inbound.Reason)
+	if !s.finishDashboardTrackerPreview(w, &view, snapshot) {
+		return
+	}
+	s.renderDashboardTrackerPreview(w, r, acct, view, catalog)
+}
+func (s *server) observeDashboardTrackerPreview(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, row state.IssueTrackerAutoSyncRecord, view *dashboard.IssueTrackerSyncPreview) (any, []issuetracker.LinearWorkflowState, issuetrackers.InboundPreview, bool) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(api.IssueTrackerRequestTimeoutSeconds)*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
 	var snapshot any
 	var catalog []issuetracker.LinearWorkflowState
+	var inbound issuetrackers.InboundPreview
+	var err error
 	if view.Provider == "linear" {
 		service, ok := s.nativeLinearStatusService(w, r, acct)
 		if !ok {
-			return
+			return nil, nil, issuetrackers.InboundPreview{}, false
 		}
-		out, choices, e := service.ReadWithWorkflows(ctx)
+		out, choices, assessment, e := service.ReadInboundPreviewWithWorkflows(ctx, row)
+		inbound = assessment
 		catalog = choices
 		err = e
 		snapshot = out
 		view.Status = out.Status
 	} else if view.Provider == "github" {
-		out, e := s.issueTrackerServiceFor(app, acct, view.IssueID, view.LinkID).Read(ctx)
+		out, assessment, e := s.issueTrackerServiceFor(app, acct, view.IssueID, view.LinkID).ReadInboundPreview(ctx, row)
+		inbound = assessment
 		err = e
 		snapshot = out
 		view.Status = out.Status
 	} else {
 		api.WriteProblem(w, api.ErrValidation("provider must be GitHub or Linear"))
-		return
+		return nil, nil, issuetrackers.InboundPreview{}, false
 	}
 	if err != nil {
 		writeNativeIssueTrackerError(w, err)
-		return
+		return nil, nil, issuetrackers.InboundPreview{}, false
 	}
-	if !s.finishDashboardTrackerPreview(w, r, app, &view, snapshot) {
-		return
-	}
-	s.renderDashboardTrackerPreview(w, r, acct, view, catalog)
+	return snapshot, catalog, inbound, true
 }
-func (s *server) finishDashboardTrackerPreview(w http.ResponseWriter, r *http.Request, app state.App, view *dashboard.IssueTrackerSyncPreview, snapshot any) bool {
-	store, ok := s.store.(state.IssueStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("issues unavailable"))
-		return false
-	}
-	now := time.Now().UTC()
-	detail, err := store.GetIssueDetail(r.Context(), app.ID, view.IssueID, now.Add(-time.Hour), now, state.IssueDetailCursors{})
-	if err != nil {
-		writeIssueError(w, err)
-		return false
-	}
-	view.SourceState = detail.Issue.State
+func (s *server) finishDashboardTrackerPreview(w http.ResponseWriter, view *dashboard.IssueTrackerSyncPreview, snapshot any) bool {
 	view.Aligned = view.SourceState == view.Status.State && (view.SourceState == "open" || view.SourceState == "resolved")
 	view.CanPush = !view.Policy.Enabled && !view.Aligned && (view.SourceState == "open" || view.SourceState == "resolved")
 	data, err := json.Marshal(snapshot)

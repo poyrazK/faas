@@ -1359,3 +1359,21 @@ Authorization state expires after ten minutes and cannot repeat a code exchange.
 If the callback is interrupted, declined or expired, start consent again. Pending
 credentials are sealed and removed by maintenance after expiry. Team selection
 requires a complete catalog of at most 200 teams, read in pages of 50.
+
+### Preview inbound tracker changes
+
+The owner's **Review tracker sync** action now includes an **Inbound sync preview**
+for GitHub and Linear. It compares a fresh provider read with the saved automatic
+sync baseline while checking that the Gregale lifecycle, connection and issue
+group stay stable throughout the read.
+
+A provider reopening can be shown as an inbound candidate. A provider resolution
+is shown as needing an explicitly selected fixing deployment in the same app and
+environment. If Gregale also changed, an outbound write is unconfirmed, a Linear
+workflow falls outside the selected mapping, or the baseline belongs to an older
+connection/group, the preview explains why review is required.
+
+This preview does not apply inbound changes, enable inbound sync, resume a paused
+policy or advance its baseline. No matching baseline means review and alignment
+are needed first. Automatic inbound application remains a follow-up; it needs an
+atomic local snapshot check, deployment evidence and explicit per-link opt-in.
