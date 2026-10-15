@@ -106,7 +106,7 @@ func (s *PgStore) ListIssueTrackerInboundDeployments(ctx context.Context, app, a
 	}
 	out := make([]IssueTrackerFixingDeployment, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, IssueTrackerFixingDeployment{ID: issueID(row.ID), CommitSHA: row.CommitSha.String, CreatedAt: row.CreatedAt.Time})
+		out = append(out, IssueTrackerFixingDeployment{ID: issueID(row.ID), CommitSHA: row.CommitSha.String, CreatedAt: row.CreatedAt.Time, Status: row.Status, LastSeenAt: row.LastSeenAt.Time, ObservedEvents: row.ObservedEvents})
 	}
 	return out, nil
 }

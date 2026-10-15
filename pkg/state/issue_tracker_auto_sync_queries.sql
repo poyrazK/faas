@@ -34,7 +34,11 @@ SELECT * FROM issue_tracker_auto_sync WHERE link_id=$1 FOR UPDATE;
 -- name: IssueTrackerInboundApplied :exec
 UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,baseline=$2,source_state=$3,outcome='disabled',reason='',pending_state='',pending_source_revision=0,claim_id=NULL,claim_until=NULL,last_checked_at=now(),updated_at=now() WHERE link_id=$1;
 -- name: IssueTrackerInboundDeployments :many
-SELECT d.id,d.commit_sha,d.created_at FROM deployments d JOIN apps a ON a.id=d.app_id
+SELECT d.id,d.commit_sha,d.created_at,d.status,
+ COALESCE(i.last_seen_at,'epoch'::timestamptz)::timestamptz AS last_seen_at,
+ COALESCE((SELECT sum(ir.event_count)::bigint FROM issue_releases ir
+ WHERE ir.deployment_id=d.id AND ir.issue_id IN (SELECT i.id UNION ALL SELECT gl.issue_id FROM issue_group_links gl WHERE gl.canonical_issue_id=i.id)),0)::bigint AS observed_events
+FROM deployments d JOIN apps a ON a.id=d.app_id
 JOIN issue_group_rollups i ON i.app_id=a.id AND i.id=sqlc.arg(issue_id)
 WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND (i.environment='application' OR EXISTS (
@@ -56,3 +60,23 @@ WHERE g.app_id=sqlc.arg(app_id) FOR UPDATE OF g;
 UPDATE issue_tracker_auto_sync SET baseline=sqlc.arg(baseline),source_state='open',source_revision=sqlc.arg(source_revision),
  observed_state='open',pending_state='',pending_source_revision=0,outcome='applied',reason='',claim_id=NULL,claim_until=NULL,last_checked_at=clock_timestamp(),next_check_at=sqlc.arg(next_check_at),updated_at=clock_timestamp()
 WHERE link_id=sqlc.arg(link_id) AND enabled AND revision=sqlc.arg(revision) AND claim_id=sqlc.arg(claim_id) AND claim_until>clock_timestamp() RETURNING *;
+
+-- name: IssueTrackerReviewQueue :many
+SELECT p.link_id,p.direction,p.outcome,p.reason,p.pending_state,p.observed_state,p.source_state,p.revision,
+ p.last_checked_at,p.next_check_at,p.claim_until,p.updated_at,
+ l.provider,l.external_key,l.title AS ticket_title,l.created_at,
+ i.id AS issue_id,i.title AS issue_title,i.environment,i.state AS issue_state,
+ (p.source_issue_id<>i.id)::boolean AS regrouped
+FROM issue_tracker_auto_sync p JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+JOIN issue_tracker_links l ON l.id=p.link_id
+JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id
+JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
+WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.deleted_at IS NULL AND a.status<>'deleted'
+ AND p.enabled AND (p.reason='fixing_deployment_required' OR p.outcome IN ('blocked','conflict','error') OR p.pending_state<>'')
+ AND (sqlc.arg(category)::text='all'
+  OR (sqlc.arg(category)='closures' AND p.reason='fixing_deployment_required')
+  OR (sqlc.arg(category)='conflicts' AND p.outcome='conflict')
+  OR (sqlc.arg(category)='pending' AND p.pending_state<>'')
+  OR (sqlc.arg(category)='paused' AND p.outcome IN ('blocked','error') AND p.reason<>'fixing_deployment_required'))
+ AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (l.created_at,l.id)<(sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
+ORDER BY l.created_at DESC,l.id DESC LIMIT sqlc.arg(page_limit);

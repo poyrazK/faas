@@ -58845,3 +58845,9 @@ ALTER TABLE ONLY public.issue_tracker_source_guards
 
 ALTER TABLE ONLY public.issue_tracker_source_guards
     ADD CONSTRAINT issue_tracker_source_guards_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_auto_sync_review_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_auto_sync_review_idx ON public.issue_tracker_auto_sync USING btree (app_id, link_id) WHERE (enabled AND ((reason = 'fixing_deployment_required'::text) OR (outcome = ANY (ARRAY['blocked'::text, 'conflict'::text, 'error'::text])) OR (pending_state <> ''::text)));

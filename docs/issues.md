@@ -1435,3 +1435,28 @@ align the lifecycles and explicitly re-enable. Conflicts and holds stay paused u
 review. Disable remains available without provider access. A both-direction write
 with an unknown outcome is observed without redispatch; inspect the ticket before
 resetting its policy. Already dispatched writes cannot be recalled by disabling.
+
+### Review held closures across an app
+
+Open **Review tracker sync problems** from the app's Issues page. The owner-only
+queue lists enabled links needing attention, with filters for held provider
+closures, conflicts, unconfirmed writes, and other blocks or errors. It shows the
+current Gregale lifecycle, last saved provider observation, direction, check time
+and reason. Healthy and disabled policies are omitted. Errors may still be retried
+by the worker. The queue shows saved observations; loading or filtering it does
+not contact GitHub or Linear or modify issues.
+
+Choose **Refresh provider status and review fixing deployment** on a held closure.
+The existing review obtains a fresh provider snapshot before offering confirmation.
+The deployment selector is scoped to the app and issue environment. Its evidence
+shows commit, deployment status, creation time, latest issue-group occurrence, and
+recorded occurrences on each deployment, including grouped original issues.
+
+Within the recent deployment list, live deployments created after the latest
+recorded occurrence with no recorded occurrences of this group are suggested first.
+No deployment is selected automatically. Creation time is not rollout time, and
+sampling or retention can explain missing occurrences; these suggestions do not
+prove a fix. Explicitly choose the deployment that fixes the issue and confirm the
+pull. Confirmation rechecks issue intent, policy, provider and deployment scope;
+it resolves Gregale and pauses automatic sync together. Conflicts, unconfirmed
+writes and live worker leases must be reviewed before applying a pull.

@@ -28,8 +28,11 @@ func IssueTrackerInboundChanged() error {
 }
 
 type IssueTrackerFixingDeployment struct {
-	ID, CommitSHA string
-	CreatedAt     time.Time
+	ID, CommitSHA  string
+	CreatedAt      time.Time
+	Status         string
+	LastSeenAt     time.Time
+	ObservedEvents int64
 }
 
 // IssueTrackerInboundAutoStore separates durable source intent from worker claims

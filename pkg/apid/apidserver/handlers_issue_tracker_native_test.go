@@ -1773,3 +1773,123 @@ func TestNativeIssueAutomaticReopenConsumesClaimAtomically(t *testing.T) {
 		t.Fatal("waited edit overwritten", afterRace, err)
 	}
 }
+
+func TestNativeIssueTrackerReviewQueueScopesFiltersAndPages(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "tracker-review")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	token := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "ReviewQueue", Message: "failed"}, map[string]string{"Authorization": "Bearer " + token.Token}), 202)
+	st := state.NewPgStore(*e.Pool())
+	// Seed one policy per original issue to exercise app-wide paging without
+	// exceeding the per-issue tracker-link quota.
+	for n := 0; n < api.IssuePageSize+1; n++ {
+		id := uuid.NewString()
+		if n == 0 {
+			id = accepted.IssueID
+		} else {
+			_, err := (*e.Pool()).Exec(t.Context(), `INSERT INTO app_issues(id,account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at)
+    SELECT $2,account_id,app_id,environment,$3,grouping_version,'Queue sibling',first_seen_at,last_seen_at FROM app_issues WHERE id=$1`, accepted.IssueID, id, fmt.Sprintf("%064x", n))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		link, err := st.PutIssueTrackerLink(t.Context(), app.ID, app.AccountID, id, app.AccountID, api.PutIssueTrackerLinkRequest{URL: fmt.Sprintf("https://github.com/owner/repo/issues/%d", n+100)}, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = st.ConfigureIssueTrackerAutoSync(t.Context(), app.ID, app.AccountID, id, state.IssueTrackerAutoSyncRecord{BindingFingerprint: strings.Repeat("a", 64), Baseline: api.IssueTrackerProviderStatus{Provider: "github", ID: fmt.Sprint(n + 100), URL: link.URL, State: "open"}, Policy: api.IssueTrackerAutoSync{LinkID: link.ID, Enabled: true, SourceState: "open", SourceIssueID: id}}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outcome, reason, pending := "blocked", "connection_required", ""
+		if n == 0 {
+			reason = "fixing_deployment_required"
+		}
+		if n == 1 {
+			outcome, reason = "conflict", "source_intent_changed"
+		}
+		if n == 2 {
+			outcome, reason, pending = "pending", "", "resolved"
+		}
+		if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE issue_tracker_auto_sync SET outcome=$2,reason=$3,pending_state=$4,observed_state='resolved' WHERE link_id=$1", link.ID, outcome, reason, pending); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := st.ListIssueTrackerReviews(t.Context(), app.ID, app.AccountID, "all", state.IssueCursor{})
+	if err != nil || len(first.Items) != api.IssuePageSize || first.NextCursor == "" {
+		t.Fatal(first, err)
+	}
+	cursor, err := state.DecodeIssueCursor(first.NextCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.ListIssueTrackerReviews(t.Context(), app.ID, app.AccountID, "all", cursor)
+	if err != nil || len(second.Items) != 1 || second.NextCursor != "" {
+		t.Fatal(second, err)
+	}
+	seen := map[string]bool{}
+	for _, row := range first.Items {
+		seen[row.LinkID] = true
+	}
+	if seen[second.Items[0].LinkID] {
+		t.Fatal("duplicate page boundary")
+	}
+	for category, want := range map[string]int{"closures": 1, "conflicts": 1, "pending": 1, "paused": api.IssuePageSize - 2} {
+		page, err := st.ListIssueTrackerReviews(t.Context(), app.ID, app.AccountID, category, state.IssueCursor{})
+		if err != nil || len(page.Items) != want {
+			t.Fatal(category, page, err)
+		}
+		if _, err = st.ListIssueTrackerReviews(t.Context(), app.ID, app.AccountID, category, cursor); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatal("cursor crossed filter", category, err)
+		}
+	}
+	foreign, err := st.ListIssueTrackerReviews(t.Context(), app.ID, uuid.NewString(), "all", state.IssueCursor{})
+	if err != nil || len(foreign.Items) != 0 {
+		t.Fatal("foreign owner read queue", foreign, err)
+	}
+	if _, err = st.ListIssueTrackerReviews(t.Context(), app.ID, app.AccountID, "unknown", state.IssueCursor{}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal(err)
+	}
+	// Queue requests only read saved observations, even without provider clients.
+	pageURL := "/dashboard/apps/" + app.Slug + "/issues/tracker-review"
+	get := func(path string, auth bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		if auth {
+			e.AddAdminSession(t, req)
+		}
+		out := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(out, req)
+		return out
+	}
+	response := get(pageURL+"?category=closures", true)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "review fixing deployment") {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	if len(response.Result().Cookies()) == 0 {
+		t.Fatal("missing CSRF cookie")
+	}
+	if r := get(pageURL+"?category=unknown", true); r.Code != 400 {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	if r := get(pageURL+"?category=closures&cursor="+url.QueryEscape(first.NextCursor), true); r.Code != 400 {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	if r := get(pageURL, false); r.Code == 200 {
+		t.Fatal("anonymous queue access")
+	}
+	// Evidence includes occurrences on the reporting deployment, not just traffic
+	// from unrelated groups; named environments still require release membership.
+	choices, err := st.ListIssueTrackerInboundDeployments(t.Context(), app.ID, app.AccountID, accepted.IssueID)
+	if err != nil || len(choices) != 1 || choices[0].ID != dep.ID || choices[0].ObservedEvents != 1 || choices[0].LastSeenAt.IsZero() {
+		t.Fatal(choices, err)
+	}
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE app_issues SET environment='staging' WHERE id=$1", accepted.IssueID); err != nil {
+		t.Fatal(err)
+	}
+	choices, err = st.ListIssueTrackerInboundDeployments(t.Context(), app.ID, app.AccountID, accepted.IssueID)
+	if err != nil || len(choices) != 0 {
+		t.Fatal("off-environment suggestion", choices, err)
+	}
+}

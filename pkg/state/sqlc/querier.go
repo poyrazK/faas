@@ -1695,6 +1695,7 @@ type Querier interface {
 	IssueTrackerLinearGet(ctx context.Context, db DBTX, arg IssueTrackerLinearGetParams) (IssueTrackerLinearConnection, error)
 	IssueTrackerLinearOwner(ctx context.Context, db DBTX, arg IssueTrackerLinearOwnerParams) (pgtype.UUID, error)
 	IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueTrackerLinearPutParams) (IssueTrackerLinearConnection, error)
+	IssueTrackerReviewQueue(ctx context.Context, db DBTX, arg IssueTrackerReviewQueueParams) ([]IssueTrackerReviewQueueRow, error)
 	IssueTrackerSourceRevision(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionParams) (int64, error)
 	// Acquire the fence only. Read the effective group revision in a new statement
 	// after this lock returns, so a wait cannot preserve an older subquery snapshot.

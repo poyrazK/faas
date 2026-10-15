@@ -47,7 +47,7 @@ func (s *server) finishDashboardInboundPreview(w http.ResponseWriter, r *http.Re
 			writeNativeIssueTrackerError(w, err)
 			return false
 		}
-		view.FixingDeployments = choices
+		view.FixingDeployments = dashboard.SuggestFixingDeployments(choices)
 		view.CanPull = len(choices) > 0
 	}
 	return true

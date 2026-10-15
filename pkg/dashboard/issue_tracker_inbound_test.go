@@ -2,10 +2,12 @@ package dashboard
 
 import (
 	"bytes"
-	statepkg "github.com/onebox-faas/faas/pkg/state"
+
 	"html/template"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestInboundAssessmentRendersWithoutApplyControl(t *testing.T) {
@@ -36,10 +38,10 @@ func TestInboundPullFormRequiresGuardAndDeploymentSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, state := range []string{"open", "resolved"} {
-		t.Run(state, func(t *testing.T) {
-			view := IssueTrackerSyncPreview{Provider: "linear", CanPull: true, InboundOutcome: "candidate", InboundGuardRevision: 71, ExpectedJSON: `{"value":"<script>attack</script>"}`, FixingDeployments: []statepkg.IssueTrackerFixingDeployment{{ID: "deployment", CommitSHA: "<script>commit</script>"}}}
-			view.Status.State = state
+	for _, lifecycle := range []string{"open", "resolved"} {
+		t.Run(lifecycle, func(t *testing.T) {
+			view := IssueTrackerSyncPreview{Provider: "linear", CanPull: true, InboundOutcome: "candidate", InboundGuardRevision: 71, ExpectedJSON: `{"value":"<script>attack</script>"}`, FixingDeployments: []IssueTrackerDeploymentSuggestion{{IssueTrackerFixingDeployment: state.IssueTrackerFixingDeployment{ID: "deployment", CommitSHA: "<script>commit</script>"}}}}
+			view.Status.State = lifecycle
 			var out bytes.Buffer
 			if err := tmpl.ExecuteTemplate(&out, "issue_tracker_sync.html", Page{Data: view}); err != nil {
 				t.Fatal(err)
@@ -53,7 +55,7 @@ func TestInboundPullFormRequiresGuardAndDeploymentSelection(t *testing.T) {
 			if strings.Contains(body, `<script>attack</script>`) || strings.Contains(body, `<script>commit</script>`) {
 				t.Fatal("unescaped pull evidence")
 			}
-			if strings.Contains(body, `name="fixed_deployment_id"`) != (state == "resolved") {
+			if strings.Contains(body, `name="fixed_deployment_id"`) != (lifecycle == "resolved") {
 				t.Fatal("deployment selection shown for wrong action", body)
 			}
 		})

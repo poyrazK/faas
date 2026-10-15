@@ -378,7 +378,11 @@ func (q *Queries) IssueTrackerInboundApplied(ctx context.Context, db DBTX, arg I
 }
 
 const issueTrackerInboundDeployments = `-- name: IssueTrackerInboundDeployments :many
-SELECT d.id,d.commit_sha,d.created_at FROM deployments d JOIN apps a ON a.id=d.app_id
+SELECT d.id,d.commit_sha,d.created_at,d.status,
+ COALESCE(i.last_seen_at,'epoch'::timestamptz)::timestamptz AS last_seen_at,
+ COALESCE((SELECT sum(ir.event_count)::bigint FROM issue_releases ir
+ WHERE ir.deployment_id=d.id AND ir.issue_id IN (SELECT i.id UNION ALL SELECT gl.issue_id FROM issue_group_links gl WHERE gl.canonical_issue_id=i.id)),0)::bigint AS observed_events
+FROM deployments d JOIN apps a ON a.id=d.app_id
 JOIN issue_group_rollups i ON i.app_id=a.id AND i.id=$1
 WHERE a.id=$2 AND a.account_id=$3 AND a.deleted_at IS NULL AND a.status<>'deleted'
 AND (i.environment='application' OR EXISTS (
@@ -395,9 +399,12 @@ type IssueTrackerInboundDeploymentsParams struct {
 }
 
 type IssueTrackerInboundDeploymentsRow struct {
-	ID        pgtype.UUID
-	CommitSha pgtype.Text
-	CreatedAt pgtype.Timestamptz
+	ID             pgtype.UUID
+	CommitSha      pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	Status         string
+	LastSeenAt     pgtype.Timestamptz
+	ObservedEvents int64
 }
 
 func (q *Queries) IssueTrackerInboundDeployments(ctx context.Context, db DBTX, arg IssueTrackerInboundDeploymentsParams) ([]IssueTrackerInboundDeploymentsRow, error) {
@@ -414,7 +421,14 @@ func (q *Queries) IssueTrackerInboundDeployments(ctx context.Context, db DBTX, a
 	items := []IssueTrackerInboundDeploymentsRow{}
 	for rows.Next() {
 		var i IssueTrackerInboundDeploymentsRow
-		if err := rows.Scan(&i.ID, &i.CommitSha, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.CommitSha,
+			&i.CreatedAt,
+			&i.Status,
+			&i.LastSeenAt,
+			&i.ObservedEvents,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -486,6 +500,109 @@ func (q *Queries) IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, li
 		&i.ObservedState,
 	)
 	return i, err
+}
+
+const issueTrackerReviewQueue = `-- name: IssueTrackerReviewQueue :many
+SELECT p.link_id,p.direction,p.outcome,p.reason,p.pending_state,p.observed_state,p.source_state,p.revision,
+ p.last_checked_at,p.next_check_at,p.claim_until,p.updated_at,
+ l.provider,l.external_key,l.title AS ticket_title,l.created_at,
+ i.id AS issue_id,i.title AS issue_title,i.environment,i.state AS issue_state,
+ (p.source_issue_id<>i.id)::boolean AS regrouped
+FROM issue_tracker_auto_sync p JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+JOIN issue_tracker_links l ON l.id=p.link_id
+JOIN issue_group_assignments ga ON ga.original_issue_id=l.issue_id
+JOIN app_issues i ON i.id=ga.canonical_issue_id AND i.app_id=a.id
+WHERE a.id=$1 AND a.account_id=$2 AND a.deleted_at IS NULL AND a.status<>'deleted'
+ AND p.enabled AND (p.reason='fixing_deployment_required' OR p.outcome IN ('blocked','conflict','error') OR p.pending_state<>'')
+ AND ($3::text='all'
+  OR ($3='closures' AND p.reason='fixing_deployment_required')
+  OR ($3='conflicts' AND p.outcome='conflict')
+  OR ($3='pending' AND p.pending_state<>'')
+  OR ($3='paused' AND p.outcome IN ('blocked','error') AND p.reason<>'fixing_deployment_required'))
+ AND ($4::timestamptz IS NULL OR (l.created_at,l.id)<($4,$5::uuid))
+ORDER BY l.created_at DESC,l.id DESC LIMIT $6
+`
+
+type IssueTrackerReviewQueueParams struct {
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	Category   string
+	CursorTime pgtype.Timestamptz
+	CursorID   pgtype.UUID
+	PageLimit  int32
+}
+
+type IssueTrackerReviewQueueRow struct {
+	LinkID        pgtype.UUID
+	Direction     string
+	Outcome       string
+	Reason        string
+	PendingState  string
+	ObservedState string
+	SourceState   string
+	Revision      int64
+	LastCheckedAt pgtype.Timestamptz
+	NextCheckAt   pgtype.Timestamptz
+	ClaimUntil    pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	Provider      string
+	ExternalKey   string
+	TicketTitle   string
+	CreatedAt     pgtype.Timestamptz
+	IssueID       pgtype.UUID
+	IssueTitle    string
+	Environment   string
+	IssueState    string
+	Regrouped     bool
+}
+
+func (q *Queries) IssueTrackerReviewQueue(ctx context.Context, db DBTX, arg IssueTrackerReviewQueueParams) ([]IssueTrackerReviewQueueRow, error) {
+	rows, err := db.Query(ctx, issueTrackerReviewQueue,
+		arg.AppID,
+		arg.AccountID,
+		arg.Category,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueTrackerReviewQueueRow{}
+	for rows.Next() {
+		var i IssueTrackerReviewQueueRow
+		if err := rows.Scan(
+			&i.LinkID,
+			&i.Direction,
+			&i.Outcome,
+			&i.Reason,
+			&i.PendingState,
+			&i.ObservedState,
+			&i.SourceState,
+			&i.Revision,
+			&i.LastCheckedAt,
+			&i.NextCheckAt,
+			&i.ClaimUntil,
+			&i.UpdatedAt,
+			&i.Provider,
+			&i.ExternalKey,
+			&i.TicketTitle,
+			&i.CreatedAt,
+			&i.IssueID,
+			&i.IssueTitle,
+			&i.Environment,
+			&i.IssueState,
+			&i.Regrouped,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const issueTrackerSourceRevision = `-- name: IssueTrackerSourceRevision :one
