@@ -265,3 +265,11 @@ For an existing outbox, explicitly re-run the opt-in DDL to add
 Use `GetEventOutboxHealth` for bounded counts and eligibility ages, and
 `WatchEventOutboxHealth` for sustained local backlog, stall, blocked and expiry
 notifications. See [coverage, freshness and alert semantics](event-outbox-health.md).
+
+## Retained control history
+
+Supply `CommandID` on reconciliation or resume options to record the result
+atomically with any local state change and replay it after a lost response.
+See [durable control receipts](event-outbox-control-history.md) for schema setup,
+parameter binding, lookup, pagination, and retention. Calls without an ID preserve
+the earlier behavior and do not write history.

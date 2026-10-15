@@ -1264,3 +1264,8 @@ metadata. Unavailable verification never automatically resumes publication.
 `WatchEventOutboxHealth` emits sustained local backlog, stall, blocked and expiry
 alerts. See [the health guide](../../docs/event-outbox-health.md) for completeness,
 freshness and existing-installation index requirements.
+
+Set `CommandID` on outbox reconciliation/resume options for atomic retained
+control results. `GetEventOutboxControlReceipt` recovers a command result and
+`ListEventOutboxControlHistory` paginates one publication's retained controls.
+See [command replay and retention](../../docs/event-outbox-control-history.md).

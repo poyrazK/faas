@@ -19,7 +19,7 @@ import (
 var EventOutboxSchema string
 
 var (
-	ErrEventOutboxCommitUnknown = errors.New("event outbox claim commit outcome is unknown")
+	ErrEventOutboxCommitUnknown = errors.New("event outbox transaction commit outcome is unknown")
 	ErrEventOutboxStore         = errors.New("event outbox storage operation failed")
 	ErrEventOutboxConflict      = errors.New("event outbox immutable publication conflicts")
 	ErrEventOutboxEmpty         = errors.New("no event outbox publication is due")

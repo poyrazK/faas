@@ -13,8 +13,10 @@ import (
 )
 
 // EventOutboxReconciliationOptions optionally supplies a renamed app's current
-// slug for read-only verification. Neither option changes the saved request.
+// slug for read-only verification. Options never change saved event content.
 type EventOutboxReconciliationOptions struct {
+	// CommandID enables durable history and result replay; install updated DDL first.
+	CommandID      string
 	AppSlug        string
 	RequestTimeout time.Duration
 }
@@ -42,6 +44,20 @@ func eventOutboxKey(key string) bool {
 // Live claims are rejected; settlement compares the original metadata and digest
 // so concurrent recovery/control changes invalidate the verification snapshot.
 func ReconcileEventOutbox(ctx context.Context, db *sql.DB, client *Client, accountID, appID, key string, options EventOutboxReconciliationOptions) (EventOutboxReconciliationResult, error) {
+	if ctx == nil || db == nil || client == nil || client.Client == nil {
+		return EventOutboxReconciliationResult{}, ErrInvalidEventConsumerRequest
+	}
+	if options.CommandID != "" {
+		return reconcileEventOutboxControl(ctx, db, client, accountID, appID, key, options)
+	}
+	return reconcileEventOutbox(ctx, db, client, accountID, appID, key, options)
+}
+
+type eventOutboxControlStore interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func reconcileEventOutbox(ctx context.Context, db eventOutboxControlStore, client *Client, accountID, appID, key string, options EventOutboxReconciliationOptions) (EventOutboxReconciliationResult, error) {
 	var out EventOutboxReconciliationResult
 	if ctx == nil || db == nil || client == nil || client.Client == nil || !eventOutboxKey(key) {
 		return out, ErrInvalidEventConsumerRequest
@@ -134,6 +150,8 @@ func ReconcileEventOutbox(ctx context.Context, db *sql.DB, client *Client, accou
 // EventOutboxResumeOptions requires a status snapshot read by the operator.
 // AppSlug may correct an app rename; the immutable request retains its UUID guard.
 type EventOutboxResumeOptions struct {
+	// CommandID enables durable history and result replay; install updated DDL first.
+	CommandID         string
 	ExpectedUpdatedAt time.Time
 	ExpectedAttempts  int64
 	AppSlug           string
@@ -143,6 +161,16 @@ type EventOutboxResumeOptions struct {
 // It sends no HTTP and performs no automatic inference from unavailable evidence.
 // Stale snapshots, terminal confirmation, live claims and expiry cannot resume.
 func ResumeEventOutbox(ctx context.Context, db *sql.DB, accountID, appID, key string, options EventOutboxResumeOptions) (EventOutboxStatus, error) {
+	if ctx == nil || db == nil {
+		return EventOutboxStatus{}, ErrInvalidEventConsumerRequest
+	}
+	if options.CommandID != "" {
+		return resumeEventOutboxControl(ctx, db, accountID, appID, key, options)
+	}
+	return resumeEventOutbox(ctx, db, accountID, appID, key, options)
+}
+
+func resumeEventOutbox(ctx context.Context, db eventOutboxControlStore, accountID, appID, key string, options EventOutboxResumeOptions) (EventOutboxStatus, error) {
 	var zero EventOutboxStatus
 	if ctx == nil || db == nil || !eventOutboxKey(key) || options.ExpectedUpdatedAt.IsZero() || options.ExpectedAttempts < 0 || options.AppSlug != "" && !eventOutboxSlug(options.AppSlug) {
 		return zero, ErrInvalidEventConsumerRequest
