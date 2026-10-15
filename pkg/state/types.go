@@ -3299,7 +3299,21 @@ const (
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
 	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
+	// OperatorIntentKindDatabaseMove moves a native managed database to
+	// another database node (ADR-1027). TargetID is the database id,
+	// AccountID is nil, and Metadata names the target node (empty: the
+	// active node with the most free volume capacity). schedd's database
+	// scheduler parks the database and records the move before stamping
+	// the intent; the copy finishes in the background.
+	OperatorIntentKindDatabaseMove OperatorIntentKind = "database_move"
 )
+
+// DatabaseMoveIntentMetadata is a database_move intent's metadata: the
+// node to move to, or empty for the active node with the most free volume
+// capacity.
+type DatabaseMoveIntentMetadata struct {
+	TargetNode string `json:"target_node,omitempty"`
+}
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
 // apid inserts customer-workload or fleet-level node intents, emits

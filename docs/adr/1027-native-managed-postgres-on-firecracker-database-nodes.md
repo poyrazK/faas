@@ -926,8 +926,23 @@ an abort only has to discard the copy.
   unsampled, keeping its last rate, rather than sampling it short. The
   per-database archive quota still counts only the node's copy, because it
   guards the node's disk.
-- **Known gap.** Moves have no operator RPC yet; only evacuation drives
-  them.
+- **Operator moves.** `gregalectl database-nodes move --database <id>
+  [--node <id>]` POSTs `/v1/admin/ops/databases/{id}/move`. The route
+  takes admin mutation authentication and `confirm=true`; its handler is
+  in `pkg/apid/managedpg`. apid only validates the request and records a
+  `database_move` operator intent (migration widens
+  `operator_intents_kind_check`). schedd's intent dispatcher calls the
+  database scheduler's `StartMove`. Intent claims are reclaimed after 5
+  minutes while a copy can take hours, so `StartMove` returns once the
+  move is durable: the database parked and `moving` under its lease. The
+  copy, switch and wake finish in the background under the per-database
+  lock.
+  - A second request waits at most `StartMoveWait` (30 s) for that lock,
+    then fails busy.
+  - The outcome is the database's node or `last_error`, plus
+    `schedd_database_moves_total`.
+  - A schedd that stops mid-copy aborts the move; `SettleMoves` finishes
+    the abort when the lease lapses.
 - The database-node method allowlist had missed four RPCs added after it
   (`ListDatabaseVolumes`, `GrowDatabaseVolume`, `PruneDatabaseArchive`,
   `DatabaseArchiveBytes`); a test now derives it from the service

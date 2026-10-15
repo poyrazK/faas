@@ -1626,7 +1626,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(v, nil)
 	}
-	stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, ops, log)
+	databases, stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, ops, log)
 	if err != nil {
 		return err
 	}
@@ -1688,7 +1688,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// systemd watchdog (started next to NotifyReadyWhen below) stops
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
-	loop := sched.NewLoop(pool, engine, log).
+	loop := sched.NewLoop(pool, engine, log)
+	if databases != nil {
+		loop.WithDatabaseMover(databaseMover{sched: databases})
+	}
+	loop = loop.
 		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).

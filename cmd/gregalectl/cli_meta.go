@@ -221,6 +221,26 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		// ADR-1027: native managed-PostgreSQL database nodes. A node's
+		// lifecycle lives in the manifest; moving one database is a
+		// durable operator intent schedd's database scheduler runs.
+		Name:    dispatchDatabaseNodes,
+		DocSlug: "database-nodes",
+		Short:   "Native managed-PostgreSQL database nodes (database-nodes move)",
+		Subcommands: []cliSub{
+			{
+				Name:  "move",
+				Short: "Move a native database to another database node (POST /v1/admin/ops/databases/{id}/move; durable operator intent)",
+				Flags: []cliFlag{
+					{Name: "database", Short: "the native database's id (required)"},
+					{Name: "node", Short: "target database node (default: the active node with the most free volume capacity)"},
+					{Name: "reason", Short: "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_move)"},
+					{Name: "timeout", Short: "maximum wait for the move to be recorded (default 1m)"},
+				},
+			},
+		},
+	},
+	{
 		// PR-911 image rollout (PR #929 mega; ADR-110 + ADR-111). Operator
 		// surfaces draining + activation of compute_nodes rows so the
 		// deployctl upgrade-node orchestrator can reason about which box

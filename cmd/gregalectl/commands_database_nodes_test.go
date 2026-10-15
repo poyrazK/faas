@@ -1,0 +1,80 @@
+// adr: 1027 — an operator moves a native database through a durable
+// operator intent: gregalectl posts it and polls it to a terminal status.
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+const testDatabaseID = "0f6f3a52-6c0e-4c55-8e0a-2a0b9d6c1d11"
+
+func databaseMoveServer(t *testing.T, status, errMsg string) *httptest.Server {
+	t.Helper()
+	const intentID = "22222222-2222-2222-2222-222222222222"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/ops/databases/"+testDatabaseID+"/move":
+			q := r.URL.Query()
+			if q.Get("confirm") != "true" || q.Get("node") != "db-2" || q.Get("reason") != "rebalance" || r.Header.Get("Idempotency-Key") == "" {
+				t.Errorf("move request %s, idempotency key %q", r.URL.RawQuery, r.Header.Get("Idempotency-Key"))
+			}
+			writeTestJSON(w, http.StatusAccepted, api.ObsDatabaseMoveResponse{OK: true, IntentID: intentID,
+				StatusURL: "/v1/admin/operator-intents/" + intentID, Kind: "database_move", DatabaseID: testDatabaseID, TargetNode: "db-2"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/operator-intents/"+intentID:
+			writeTestJSON(w, http.StatusOK, api.OperatorIntentResponse{IntentID: intentID, Status: status, Error: errMsg})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestDatabaseNodesMoveRecordsTheMove(t *testing.T) {
+	server := databaseMoveServer(t, "succeeded", "")
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+	if code := cmdDatabaseNodes([]string{"move", "--database", testDatabaseID, "--node", "db-2", "--reason", "rebalance", "--timeout", "5s"}); code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(out.String(), "move of "+testDatabaseID+" recorded") {
+		t.Fatalf("stdout = %q", out.String())
+	}
+
+	out.Reset()
+	jsonOutput = true
+	if code := cmdDatabaseNodes([]string{"move", "--database", testDatabaseID, "--node", "db-2", "--reason", "rebalance"}); code != 0 {
+		t.Fatalf("json exit = %d, stderr=%s", code, stderr.String())
+	}
+	var got struct {
+		Operation api.ObsDatabaseMoveResponse `json:"operation"`
+		Outcome   api.OperatorIntentResponse  `json:"outcome"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Operation.TargetNode != "db-2" || got.Outcome.Status != "succeeded" {
+		t.Fatalf("json = %s (%v)", out.String(), err)
+	}
+}
+
+func TestDatabaseNodesMoveReportsARefusal(t *testing.T) {
+	server := databaseMoveServer(t, "failed", "database_move: dbsched: no database node has capacity")
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+	_, stderr, restore := captureOperatorIO()
+	defer restore()
+	if code := moveDatabaseViaAPI(testDatabaseID, "db-2", "rebalance", 5*time.Second); code != 1 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(stderr.String(), "no database node has capacity") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if code := cmdDatabaseNodes([]string{"move"}); code != 2 {
+		t.Fatalf("move without --database exit = %d, want 2", code)
+	}
+}

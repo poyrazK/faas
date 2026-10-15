@@ -179,3 +179,28 @@ discarded. Evacuation retries the move on its next sweep. schedd's
 `dbsched: move failed` log names the failed step: copy, archive handoff or
 switch.
 
+## Moving one database
+
+To take load off a node, or to move a noisy database, move it by its id
+(the UUID in `database_vms`):
+
+```sh
+gregalectl database-nodes move --database <id> [--node db-2] [--reason rebalance]
+```
+
+It needs an operator session (`gregalectl auth`) and `shared_archive`.
+apid records a `database_move` operator intent. schedd's database scheduler
+parks the database, records it `moving` under the move's lease and
+answers the intent. A database already moving, waking or parking is
+refused as busy. The copy runs in the background, so the command returns
+before it finishes.
+
+- **Success:** the database wakes on its new node, if it was running or is
+  always-on.
+- **Failure:** the database stays where it was with `last_error =
+  move_failed`, and FaasDatabaseMoveFailed fires.
+
+If schedd stops mid-copy, the move aborts the same way. Without `--node`,
+schedd picks the active node with the most free volume capacity that
+offers the database's major.
+

@@ -2,4 +2,7 @@
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
 # Main's merged workflow coordination code (#4492) added 1,080 lines; the
 # PostgreSQL rollout-readiness change adds no apidserver production code.
-155936
+# ADR-1027 native managed PostgreSQL adds 23 lines of wiring: the native
+# backend's factories, resize and capability glue, and the database move
+# route (its handler lives in pkg/apid/managedpg).
+155959

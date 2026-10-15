@@ -347,3 +347,48 @@ func TestStorePlacesByPostgresMajor(t *testing.T) {
 		})
 	}
 }
+
+// An operator's move returns once the database is recorded moving and
+// finishes in the background; a second request while it moves is busy.
+func TestStartMoveFinishesInTheBackground(t *testing.T) {
+	s, store, vmm := newMoveScheduler(t)
+	s.cfg.StartMoveWait = 100 * time.Millisecond
+	ctx := context.Background()
+	vm := provisionOn(t, s, "db-a")
+	if _, err := s.Wake(ctx, vm.DatabaseID); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	vmm.mu.Lock()
+	vmm.copyGate = release
+	vmm.mu.Unlock()
+	moving, err := s.StartMove(ctx, vm.DatabaseID, "")
+	if err != nil || moving.State != StateMoving || moving.MoveNode != "db-b" || moving.NodeID != "db-a" {
+		t.Fatalf("start move = %+v, %v; want moving from db-a to db-b", moving, err)
+	}
+	if _, err := s.StartMove(ctx, vm.DatabaseID, "db-a"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a second move while copying = %v, want ErrConflict", err)
+	}
+	close(release)
+	s.moveWG.Wait()
+	got, _ := store.Get(ctx, vm.DatabaseID)
+	if got.NodeID != "db-b" || got.State != StateRunning || got.MoveNode != "" {
+		t.Fatalf("after the background move: %+v; want running on db-b", got)
+	}
+}
+
+func TestStartMoveRefusesWhatMoveRefuses(t *testing.T) {
+	s, _, _ := newMoveScheduler(t)
+	ctx := context.Background()
+	vm := provisionOn(t, s, "db-a")
+	if _, err := s.StartMove(ctx, vm.DatabaseID, "db-a"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("move onto its own node = %v, want ErrInvalid", err)
+	}
+	if _, err := s.StartMove(ctx, uuid.NewString(), ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("move of an unknown database = %v, want ErrNotFound", err)
+	}
+	s.cfg.SharedArchive = false
+	if _, err := s.StartMove(ctx, vm.DatabaseID, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("move without a shared archive = %v, want ErrInvalid", err)
+	}
+}

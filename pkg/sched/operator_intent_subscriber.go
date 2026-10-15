@@ -174,6 +174,11 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 		// CAS can run, so a successful mutation can never be orphaned
 		// from its actor, reason, preflight, and trace metadata.
 		err = applyNodeOperatorIntent(ctx, l.engine.Store(), intent)
+	case state.OperatorIntentKindDatabaseMove:
+		// The move parks the database and records it moving before this
+		// returns; the copy, which can take hours, finishes in the
+		// background, past the intent's claim.
+		err = l.startDatabaseMove(ctx, intent)
 	default:
 		// Should be impossible — the schema CHECK rejects any
 		// unknown kind — but if we somehow receive one, stamp
@@ -263,6 +268,37 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 		}
 		l.audit.Emit(ctx, outcomeKind, intent.AccountID, data)
 	}
+}
+
+// DatabaseMover starts a native database's move to another database node
+// (ADR-1027): it returns once the move is recorded, and the copy finishes
+// in the background.
+type DatabaseMover interface {
+	StartDatabaseMove(ctx context.Context, databaseID, targetNode string) (DatabaseMove, error)
+}
+
+// DatabaseMove is a started move.
+type DatabaseMove struct {
+	From, To string
+}
+
+func (l *Loop) startDatabaseMove(ctx context.Context, intent state.OperatorIntent) error {
+	if l.databaseMover == nil {
+		return errors.New("database_move: the database scheduler is not enabled on this schedd")
+	}
+	var meta state.DatabaseMoveIntentMetadata
+	if len(intent.Metadata) > 0 {
+		if err := json.Unmarshal(intent.Metadata, &meta); err != nil {
+			return fmt.Errorf("database_move: metadata: %w", err)
+		}
+	}
+	move, err := l.databaseMover.StartDatabaseMove(ctx, intent.TargetID, meta.TargetNode)
+	if err != nil {
+		return fmt.Errorf("database_move: %w", err)
+	}
+	l.log.Info("sched: operator_intent: database move started", "intent_id", intent.ID,
+		"database_id", intent.TargetID, "from", move.From, "to", move.To)
+	return nil
 }
 
 // applyNodeOperatorIntent converts one closed-vocabulary fleet intent into a

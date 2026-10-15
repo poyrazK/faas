@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/dbsched"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -123,25 +124,25 @@ func databaseNodeVerifier(cfg *DatabaseSchedulerConfig) wire.NodeVerifier {
 // loadVMMTLS builds the client TLS for database-node vmmd. It receives
 // databaseNodeVerifier(cfg): database nodes are not in compute_nodes, so
 // the compute registry verifier would refuse their vmmd certificates.
-func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, pool *pgxpool.Pool, loadVMMTLS func(wire.NodeVerifier) (*tls.Config, error), handler *scheddgrpc.Server, ops *wire.OpsMetrics, log *slog.Logger) (func(), error) {
+func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, pool *pgxpool.Pool, loadVMMTLS func(wire.NodeVerifier) (*tls.Config, error), handler *scheddgrpc.Server, ops *wire.OpsMetrics, log *slog.Logger) (*dbsched.Scheduler, func(), error) {
 	if cfg == nil {
-		return func() {}, nil
+		return nil, func() {}, nil
 	}
 	vmmTLS, err := loadVMMTLS(databaseNodeVerifier(cfg))
 	if err != nil {
-		return nil, fmt.Errorf("schedd: database node TLS: %w", err)
+		return nil, nil, fmt.Errorf("schedd: database node TLS: %w", err)
 	}
 	store, err := dbsched.NewPgStore(pool)
 	if err != nil {
-		return nil, fmt.Errorf("schedd: database store: %w", err)
+		return nil, nil, fmt.Errorf("schedd: database store: %w", err)
 	}
 	for _, nc := range cfg.Nodes {
 		node, err := nc.node()
 		if err != nil {
-			return nil, fmt.Errorf("schedd: %w", err)
+			return nil, nil, fmt.Errorf("schedd: %w", err)
 		}
 		if err := store.UpsertNode(ctx, node); err != nil {
-			return nil, fmt.Errorf("schedd: register database node: %w", err)
+			return nil, nil, fmt.Errorf("schedd: register database node: %w", err)
 		}
 	}
 	vmm := dbsched.NewGRPCVMM(vmmTLS)
@@ -154,7 +155,7 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter, Metrics: metrics}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
-		return nil, fmt.Errorf("schedd: recover databases: %w", err)
+		return nil, nil, fmt.Errorf("schedd: recover databases: %w", err)
 	}
 	sweep := cfg.SweepInterval
 	if sweep <= 0 {
@@ -168,8 +169,20 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 	go sched.RunStandbyLoop(loopCtx)
 	handler.WithDatabases(sched)
 	log.Info("schedd: database scheduler enabled", "nodes", len(cfg.Nodes), "idle_timeout", cfg.IdleTimeout, "sweep_interval", sweep)
-	return func() {
+	return sched, func() {
 		stop()
 		_ = vmm.Close()
 	}, nil
+}
+
+// databaseMover starts operators' database moves (database_move intents)
+// on the database scheduler.
+type databaseMover struct{ sched *dbsched.Scheduler }
+
+func (m databaseMover) StartDatabaseMove(ctx context.Context, databaseID, targetNode string) (sched.DatabaseMove, error) {
+	vm, err := m.sched.StartMove(ctx, databaseID, targetNode)
+	if err != nil {
+		return sched.DatabaseMove{}, err
+	}
+	return sched.DatabaseMove{From: vm.NodeID, To: vm.MoveNode}, nil
 }

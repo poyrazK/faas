@@ -189,6 +189,10 @@ func run(args []string) int {
 		// Node registration/read tools plus authenticated, durable-intent
 		// lifecycle mutations. Direct DB writes require --break-glass-db.
 		return cmdComputeNodesDispatch(args[1:])
+	case dispatchDatabaseNodes:
+		// ADR-1027: an authenticated, durable-intent move of a native
+		// database between database nodes.
+		return cmdDatabaseNodes(args[1:])
 	case "release-acceptance":
 		return cmdReleaseAcceptanceDispatch(args[1:])
 	case dispatchOperatorAuth:

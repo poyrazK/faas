@@ -51,6 +51,8 @@ type fakeVMM struct {
 	// switched over; copyErr and syncErr fail those steps.
 	copied           map[string]string
 	copyErr, syncErr error
+	// copyGate, when set, holds every copy until it is closed.
+	copyGate chan struct{}
 	// startDelay is how long a boot takes, outside the lock; booting and
 	// maxBooting count the boots in flight.
 	startDelay          time.Duration
@@ -522,6 +524,12 @@ func TestRecoverParksInFlightDatabases(t *testing.T) {
 }
 
 func (f *fakeVMM) CopyVolume(_ context.Context, from, to Node, id string) error {
+	f.mu.Lock()
+	gate := f.copyGate
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.onNode = append(f.onNode, "copy@"+from.ID+">"+to.ID)

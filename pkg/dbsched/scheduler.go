@@ -174,6 +174,10 @@ type Config struct {
 	// a move's lease lasts unrenewed before another replica may abort it.
 	MoveTimeout time.Duration
 	MoveLease   time.Duration
+	// StartMoveWait bounds how long an operator's move waits for the
+	// database's lock (default 30 s); a database already moving holds it
+	// for the whole copy.
+	StartMoveWait time.Duration
 	// EvacuateDraining moves databases off draining nodes (needs
 	// SharedArchive).
 	EvacuateDraining bool
@@ -230,6 +234,8 @@ type Scheduler struct {
 	standbyWG     sync.WaitGroup
 	// nodeFailing is since when each node's vmmd has not answered.
 	nodeFailing sync.Map // node id -> time.Time
+	// moveWG tracks operators' moves running in the background.
+	moveWG sync.WaitGroup
 }
 
 // nodeEvents is a per-node broadcast: wait returns a channel the next
@@ -296,6 +302,9 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.MoveLease <= 0 {
 		cfg.MoveLease = 2 * time.Minute
+	}
+	if cfg.StartMoveWait <= 0 {
+		cfg.StartMoveWait = 30 * time.Second
 	}
 	if cfg.StandbyCheckInterval <= 0 {
 		cfg.StandbyCheckInterval = 2 * time.Second

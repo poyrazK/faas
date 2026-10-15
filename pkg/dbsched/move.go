@@ -25,35 +25,102 @@ const errCodeMove = "move_failed"
 // see one stop and boot, plus the copy. A database that is not parked or
 // running is ErrConflict. It needs a shared archive.
 func (s *Scheduler) Move(ctx context.Context, id, target string) (VM, error) {
-	if !s.cfg.SharedArchive {
-		return VM{}, fmt.Errorf("%w: moving a database needs a shared archive", ErrInvalid)
-	}
 	unlock := s.lock(id)
 	defer unlock()
+	moving, wake, err := s.beginMoveLocked(ctx, id, target)
+	if err != nil {
+		return moving, err
+	}
+	return s.finishMoveLocked(ctx, moving, wake)
+}
+
+// StartMove is an operator's move: it parks the database and records it
+// moving under the move's lease, returning it with its MoveNode, and
+// finishes the move in the background. It returns once the move is
+// durable, so the operator's intent is answered within its claim, while a
+// copy can take hours. ctx bounds the background copy as well: a schedd
+// that stops aborts the move, leaving the database where it was. The
+// outcome is the database's node or its last_error (move_failed), and
+// schedd_database_moves_total.
+func (s *Scheduler) StartMove(ctx context.Context, id, target string) (VM, error) {
+	// A database moving here holds its lock for the whole copy: a second
+	// request must not wait for it past the intent's claim.
+	unlock, ok := s.lockWithin(ctx, id, s.cfg.StartMoveWait)
+	if !ok {
+		return VM{}, fmt.Errorf("%w: the database is busy (moving, waking or parking); try again", ErrConflict)
+	}
+	moving, wake, err := s.beginMoveLocked(ctx, id, target)
+	if err != nil {
+		unlock()
+		return moving, err
+	}
+	s.moveWG.Add(1)
+	go func() {
+		defer s.moveWG.Done()
+		defer unlock()
+		_, _ = s.finishMoveLocked(ctx, moving, wake) // finishMoveLocked logs and counts the outcome
+	}()
+	return moving, nil
+}
+
+// lockWithin takes the database's lock if it frees within d.
+func (s *Scheduler) lockWithin(ctx context.Context, id string, d time.Duration) (func(), bool) {
+	deadline := time.NewTimer(d)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if unlock, ok := s.tryLock(id); ok {
+			return unlock, true
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-deadline.C:
+			return nil, false
+		case <-tick.C:
+		}
+	}
+}
+
+// beginMoveLocked parks the database if it runs and marks it moving to
+// target. It reports whether the database should run again afterwards.
+// A failure leaves it as it was.
+func (s *Scheduler) beginMoveLocked(ctx context.Context, id, target string) (VM, bool, error) {
+	if !s.cfg.SharedArchive {
+		return VM{}, false, fmt.Errorf("%w: moving a database needs a shared archive", ErrInvalid)
+	}
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
-		return vm, err
+		return vm, false, err
 	}
 	wake := vm.AlwaysOn
 	switch vm.State {
 	case StateRunning:
 		wake = true
 		if err := s.parkLocked(ctx, id); err != nil {
-			return vm, err
+			return vm, false, err
 		}
 	case StateParked:
 	default:
-		return vm, ErrConflict
+		return vm, false, ErrConflict
 	}
 	moving, err := s.store.BeginMove(ctx, id, target, s.cfg.MoveLease)
 	if err != nil {
 		if wake {
 			_, _ = s.wakeLocked(ctx, id) // back up where it was
 		}
-		return vm, err
+		return vm, false, err
 	}
+	return moving, wake, nil
+}
+
+// finishMoveLocked copies, switches and wakes a database beginMoveLocked
+// marked moving; a failure aborts the move and wakes it where it was.
+func (s *Scheduler) finishMoveLocked(ctx context.Context, moving VM, wake bool) (VM, error) {
+	id := moving.DatabaseID
 	started := s.now()
-	err = s.runMove(ctx, moving)
+	err := s.runMove(ctx, moving)
 	s.cfg.Metrics.moved(err)
 	if err != nil {
 		s.log.Warn("dbsched: move failed", "database_id", id, "from", moving.NodeID, "to", moving.MoveNode, "err", err)
@@ -62,7 +129,7 @@ func (s *Scheduler) Move(ctx context.Context, id, target string) (VM, error) {
 		}
 		after, getErr := s.store.Get(context.WithoutCancel(ctx), id)
 		if getErr != nil {
-			after = vm
+			after = moving
 		}
 		return after, err
 	}

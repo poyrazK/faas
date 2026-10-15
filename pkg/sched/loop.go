@@ -223,6 +223,10 @@ type Loop struct {
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
+
+	// databaseMover starts database_move operator intents (nil: the
+	// database scheduler is not enabled).
+	databaseMover DatabaseMover
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -736,6 +740,14 @@ func (l *Loop) WithMigratingWatchdog(w *MigratingWatchdog) *Loop {
 // staleness window this sweeper enforces is 120 s (api.DeadNode-
 // ReconcilerStalenessSeconds), so a 1 s tick would issue ~120
 // no-op queries per node death before any row is even eligible.
+// WithDatabaseMover attaches the native database scheduler's moves
+// (ADR-1027) for database_move operator intents. Without one those intents
+// fail: the database scheduler is not enabled on this schedd.
+func (l *Loop) WithDatabaseMover(m DatabaseMover) *Loop {
+	l.databaseMover = m
+	return l
+}
+
 func (l *Loop) WithDeadNodeReconciler(r *DeadNodeReconciler) *Loop {
 	l.deadNodeReconciler = r
 	return l
