@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -153,6 +154,28 @@ func TestEnvironmentGitOpsRetainedWorkloadRemovalAndRecovery(t *testing.T) {
 		beginRetainedRecovery(t, basic, lease, r)
 	})
 }
+func TestPgEnvironmentGitOpsRetirementHistorySurvivesCleanupAttempts(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	lease, original := retireEmptyEnvironment(t, store)
+	for _, attempt := range []struct{ name, query, id string }{
+		{"journal", "DELETE FROM environment_workload_retirements WHERE id=$1", original.ID},
+		{"source cascade", "DELETE FROM environment_git_sources WHERE id=$1", lease.Source.ID},
+	} {
+		var rejected *pgconn.PgError
+		if _, err := pool.Exec(t.Context(), attempt.query, attempt.id); !errors.As(err, &rejected) || rejected.Code != "23514" {
+			t.Fatalf("%s cleanup did not hit its retention guard: %v", attempt.name, err)
+		}
+		rows, err := store.ListEnvironmentGitOpsWorkloadRetirements(t.Context(), lease.Source.AccountID, lease.Source.ID)
+		if err != nil || len(rows) != 1 || rows[0].ID != original.ID || rows[0].Phase != "retired" {
+			t.Fatalf("%s cleanup changed retained evidence: %+v %v", attempt.name, rows, err)
+		}
+		if blocked, err := store.EnvironmentWorkloadAdmissionRetired(t.Context(), original.AppID, lease.Source.EnvironmentSlug); err != nil || !blocked {
+			t.Fatalf("%s cleanup reopened admission: %t %v", attempt.name, blocked, err)
+		}
+	}
+}
+
 func TestPgEnvironmentGitOpsRetirementCannotForgeRecoveredEvidence(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)
