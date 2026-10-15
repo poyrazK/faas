@@ -532,7 +532,7 @@ func uploadCommitProcessTimeout(bytes int64) time.Duration {
 	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
 }
 
-func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) { //nolint:contextcheck // Once every byte has arrived the commit runs detached from the request budget under a size-scaled bound (H10-26); the outcome is recorded idempotently.
+func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	// Serialize per-upload_id upload/file critical sections to
 	// prevent two concurrent commit retries both calling
@@ -591,7 +591,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	defer cancel()
 	r = r.WithContext(ctx)
 
-	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
+	app, err := s.store.AppBySlug(r.Context(), row.AppSlug) //nolint:contextcheck // r carries the commit context detached from the request budget (H10-26)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such app")
@@ -609,7 +609,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 		return
 	}
-	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
+	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil { //nolint:contextcheck // r carries the commit context detached from the request budget (H10-26)
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -624,7 +624,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	}
 	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	manifestCommitted := false
-	defer func(ctx context.Context) {
+	defer func(ctx context.Context) { //nolint:contextcheck // r carries the commit context detached from the request budget (H10-26)
 		if manifestCommitted || !sourceRefManifestNeedsRollback(stagedManifest) {
 			return
 		}
