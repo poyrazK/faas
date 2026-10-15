@@ -206,3 +206,40 @@ including accepted or ignored comparisons. Violations also carry the matched
 rule and effective settings. JUnit failure names include the rule name and
 failure details use the effective thresholds; accepted JUnit output includes
 the comparison decisions. These are additive fields in result schema version 1.
+
+## Policy lint and preview
+
+```sh
+gregale test policy lint --policy regression-policy.yaml
+gregale test policy lint --policy regression-policy.yaml --from current.json
+gregale test policy preview --policy regression-policy.yaml --from current.json --baseline previous.json
+```
+
+Both commands emit versioned informational JSON to stdout. Strict policy parsing
+rejects conflicting overrides, invalid settings, duplicate names, and unknown
+fields. Static lint warns when an earlier rule's exact selectors contain every
+combination matched by a later rule (`shadowed_rule`). It does not attempt to
+prove shadowing by a union of several earlier rules.
+
+Supplying reports adds per-rule observed match and selection counts, plus
+`no_observed_match` and `never_selected` diagnostics. Lint accepts an optional
+current report and optional baseline; the baseline requires the current report.
+Observations are unique configuration/context pairs and comparison first-failure
+groups. Rules may match both kinds, so these counts are not execution counts.
+Assertion selectors do not match context-only observations.
+
+A rule with no observed match may apply to passing assertions, other suites,
+or future failures. The warning is advisory, not proof of an invalid selector.
+Without reports, `observations_supplied` is false and observed counts are zero;
+static lint does not emit no-match warnings.
+
+Preview requires both raw reports. Its `prospective_result` uses the same
+evaluator as policy-gated comparisons: comparison decisions show matched rules
+and effective thresholds, and violations explain what would reject the run.
+No policy is changed or published. Preview and lint return 0 even for warnings
+or predicted policy rejections; invalid policies, inputs, options, and output
+errors return 1. Use `test compare --policy` when a CI gate is intended.
+
+JSON redirection must use a distinct destination because the shell opens it
+before Gregale can inspect source files. Existing digest and gate behavior is
+unchanged.
