@@ -2397,6 +2397,8 @@ type Querier interface {
 	// Match the permanent retirement fence's table-before-instance lock order.
 	LockCloneCheckpointWakeDispatchTables(ctx context.Context, db DBTX) error
 	LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error
+	// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+	LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error
 	LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error
 	LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.

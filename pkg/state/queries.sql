@@ -18218,6 +18218,7 @@ SELECT
  (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_git_sources,
  (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_managed_fields,
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_workload_graphs,
+ (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS feature_flag_versions,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_admissions,
@@ -18368,6 +18369,7 @@ SELECT (jsonb_build_object(
     'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
 ) || jsonb_build_object(
     -- ADR-595 application-standard artifact evidence
+    'environment_workload_retirements_route_deployment_id_fkey', (SELECT count(*) FROM environment_workload_retirements WHERE route_deployment_id = sqlc.arg(deployment_id)::uuid),
     'application_standard_snapshot_captures_deployment_id_fkey', (SELECT count(*) FROM application_standard_snapshot_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'build_export_publications_deployment_id_fkey', (SELECT count(*) FROM build_export_publications WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_artifact_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_artifact_scan_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -18391,6 +18393,10 @@ VALUES($1,$2,$3,$4,$5,$6);
 -- name: LockCloneDeploymentCleanupBorrowerWriters :exec
 SELECT lock_clone_deployment_cleanup_borrower_writers();
 
+-- name: LockCloneDeploymentCleanupRetirementWriters :exec
+-- Deployment UUID arrays retain original artifacts without a foreign-key lock.
+LOCK TABLE environment_workload_retirements IN SHARE MODE;
+
 -- name: DeleteCloneOwnedDeployments :execrows
 DELETE FROM deployments d USING project_environment_clone_workloads w
 WHERE w.operation_id=sqlc.arg(operation_id)::uuid AND w.target_deployment_id=d.id AND w.app_id=d.app_id
@@ -18405,6 +18411,7 @@ SELECT EXISTS(SELECT 1 FROM deployments d JOIN project_environment_clone_workloa
 -- name: ReadCloneDeploymentSoftBorrowers :one
 -- Original clone native journals remain retained evidence; other owners block cleanup.
 SELECT jsonb_build_object(
+ 'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE sqlc.arg(deployment_id)::uuid=ANY(deployment_ids)),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),

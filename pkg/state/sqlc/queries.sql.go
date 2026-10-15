@@ -45834,6 +45834,16 @@ func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context,
 	return err
 }
 
+const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
+LOCK TABLE environment_workload_retirements IN SHARE MODE
+`
+
+// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+func (q *Queries) LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneDeploymentCleanupRetirementWriters)
+	return err
+}
+
 const lockCloneEnvironmentCleanupScopeBorrowers = `-- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
 SELECT lock_clone_environment_cleanup_scope_borrowers()
 `
@@ -65287,6 +65297,7 @@ SELECT (jsonb_build_object(
     'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = $1::uuid)
 ) || jsonb_build_object(
     -- ADR-595 application-standard artifact evidence
+    'environment_workload_retirements_route_deployment_id_fkey', (SELECT count(*) FROM environment_workload_retirements WHERE route_deployment_id = $1::uuid),
     'application_standard_snapshot_captures_deployment_id_fkey', (SELECT count(*) FROM application_standard_snapshot_captures WHERE deployment_id = $1::uuid),
     'build_export_publications_deployment_id_fkey', (SELECT count(*) FROM build_export_publications WHERE deployment_id = $1::uuid),
     'deployment_artifact_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_artifact_scan_current WHERE deployment_id = $1::uuid),
@@ -65329,6 +65340,7 @@ func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, opera
 
 const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
 SELECT jsonb_build_object(
+ 'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE $1::uuid=ANY(deployment_ids)),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=$1::uuid::text),
@@ -65415,6 +65427,7 @@ SELECT
  (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=$1::uuid) AS environment_git_sources,
  (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=$1::uuid) AS environment_managed_fields,
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=$1::uuid) AS environment_workload_graphs,
+ (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=$1::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=$1::uuid) AS feature_flag_versions,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
@@ -65449,6 +65462,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	EnvironmentGitSources                int64
 	EnvironmentManagedFields             int64
 	EnvironmentWorkloadGraphs            int64
+	EnvironmentWorkloadRetirements       int64
 	FeatureFlagVersions                  int64
 	InvocationEnvironmentQueueAdmissions int64
 	InvocationWorkEnvironmentAdmissions  int64
@@ -65486,6 +65500,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.EnvironmentGitSources,
 		&i.EnvironmentManagedFields,
 		&i.EnvironmentWorkloadGraphs,
+		&i.EnvironmentWorkloadRetirements,
 		&i.FeatureFlagVersions,
 		&i.InvocationEnvironmentQueueAdmissions,
 		&i.InvocationWorkEnvironmentAdmissions,
