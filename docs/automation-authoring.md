@@ -202,6 +202,71 @@ summaries. It leaves admitted runs under the normal workflow controls and
 retention. Live reports are separate from publishing receipts and native runtime
 qualification.
 
+### Verify a deployed automation from CI
+
+`gregale automations live` exposes the same saved-case verification through the
+CLI. Authenticate the CI job with `FAAS_TOKEN`; use `FAAS_API` when selecting a
+different control-plane endpoint.
+Use `live list --app billing --name paid-invoice --json` to read the current
+published revision, default deployment and recent verification IDs. Read the
+saved automation version with `automations get`. Review the synthetic case and
+its integrations before confirming real actions.
+
+Start one case against explicitly selected target versions:
+
+```sh
+gregale automations live start --app billing --name paid-invoice \
+  --case synthetic --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --idempotency-key deploy-42-synthetic --confirm-real-actions \
+  --json > verification-start.json
+```
+
+The start command exits successfully when admission is confirmed. Save its JSON
+artifact before waiting; `.verification.run_id` identifies the admitted run.
+`live show --app billing --name paid-invoice --run RUN_UUID` inspects it. To require
+a current passing verdict in a later CI step, reconnect to that same run:
+
+```sh
+gregale automations live wait --app billing --name paid-invoice \
+  --run RUN_UUID --timeout 10m --poll-interval 3s \
+  --json > verification-result.json
+```
+
+For one-step jobs, add `--wait` and optional wait settings to `live start`.
+`live check --app billing --name paid-invoice --run RUN_UUID` performs a single
+result check; a queued/running/waiting run returns a pending result rather than
+waiting. Current terminal reports are reused. Wait follows a continuation seen
+during checking; a terminal report that remains stale stops as unavailable.
+
+`check` and waiting commands exit 0 only for a passing report with
+`report_current=true` and `outdated=false`. Failed assertions, pending checks,
+unavailable verdicts and outdated targets exit 1. A case deliberately expecting a
+failed/dead run can pass its assertions. `start` without waiting, `list` and `show`
+return success for their own admission/read operation and are not assertion gates.
+HTTP failures retain normal CLI exits: 2 authentication, 3 infrastructure,
+4 missing/expired record, 5 conflict, and 6 permission denied. Wait deadline expiry exits 124;
+SIGINT/SIGTERM interruption exits 130. A timed-out or interrupted run can continue;
+the result retains its last observation and a shell-quoted reconnect command.
+
+Wait defaults to 5 minutes, accepts a positive deadline up to 1 hour, polls every
+3 seconds (configurable from 1 second to 1 minute), and caps each HTTP request at
+10 seconds; an individual request timeout exits 3 as an infrastructure error.
+Timeout and poll flags on `start` require `--wait`. A failed request
+stops observation. Explicitly reconnect after resolving it. If start admission
+was not confirmed, retry with the **same original target flags and idempotency
+key**; the CLI does not refresh the target or generate a replacement key.
+
+JSON operation results use `schema_version: 1`, `app`, `name`, `outcome`,
+`exit_code`, `message`, and optional `run_id`, `verification` and `reconnect` fields.
+Known run IDs and reconnect commands survive even a failed initial read. Outcomes
+are `accepted`, `observed`, `passed`, `failed`, `pending`, `outdated`, `unavailable`,
+`error`, `timed_out`, or `interrupted`. List results include `app`, `name` and the
+existing collection fields. Standard error carries sanitized RFC 7807 diagnostics
+for request/protocol failures. Reports contain identifiers, states and mismatch
+field names; input/output bodies, expected values and raw errors are excluded.
+These observations do not grant publication receipts or authorize future targets.
+
 ### Configure and preview a scheduled report
 
 Choose **scheduled-report**, enter its schedule and an IANA timezone, and replace

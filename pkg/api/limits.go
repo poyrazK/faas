@@ -6396,6 +6396,10 @@ const (
 	AutomationLiveProgressRequestTimeout       = 10 * time.Second
 	AutomationLiveProgressMaxRequests          = 100
 	AutomationLiveProgressFormMaxBytes   int64 = 4096
+	AutomationLiveCLIWaitDefault               = 5 * time.Minute
+	AutomationLiveCLIWaitMax                   = time.Hour
+	AutomationLiveCLIPollMin                   = time.Second
+	AutomationLiveCLIPollMax                   = time.Minute
 	AutomationTestCaseNameMaxBytes             = 128
 	AutomationTestStepResultsMax               = AutomationSimulationMaxTraceEntries
 	// Browser forms percent-encode the definition, sample, cases, and selected

@@ -5634,6 +5634,79 @@ gregale automations restore --app billing --name paid-invoice --revision 42 --ex
 gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes
 ```
 
+### automations live
+
+Start, observe and check saved cases against real execution
+
+#### automations live list
+
+Read current target IDs and recent live verifications
+
+`gregale automations live list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+
+#### automations live start
+
+Explicitly start one saved case against real handlers
+
+`gregale automations live start --app <SLUG> --name <NAME> --case <NAME> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --idempotency-key <KEY> --confirm-real-actions [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--case <NAME>` | saved case with live expectations | required |
+| `--expected-version <N>` | current saved automation version | required |
+| `--expected-published-version <N>` | published automation revision | required |
+| `--expected-deployment-id <UUID>` | live default deployment UUID | required |
+| `--idempotency-key <KEY>` | stable key; retry only with the original start flags | required |
+| `--confirm-real-actions` | confirm this case can perform real actions | required |
+| `--wait` | wait and require a current passing assertion verdict |  |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+#### automations live show
+
+Read one verification without requiring a verdict
+
+`gregale automations live show --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+
+#### automations live check
+
+Check a terminal verification and require a current passing verdict
+
+`gregale automations live check --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+
+#### automations live wait
+
+Observe an existing run, check assertions and require a current passing verdict
+
+`gregale automations live wait --app <SLUG> --name <NAME> --run <UUID> [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
 ### automations diff
 
 Compare draft and published definition fields without exposing values
