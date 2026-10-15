@@ -7,10 +7,13 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.obs_health_response_operator_intent_outcome_missing_total import (
         ObsHealthResponseOperatorIntentOutcomeMissingTotal,
     )
+    from ..models.obs_health_response_signals import ObsHealthResponseSignals
     from ..models.obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
 
 
@@ -33,21 +36,23 @@ class ObsHealthResponse:
     """
 
     generated_at: datetime.datetime
-    """Snapshot timestamp (UTC, RFC 3339)."""
+    """Response generation timestamp (UTC, RFC 3339); not a telemetry observation time."""
     prometheus_available: bool
-    """True only when every PromQL query used for this snapshot
-    completed successfully. False means Prometheus-derived numeric
-    fields are fallback values and must not be interpreted as
-    observed telemetry.
+    """True only when all three Prometheus signals are healthy with
+    fresh underlying observations. When false, consult each signal:
+    healthy values remain usable and other numeric values are zero
+    compatibility fallbacks. On legacy responses without signals,
+    false makes all Prometheus-derived values unavailable.
     """
     audit_log_write_total_5m: int
     """Increase of apid_audit_log_write_total over the trailing 5m
-    window. 0 when the audit pipeline has been silent in the
-    window. Check `prometheus_available` before interpreting it.
+    window. Zero activity is a healthy zero only when the matching
+    signals entry is healthy; otherwise zero is a compatibility fallback.
     """
     audit_log_write_failures_5m: int
     """Increase of apid_audit_log_write_failures_total over the trailing
-    5m window. Check `prometheus_available` before interpreting it.
+    5m window. Interpret only when the matching signals entry is
+    healthy, or prometheus_available is true on a legacy response.
     """
     audit_log_coverage_ratio_5m: float
     """Ratio of durable audit_log rows with a valid W3C trace_id
@@ -72,8 +77,17 @@ class ObsHealthResponse:
     """
     alerts_firing: int
     """Count of Prometheus alert rules in the firing state
-    via PromQL ALERTS{alertstate="firing"}. Check
-    `prometheus_available` before interpreting a zero value.
+    via PromQL ALERTS{alertstate="firing"}, excluding watchdog and
+    info-only rules. A fresh faas.rules.yml evaluation heartbeat is
+    required for the matching signal to be healthy, including when
+    no alerts fire. This describes source freshness, not alert severity.
+    """
+    signals: ObsHealthResponseSignals | Unset = UNSET
+    """Independent evidence for audit_log_write_total_5m,
+    audit_log_write_failures_5m, and alerts_firing. Present on new
+    servers; optional for compatibility with older responses.
+    Only healthy signal values are usable. SQL-derived fields remain
+    independent; a database read failure returns 503.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -94,6 +108,10 @@ class ObsHealthResponse:
 
         alerts_firing = self.alerts_firing
 
+        signals: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.signals, Unset):
+            signals = self.signals.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,6 +126,8 @@ class ObsHealthResponse:
                 "alerts_firing": alerts_firing,
             }
         )
+        if signals is not UNSET:
+            field_dict["signals"] = signals
 
         return field_dict
 
@@ -116,6 +136,7 @@ class ObsHealthResponse:
         from ..models.obs_health_response_operator_intent_outcome_missing_total import (
             ObsHealthResponseOperatorIntentOutcomeMissingTotal,
         )
+        from ..models.obs_health_response_signals import ObsHealthResponseSignals
         from ..models.obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
 
         d = dict(src_dict)
@@ -139,6 +160,13 @@ class ObsHealthResponse:
 
         alerts_firing = d.pop("alerts_firing")
 
+        _signals = d.pop("signals", UNSET)
+        signals: ObsHealthResponseSignals | Unset
+        if isinstance(_signals, Unset):
+            signals = UNSET
+        else:
+            signals = ObsHealthResponseSignals.from_dict(_signals)
+
         obs_health_response = cls(
             generated_at=generated_at,
             prometheus_available=prometheus_available,
@@ -148,6 +176,7 @@ class ObsHealthResponse:
             operator_intent_outcome_missing_total=operator_intent_outcome_missing_total,
             trace_id_completeness_ratio=trace_id_completeness_ratio,
             alerts_firing=alerts_firing,
+            signals=signals,
         )
 
         obs_health_response.additional_properties = d

@@ -543,14 +543,53 @@ func isTerminal(w *os.File) bool {
 // the order too.
 func writeObsHealthHuman(w io.Writer, snap map[string]any) {
 	_, _ = fmt.Fprintln(w, "prometheus_available:", snap["prometheus_available"])
-	_, _ = fmt.Fprintln(w, "audit_log_write_total_5m:", snap["audit_log_write_total_5m"])
-	_, _ = fmt.Fprintln(w, "audit_log_write_failures_5m:", snap["audit_log_write_failures_5m"])
+	writeObsHealthSignal(w, snap, "audit_log_write_total_5m")
+	writeObsHealthSignal(w, snap, "audit_log_write_failures_5m")
 	_, _ = fmt.Fprintln(w, "audit_log_coverage_ratio_5m:", snap["audit_log_coverage_ratio_5m"])
 	_, _ = fmt.Fprintln(w, "operator_intent_outcome_missing_total:")
 	writeObsHealthKindBlock(w, snap["operator_intent_outcome_missing_total"], false)
 	_, _ = fmt.Fprintln(w, "trace_id_completeness_ratio:")
 	writeObsHealthKindBlock(w, snap["trace_id_completeness_ratio"], true)
-	_, _ = fmt.Fprintln(w, "alerts_firing:", snap["alerts_firing"])
+	writeObsHealthSignal(w, snap, "alerts_firing")
+}
+
+// Legacy servers have no signals map. New responses render each field's state
+// independently, so a failed query cannot hide another signal's healthy zero.
+func writeObsHealthSignal(w io.Writer, snap map[string]any, name string) {
+	signals, hasSignals := snap["signals"].(map[string]any)
+	if !hasSignals {
+		value := snap[name]
+		if available, ok := snap["prometheus_available"].(bool); ok && !available {
+			value = "unavailable"
+		}
+		_, _ = fmt.Fprintf(w, "%s: %v\n", name, value)
+		return
+	}
+	signal, _ := signals[name].(map[string]any)
+	state, _ := signal["state"].(string)
+	reason, _ := signal["reason"].(string)
+	value := any("unavailable")
+	switch state {
+	case api.ObsHealthSignalHealthy:
+		value = snap[name]
+	case api.ObsHealthSignalStale, api.ObsHealthSignalNoSamples, api.ObsHealthSignalUnavailable:
+	default:
+		state, reason = api.ObsHealthSignalUnavailable, "missing_or_unknown_signal_state"
+	}
+	_, _ = fmt.Fprintf(w, "%s: %v state=%s", name, value, state)
+	if observed, ok := signal["observed_at"].(string); ok {
+		_, _ = fmt.Fprintf(w, " observed_at=%s", observed)
+	}
+	if window, ok := signal["window_seconds"]; ok {
+		_, _ = fmt.Fprintf(w, " window_seconds=%v", window)
+	}
+	if maxAge, ok := signal["max_age_seconds"]; ok {
+		_, _ = fmt.Fprintf(w, " max_age_seconds=%v", maxAge)
+	}
+	if reason != "" {
+		_, _ = fmt.Fprintf(w, " reason=%s", reason)
+	}
+	_, _ = fmt.Fprintln(w)
 }
 
 // writeObsHealthKindBlock renders a per-kind sub-map

@@ -1135,6 +1135,7 @@ export type { ObjectWriteProtection } from './models/ObjectWriteProtection.js';
 export type { ObjectWriteReceipt } from './models/ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './models/ObjectWriteReceiptList.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
+export type { ObsHealthSignal } from './models/ObsHealthSignal.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
 export type { OCIHealthcheckTiming } from './models/OCIHealthcheckTiming.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';

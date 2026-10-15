@@ -2322,6 +2322,7 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"OperatorAuditTraceCoverage":                    true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
 	"LatestEdgeRuleChangeID":                        true,
@@ -2372,6 +2373,15 @@ var storeDispatched = map[string]bool{
 	"UpdateProjectEnvironmentPromotionVerification": true,
 	"UsageByAccount":                                true,
 	"UsageSLOForAccount":                            true,
+}
+
+func (s *Store) OperatorAuditTraceCoverage(ctx context.Context, since time.Time) (float64, error) {
+	if o, ok := s.over.(interface {
+		OperatorAuditTraceCoverage(context.Context, time.Time) (float64, error)
+	}); ok {
+		return o.OperatorAuditTraceCoverage(ctx, since)
+	}
+	return s.Store.OperatorAuditTraceCoverage(ctx, since)
 }
 
 func (s *Store) AccountByID(p0 context.Context, p1 string) (state.Account, error) {

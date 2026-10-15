@@ -291,6 +291,26 @@ environment values, and log-spool locations. These actions use the existing
 deployment queue state machine; they do not require direct SQL and do not
 change the deployment hot path.
 
+### Telemetry health
+
+Run `gregalectl obs health` to inspect each audit counter and the firing-alert
+count independently. A `healthy` zero is observed zero activity. `no_samples`,
+`stale`, and `unavailable` display an unavailable value with a reason rather
+than presenting a fallback zero as evidence. `observed_at` is the underlying
+scrape or rule-evaluation time; `generated_at` is only response generation.
+
+The counter window is 300 seconds and the freshness limit is 120 seconds.
+Alert counts require fresh `faas.rules.yml` evaluation metrics from the
+Prometheus self-scrape, even when no alerts fire. Removed series or rule groups
+can keep a signal stale until its bounded history expires. `healthy` describes
+fresh source evidence; inspect the value to judge operational health.
+
+JSON consumers should inspect `signals.<field>.state` before using each
+Prometheus value. `prometheus_available` is true only when all three signals
+are healthy. Legacy responses without `signals` use that overall flag.
+SQL coverage remains readable during a Prometheus failure; a database failure
+returns 503.
+
 ### Incident inbox
 
 Start triage from one bounded, read-only view that correlates deployment,

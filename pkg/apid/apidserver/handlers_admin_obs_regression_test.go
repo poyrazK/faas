@@ -29,7 +29,12 @@ func TestObsRegressionCoverageZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"0"]}]}}`)
+		value := int64(0)
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "timestamp(") || strings.Contains(query, "last_evaluation_timestamp_seconds") {
+			value = time.Now().Unix()
+		}
+		fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"%d"]}]}}`, value)
 	}))
 	defer p.Close()
 	*(*e.S()).PromqlClient() = promql.NewClient(p.URL, p.Client())

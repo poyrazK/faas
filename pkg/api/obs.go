@@ -879,19 +879,39 @@ type ObsBuilderHeartbeatRow struct {
 //     Alertmanager integration).
 //
 // Prometheus-derived fields retain stable numeric fallbacks for compatibility,
-// but PrometheusAvailable explicitly tells consumers whether those values came
-// from a live query. SQL-derived fields still fail the endpoint when the local
-// source of truth is unavailable.
+// but Signals identifies usable values independently using underlying sample
+// freshness. PrometheusAvailable is true only when every signal is healthy.
+// SQL-derived fields still fail the endpoint when the local source of truth is
+// unavailable. Signals is optional for compatibility with legacy responses.
 type ObsHealthResponse struct {
-	GeneratedAt                        time.Time          `json:"generated_at"`
-	PrometheusAvailable                bool               `json:"prometheus_available"`
-	AuditLogWriteTotal5m               int64              `json:"audit_log_write_total_5m"`
-	AuditLogWriteFailures5m            int64              `json:"audit_log_write_failures_5m"`
-	AuditLogCoverageRatio5m            float64            `json:"audit_log_coverage_ratio_5m"`
-	OperatorIntentOutcomeMissingCounts map[string]int     `json:"operator_intent_outcome_missing_total"`
-	TraceIDCompletenessRatio           map[string]float64 `json:"trace_id_completeness_ratio"`
-	AlertsFiring                       int64              `json:"alerts_firing"`
+	GeneratedAt                        time.Time                  `json:"generated_at"`
+	PrometheusAvailable                bool                       `json:"prometheus_available"`
+	AuditLogWriteTotal5m               int64                      `json:"audit_log_write_total_5m"`
+	AuditLogWriteFailures5m            int64                      `json:"audit_log_write_failures_5m"`
+	AuditLogCoverageRatio5m            float64                    `json:"audit_log_coverage_ratio_5m"`
+	OperatorIntentOutcomeMissingCounts map[string]int             `json:"operator_intent_outcome_missing_total"`
+	TraceIDCompletenessRatio           map[string]float64         `json:"trace_id_completeness_ratio"`
+	AlertsFiring                       int64                      `json:"alerts_firing"`
+	Signals                            map[string]ObsHealthSignal `json:"signals,omitempty"`
 }
+
+// ObsHealthSignal describes the evidence behind one Prometheus-derived field.
+// ObservedAt is an underlying sample/evaluation time, never the query's output
+// timestamp. Numeric fields are usable only when their signal is healthy.
+type ObsHealthSignal struct {
+	State         string     `json:"state"`
+	ObservedAt    *time.Time `json:"observed_at,omitempty"`
+	WindowSeconds int        `json:"window_seconds"`
+	MaxAgeSeconds int        `json:"max_age_seconds"`
+	Reason        string     `json:"reason,omitempty"`
+}
+
+const (
+	ObsHealthSignalHealthy     = "healthy"
+	ObsHealthSignalNoSamples   = "no_samples"
+	ObsHealthSignalStale       = "stale"
+	ObsHealthSignalUnavailable = "unavailable"
+)
 
 // ObsHealthKindVocabulary is the closed set of operator-action
 // kinds the /v1/admin/obs/health handler emits to

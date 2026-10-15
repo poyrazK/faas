@@ -1,30 +1,5 @@
-// obs_health_query.go — Obs-Meta + Trace-IDs Mega-PR / C7: per-metric
-// computation methods for GET /v1/admin/obs/health. Extracted so the
-// handler stays ≤50 lines and the PromQL / SQL calls each live behind
-// a small testable seam.
-//
-// Source-of-truth design:
-//
-//   - audit_log_write_total / audit_log_write_failures_total /
-//     audit_log_coverage_ratio: durable SQL coverage and apid Prometheus counters
-//     (PR #TBD / C5). Federation is out of scope; schedd's gauges
-//     stay on schedd's /metrics. This endpoint answers the local
-//     apid's health, not the fleet's.
-//   - operator_intent_outcome_missing_total: SELECT count(*) FROM
-//     operator_intents WHERE status='running' AND started_at <
-//     threshold GROUP BY kind. Single SQL round-trip.
-//   - trace_id_completeness_ratio: SELECT kind, count(*) FILTER
-//     (WHERE trace_id IS NOT NULL)::float / count(*) FROM events
-//     WHERE kind LIKE 'operator.action.%' AND at > since GROUP BY
-//     kind. Reads events (live), NOT audit_log (FK-free
-//     post-deletion copy) — ADR-091 §3.7.4.
-//   - alerts_firing: PromQL ALERTS{alertstate="firing"} via the
-//     existing promqlClient.
-//
-// nil-safe: if s.promqlClient is nil (single-node dev / no
-// Prometheus sidecar) the PromQL-derived fields retain their stable
-// numeric fallback, while the status helpers report unavailable so the
-// caller cannot mistake that fallback for observed telemetry.
+// SQL coverage and stuck-intent helpers for GET /v1/admin/obs/health.
+// Prometheus values and their freshness evidence live in operatorobs.
 package apidserver
 
 import (
@@ -39,7 +14,7 @@ import (
 // existing /v1/admin/obs/audit-log/search window and the C5
 // gauge tick interval (60s); the operator can still scrape this
 // endpoint on a 30s cadence and see smooth tiles.
-const obsHealthQueryWindow = 5 * time.Minute
+const obsHealthQueryWindow = api.ObsHealthWindow
 
 // obsHealthStuckRunningThreshold is the cutoff for the
 // operator_intent_outcome_missing_total tile: a row is "stuck"
@@ -49,39 +24,6 @@ const obsHealthQueryWindow = 5 * time.Minute
 // schedd will reclaim a row at exactly the threshold the
 // operator sees it as "missing" at.
 const obsHealthStuckRunningThreshold = 5 * time.Minute
-
-// auditLogWrite5mStatus queries the apid Prometheus for the delta of
-// audit_log_write_total over the trailing 5m window. Returns 0
-// when s.promqlClient is nil OR when the query fails — the
-// endpoint surfaces this as "no data" rather than a 500 so a
-// Prometheus outage doesn't page the on-call about an unrelated
-// apid bug.
-func (s *server) auditLogWrite5mStatus(ctx context.Context) (int64, bool) {
-	if s.promqlClient == nil {
-		return 0, false
-	}
-	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(increase(apid_audit_log_write_total[5m]))`)
-	if err != nil {
-		return 0, false
-	}
-	return int64(v), true
-}
-
-// auditLogWriteFailures5mStatus mirrors auditLogWrite5mStatus for the failure
-// counter. Returned as a separate field so the dashboard can
-// render a failed/total ratio without a per-field subtraction.
-func (s *server) auditLogWriteFailures5mStatus(ctx context.Context) (int64, bool) {
-	if s.promqlClient == nil {
-		return 0, false
-	}
-	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(increase(apid_audit_log_write_failures_total[5m]))`)
-	if err != nil {
-		return 0, false
-	}
-	return int64(v), true
-}
 
 // operatorIntentOutcomeMissing returns the per-kind count of
 // stuck-running operator_intents rows. The handler seeds
@@ -102,23 +44,6 @@ func (s *server) operatorIntentOutcomeMissing(ctx context.Context) (map[string]i
 func (s *server) traceIDCompletenessRatio(ctx context.Context) (map[string]float64, error) {
 	since := time.Now().UTC().Add(-obsHealthQueryWindow)
 	return s.store.OperatorActionTraceCompleteness(ctx, since)
-}
-
-// alertsFiring queries Prometheus for the count of alert rules
-// in the firing state. Uses the standard ALERTS series
-// {alertstate="firing"} which Alertmanager emits for every
-// active firing rule. Returns 0 on nil-promql or query error
-// — same "no data" posture as auditLogWrite5m.
-func (s *server) alertsFiringStatus(ctx context.Context) (int64, bool) {
-	if s.promqlClient == nil {
-		return 0, false
-	}
-	v, err := s.promqlClient.QueryScalar(ctx,
-		`count(ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"}) or vector(0)`)
-	if err != nil {
-		return 0, false
-	}
-	return int64(v), true
 }
 
 // seedHealthKindCounts returns the closed-set seed map for

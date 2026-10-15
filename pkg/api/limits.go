@@ -8849,6 +8849,15 @@ const (
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100
 
+	// Operator health has one shared Prometheus budget, including freshness
+	// reads, so an outage cannot multiply the per-query timeout by six.
+	ObsHealthPrometheusBudget    = 3 * time.Second
+	ObsHealthWindow              = 5 * time.Minute
+	ObsHealthObservationLookback = 15 * time.Minute
+	ObsHealthObservationStep     = 15 * time.Second
+	ObsHealthFreshnessMaxAge     = 2 * time.Minute
+	ObsHealthClockSkewTolerance  = 30 * time.Second
+
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.

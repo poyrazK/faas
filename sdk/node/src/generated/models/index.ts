@@ -1132,6 +1132,7 @@ export type { ObjectWriteProtection } from './ObjectWriteProtection.js';
 export type { ObjectWriteReceipt } from './ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './ObjectWriteReceiptList.js';
 export type { ObsHealthResponse } from './ObsHealthResponse.js';
+export type { ObsHealthSignal } from './ObsHealthSignal.js';
 export type { ObsNodeOperationPreflight } from './ObsNodeOperationPreflight.js';
 export type { OpenAPIContractAddition } from './OpenAPIContractAddition.js';
 export type { OpenAPIContractBreak } from './OpenAPIContractBreak.js';

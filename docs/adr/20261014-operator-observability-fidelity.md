@@ -34,3 +34,34 @@ failed jobs, node cursors, zero audit coverage, failed tenant reads, per-node wa
 series, individual alerts, refresh failure/recovery, and console rendering with
 legacy null overview summaries. PostgreSQL and in-memory projections are checked
 against the same expectations.
+
+Per-signal health refinement, 2026-10-15: `/v1/admin/obs/health` includes an
+additive `signals` map for its two audit counters and firing-alert count. Each
+entry carries `state` (`healthy`, `no_samples`, `stale`, or `unavailable`),
+`window_seconds`, `max_age_seconds`, an optional underlying `observed_at`, and a
+closed reason code. Healthy describes fresh source evidence, not a healthy
+metric value. SQL-derived coverage retains its existing 503 failure contract.
+The overall `prometheus_available` flag is true only when all three signals are
+healthy; healthy values survive another signal's failure. Non-healthy numeric
+fields remain zero compatibility fallbacks. Consumers must use the matching
+signal state, falling back to the overall flag on older servers.
+
+Counter freshness uses `timestamp(counter)` inside a 15-second subquery over
+15 minutes, then the minimum of each series' most recent observation. This
+preserves scrape timestamps even when `increase()` produces a fresh output
+timestamp from old samples. Alert freshness uses the minimum last evaluation
+value of the `faas.rules.yml` rule groups, scraped from Prometheus itself. An
+empty `ALERTS` vector is a healthy zero only with that evaluation heartbeat.
+Observations older than 120 seconds are stale; timestamps more than 30 seconds
+in the future are invalid. Missing observations and insufficient counter
+samples are distinct from query failure. Retired series or groups can
+conservatively keep the signal stale until the bounded history expires.
+
+All six queries share one three-second budget and the caller's deadline.
+No last-good values are cached, and reason codes never include upstream error
+bodies. `gregalectl obs health` prints per-signal state, observation time,
+window, threshold, and reason; unavailable and stale values are displayed as
+unavailable rather than healthy zeroes. Real Prometheus 2.54.1 fixtures pin
+underlying timestamps, stopped scrapes, mixed fresh/stale series, missing rule
+heartbeats, and the freshness boundary. Domain, HTTP, and CLI tests cover
+partial failures, zero activity, missing samples, deadlines, and recovery.

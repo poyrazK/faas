@@ -2309,7 +2309,11 @@ from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
 )
+from .obs_health_response_signals import ObsHealthResponseSignals
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
+from .obs_health_signal import ObsHealthSignal
+from .obs_health_signal_reason import ObsHealthSignalReason
+from .obs_health_signal_state import ObsHealthSignalState
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
 from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
@@ -6870,7 +6874,11 @@ __all__ = (
     "ObjectWriteReceiptStatus",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
+    "ObsHealthResponseSignals",
     "ObsHealthResponseTraceIdCompletenessRatio",
+    "ObsHealthSignal",
+    "ObsHealthSignalReason",
+    "ObsHealthSignalState",
     "ObsNodeOperationPreflight",
     "OCIHealthcheckTiming",
     "OIDCExchangeRequest",

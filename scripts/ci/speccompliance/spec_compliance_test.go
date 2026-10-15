@@ -146,6 +146,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
 	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
+	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence": true, // operator-only bounded incident evidence
+
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Mirror the cmd/sdk-coverage/main.go::routeExclude
 	// entries for these same routes — both lists must move
@@ -532,6 +534,8 @@ var dtoExclude = map[string]bool{
 	"ObsBuilderHeartbeatRow":          true,
 	"ObsIncident":                     true,
 	"ObsIncidentListResponse":         true,
+	"ObsIncidentEvidenceResponse":     true, // same private incident surface
+	"ObsIncidentEvidenceEntry":        true,
 	// P2d / C5/C7 mega-PR follow-on DTOs (Obs-Meta + Trace-IDs
 	// Mega-PR / PR #1111): admin-only shapes for /v1/admin/obs/*
 	// surface; intentionally undocumented for public consumers.
