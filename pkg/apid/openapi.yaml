@@ -39892,6 +39892,44 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionPendingSummary
+      summary: Read complete consumer pending counts and effective deadlines.
+      description: "Read-only, payload-free counts and earliest effective deadline across all retained captured pending application recipients for this subscription. One Repeatable Read snapshot includes current controls. Processing work, future arrivals and publications awaiting recipient capture are excluded. No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not model future admission or guarantee deadline safety."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for a full pending summary.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose retained pending recipients are being counted.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Complete pending counts, effective deadlines and current controls; inspect complete before monitoring.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionPendingSummary' }
+        '400':
+          description: Subscription UUID is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Full pending-summary read exceeded its budget; coverage is unknown.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview:
     post:
       tags: [events]
@@ -73416,6 +73454,32 @@ components:
         enabled: { type: boolean }
         interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
         burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+    EventSubscriptionPendingSummary:
+      type: object
+      description: Full retained captured pending application-recipient counts from one read-only snapshot. No payloads, identities or modeled completion estimates. Incomplete evidence cannot establish health or recovery.
+      required: [coverage, app_id, subscription_id, observed_at, read_only, complete, pending_recipients, deadline_recipients, already_expired_count, current, paused, legacy_rate_per_second, circuit_state, capacity_blocking_scopes, constraints]
+      properties:
+        coverage: { type: string, enum: [all_retained_captured_pending_application_recipients] }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        complete: { type: boolean, description: "False for unusable clocks; incomplete counts must not drive alert recovery." }
+        pending_recipients: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        deadline_recipients: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        already_expired_count: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        earliest_deadline_at: { type: string, format: date-time, description: "Earliest effective deadline, including expired rows; omitted when no pending recipients have deadlines." }
+        current: { $ref: '#/components/schemas/EventSubscriptionRateLimit' }
+        paused: { type: boolean }
+        legacy_rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        circuit_state: { type: string, enum: [closed, open, half_open, draining] }
+        capacity_blocking_scopes:
+          type: array
+          items: { type: string, enum: [consumer, app, account] }
+        constraints:
+          type: array
+          items: { type: string, enum: [subscription_paused, legacy_rate_limit, circuit_open, circuit_half_open, circuit_draining, capacity_consumer, capacity_app, capacity_account, active_leases, scheduled_retries, clock_uncertain] }
+
     EventSubscriptionRatePreview:
       type: object
       additionalProperties: false

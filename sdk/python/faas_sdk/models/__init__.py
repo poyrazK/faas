@@ -1419,6 +1419,13 @@ from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
+from .event_subscription_pending_summary import EventSubscriptionPendingSummary
+from .event_subscription_pending_summary_capacity_blocking_scopes_item import (
+    EventSubscriptionPendingSummaryCapacityBlockingScopesItem,
+)
+from .event_subscription_pending_summary_circuit_state import EventSubscriptionPendingSummaryCircuitState
+from .event_subscription_pending_summary_constraints_item import EventSubscriptionPendingSummaryConstraintsItem
+from .event_subscription_pending_summary_coverage import EventSubscriptionPendingSummaryCoverage
 from .event_subscription_rate_command_receipt import EventSubscriptionRateCommandReceipt
 from .event_subscription_rate_command_receipt_outcome import EventSubscriptionRateCommandReceiptOutcome
 from .event_subscription_rate_commands import EventSubscriptionRateCommands
@@ -6079,6 +6086,11 @@ __all__ = (
     "EventSubscriptionCapacityRequest",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
+    "EventSubscriptionPendingSummary",
+    "EventSubscriptionPendingSummaryCapacityBlockingScopesItem",
+    "EventSubscriptionPendingSummaryCircuitState",
+    "EventSubscriptionPendingSummaryConstraintsItem",
+    "EventSubscriptionPendingSummaryCoverage",
     "EventSubscriptionRateCommandReceipt",
     "EventSubscriptionRateCommandReceiptOutcome",
     "EventSubscriptionRateCommands",

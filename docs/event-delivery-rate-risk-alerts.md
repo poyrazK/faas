@@ -1,11 +1,13 @@
 # Sustained consumer rate and deadline-risk alerts
 
 The Go SDK delivery-health watch supports opt-in `RateRisk` conditions using
+[full pending summaries](event-subscription-pending-summary.md) and optional
 [read-only rate previews](event-subscription-rate-preview.md). This adds no server
 scheduler, automatic notification destination, configuration mutation or migration.
-The watch reads health, current delivery-control settings, then a preview of those
-same settings. A configuration change between the reads makes that evidence
-unknown; the next poll refreshes it.
+The watch reads health and a full pending summary, then a matching rate preview
+only when modeled-risk monitoring is selected. Configuration changes between the
+summary and preview make model evidence unknown; summary-based evidence remains
+independent. The next poll refreshes both.
 
 ```go
 result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, subscriptionID,
@@ -30,7 +32,8 @@ result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, subscriptionID,
 
 Set a count or DeadlineWithin to zero to disable that condition. All three disabled is invalid.
 DeadlineWithin accepts whole milliseconds from 100 ms through 24 h.
-Counts range from 1 through the preview sample bound of 1000. Warning and recovery
+Growth thresholds range from 1 through the exact JSON count bound 9007199254740991.
+Modeled-risk thresholds range from 1 through the preview sample bound of 1000. Warning and recovery
 durations default independently to one minute; explicit durations use the existing
 100 ms..24 h watch bounds. Options are copied before polling begins. With RateRisk
 absent, existing watch behavior and request count remain unchanged. Node and Python
@@ -38,10 +41,10 @@ watch helpers do not yet expose this Go SDK option.
 
 ## Conditions and interpretation
 
-- `rate_preview.throttled_growth_recipients` measures positive pending-count growth
-  between consecutive complete previews, while the shared token bucket is rate
+- `pending_summary.throttled_growth_recipients` measures positive pending-count growth
+  between consecutive complete full summaries, while the shared token bucket is rate
   limited at both observations. The threshold is recipients **per observation
-  interval**, not recipients per second. The first preview establishes a baseline;
+  interval**, not recipients per second. The first summary establishes a baseline;
   it cannot establish growth. Policy changes, read failures and sample gaps discard
   the baseline. Legacy per-second pacing is reported as a contributor; use existing
   `WaitingReasonCounts` or `WaitingReasonDurations` for
@@ -52,8 +55,7 @@ watch helpers do not yet expose this Go SDK option.
   remains advisory: scheduling, future work, retries and blocking controls can
   change actual outcomes. A count below threshold is not a deadline-safety proof.
 
-- `rate_preview.deadline_within_millis.<window>` warns when the earliest sampled
-  effective deadline is within `DeadlineWithin` of the observation, including
+- `pending_summary.deadline_within_millis.<window>` warns when the earliest effective deadline in the full pending set is within `DeadlineWithin` of the observation, including
   already expired rows. This includes paused deliveries that the rate-only model
   considers safe. Its value is boolean (0 or 1), with threshold 1. Choose a warning
   sustain duration that fits the warning window; sampled evidence does not prove
@@ -61,42 +63,41 @@ watch helpers do not yet expose this Go SDK option.
 
 Both opening and resolution require at least two fresh, advancing eligible metric
 observations spanning their configured duration. Growth normally needs at least
-three raw previews: one baseline and two comparable growth observations. Current
+three full summaries: one baseline and two comparable growth observations. Current
 firing incidents remain firing during pending recovery. Recovery means the selected
 condition stayed below threshold; a resolved growth incident does not mean the
 bucket is unthrottled or the backlog is empty.
 
 ## Evidence and contributors
 
-`RateEvidence` reports eligible/unknown status, reason, the observed preview,
+`RateEvidence` reports summary eligible/unknown status, reason, the observed full
+summary and optional preview, independent preview availability/reason,
 growth availability/count/reason, deadline-evidence availability/reason, and a bounded contributor summary. Contributors
 include shared bucket throttling, subscription pause, circuit state, configured
 legacy pacing, saturated consumer/app/account capacity, active leases and scheduled
 retries. They describe observed controls, not proof of a unique root cause. These
 controls are not changed by monitoring.
 
-Preview identity, revision, capacity bounds, risk-counter coverage, timestamps and
-known constraint labels must validate. The watch requires complete pending coverage
-with no pending-sample truncation. Missing data, stale/future/nonadvancing clocks,
-configuration mismatch, unsupported servers and truncated pending samples produce
-unknown/confirmation_lost rather than a successful resolution. Freshness and maximum
-gap checks apply independently of the duration required for an alert.
+Summary identity, explicit full coverage, count/deadline consistency, controls and
+timestamps must validate. Complete full summaries support growth and deadline-window
+alerts above 1,000 pending recipients. Missing data, read timeouts, stale/future or
+nonadvancing clocks, unsupported endpoints and incomplete evidence produce
+unknown/confirmation_lost rather than successful resolution. Freshness and maximum
+gap checks apply independently of alert duration. There is no sampled fallback.
 
-The optional `deadline_coverage` marker, `deadline_recipients` count and
-`earliest_deadline_at` support the approaching-deadline signal. Missing metadata
-on older servers makes only that signal unknown; growth and modeled-risk evidence
-can still be eligible. An explicit zero count proves no sampled effective deadlines.
-The chosen deadline window is part of checkpoint condition identity.
+Modeled-risk alerts additionally require a matching complete preview and valid
+risk-counter coverage. Pending-sample truncation makes only that model unknown.
+Risk-detail truncation remains independent: aggregate risk counts can drive the
+modeled condition when only the first 100 identities are returned. Neither missing
+counts nor truncation becomes zero. Already expired rows remain facts as of the
+observation; the watcher performs no recovery or deadline extension.
 
-Risk-detail truncation is separate: aggregate risk counts still cover the complete
-pending sample, so valid aggregate counts can drive conditions when only the first
-100 risk identities are returned. The preview exposes `risks_truncated` explicitly.
-Neither a truncated pending count capped at 1000 nor missing evidence becomes zero.
-Already expired identities remain facts as of the preview observation; the watcher
-does not extend delivery deadlines or perform recovery actions.
-
+The chosen deadline window is part of checkpoint condition identity. Summary-based
+growth/window metrics have different names from the earlier sampled conditions, so
+those checkpoints cannot resume as full-summary sessions. Settle their pending
+alerts with the earlier compatible client before starting a new session.
 Each new alert includes immutable `rate_constraints` context. Progress includes the
-full bounded preview; the checkpoint alert does not copy event identities or
+full summary and optional bounded preview; the checkpoint alert does not copy event identities or
 payloads. On unavailable evidence, the context is `evidence_unavailable`. Unknown
 constraint labels fail closed instead of being copied into alert summaries.
 

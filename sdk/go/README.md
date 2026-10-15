@@ -1317,3 +1317,9 @@ warning and recovery require fresh sustained evidence. Progress exposes preview
 coverage and contributors; incomplete pending samples become unknown. The conditions
 support existing durable checkpoints and acknowledgements. See
 [rate-risk alerts](../../docs/event-delivery-rate-risk-alerts.md).
+
+`GetEventSubscriptionPendingSummary` reads full retained captured pending counts
+and effective deadlines under fixed read budgets. Growth and approaching-deadline
+watch conditions use that complete evidence beyond the preview's 1000-row cap;
+modeled-risk conditions retain the cap. See [full summaries and checkpoint
+compatibility](../../docs/event-subscription-pending-summary.md).

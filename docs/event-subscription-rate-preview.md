@@ -102,3 +102,7 @@ configuration change extends delivery deadlines, retention or deduplication.
 The Go SDK can monitor these previews continuously through opt-in
 [rate-risk watch conditions](event-delivery-rate-risk-alerts.md), with sustained
 warning/recovery confirmation and the existing durable alert outbox.
+
+For complete pending counts and approaching-deadline monitoring above this
+preview's sample bound, use the [full pending summary](event-subscription-pending-summary.md).
+It does not expand or replace the sampled rate-only model.

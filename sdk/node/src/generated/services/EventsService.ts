@@ -74,6 +74,7 @@ import type { EventSubscriptionCapacityCommands } from '../models/EventSubscript
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
+import type { EventSubscriptionPendingSummary } from '../models/EventSubscriptionPendingSummary.js';
 import type { EventSubscriptionRateCommandReceipt } from '../models/EventSubscriptionRateCommandReceipt.js';
 import type { EventSubscriptionRateCommands } from '../models/EventSubscriptionRateCommands.js';
 import type { EventSubscriptionRatePreview } from '../models/EventSubscriptionRatePreview.js';
@@ -2895,6 +2896,41 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * Read complete consumer pending counts and effective deadlines.
+   * Read-only, payload-free counts and earliest effective deadline across all retained captured pending application recipients for this subscription. One Repeatable Read snapshot includes current controls. Processing work, future arrivals and publications awaiting recipient capture are excluded. No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not model future admission or guarantee deadline safety.
+   * @returns EventSubscriptionPendingSummary Complete pending counts, effective deadlines and current controls; inspect complete before monitoring.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionPendingSummary({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug for a full pending summary.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose retained pending recipients are being counted.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventSubscriptionPendingSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Subscription UUID is invalid.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Full pending-summary read exceeded its budget; coverage is unknown.`,
       },
     });
   }

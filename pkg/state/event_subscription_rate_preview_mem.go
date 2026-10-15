@@ -28,24 +28,7 @@ func (m *MemStore) PreviewEventSubscriptionRateLimit(ctx context.Context, accoun
 		return zero, ErrNotFound
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	c := m.eventSubscriptionControls[canonicalMemUUID(sub)]
-	var st subscriptionRatePreviewState
-	st.current, st.credit, _ = subscriptionRateMem(c, now)
-	st.circuit = "closed"
-	configured := 0
-	if c != nil {
-		st.paused = c.Paused
-		st.rate = c.Rate
-		st.count = c.WindowCount
-		st.window = c.WindowAt
-		configured = c.MaxPendingDeliveries
-		st.clockInvalid = c.RateEnabled && c.RateRefilledAt.After(now) || c.Rate > 0 && c.WindowAt.After(now)
-	}
-	if circuit := m.eventCircuitBreakers[canonicalMemUUID(sub)]; circuit != nil {
-		st.circuit = circuit.Runtime.State
-	}
-	consumer, application, acct := m.eventDeliveryCountsLocked(eventDeliverySlot{account, app, canonicalMemUUID(sub)}, nil)
-	st.capacity = subscriptionRatePreviewCapacity(m.eventDeliveryLimitsLocked(account), configured, [3]int64{consumer, application, acct})
+	st := m.subscriptionRatePreviewStateLocked(account, app, sub, now)
 	pending := make([]subscriptionRatePreviewPending, 0, api.EventSubscriptionRatePreviewSampleMax+1)
 	for _, work := range m.eventFanout {
 		if err := ctx.Err(); err != nil {
@@ -97,4 +80,26 @@ func appendRatePreviewPending(rows []subscriptionRatePreviewPending, item subscr
 	copy(rows[index+1:], rows[index:len(rows)-1])
 	rows[index] = item
 	return rows
+}
+
+func (m *MemStore) subscriptionRatePreviewStateLocked(account, app, sub string, now time.Time) subscriptionRatePreviewState {
+	c := m.eventSubscriptionControls[canonicalMemUUID(sub)]
+	var st subscriptionRatePreviewState
+	st.current, st.credit, _ = subscriptionRateMem(c, now)
+	st.circuit = "closed"
+	configured := 0
+	if c != nil {
+		st.paused = c.Paused
+		st.rate = c.Rate
+		st.count = c.WindowCount
+		st.window = c.WindowAt
+		configured = c.MaxPendingDeliveries
+		st.clockInvalid = c.RateEnabled && c.RateRefilledAt.After(now) || c.Rate > 0 && c.WindowAt.After(now)
+	}
+	if circuit := m.eventCircuitBreakers[canonicalMemUUID(sub)]; circuit != nil {
+		st.circuit = circuit.Runtime.State
+	}
+	consumer, application, acct := m.eventDeliveryCountsLocked(eventDeliverySlot{account, app, canonicalMemUUID(sub)}, nil)
+	st.capacity = subscriptionRatePreviewCapacity(m.eventDeliveryLimitsLocked(account), configured, [3]int64{consumer, application, acct})
+	return st
 }

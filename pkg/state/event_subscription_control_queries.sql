@@ -126,3 +126,23 @@ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_
 LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
 WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uuid AND b.subscription_id=sqlc.arg(subscription_id)::text AND b.consumer_kind='application' AND b.routing_state='pending'
 ORDER BY b.accepted_at,b.outbox_id LIMIT sqlc.arg(sample_limit)::integer;
+
+-- name: EventSubscriptionPendingSummaryBudget :one
+SELECT set_config('statement_timeout',sqlc.arg(timeout_millis)::text,true)::text;
+
+-- name: EventSubscriptionPendingSummary :one
+WITH pending AS (
+ SELECT b.accepted_at,b.next_attempt_at,b.lease_until,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uuid AND b.subscription_id=sqlc.arg(subscription_id)::text AND b.consumer_kind='application' AND b.routing_state='pending'
+)
+SELECT count(*)::bigint AS pending_recipients,
+ count(deadline_at)::bigint AS deadline_recipients,
+ count(*) FILTER (WHERE deadline_at<=sqlc.arg(observed_at)::timestamptz)::bigint AS already_expired_count,
+ min(deadline_at) FILTER (WHERE isfinite(deadline_at))::timestamptz AS earliest_deadline_at,
+ coalesce(bool_or(accepted_at IS NULL OR NOT isfinite(accepted_at) OR accepted_at>sqlc.arg(observed_at)::timestamptz OR (deadline_at IS NOT NULL AND NOT isfinite(deadline_at)) OR (next_attempt_at IS NOT NULL AND NOT isfinite(next_attempt_at)) OR (lease_until IS NOT NULL AND NOT isfinite(lease_until))),false)::boolean AS clock_invalid,
+ coalesce(bool_or(lease_until>sqlc.arg(observed_at)::timestamptz),false)::boolean AS active_leases,
+ coalesce(bool_or(next_attempt_at>sqlc.arg(observed_at)::timestamptz),false)::boolean AS scheduled_retries
+FROM pending;

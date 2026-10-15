@@ -348,6 +348,72 @@ func (q *Queries) EventSubscriptionControlUsePermit(ctx context.Context, db DBTX
 	return err
 }
 
+const eventSubscriptionPendingSummary = `-- name: EventSubscriptionPendingSummary :one
+WITH pending AS (
+ SELECT b.accepted_at,b.next_attempt_at,b.lease_until,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=$2::uuid AND b.app_id=$3::uuid AND b.subscription_id=$4::text AND b.consumer_kind='application' AND b.routing_state='pending'
+)
+SELECT count(*)::bigint AS pending_recipients,
+ count(deadline_at)::bigint AS deadline_recipients,
+ count(*) FILTER (WHERE deadline_at<=$1::timestamptz)::bigint AS already_expired_count,
+ min(deadline_at) FILTER (WHERE isfinite(deadline_at))::timestamptz AS earliest_deadline_at,
+ coalesce(bool_or(accepted_at IS NULL OR NOT isfinite(accepted_at) OR accepted_at>$1::timestamptz OR (deadline_at IS NOT NULL AND NOT isfinite(deadline_at)) OR (next_attempt_at IS NOT NULL AND NOT isfinite(next_attempt_at)) OR (lease_until IS NOT NULL AND NOT isfinite(lease_until))),false)::boolean AS clock_invalid,
+ coalesce(bool_or(lease_until>$1::timestamptz),false)::boolean AS active_leases,
+ coalesce(bool_or(next_attempt_at>$1::timestamptz),false)::boolean AS scheduled_retries
+FROM pending
+`
+
+type EventSubscriptionPendingSummaryParams struct {
+	ObservedAt     pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+type EventSubscriptionPendingSummaryRow struct {
+	PendingRecipients   int64
+	DeadlineRecipients  int64
+	AlreadyExpiredCount int64
+	EarliestDeadlineAt  pgtype.Timestamptz
+	ClockInvalid        bool
+	ActiveLeases        bool
+	ScheduledRetries    bool
+}
+
+func (q *Queries) EventSubscriptionPendingSummary(ctx context.Context, db DBTX, arg EventSubscriptionPendingSummaryParams) (EventSubscriptionPendingSummaryRow, error) {
+	row := db.QueryRow(ctx, eventSubscriptionPendingSummary,
+		arg.ObservedAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var i EventSubscriptionPendingSummaryRow
+	err := row.Scan(
+		&i.PendingRecipients,
+		&i.DeadlineRecipients,
+		&i.AlreadyExpiredCount,
+		&i.EarliestDeadlineAt,
+		&i.ClockInvalid,
+		&i.ActiveLeases,
+		&i.ScheduledRetries,
+	)
+	return i, err
+}
+
+const eventSubscriptionPendingSummaryBudget = `-- name: EventSubscriptionPendingSummaryBudget :one
+SELECT set_config('statement_timeout',$1::text,true)::text
+`
+
+func (q *Queries) EventSubscriptionPendingSummaryBudget(ctx context.Context, db DBTX, timeoutMillis string) (string, error) {
+	row := db.QueryRow(ctx, eventSubscriptionPendingSummaryBudget, timeoutMillis)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const eventSubscriptionRateClock = `-- name: EventSubscriptionRateClock :one
 SELECT clock_timestamp()::timestamptz
 `

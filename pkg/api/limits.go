@@ -11192,3 +11192,10 @@ const (
 	EventDeliveryRateRiskRecoveryDefault = time.Minute
 	EventDeliveryRateContributorMaxBytes = 512
 )
+
+// Full pending-summary reads have a fixed resource budget, independent of row count.
+const (
+	EventSubscriptionPendingSummaryTimeout               = 5 * time.Second
+	EventSubscriptionPendingSummaryStatementMillis       = 4000
+	EventSubscriptionPendingSummaryCountMax        int64 = 9007199254740991
+)

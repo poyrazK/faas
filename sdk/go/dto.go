@@ -584,3 +584,6 @@ type (
 	EventDeliveryRateRiskOptions = api.EventDeliveryRateRiskOptions
 	EventDeliveryRateEvidence    = api.EventDeliveryRateEvidence
 )
+
+// Complete retained pending-recipient observations.
+type EventSubscriptionPendingSummary = api.EventSubscriptionPendingSummary

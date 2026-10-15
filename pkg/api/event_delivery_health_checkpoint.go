@@ -42,7 +42,7 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 		return threshold == 1
 	}
 	if deliveryRateRiskMetric(metric) {
-		return threshold <= EventSubscriptionRatePreviewSampleMax && math.Trunc(threshold) == threshold
+		return threshold <= rateRiskMetricValueMax(metric) && math.Trunc(threshold) == threshold
 	}
 	if processingWindowMetric(metric) {
 		return (metric == "processing_renewal_rejection_fraction" && threshold <= 1) || (metric == "processing_lease_expiry_rate_per_second" && threshold <= float64(EventDeliveryHealthWatchCountMax))
@@ -170,7 +170,7 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		if _, near := rateDeadlineWindow(a.Metric); near && a.Value > 1 {
 			return ErrValidation("invalid near-deadline checkpoint value")
 		}
-		if !validRateContributors(a.Metric, a.RateConstraints) || (deliveryRateRiskMetric(a.Metric) && (a.Value > EventSubscriptionRatePreviewSampleMax || math.Trunc(a.Value) != a.Value)) {
+		if !validRateContributors(a.Metric, a.RateConstraints) || (deliveryRateRiskMetric(a.Metric) && (a.Value > rateRiskMetricValueMax(a.Metric) || math.Trunc(a.Value) != a.Value)) {
 			return ErrValidation("invalid rate-risk checkpoint evidence")
 		}
 		if a.Metric == "capacity_command_receipt_budget_used_slots" && (a.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(a.Value) != a.Value) {

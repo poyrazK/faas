@@ -286,7 +286,7 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 	rateTracker := deliveryRateTracker{}
 	// Historical timestamps prevent replay; counts and sustain proof are not restored.
 	for _, condition := range conditions {
-		if deliveryRateRiskMetric(condition.Metric) && condition.observedAt.After(rateTracker.lastObserved) {
+		if deliveryRateRiskMetric(condition.Metric) && condition.Metric != "rate_preview.deadline_risk_recipients" && condition.observedAt.After(rateTracker.lastObserved) {
 			rateTracker.lastObserved = condition.observedAt
 		}
 	}
@@ -334,7 +334,7 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 		binding = binding && strings.EqualFold(appID, health.Routing.AppID)
 		if o.RateRisk != nil {
 			if binding {
-				out.RateEvidence = c.readDeliveryRateEvidence(ctx, app, sub, appID, &rateTracker, o.MaxAge)
+				out.RateEvidence = c.readDeliveryRateEvidence(ctx, app, sub, appID, &rateTracker, o.MaxAge, o.RateRisk.DeadlineRisk > 0)
 			} else {
 				rateTracker.previous = nil
 				out.RateEvidence = &EventDeliveryRateEvidence{Status: "unknown", Reason: "binding_mismatch", Contributors: "evidence_unavailable"}

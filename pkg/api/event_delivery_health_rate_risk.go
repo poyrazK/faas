@@ -3,15 +3,14 @@ package api
 import (
 	"context"
 	"math"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// EventDeliveryRateRiskOptions enables preview-based Go SDK watch conditions.
-// Growth counts recipients added between consecutive complete observations while
+// EventDeliveryRateRiskOptions enables summary/model-based Go SDK watch conditions.
+// Growth measures net pending-count increases between complete observations while
 // the shared token bucket is throttled. DeadlineRisk counts modeled/expired risks.
 type EventDeliveryRateRiskOptions struct {
 	ThrottledGrowth int64
@@ -24,23 +23,26 @@ type EventDeliveryRateRiskOptions struct {
 // EventDeliveryRateEvidence is a local proof diagnostic, never a reservation.
 // Risk-detail truncation is independent of complete aggregate pending coverage.
 type EventDeliveryRateEvidence struct {
-	Status                    string                        `json:"status"`
-	Reason                    string                        `json:"reason"`
-	Preview                   *EventSubscriptionRatePreview `json:"preview,omitempty"`
-	DeadlineEvidenceAvailable bool                          `json:"deadline_evidence_available"`
-	DeadlineEvidenceReason    string                        `json:"deadline_evidence_reason"`
-	GrowthAvailable           bool                          `json:"growth_available"`
-	GrowthRecipients          int64                         `json:"growth_recipients"`
-	GrowthReason              string                        `json:"growth_reason,omitempty"`
-	Contributors              string                        `json:"contributors"`
+	Status                    string                           `json:"status"`
+	Reason                    string                           `json:"reason"`
+	Summary                   *EventSubscriptionPendingSummary `json:"summary,omitempty"`
+	PreviewEvidenceAvailable  bool                             `json:"preview_evidence_available"`
+	PreviewEvidenceReason     string                           `json:"preview_evidence_reason"`
+	Preview                   *EventSubscriptionRatePreview    `json:"preview,omitempty"`
+	DeadlineEvidenceAvailable bool                             `json:"deadline_evidence_available"`
+	DeadlineEvidenceReason    string                           `json:"deadline_evidence_reason"`
+	GrowthAvailable           bool                             `json:"growth_available"`
+	GrowthRecipients          int64                            `json:"growth_recipients"`
+	GrowthReason              string                           `json:"growth_reason,omitempty"`
+	Contributors              string                           `json:"contributors"`
 }
 type deliveryRateTracker struct {
-	previous     *EventSubscriptionRatePreview
+	previous     *EventSubscriptionPendingSummary
 	lastObserved time.Time
 }
 
 func rateDeadlineWindow(metric string) (time.Duration, bool) {
-	raw, ok := strings.CutPrefix(metric, "rate_preview.deadline_within_millis.")
+	raw, ok := strings.CutPrefix(metric, "pending_summary.deadline_within_millis.")
 	if !ok {
 		return 0, false
 	}
@@ -52,7 +54,7 @@ func rateDeadlineWindow(metric string) (time.Duration, bool) {
 }
 func deliveryRateRiskMetric(metric string) bool {
 	_, deadline := rateDeadlineWindow(metric)
-	return deadline || metric == "rate_preview.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
+	return deadline || metric == "pending_summary.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
 }
 func rateRiskPolicy(o EventDeliveryRateRiskOptions) (time.Duration, time.Duration) {
 	sustain, recovery := o.Sustain, o.RecoverySustain
@@ -73,8 +75,8 @@ func validateRateRiskOptions(o *EventDeliveryRateRiskOptions) error {
 		return ErrValidation("deadline window must be whole milliseconds within watch duration bounds")
 	}
 
-	if o.ThrottledGrowth < 0 || o.DeadlineRisk < 0 || o.ThrottledGrowth > EventSubscriptionRatePreviewSampleMax || o.DeadlineRisk > EventSubscriptionRatePreviewSampleMax || o.ThrottledGrowth == 0 && o.DeadlineRisk == 0 && o.DeadlineWithin == 0 || sustain < EventDeliveryHealthWatchThresholdMin || sustain > EventDeliveryHealthWatchThresholdMax || recovery < EventDeliveryHealthWatchThresholdMin || recovery > EventDeliveryHealthWatchThresholdMax {
-		return ErrValidation("rate-risk alerts require a count 1..1000, deadline window, or bounded warning/recovery sustain durations")
+	if o.ThrottledGrowth < 0 || o.DeadlineRisk < 0 || o.ThrottledGrowth > EventSubscriptionPendingSummaryCountMax || o.DeadlineRisk > EventSubscriptionRatePreviewSampleMax || o.ThrottledGrowth == 0 && o.DeadlineRisk == 0 && o.DeadlineWithin == 0 || sustain < EventDeliveryHealthWatchThresholdMin || sustain > EventDeliveryHealthWatchThresholdMax || recovery < EventDeliveryHealthWatchThresholdMin || recovery > EventDeliveryHealthWatchThresholdMax {
+		return ErrValidation("rate-risk alerts require enabled bounded thresholds and bounded warning/recovery sustain durations")
 	}
 	return nil
 }
@@ -87,13 +89,13 @@ func newRateRiskConditions(o *EventDeliveryRateRiskOptions) []*deliveryHealthCon
 	for _, v := range []struct {
 		metric string
 		count  int64
-	}{{"rate_preview.throttled_growth_recipients", o.ThrottledGrowth}, {"rate_preview.deadline_risk_recipients", o.DeadlineRisk}} {
+	}{{"pending_summary.throttled_growth_recipients", o.ThrottledGrowth}, {"rate_preview.deadline_risk_recipients", o.DeadlineRisk}} {
 		if v.count > 0 {
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, State: "unknown", Threshold: float64(v.count), MinimumSamples: 2, SustainSeconds: sustain.Seconds(), RecoveryThreshold: float64(v.count - 1), RecoverySustainSeconds: recovery.Seconds()}})
 		}
 	}
 	if o.DeadlineWithin > 0 {
-		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "rate_preview.deadline_within_millis." + strconv.FormatInt(o.DeadlineWithin.Milliseconds(), 10), State: "unknown", Threshold: 1, MinimumSamples: 2, SustainSeconds: sustain.Seconds(), RecoveryThreshold: 0, RecoverySustainSeconds: recovery.Seconds()}})
+		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "pending_summary.deadline_within_millis." + strconv.FormatInt(o.DeadlineWithin.Milliseconds(), 10), State: "unknown", Threshold: 1, MinimumSamples: 2, SustainSeconds: sustain.Seconds(), RecoveryThreshold: 0, RecoverySustainSeconds: recovery.Seconds()}})
 	}
 	return out
 }
@@ -101,7 +103,7 @@ func validRateRiskCondition(c EventDeliveryHealthCondition) bool {
 	if _, near := rateDeadlineWindow(c.Metric); near && c.Value > 1 {
 		return false
 	}
-	return c.MinimumSamples == 2 && finiteSLOValue(c.SustainSeconds) && c.SustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.SustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds() && c.Value <= EventSubscriptionRatePreviewSampleMax && math.Trunc(c.Value) == c.Value
+	return c.MinimumSamples == 2 && finiteSLOValue(c.SustainSeconds) && c.SustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.SustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds() && c.Value <= rateRiskMetricValueMax(c.Metric) && math.Trunc(c.Value) == c.Value
 }
 func knownRateContributor(s string) bool {
 	switch s {
@@ -215,101 +217,133 @@ func validateRatePreviewEvidence(p EventSubscriptionRatePreview, appID, sub stri
 	}
 	return ""
 }
-func sameRatePreviewPolicy(a, b EventSubscriptionRatePreview) bool {
-	return a.ExpectedRevision == b.ExpectedRevision && a.Current.Enabled == b.Current.Enabled && a.Current.IntervalMillis == b.Current.IntervalMillis && a.Current.Burst == b.Current.Burst && a.LegacyRatePerSecond == b.LegacyRatePerSecond
+func rateRiskMetricValueMax(metric string) float64 {
+	if metric == "rate_preview.deadline_risk_recipients" {
+		return EventSubscriptionRatePreviewSampleMax
+	}
+	return float64(EventSubscriptionPendingSummaryCountMax)
+}
+func sameRateSummaryPolicy(a, b EventSubscriptionPendingSummary) bool {
+	return a.Current.Revision == b.Current.Revision && a.Current.Enabled == b.Current.Enabled && a.Current.IntervalMillis == b.Current.IntervalMillis && a.Current.Burst == b.Current.Burst && a.LegacyRatePerSecond == b.LegacyRatePerSecond
+}
+func summaryRateContributors(p EventSubscriptionPendingSummary) (string, bool) {
+	return previewRateContributors(EventSubscriptionRatePreview{Current: p.Current, Paused: p.Paused, LegacyRatePerSecond: p.LegacyRatePerSecond, CircuitState: p.CircuitState, CapacityBlockingScopes: p.CapacityBlockingScopes, Constraints: p.Constraints})
+}
+func validatePendingSummaryEvidence(p EventSubscriptionPendingSummary, appID, sub string) string {
+	if !strings.EqualFold(p.AppID, appID) || !strings.EqualFold(p.SubscriptionID, sub) {
+		return "binding_mismatch"
+	}
+	if !p.ReadOnly || !p.Complete || p.Coverage != "all_retained_captured_pending_application_recipients" {
+		return "incomplete_pending_summary"
+	}
+	if p.PendingRecipients < 0 || p.PendingRecipients > EventSubscriptionPendingSummaryCountMax || p.DeadlineRecipients < 0 || p.DeadlineRecipients > p.PendingRecipients || p.AlreadyExpiredCount < 0 || p.AlreadyExpiredCount > p.DeadlineRecipients || (p.DeadlineRecipients == 0) != (p.EarliestDeadlineAt == nil) {
+		return "invalid_summary_counts"
+	}
+	if p.EarliestDeadlineAt != nil && (p.EarliestDeadlineAt.IsZero() || (!p.EarliestDeadlineAt.After(p.ObservedAt)) != (p.AlreadyExpiredCount > 0)) {
+		return "invalid_summary_deadlines"
+	}
+	// Reuse the rate-preview's control/capacity validation with an empty model;
+	// complete aggregate counters are validated independently above.
+	zero := int64(0)
+	controls := EventSubscriptionRatePreview{Coverage: "retained_captured_pending_application_recipients", AppID: p.AppID, SubscriptionID: p.SubscriptionID, ObservedAt: p.ObservedAt, ReadOnly: true, Advisory: true, Complete: true, SampleLimit: EventSubscriptionRatePreviewSampleMax, ExpectedRevision: p.Current.Revision, Current: p.Current, Projected: p.Current, Paused: p.Paused, LegacyRatePerSecond: p.LegacyRatePerSecond, CircuitState: p.CircuitState, CapacityBlockingScopes: p.CapacityBlockingScopes, Constraints: p.Constraints, RateOnlyDrainMillis: &zero, DeadlineRisks: []EventSubscriptionRateDeadlineRisk{}}
+	return validateRatePreviewEvidence(controls, appID, sub)
 }
 
-func (c *Client) readDeliveryRateEvidence(ctx context.Context, app, sub, appID string, tracker *deliveryRateTracker, maxAge time.Duration) *EventDeliveryRateEvidence {
-	out := &EventDeliveryRateEvidence{Status: "unknown", Reason: "read_failure", Contributors: "evidence_unavailable"}
-	var control EventSubscriptionDeliveryControl
-	err := c.do(ctx, http.MethodGet, subscriptionDeliveryControlPath(app, sub), nil, &control)
+func (c *Client) readDeliveryRateEvidence(ctx context.Context, app, sub, appID string, tracker *deliveryRateTracker, maxAge time.Duration, modeled bool) *EventDeliveryRateEvidence {
+	out := &EventDeliveryRateEvidence{Status: "unknown", Reason: "summary_read_failure", Contributors: "evidence_unavailable", DeadlineEvidenceReason: "deadline_evidence_unavailable", PreviewEvidenceReason: "not_requested"}
+	summary, err := c.GetEventSubscriptionPendingSummary(ctx, app, sub)
 	if err != nil {
 		tracker.previous = nil
 		return out
 	}
-	if !strings.EqualFold(control.AppID, appID) || !strings.EqualFold(control.SubscriptionID, sub) {
-		tracker.previous = nil
-		out.Reason = "binding_mismatch"
-		return out
-	}
-	current := EventSubscriptionRateLimit{IntervalMillis: 1000, Burst: 1}
-	if control.RateLimit != nil {
-		current = *control.RateLimit
-	}
-	enabled := current.Enabled
-	preview, err := c.PreviewEventSubscriptionRateLimit(ctx, app, sub, EventSubscriptionRatePreviewRequest{Enabled: &enabled, IntervalMillis: current.IntervalMillis, Burst: current.Burst})
-	if err != nil {
-		tracker.previous = nil
-		return out
-	}
-	out.Preview = &preview
-	reason := validateRatePreviewEvidence(preview, appID, sub)
-	if reason == "" && (current.Revision != preview.ExpectedRevision || current.Enabled != preview.Current.Enabled || current.IntervalMillis != preview.Current.IntervalMillis || current.Burst != preview.Current.Burst) {
-		reason = "configuration_changed"
-	}
+	out.Summary = &summary
+	reason := validatePendingSummaryEvidence(summary, appID, sub)
 	if reason == "" {
-		reason = deliveryHealthConfirmationFailure(0, true, preview.ObservedAt, time.Now(), maxAge, time.Time{})
+		reason = deliveryHealthConfirmationFailure(0, true, summary.ObservedAt, time.Now(), maxAge, time.Time{})
 	}
-	contributors, known := previewRateContributors(preview)
+	contributors, known := summaryRateContributors(summary)
 	if reason == "" && !known {
 		reason = "unknown_constraints"
+	}
+	if reason == "" && !tracker.lastObserved.IsZero() && !summary.ObservedAt.After(tracker.lastObserved) {
+		reason = "nonadvancing_observation"
 	}
 	if reason != "" {
 		out.Reason = reason
 		tracker.previous = nil
 		return out
 	}
-	if !tracker.lastObserved.IsZero() && !preview.ObservedAt.After(tracker.lastObserved) {
-		out.Reason = "nonadvancing_observation"
-		tracker.previous = nil
-		return out
-	}
-	tracker.lastObserved = preview.ObservedAt
-	out.Status, out.Reason, out.Contributors = "eligible", "preview_evidence_available", contributors
-	_, out.DeadlineEvidenceAvailable = rateDeadlineWindowValue(preview, 0)
-	out.DeadlineEvidenceReason = "effective_deadlines_available"
-	if !out.DeadlineEvidenceAvailable {
-		out.DeadlineEvidenceReason = "deadline_evidence_unavailable"
-	}
-
+	tracker.lastObserved = summary.ObservedAt
+	out.Status, out.Reason, out.Contributors = "eligible", "complete_pending_summary_available", contributors
+	out.DeadlineEvidenceAvailable = true
+	out.DeadlineEvidenceReason = "complete_effective_deadlines_available"
 	prior := tracker.previous
 	out.GrowthReason = "growth_baseline_required"
 	if prior != nil {
 		switch {
-		case !preview.ObservedAt.After(prior.ObservedAt):
-			out.Status = "unknown"
-			out.Reason = "nonadvancing_observation"
-			out.Contributors = "evidence_unavailable"
-			tracker.previous = nil
-			return out
-		case preview.ObservedAt.Sub(prior.ObservedAt) > maxAge:
+		case summary.ObservedAt.Sub(prior.ObservedAt) > maxAge:
 			out.GrowthReason = "sample_gap"
-		case !sameRatePreviewPolicy(*prior, preview):
+		case !sameRateSummaryPolicy(*prior, summary):
 			out.GrowthReason = "configuration_changed"
 		default:
 			out.GrowthAvailable = true
-			out.GrowthReason = "consecutive_complete_previews"
-			if preview.Current.RateLimited && prior.Current.RateLimited {
-				out.GrowthRecipients = max(int64(0), int64(preview.SampledPending-prior.SampledPending))
+			out.GrowthReason = "consecutive_complete_summaries"
+			if summary.Current.RateLimited && prior.Current.RateLimited {
+				out.GrowthRecipients = max(int64(0), summary.PendingRecipients-prior.PendingRecipients)
 			}
 		}
 	}
-	tracker.previous = &preview
+	tracker.previous = &summary
+	if modeled {
+		c.readDeliveryRateModel(ctx, app, sub, appID, summary, maxAge, out)
+	}
 	return out
+}
+func (c *Client) readDeliveryRateModel(ctx context.Context, app, sub, appID string, summary EventSubscriptionPendingSummary, maxAge time.Duration, out *EventDeliveryRateEvidence) {
+	out.PreviewEvidenceReason = "preview_read_failure"
+	enabled := summary.Current.Enabled
+	preview, err := c.PreviewEventSubscriptionRateLimit(ctx, app, sub, EventSubscriptionRatePreviewRequest{Enabled: &enabled, IntervalMillis: summary.Current.IntervalMillis, Burst: summary.Current.Burst})
+	if err != nil {
+		return
+	}
+	out.Preview = &preview
+	reason := validateRatePreviewEvidence(preview, appID, sub)
+	if reason == "" && (summary.Current.Revision != preview.ExpectedRevision || summary.Current.Enabled != preview.Current.Enabled || summary.Current.IntervalMillis != preview.Current.IntervalMillis || summary.Current.Burst != preview.Current.Burst) {
+		reason = "configuration_changed"
+	}
+	if reason == "" {
+		reason = deliveryHealthConfirmationFailure(0, true, preview.ObservedAt, time.Now(), maxAge, time.Time{})
+	}
+	_, known := previewRateContributors(preview)
+	if reason == "" && !known {
+		reason = "unknown_constraints"
+	}
+	if reason != "" {
+		out.PreviewEvidenceReason = reason
+		return
+	}
+	out.PreviewEvidenceAvailable = true
+	out.PreviewEvidenceReason = "complete_sample_model_available"
 }
 func updateDeliveryRateRiskCondition(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, maxAge time.Duration, binding bool) {
 	evidence := out.RateEvidence
-	valid := binding && evidence != nil && evidence.Status == "eligible" && evidence.Preview != nil
+	valid := binding && evidence != nil && evidence.Status == "eligible" && evidence.Summary != nil
 	value := float64(0)
 	var observed time.Time
-	if evidence != nil && evidence.Preview != nil {
-		observed = evidence.Preview.ObservedAt
+	if evidence != nil && evidence.Summary != nil {
+		observed = evidence.Summary.ObservedAt
 	}
 	if valid {
 		if within, isDeadline := rateDeadlineWindow(c.Metric); isDeadline {
-			value, valid = rateDeadlineWindowValue(*evidence.Preview, within)
+			if evidence.Summary.EarliestDeadlineAt != nil && !evidence.Summary.EarliestDeadlineAt.After(observed.Add(within)) {
+				value = 1
+			}
 		} else if c.Metric == "rate_preview.deadline_risk_recipients" {
-			value = float64(evidence.Preview.DeadlineRiskCount)
+			valid = evidence.PreviewEvidenceAvailable && evidence.Preview != nil
+			if valid {
+				value = float64(evidence.Preview.DeadlineRiskCount)
+				observed = evidence.Preview.ObservedAt
+			}
 		} else {
 			valid = evidence.GrowthAvailable
 			value = float64(evidence.GrowthRecipients)
@@ -347,28 +381,4 @@ func validRatePreviewRiskDetails(p EventSubscriptionRatePreview) bool {
 		}
 	}
 	return expired <= p.AlreadyExpiredCount && (p.RisksTruncated || expired == p.AlreadyExpiredCount)
-}
-
-func rateDeadlineWindowValue(p EventSubscriptionRatePreview, within time.Duration) (float64, bool) {
-	if p.DeadlineCoverage != "sampled_effective_pending_deadlines" || p.DeadlineRecipients == nil || *p.DeadlineRecipients < p.DeadlineRiskCount || *p.DeadlineRecipients > p.SampledPending || (*p.DeadlineRecipients == 0) != (p.EarliestDeadlineAt == nil) {
-		return 0, false
-	}
-	if p.EarliestDeadlineAt == nil {
-		return 0, true
-	}
-	for _, risk := range p.DeadlineRisks {
-		if p.EarliestDeadlineAt.After(risk.DeadlineAt) {
-			return 0, false
-		}
-	}
-	if p.AlreadyExpiredCount > 0 && p.EarliestDeadlineAt.After(p.ObservedAt) {
-		return 0, false
-	}
-	if p.EarliestDeadlineAt.IsZero() {
-		return 0, false
-	}
-	if !p.EarliestDeadlineAt.After(p.ObservedAt.Add(within)) {
-		return 1, true
-	}
-	return 0, true
 }
