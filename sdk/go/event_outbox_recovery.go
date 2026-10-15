@@ -14,8 +14,8 @@ import (
 )
 
 // EventOutboxRecoveryOptions bounds one recovery iteration. Backoff is applied
-// after uncertainty, never past the immutable retry deadline. No helper runs a
-// background goroutine or retries blocked publications.
+// after uncertainty, never past the immutable retry deadline. A single recovery
+// call runs no background goroutine and never retries blocked publications.
 type EventOutboxRecoveryOptions struct {
 	ClaimDuration  time.Duration
 	RequestTimeout time.Duration
@@ -59,6 +59,7 @@ type eventOutboxClaim struct {
 	body                    string
 	token                   [32]byte
 	attempts                int64
+	request                 AppPublishEventRequest
 }
 
 // RecoverNextEventOutbox claims and publishes at most one retained due intent.
@@ -79,23 +80,35 @@ func RecoverNextEventOutbox(ctx context.Context, db *sql.DB, client *Client, acc
 	if err != nil {
 		return zero, err
 	}
+	claim, status, err := claimNextEventOutbox(ctx, db, account, app, options)
+	if err != nil {
+		return status, err
+	}
+	return claim.publish(ctx, db, client, claim.request, options)
+}
+
+// Claiming is separated from publication so the worker can stop claims while
+// allowing committed claims to drain. Inputs are validated by the public caller.
+func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, options EventOutboxRecoveryOptions) (eventOutboxClaim, EventOutboxStatus, error) {
+	var zero EventOutboxStatus
+	var err error
 	claim := eventOutboxClaim{account: account, app: app}
 	if _, err = rand.Read(claim.token[:]); err != nil {
-		return zero, ErrEventOutboxStore
+		return eventOutboxClaim{}, zero, ErrEventOutboxStore
 	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return zero, eventOutboxStoreError(ctx)
+		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 	}
 	defer func() { _ = tx.Rollback() }()
 	var digest []byte
 	var expired bool
 	err = tx.QueryRowContext(ctx, `SELECT producer_key,app_slug,request_body,request_digest,retry_until<=clock_timestamp(),attempts FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed') AND next_attempt_at<=clock_timestamp() AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) ORDER BY next_attempt_at,producer_key LIMIT 1 FOR UPDATE SKIP LOCKED`, account, app).Scan(&claim.key, &claim.slug, &claim.body, &digest, &expired, &claim.attempts)
 	if errors.Is(err, sql.ErrNoRows) {
-		return zero, ErrEventOutboxEmpty
+		return eventOutboxClaim{}, zero, ErrEventOutboxEmpty
 	}
 	if err != nil {
-		return zero, eventOutboxStoreError(ctx)
+		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 	}
 	var request AppPublishEventRequest
 	actual := sha256.Sum256([]byte(claim.body))
@@ -110,21 +123,22 @@ func RecoverNextEventOutbox(ctx context.Context, db *sql.DB, client *Client, acc
 	if code != "" {
 		status, readErr := eventOutboxStatus(tx.QueryRowContext(ctx, `UPDATE public.gregale_event_outbox SET state='blocked',last_code=$4,claim_token=NULL,claim_expires_at=NULL,updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3 RETURNING `+eventOutboxStatusColumns, account, app, claim.key, code))
 		if readErr != nil {
-			return zero, eventOutboxStoreError(ctx)
+			return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 		}
 		if err = tx.Commit(); err != nil {
-			return zero, errors.Join(ErrEventOutboxCommitUnknown, eventOutboxStoreError(ctx))
+			return eventOutboxClaim{key: claim.key}, zero, errors.Join(ErrEventOutboxCommitUnknown, eventOutboxStoreError(ctx))
 		}
-		return status, ErrEventOutboxBlocked
+		return eventOutboxClaim{}, status, ErrEventOutboxBlocked
 	}
 	err = tx.QueryRowContext(ctx, `UPDATE public.gregale_event_outbox SET claim_token=$4,claim_expires_at=least(retry_until,clock_timestamp()+$5::bigint*interval '1 millisecond'),attempts=least(attempts+1,2147483647),updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3 RETURNING attempts`, account, app, claim.key, claim.token[:], options.ClaimDuration.Milliseconds()).Scan(&claim.attempts)
 	if err != nil {
-		return zero, eventOutboxStoreError(ctx)
+		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 	}
 	if err = tx.Commit(); err != nil {
-		return zero, errors.Join(ErrEventOutboxCommitUnknown, eventOutboxStoreError(ctx))
+		return eventOutboxClaim{key: claim.key}, zero, errors.Join(ErrEventOutboxCommitUnknown, eventOutboxStoreError(ctx))
 	}
-	return claim.publish(ctx, db, client, request, options)
+	claim.request = request
+	return claim, EventOutboxStatus{}, nil
 }
 
 func (c eventOutboxClaim) publish(ctx context.Context, db *sql.DB, client *Client, request AppPublishEventRequest, options EventOutboxRecoveryOptions) (EventOutboxStatus, error) {

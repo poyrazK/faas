@@ -280,3 +280,10 @@ Set `RetryPolicy` on recovery options for capped exponential jitter, 429/503
 Retry-After guidance, and optional lifetime attempt limits. Fixed `Backoff`
 remains the default. See [the retry policy guide](event-outbox-retry-policy.md),
 including the explicit CHECK-constraint upgrade for existing installations.
+
+## Recovery worker lifecycle
+
+`RunEventOutboxWorker` provides a blocking worker pool with bounded concurrency,
+idle polling backoff, per-operation timeouts, local outcome callbacks and graceful
+drain. See [worker setup and shutdown semantics](event-outbox-worker.md). The
+single-iteration recovery helper remains available for custom supervisors.

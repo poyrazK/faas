@@ -1274,3 +1274,8 @@ Outbox recovery can opt into `EventOutboxRetryPolicy` for capped exponential
 jitter, Retry-After guidance, and lifetime claim limits. See
 [policy and schema upgrade](../../docs/event-outbox-retry-policy.md) before enabling
 it on an existing application outbox.
+
+`RunEventOutboxWorker` adds bounded concurrent recovery, idle polling backoff and
+cooperative shutdown draining around the existing outbox helpers. See
+[worker lifecycle and callbacks](../../docs/event-outbox-worker.md) before wiring
+it into application supervision.
