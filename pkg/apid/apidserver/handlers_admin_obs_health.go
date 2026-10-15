@@ -21,6 +21,7 @@
 package apidserver
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -36,12 +37,19 @@ func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	ctx := r.Context()
+	response, prob := s.obsHealthSnapshot(r.Context())
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) obsHealthSnapshot(ctx context.Context) (api.ObsHealthResponse, *api.Problem) {
 	missing := seedHealthKindCounts()
 	storeCounts, err := s.operatorIntentOutcomeMissing(ctx)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not count stuck-running operator intents"))
-		return
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not count stuck-running operator intents")
 	}
 	for kind, n := range storeCounts {
 		missing[kind] = n
@@ -49,19 +57,22 @@ func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct s
 	ratios := seedHealthKindRatios()
 	storeRatios, err := s.traceIDCompletenessRatio(ctx)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not compute trace_id completeness ratio"))
-		return
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not compute trace_id completeness ratio")
 	}
 	for kind, r := range storeRatios {
 		ratios[kind] = r
 	}
 	auditCoverage, err := s.store.OperatorAuditTraceCoverage(ctx, time.Now().UTC().Add(-obsHealthQueryWindow))
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not compute audit trace coverage"))
-		return
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not compute audit trace coverage")
 	}
+	collection, err := s.store.OperatorAlertCollectionStatus(ctx)
+	if err != nil {
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not load alert history health")
+	}
+	history := collection.Health(time.Now().UTC())
 	telemetry := operatorobs.PrometheusHealth(ctx, s.promqlClient, time.Now().UTC())
-	writeJSON(w, http.StatusOK, api.ObsHealthResponse{
+	return api.ObsHealthResponse{
 		GeneratedAt:                        time.Now().UTC(),
 		PrometheusAvailable:                telemetry.Available,
 		AuditLogWriteTotal5m:               telemetry.AuditWrites,
@@ -71,5 +82,6 @@ func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct s
 		TraceIDCompletenessRatio:           ratios,
 		AlertsFiring:                       telemetry.AlertsFiring,
 		Signals:                            telemetry.Signals,
-	})
+		AlertHistory:                       &history,
+	}, nil
 }

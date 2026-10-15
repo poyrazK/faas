@@ -6090,6 +6090,37 @@ type OidcTrustPolicy struct {
 	AuditLogin     string
 }
 
+type OperatorAlertCollection struct {
+	Singleton     bool
+	LastAttemptAt pgtype.Timestamptz
+	LastSuccessAt pgtype.Timestamptz
+}
+
+type OperatorAlertEpisode struct {
+	ID              string
+	SeriesID        string
+	RuleKey         string
+	Name            string
+	Component       string
+	Severity        string
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	NodeID          pgtype.UUID
+	RunbookUrl      string
+	StartedAt       pgtype.Timestamptz
+	FirstSeenAt     pgtype.Timestamptz
+	LastSeenAt      pgtype.Timestamptz
+	LastEvaluatedAt pgtype.Timestamptz
+	LastCheckedAt   pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
+type OperatorAlertRuleObservation struct {
+	RuleKey     string
+	EvaluatedAt pgtype.Timestamptz
+	EpisodeIds  []byte
+}
+
 type OperatorIntent struct {
 	ID                 pgtype.UUID
 	Kind               string

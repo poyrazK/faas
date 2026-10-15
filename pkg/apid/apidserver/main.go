@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
@@ -1761,6 +1762,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
 	}
 	go srv.runStatusEvaluator(ctx)
+	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.

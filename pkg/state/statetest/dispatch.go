@@ -2322,6 +2322,9 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"OperatorAlertEpisodes":                         true,
+	"OperatorAlertEpisode":                          true,
+	"OperatorAlertCollectionStatus":                 true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
 	"OperatorOverview":                              true,
@@ -2938,4 +2941,29 @@ func (s *Store) OperatorOverview(ctx context.Context, now time.Time) (api.ObsOve
 		return o.OperatorOverview(ctx, now)
 	}
 	return s.Store.OperatorOverview(ctx, now)
+}
+
+func (s *Store) OperatorAlertEpisodes(ctx context.Context, f state.OperatorAlertFilter) (state.OperatorAlertPage, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertEpisodes(context.Context, state.OperatorAlertFilter) (state.OperatorAlertPage, error)
+	}); ok {
+		return o.OperatorAlertEpisodes(ctx, f)
+	}
+	return s.Store.OperatorAlertEpisodes(ctx, f)
+}
+func (s *Store) OperatorAlertEpisode(ctx context.Context, id string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertEpisode(context.Context, string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error)
+	}); ok {
+		return o.OperatorAlertEpisode(ctx, id)
+	}
+	return s.Store.OperatorAlertEpisode(ctx, id)
+}
+func (s *Store) OperatorAlertCollectionStatus(ctx context.Context) (state.OperatorAlertCollection, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertCollectionStatus(context.Context) (state.OperatorAlertCollection, error)
+	}); ok {
+		return o.OperatorAlertCollectionStatus(ctx)
+	}
+	return s.Store.OperatorAlertCollectionStatus(ctx)
 }

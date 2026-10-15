@@ -30,7 +30,7 @@ func (s *server) obsIncidentEvidence(w http.ResponseWriter, r *http.Request, cal
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-				"Incident resource not found", "resource is missing or deleted, or alert is no longer firing"))
+				"Incident resource not found", "resource is missing or deleted, or alert evidence is not retained"))
 		} else {
 			api.WriteProblem(w, api.ErrCapacity("could not load incident evidence"))
 		}

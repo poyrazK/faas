@@ -893,6 +893,7 @@ type ObsHealthResponse struct {
 	TraceIDCompletenessRatio           map[string]float64         `json:"trace_id_completeness_ratio"`
 	AlertsFiring                       int64                      `json:"alerts_firing"`
 	Signals                            map[string]ObsHealthSignal `json:"signals,omitempty"`
+	AlertHistory                       *ObsAlertCollectionHealth  `json:"alert_history,omitempty"`
 }
 
 // ObsHealthSignal describes the evidence behind one Prometheus-derived field.
@@ -938,22 +939,42 @@ var ObsHealthKindVocabulary = []string{
 // identifiers are safe operational handles, while customer inputs, image
 // references, environment values, and raw log paths stay out of the shape.
 type ObsIncident struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Severity     string    `json:"severity"`
-	Status       string    `json:"status"`
-	Summary      string    `json:"summary"`
-	AccountID    string    `json:"account_id,omitempty"`
-	AppID        string    `json:"app_id,omitempty"`
-	NodeID       string    `json:"node_id,omitempty"`
-	ResourceID   string    `json:"resource_id"`
-	ResourceName string    `json:"resource_name,omitempty"`
-	ObservedAt   time.Time `json:"observed_at"`
-	DedupeKey    string    `json:"dedupe_key"`
-	ActionPath   string    `json:"action_path,omitempty"`
-	AuditPath    string    `json:"audit_path,omitempty"`
-	RunbookURL   string    `json:"runbook_url,omitempty"`
-	EvidencePath string    `json:"evidence_path,omitempty"`
+	ID           string           `json:"id"`
+	Type         string           `json:"type"`
+	Severity     string           `json:"severity"`
+	Status       string           `json:"status"`
+	Summary      string           `json:"summary"`
+	AccountID    string           `json:"account_id,omitempty"`
+	AppID        string           `json:"app_id,omitempty"`
+	NodeID       string           `json:"node_id,omitempty"`
+	ResourceID   string           `json:"resource_id"`
+	ResourceName string           `json:"resource_name,omitempty"`
+	ObservedAt   time.Time        `json:"observed_at"`
+	DedupeKey    string           `json:"dedupe_key"`
+	ActionPath   string           `json:"action_path,omitempty"`
+	AuditPath    string           `json:"audit_path,omitempty"`
+	RunbookURL   string           `json:"runbook_url,omitempty"`
+	EvidencePath string           `json:"evidence_path,omitempty"`
+	AlertEpisode *ObsAlertEpisode `json:"alert_episode,omitempty"`
+}
+
+// ObsAlertEpisode distinguishes recurrences and last-known state from current
+// evidence. Resolution time is when a healthy rule evaluation confirmed recovery.
+type ObsAlertEpisode struct {
+	SeriesID         string     `json:"series_id"`
+	StartedAt        time.Time  `json:"started_at"`
+	FirstSeenAt      time.Time  `json:"first_seen_at"`
+	LastSeenAt       time.Time  `json:"last_seen_at"`
+	LastEvaluatedAt  time.Time  `json:"last_evaluated_at"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+	ObservationState string     `json:"observation_state"`
+}
+
+type ObsAlertCollectionHealth struct {
+	State         string     `json:"state"`
+	Reason        string     `json:"reason,omitempty"`
+	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 }
 
 // ObsIncidentEvidenceResponse is a read-only snapshot, not a persisted incident

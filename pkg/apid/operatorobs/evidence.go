@@ -59,7 +59,15 @@ func Evidence(ctx context.Context, store Store, client *promql.Client, kind, id 
 		return out, ErrInvalidReference
 	}
 	if kind == "platform_alert" {
-		return alertEvidence(ctx, client, id, out)
+		if retained, handled, err := retainedAlertEvidence(ctx, store, id, out); handled {
+			return retained, err
+		}
+		live, err := alertEvidence(ctx, client, id, out)
+		if _, ok := store.(state.OperatorAlertHistoryReader); ok && err == nil {
+			live.Incident.Status = "unknown"
+			live.UnavailableSources = append(live.UnavailableSources, "platform_alert_history")
+		}
+		return live, err
 	}
 	item, code, err := resourceIncident(ctx, store, kind, id, now)
 	if err != nil {

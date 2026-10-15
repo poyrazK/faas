@@ -138,6 +138,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	operatorAlertEpisodes   map[string]OperatorAlertEpisode
+	operatorAlertRules      map[string]OperatorAlertRuleObservation
+	operatorAlertCollection OperatorAlertCollection
+
 	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
 	initialCompletionNext                map[string]time.Time
 	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot

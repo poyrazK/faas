@@ -26912,6 +26912,70 @@ CREATE TABLE public.oidc_trust_policies (
 
 
 --
+-- Name: operator_alert_collection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_collection (
+    singleton boolean DEFAULT true NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    CONSTRAINT operator_alert_collection_check CHECK (((last_success_at IS NULL) OR (last_success_at <= last_attempt_at))),
+    CONSTRAINT operator_alert_collection_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: operator_alert_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_episodes (
+    id text NOT NULL,
+    series_id text NOT NULL,
+    rule_key text NOT NULL,
+    name text NOT NULL,
+    component text NOT NULL,
+    severity text NOT NULL,
+    account_id uuid,
+    app_id uuid,
+    node_id uuid,
+    runbook_url text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    last_checked_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT operator_alert_episodes_check CHECK ((last_seen_at >= first_seen_at)),
+    CONSTRAINT operator_alert_episodes_check1 CHECK ((last_evaluated_at >= started_at)),
+    CONSTRAINT operator_alert_episodes_check2 CHECK ((last_checked_at >= last_seen_at)),
+    CONSTRAINT operator_alert_episodes_check3 CHECK ((resolved_at >= started_at)),
+    CONSTRAINT operator_alert_episodes_component_check CHECK (((component ~ '^[a-zA-Z0-9_.:-]*$'::text) AND (octet_length(component) <= 64))),
+    CONSTRAINT operator_alert_episodes_first_seen_at_check CHECK (isfinite(first_seen_at)),
+    CONSTRAINT operator_alert_episodes_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_alert_episodes_name_check CHECK (((name ~ '^[a-zA-Z_:][a-zA-Z0-9_:]*$'::text) AND (octet_length(name) <= 128))),
+    CONSTRAINT operator_alert_episodes_rule_key_check CHECK ((rule_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_alert_episodes_runbook_url_check CHECK ((octet_length(runbook_url) <= 2048)),
+    CONSTRAINT operator_alert_episodes_series_id_check CHECK ((series_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_alert_episodes_severity_check CHECK ((severity = ANY (ARRAY['warning'::text, 'error'::text, 'critical'::text]))),
+    CONSTRAINT operator_alert_episodes_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: operator_alert_rule_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_rule_observations (
+    rule_key text NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    episode_ids jsonb NOT NULL,
+    CONSTRAINT operator_alert_rule_observations_episode_ids_check CHECK ((jsonb_typeof(episode_ids) = 'array'::text)),
+    CONSTRAINT operator_alert_rule_observations_evaluated_at_check CHECK (isfinite(evaluated_at)),
+    CONSTRAINT operator_alert_rule_observations_rule_key_check CHECK ((rule_key ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: operator_intents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37714,6 +37778,30 @@ ALTER TABLE ONLY public.oidc_trust_policies
 
 
 --
+-- Name: operator_alert_collection operator_alert_collection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_collection
+    ADD CONSTRAINT operator_alert_collection_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: operator_alert_episodes operator_alert_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_episodes
+    ADD CONSTRAINT operator_alert_episodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: operator_alert_rule_observations operator_alert_rule_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_rule_observations
+    ADD CONSTRAINT operator_alert_rule_observations_pkey PRIMARY KEY (rule_key);
+
+
+--
 -- Name: operator_intents operator_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45560,6 +45648,48 @@ CREATE INDEX object_write_pending_key_idx ON public.object_storage_write_admissi
 --
 
 CREATE INDEX oidc_exchanged_tokens_expires_at_idx ON public.oidc_exchanged_tokens USING btree (expires_at);
+
+
+--
+-- Name: operator_alert_episodes_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX operator_alert_episodes_open_idx ON public.operator_alert_episodes USING btree (rule_key, series_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: operator_alert_episodes_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_order_idx ON public.operator_alert_episodes USING btree (COALESCE(resolved_at, started_at) DESC, id DESC);
+
+
+--
+-- Name: operator_alert_episodes_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_retention_idx ON public.operator_alert_episodes USING btree (COALESCE(resolved_at, last_seen_at), id);
+
+
+--
+-- Name: operator_alert_episodes_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_rule_idx ON public.operator_alert_episodes USING btree (rule_key);
+
+
+--
+-- Name: operator_alert_episodes_series_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_series_idx ON public.operator_alert_episodes USING btree (series_id, started_at DESC, first_seen_at DESC, id DESC);
+
+
+--
+-- Name: operator_alert_rule_observations_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_rule_observations_retention_idx ON public.operator_alert_rule_observations USING btree (evaluated_at, rule_key);
 
 
 --

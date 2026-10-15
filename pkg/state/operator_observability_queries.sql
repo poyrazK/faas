@@ -225,3 +225,86 @@ WITH history AS (
 )
 SELECT id, source, kind, status, at, trace_id FROM history
 ORDER BY at DESC, source COLLATE "C" DESC, id COLLATE "C" DESC LIMIT sqlc.arg(page_limit);
+
+-- name: OperatorAlertCollectionLock :one
+SELECT last_attempt_at, last_success_at FROM operator_alert_collection WHERE singleton FOR UPDATE;
+
+-- name: OperatorAlertCollection :one
+SELECT last_attempt_at, last_success_at FROM operator_alert_collection WHERE singleton;
+
+-- name: OperatorAlertCollectionSucceeded :exec
+UPDATE operator_alert_collection SET last_attempt_at = sqlc.arg(at), last_success_at = sqlc.arg(at) WHERE singleton;
+
+-- name: OperatorAlertCollectionFailed :exec
+UPDATE operator_alert_collection SET last_attempt_at = sqlc.arg(at)
+WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < sqlc.arg(at));
+
+-- name: OperatorAlertAdvanceRules :many
+INSERT INTO operator_alert_rule_observations (rule_key, evaluated_at, episode_ids)
+SELECT r.key, r.evaluated_at, r.episode_ids FROM jsonb_to_recordset(sqlc.arg(rules)::jsonb) AS r(key text, evaluated_at timestamptz, episode_ids jsonb)
+WHERE true
+ON CONFLICT (rule_key) DO UPDATE SET evaluated_at = excluded.evaluated_at, episode_ids = excluded.episode_ids
+WHERE excluded.evaluated_at > operator_alert_rule_observations.evaluated_at
+   OR (excluded.evaluated_at = operator_alert_rule_observations.evaluated_at AND excluded.episode_ids = operator_alert_rule_observations.episode_ids)
+RETURNING rule_key;
+
+-- name: OperatorAlertResolveMissing :exec
+UPDATE operator_alert_episodes e
+SET resolved_at = r.evaluated_at, last_evaluated_at = r.evaluated_at, last_checked_at = sqlc.arg(observed_at)::timestamptz
+FROM jsonb_to_recordset(sqlc.arg(rules)::jsonb) AS r(key text, evaluated_at timestamptz, episode_ids jsonb)
+WHERE e.rule_key = r.key AND e.resolved_at IS NULL AND e.last_evaluated_at <= r.evaluated_at
+  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(r.episode_ids) AS current_ids(id) WHERE current_ids.id = e.id);
+
+-- name: OperatorAlertUpsertEpisodes :exec
+INSERT INTO operator_alert_episodes (id, series_id, rule_key, name, component, severity, account_id, app_id, node_id,
+    runbook_url, started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at)
+SELECT e.id, e.series_id, e.rule_key, e.name, e.component, e.severity,
+       nullif(e.account_id, '')::uuid, nullif(e.app_id, '')::uuid, nullif(e.node_id, '')::uuid,
+       e.runbook_url, e.started_at, sqlc.arg(observed_at)::timestamptz, sqlc.arg(observed_at)::timestamptz,
+       e.last_evaluated_at, sqlc.arg(observed_at)::timestamptz
+FROM jsonb_to_recordset(sqlc.arg(episodes)::jsonb) AS e(id text, series_id text, rule_key text, name text,
+    component text, severity text, account_id text, app_id text, node_id text, runbook_url text,
+    started_at timestamptz, last_evaluated_at timestamptz)
+WHERE true
+ON CONFLICT (id) DO UPDATE SET last_seen_at = excluded.last_seen_at,
+    last_evaluated_at = excluded.last_evaluated_at, last_checked_at = excluded.last_checked_at,
+    runbook_url = excluded.runbook_url
+WHERE operator_alert_episodes.resolved_at IS NULL AND excluded.last_evaluated_at >= operator_alert_episodes.last_evaluated_at;
+
+-- name: OperatorAlertEpisodes :many
+WITH projected AS (
+    SELECT e.*, CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+      WHEN c.last_success_at IS NOT NULL AND c.last_attempt_at = c.last_success_at
+       AND c.last_success_at >= sqlc.arg(fresh_since)::timestamptz AND c.last_success_at <= sqlc.arg(future_before)::timestamptz
+       AND e.last_checked_at = c.last_success_at AND e.last_evaluated_at >= sqlc.arg(fresh_since)::timestamptz
+       AND e.last_evaluated_at <= sqlc.arg(future_before)::timestamptz THEN 'firing' ELSE 'unknown' END AS current_status
+    FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+    WHERE (e.resolved_at IS NULL OR e.resolved_at >= sqlc.arg(since)::timestamptz)
+      AND (sqlc.arg(severity)::text = '' OR e.severity = sqlc.arg(severity)::text)
+      AND (sqlc.arg(before_id)::text = '' OR (coalesce(e.resolved_at,e.started_at), 'platform_alert/' || e.id) < (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
+)
+SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
+       coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+FROM projected WHERE sqlc.arg(status)::text = '' OR current_status = sqlc.arg(status)::text
+ORDER BY coalesce(resolved_at,started_at) DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: OperatorAlertEpisode :one
+SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
+       coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+FROM operator_alert_episodes WHERE id = sqlc.arg(id)::text OR series_id = sqlc.arg(id)::text
+ORDER BY (id = sqlc.arg(id)::text) DESC, started_at DESC, first_seen_at DESC, id DESC LIMIT 1;
+
+-- name: OperatorAlertPruneEpisodes :execrows
+DELETE FROM operator_alert_episodes WHERE id IN (
+    SELECT id FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < sqlc.arg(before)::timestamptz
+    ORDER BY coalesce(resolved_at,last_seen_at), id LIMIT sqlc.arg(batch_size)::integer
+);
+
+-- name: OperatorAlertPruneRules :exec
+DELETE FROM operator_alert_rule_observations WHERE rule_key IN (
+    SELECT r.rule_key FROM operator_alert_rule_observations r WHERE r.evaluated_at < sqlc.arg(before)::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM operator_alert_episodes e WHERE e.rule_key = r.rule_key)
+    ORDER BY r.evaluated_at, r.rule_key LIMIT sqlc.arg(batch_size)::integer
+);

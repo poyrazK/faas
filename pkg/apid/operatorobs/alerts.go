@@ -1,4 +1,4 @@
-// Package operatorobs projects bounded, read-only operator incident evidence.
+// Package operatorobs collects and projects bounded operator incident evidence.
 package operatorobs
 
 import (
@@ -117,7 +117,7 @@ func alertMetadataKey(labels map[string]string) string {
 // Only repository documentation links are emitted. Annotations never cause a
 // remote fetch or become an arbitrary scheme in an operator's terminal/browser.
 func safeRunbookURL(raw string) string {
-	if len(raw) > 2048 {
+	if len(raw) > api.ObsAlertRunbookMaxBytes {
 		return ""
 	}
 	u, err := url.Parse(raw)

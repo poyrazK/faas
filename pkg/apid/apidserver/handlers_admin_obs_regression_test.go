@@ -58,7 +58,7 @@ func TestObsRegressionPrometheusOutage(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || len(got.Items) != 0 || len(got.UnavailableSources) != 1 || got.UnavailableSources[0] != "prometheus" {
+	if rec.Code != 200 || len(got.Items) != 0 || len(got.UnavailableSources) != 2 || got.UnavailableSources[0] != "prometheus" || got.UnavailableSources[1] != "platform_alert_history" {
 		t.Fatalf("unexpected result: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
@@ -191,7 +191,7 @@ func TestObsRegressionAlertsPreserveIdentityAndSeverity(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Items) != 1 || response.NextCursor == "" || len(response.UnavailableSources) != 0 {
+	if len(response.Items) != 1 || response.NextCursor == "" || len(response.UnavailableSources) != 1 || response.UnavailableSources[0] != "platform_alert_history" || response.Items[0].Status != "unknown" {
 		t.Fatalf("first page: %s", rec.Body.String())
 	}
 	first := response.Items[0]

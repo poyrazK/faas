@@ -11,6 +11,316 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const operatorAlertAdvanceRules = `-- name: OperatorAlertAdvanceRules :many
+INSERT INTO operator_alert_rule_observations (rule_key, evaluated_at, episode_ids)
+SELECT r.key, r.evaluated_at, r.episode_ids FROM jsonb_to_recordset($1::jsonb) AS r(key text, evaluated_at timestamptz, episode_ids jsonb)
+WHERE true
+ON CONFLICT (rule_key) DO UPDATE SET evaluated_at = excluded.evaluated_at, episode_ids = excluded.episode_ids
+WHERE excluded.evaluated_at > operator_alert_rule_observations.evaluated_at
+   OR (excluded.evaluated_at = operator_alert_rule_observations.evaluated_at AND excluded.episode_ids = operator_alert_rule_observations.episode_ids)
+RETURNING rule_key
+`
+
+func (q *Queries) OperatorAlertAdvanceRules(ctx context.Context, db DBTX, rules []byte) ([]string, error) {
+	rows, err := db.Query(ctx, operatorAlertAdvanceRules, rules)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var rule_key string
+		if err := rows.Scan(&rule_key); err != nil {
+			return nil, err
+		}
+		items = append(items, rule_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorAlertCollection = `-- name: OperatorAlertCollection :one
+SELECT last_attempt_at, last_success_at FROM operator_alert_collection WHERE singleton
+`
+
+type OperatorAlertCollectionRow struct {
+	LastAttemptAt pgtype.Timestamptz
+	LastSuccessAt pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertCollection(ctx context.Context, db DBTX) (OperatorAlertCollectionRow, error) {
+	row := db.QueryRow(ctx, operatorAlertCollection)
+	var i OperatorAlertCollectionRow
+	err := row.Scan(&i.LastAttemptAt, &i.LastSuccessAt)
+	return i, err
+}
+
+const operatorAlertCollectionFailed = `-- name: OperatorAlertCollectionFailed :exec
+UPDATE operator_alert_collection SET last_attempt_at = $1
+WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < $1)
+`
+
+func (q *Queries) OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, operatorAlertCollectionFailed, at)
+	return err
+}
+
+const operatorAlertCollectionLock = `-- name: OperatorAlertCollectionLock :one
+SELECT last_attempt_at, last_success_at FROM operator_alert_collection WHERE singleton FOR UPDATE
+`
+
+type OperatorAlertCollectionLockRow struct {
+	LastAttemptAt pgtype.Timestamptz
+	LastSuccessAt pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertCollectionLock(ctx context.Context, db DBTX) (OperatorAlertCollectionLockRow, error) {
+	row := db.QueryRow(ctx, operatorAlertCollectionLock)
+	var i OperatorAlertCollectionLockRow
+	err := row.Scan(&i.LastAttemptAt, &i.LastSuccessAt)
+	return i, err
+}
+
+const operatorAlertCollectionSucceeded = `-- name: OperatorAlertCollectionSucceeded :exec
+UPDATE operator_alert_collection SET last_attempt_at = $1, last_success_at = $1 WHERE singleton
+`
+
+func (q *Queries) OperatorAlertCollectionSucceeded(ctx context.Context, db DBTX, at pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, operatorAlertCollectionSucceeded, at)
+	return err
+}
+
+const operatorAlertEpisode = `-- name: OperatorAlertEpisode :one
+SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
+       coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+FROM operator_alert_episodes WHERE id = $1::text OR series_id = $1::text
+ORDER BY (id = $1::text) DESC, started_at DESC, first_seen_at DESC, id DESC LIMIT 1
+`
+
+type OperatorAlertEpisodeRow struct {
+	ID              string
+	SeriesID        string
+	RuleKey         string
+	Name            string
+	Component       string
+	Severity        string
+	AccountID       string
+	AppID           string
+	NodeID          string
+	RunbookUrl      string
+	StartedAt       pgtype.Timestamptz
+	FirstSeenAt     pgtype.Timestamptz
+	LastSeenAt      pgtype.Timestamptz
+	LastEvaluatedAt pgtype.Timestamptz
+	LastCheckedAt   pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertEpisode(ctx context.Context, db DBTX, id string) (OperatorAlertEpisodeRow, error) {
+	row := db.QueryRow(ctx, operatorAlertEpisode, id)
+	var i OperatorAlertEpisodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.RuleKey,
+		&i.Name,
+		&i.Component,
+		&i.Severity,
+		&i.AccountID,
+		&i.AppID,
+		&i.NodeID,
+		&i.RunbookUrl,
+		&i.StartedAt,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.LastEvaluatedAt,
+		&i.LastCheckedAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const operatorAlertEpisodes = `-- name: OperatorAlertEpisodes :many
+WITH projected AS (
+    SELECT e.id, e.series_id, e.rule_key, e.name, e.component, e.severity, e.account_id, e.app_id, e.node_id, e.runbook_url, e.started_at, e.first_seen_at, e.last_seen_at, e.last_evaluated_at, e.last_checked_at, e.resolved_at, CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+      WHEN c.last_success_at IS NOT NULL AND c.last_attempt_at = c.last_success_at
+       AND c.last_success_at >= $3::timestamptz AND c.last_success_at <= $4::timestamptz
+       AND e.last_checked_at = c.last_success_at AND e.last_evaluated_at >= $3::timestamptz
+       AND e.last_evaluated_at <= $4::timestamptz THEN 'firing' ELSE 'unknown' END AS current_status
+    FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+    WHERE (e.resolved_at IS NULL OR e.resolved_at >= $5::timestamptz)
+      AND ($6::text = '' OR e.severity = $6::text)
+      AND ($7::text = '' OR (coalesce(e.resolved_at,e.started_at), 'platform_alert/' || e.id) < ($8::timestamptz, $7::text))
+)
+SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
+       coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+FROM projected WHERE $1::text = '' OR current_status = $1::text
+ORDER BY coalesce(resolved_at,started_at) DESC, id DESC LIMIT $2::integer
+`
+
+type OperatorAlertEpisodesParams struct {
+	Status       string
+	PageLimit    int32
+	FreshSince   pgtype.Timestamptz
+	FutureBefore pgtype.Timestamptz
+	Since        pgtype.Timestamptz
+	Severity     string
+	BeforeID     string
+	BeforeAt     pgtype.Timestamptz
+}
+
+type OperatorAlertEpisodesRow struct {
+	ID              string
+	SeriesID        string
+	RuleKey         string
+	Name            string
+	Component       string
+	Severity        string
+	AccountID       string
+	AppID           string
+	NodeID          string
+	RunbookUrl      string
+	StartedAt       pgtype.Timestamptz
+	FirstSeenAt     pgtype.Timestamptz
+	LastSeenAt      pgtype.Timestamptz
+	LastEvaluatedAt pgtype.Timestamptz
+	LastCheckedAt   pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertEpisodesParams) ([]OperatorAlertEpisodesRow, error) {
+	rows, err := db.Query(ctx, operatorAlertEpisodes,
+		arg.Status,
+		arg.PageLimit,
+		arg.FreshSince,
+		arg.FutureBefore,
+		arg.Since,
+		arg.Severity,
+		arg.BeforeID,
+		arg.BeforeAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertEpisodesRow{}
+	for rows.Next() {
+		var i OperatorAlertEpisodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SeriesID,
+			&i.RuleKey,
+			&i.Name,
+			&i.Component,
+			&i.Severity,
+			&i.AccountID,
+			&i.AppID,
+			&i.NodeID,
+			&i.RunbookUrl,
+			&i.StartedAt,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.LastEvaluatedAt,
+			&i.LastCheckedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorAlertPruneEpisodes = `-- name: OperatorAlertPruneEpisodes :execrows
+DELETE FROM operator_alert_episodes WHERE id IN (
+    SELECT id FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < $1::timestamptz
+    ORDER BY coalesce(resolved_at,last_seen_at), id LIMIT $2::integer
+)
+`
+
+type OperatorAlertPruneEpisodesParams struct {
+	Before    pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) OperatorAlertPruneEpisodes(ctx context.Context, db DBTX, arg OperatorAlertPruneEpisodesParams) (int64, error) {
+	result, err := db.Exec(ctx, operatorAlertPruneEpisodes, arg.Before, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const operatorAlertPruneRules = `-- name: OperatorAlertPruneRules :exec
+DELETE FROM operator_alert_rule_observations WHERE rule_key IN (
+    SELECT r.rule_key FROM operator_alert_rule_observations r WHERE r.evaluated_at < $1::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM operator_alert_episodes e WHERE e.rule_key = r.rule_key)
+    ORDER BY r.evaluated_at, r.rule_key LIMIT $2::integer
+)
+`
+
+type OperatorAlertPruneRulesParams struct {
+	Before    pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) OperatorAlertPruneRules(ctx context.Context, db DBTX, arg OperatorAlertPruneRulesParams) error {
+	_, err := db.Exec(ctx, operatorAlertPruneRules, arg.Before, arg.BatchSize)
+	return err
+}
+
+const operatorAlertResolveMissing = `-- name: OperatorAlertResolveMissing :exec
+UPDATE operator_alert_episodes e
+SET resolved_at = r.evaluated_at, last_evaluated_at = r.evaluated_at, last_checked_at = $1::timestamptz
+FROM jsonb_to_recordset($2::jsonb) AS r(key text, evaluated_at timestamptz, episode_ids jsonb)
+WHERE e.rule_key = r.key AND e.resolved_at IS NULL AND e.last_evaluated_at <= r.evaluated_at
+  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(r.episode_ids) AS current_ids(id) WHERE current_ids.id = e.id)
+`
+
+type OperatorAlertResolveMissingParams struct {
+	ObservedAt pgtype.Timestamptz
+	Rules      []byte
+}
+
+func (q *Queries) OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg OperatorAlertResolveMissingParams) error {
+	_, err := db.Exec(ctx, operatorAlertResolveMissing, arg.ObservedAt, arg.Rules)
+	return err
+}
+
+const operatorAlertUpsertEpisodes = `-- name: OperatorAlertUpsertEpisodes :exec
+INSERT INTO operator_alert_episodes (id, series_id, rule_key, name, component, severity, account_id, app_id, node_id,
+    runbook_url, started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at)
+SELECT e.id, e.series_id, e.rule_key, e.name, e.component, e.severity,
+       nullif(e.account_id, '')::uuid, nullif(e.app_id, '')::uuid, nullif(e.node_id, '')::uuid,
+       e.runbook_url, e.started_at, $1::timestamptz, $1::timestamptz,
+       e.last_evaluated_at, $1::timestamptz
+FROM jsonb_to_recordset($2::jsonb) AS e(id text, series_id text, rule_key text, name text,
+    component text, severity text, account_id text, app_id text, node_id text, runbook_url text,
+    started_at timestamptz, last_evaluated_at timestamptz)
+WHERE true
+ON CONFLICT (id) DO UPDATE SET last_seen_at = excluded.last_seen_at,
+    last_evaluated_at = excluded.last_evaluated_at, last_checked_at = excluded.last_checked_at,
+    runbook_url = excluded.runbook_url
+WHERE operator_alert_episodes.resolved_at IS NULL AND excluded.last_evaluated_at >= operator_alert_episodes.last_evaluated_at
+`
+
+type OperatorAlertUpsertEpisodesParams struct {
+	ObservedAt pgtype.Timestamptz
+	Episodes   []byte
+}
+
+func (q *Queries) OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error {
+	_, err := db.Exec(ctx, operatorAlertUpsertEpisodes, arg.ObservedAt, arg.Episodes)
+	return err
+}
+
 const operatorAuditTraceCoverage = `-- name: OperatorAuditTraceCoverage :one
 SELECT coalesce(count(*) FILTER (WHERE data->>'trace_id' ~ '^[0-9a-f]{32}$')::double precision / nullif(count(*), 0), 1.0)::double precision AS ratio
 FROM audit_log WHERE received_at >= $1

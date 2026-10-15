@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Alert is the metadata for one active Prometheus alert. Callers must project
@@ -12,6 +13,7 @@ type Alert struct {
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
 	State       string            `json:"state"`
+	ActiveAt    time.Time         `json:"activeAt"`
 }
 
 // Alerts reads rule annotations using the same deadline and response bounds as

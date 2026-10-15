@@ -13,7 +13,9 @@ Resource IDs are canonical UUIDs for `deployment`, `job_run`, and `compute_node`
 Platform alert IDs are the 64 lowercase hex characters after `platform_alert/`
 in the inbox ID. Existing label hashes and `ALERTS_FOR_STATE` activation times
 are preserved. Resources remain inspectable after recovery. A deleted/missing
-resource or an alert no longer firing returns 404. A failed source returns 503.
+resource returns 404. Platform alerts now follow
+[durable alert history](20261015125221000-operator-alert-history.md): retained episodes
+remain inspectable after resolution. A failed local source returns 503.
 
 Resource evidence includes current status, a deployment failure code when
 present, and the last 24 hours of exact-resource events, deployment audit rows,
@@ -36,8 +38,9 @@ annotation descriptions and arbitrary label bags are omitted. Runbook links
 must be local `/docs/` paths or HTTPS links to this repository's `main/docs/`
 tree. Metadata failures retain the firing alert and generic runbook fallback,
 with `prometheus_alert_metadata` in `unavailable_sources`. Resource evidence
-does not depend on Prometheus. Alert evidence requires its firing signal and
-does not invent retained alert history after resolution.
+does not depend on Prometheus. Retained alert evidence also works without
+Prometheus. Before the first successful collection, live-only alert lookup is
+explicitly unknown and does not claim historical coverage.
 
 ## Validation
 

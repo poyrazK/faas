@@ -2813,6 +2813,17 @@ type Querier interface {
 	ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsIntentParams) ([]byte, error)
 	ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsRuntimeParams) ([]ObserveEnvironmentGitOpsRuntimeRow, error)
 	OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, deliveryID string) (OperationEffectDeliveryAllowedRow, error)
+	OperatorAlertAdvanceRules(ctx context.Context, db DBTX, rules []byte) ([]string, error)
+	OperatorAlertCollection(ctx context.Context, db DBTX) (OperatorAlertCollectionRow, error)
+	OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
+	OperatorAlertCollectionLock(ctx context.Context, db DBTX) (OperatorAlertCollectionLockRow, error)
+	OperatorAlertCollectionSucceeded(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
+	OperatorAlertEpisode(ctx context.Context, db DBTX, id string) (OperatorAlertEpisodeRow, error)
+	OperatorAlertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertEpisodesParams) ([]OperatorAlertEpisodesRow, error)
+	OperatorAlertPruneEpisodes(ctx context.Context, db DBTX, arg OperatorAlertPruneEpisodesParams) (int64, error)
+	OperatorAlertPruneRules(ctx context.Context, db DBTX, arg OperatorAlertPruneRulesParams) error
+	OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg OperatorAlertResolveMissingParams) error
+	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
 	// The API catalog is the single source of named shapes. Unmatched shapes
 	// share one custom bucket, keeping the result bounded as the fleet grows.

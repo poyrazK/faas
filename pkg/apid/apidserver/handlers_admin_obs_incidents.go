@@ -62,6 +62,7 @@ type obsIncidentQuery struct {
 	limit        int
 	beforeAt     time.Time
 	beforeID     string
+	alertStatus  string
 }
 
 func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
@@ -78,7 +79,11 @@ func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
 			return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid since", "since must be RFC 3339 (e.g. 2026-09-12T00:00:00Z)")
 		}
-		floor := now.Add(-time.Duration(api.ObsAdminWindowMaxHours) * time.Hour)
+		window := time.Duration(api.ObsAdminWindowMaxHours) * time.Hour
+		if q.kind == "platform_alert" {
+			window = api.ObsAlertHistoryRetention
+		}
+		floor := now.Add(-window)
 		q.since = t.UTC()
 		if q.since.Before(floor) {
 			q.since = floor
@@ -100,6 +105,10 @@ func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
 			return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid severity", "severity must be warning, error, or critical")
 		}
+	}
+	q.alertStatus = strings.TrimSpace(r.URL.Query().Get("alert_status"))
+	if q.alertStatus != "" && (q.kind != "platform_alert" || q.alertStatus != "firing" && q.alertStatus != "resolved" && q.alertStatus != "unknown") {
+		return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid alert status", "alert_status requires type=platform_alert and must be firing, resolved, or unknown")
 	}
 	limitProb, limit := api.ParseLimit(r.URL.Query().Get("limit"), api.ObsIncidentLimitDefault, api.ObsIncidentLimitMax, "incidents")
 	if limitProb != nil {
@@ -134,7 +143,12 @@ func (s *server) loadObsIncidents(r *http.Request, q obsIncidentQuery) ([]api.Ob
 		}
 	}
 	if q.kind == "" || q.kind == "platform_alert" {
-		alerts, missing := operatorobs.FiringAlerts(r.Context(), s.promqlClient)
+		alerts, missing, err := operatorobs.AlertIncidents(r.Context(), s.store, s.promqlClient, state.OperatorAlertFilter{
+			Now: now, Since: q.since, BeforeAt: q.beforeAt, BeforeID: q.beforeID, Severity: q.severity, Status: q.alertStatus, Limit: q.limit + 1,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
 		unavailable = append(unavailable, missing...)
 		for _, alert := range alerts {
 			if q.severity == "" || q.severity == alert.Severity {
