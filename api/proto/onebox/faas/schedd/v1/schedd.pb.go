@@ -3225,7 +3225,10 @@ type RestoreDatabaseRequest struct {
 	Database         *ProvisionDatabaseRequest `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
 	SourceDatabaseId string                    `protobuf:"bytes,2,opt,name=source_database_id,json=sourceDatabaseId,proto3" json:"source_database_id,omitempty"`
 	// The instant to recover the source to; not in the future.
-	PointInTime   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=point_in_time,json=pointInTime,proto3" json:"point_in_time,omitempty"`
+	PointInTime *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=point_in_time,json=pointInTime,proto3" json:"point_in_time,omitempty"`
+	// The source's snapshot at point_in_time, which keeps it restorable
+	// outside the source's restore window.
+	Snapshot      string `protobuf:"bytes,4,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3281,6 +3284,230 @@ func (x *RestoreDatabaseRequest) GetPointInTime() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *RestoreDatabaseRequest) GetSnapshot() string {
+	if x != nil {
+		return x.Snapshot
+	}
+	return ""
+}
+
+type CaptureDatabaseSnapshotRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseId string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
+	// 32 lowercase hex characters, chosen by the caller.
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	PointInTime   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=point_in_time,json=pointInTime,proto3" json:"point_in_time,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CaptureDatabaseSnapshotRequest) Reset() {
+	*x = CaptureDatabaseSnapshotRequest{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CaptureDatabaseSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CaptureDatabaseSnapshotRequest) ProtoMessage() {}
+
+func (x *CaptureDatabaseSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CaptureDatabaseSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*CaptureDatabaseSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *CaptureDatabaseSnapshotRequest) GetDatabaseId() string {
+	if x != nil {
+		return x.DatabaseId
+	}
+	return ""
+}
+
+func (x *CaptureDatabaseSnapshotRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CaptureDatabaseSnapshotRequest) GetPointInTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PointInTime
+	}
+	return nil
+}
+
+type DatabaseSnapshotRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseId    string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseSnapshotRef) Reset() {
+	*x = DatabaseSnapshotRef{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseSnapshotRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseSnapshotRef) ProtoMessage() {}
+
+func (x *DatabaseSnapshotRef) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseSnapshotRef.ProtoReflect.Descriptor instead.
+func (*DatabaseSnapshotRef) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *DatabaseSnapshotRef) GetDatabaseId() string {
+	if x != nil {
+		return x.DatabaseId
+	}
+	return ""
+}
+
+func (x *DatabaseSnapshotRef) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type DatabaseSnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseId    string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	PointInTime   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=point_in_time,json=pointInTime,proto3" json:"point_in_time,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseSnapshot) Reset() {
+	*x = DatabaseSnapshot{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseSnapshot) ProtoMessage() {}
+
+func (x *DatabaseSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseSnapshot.ProtoReflect.Descriptor instead.
+func (*DatabaseSnapshot) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *DatabaseSnapshot) GetDatabaseId() string {
+	if x != nil {
+		return x.DatabaseId
+	}
+	return ""
+}
+
+func (x *DatabaseSnapshot) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DatabaseSnapshot) GetPointInTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PointInTime
+	}
+	return nil
+}
+
+func (x *DatabaseSnapshot) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+type DeleteDatabaseSnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteDatabaseSnapshotResponse) Reset() {
+	*x = DeleteDatabaseSnapshotResponse{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteDatabaseSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteDatabaseSnapshotResponse) ProtoMessage() {}
+
+func (x *DeleteDatabaseSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteDatabaseSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*DeleteDatabaseSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{40}
+}
+
 type SetDatabaseAlwaysOnRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DatabaseId    string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
@@ -3291,7 +3518,7 @@ type SetDatabaseAlwaysOnRequest struct {
 
 func (x *SetDatabaseAlwaysOnRequest) Reset() {
 	*x = SetDatabaseAlwaysOnRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[37]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3303,7 +3530,7 @@ func (x *SetDatabaseAlwaysOnRequest) String() string {
 func (*SetDatabaseAlwaysOnRequest) ProtoMessage() {}
 
 func (x *SetDatabaseAlwaysOnRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[37]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3316,7 +3543,7 @@ func (x *SetDatabaseAlwaysOnRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDatabaseAlwaysOnRequest.ProtoReflect.Descriptor instead.
 func (*SetDatabaseAlwaysOnRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{37}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *SetDatabaseAlwaysOnRequest) GetDatabaseId() string {
@@ -3366,13 +3593,15 @@ type DatabaseRuntime struct {
 	Replicated    bool   `protobuf:"varint,17,opt,name=replicated,proto3" json:"replicated,omitempty"`
 	StandbyNodeId string `protobuf:"bytes,18,opt,name=standby_node_id,json=standbyNodeId,proto3" json:"standby_node_id,omitempty"`
 	StandbySynced bool   `protobuf:"varint,19,opt,name=standby_synced,json=standbySynced,proto3" json:"standby_synced,omitempty"`
+	// When the database was placed.
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DatabaseRuntime) Reset() {
 	*x = DatabaseRuntime{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[38]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3384,7 +3613,7 @@ func (x *DatabaseRuntime) String() string {
 func (*DatabaseRuntime) ProtoMessage() {}
 
 func (x *DatabaseRuntime) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[38]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3397,7 +3626,7 @@ func (x *DatabaseRuntime) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseRuntime.ProtoReflect.Descriptor instead.
 func (*DatabaseRuntime) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{38}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *DatabaseRuntime) GetDatabaseId() string {
@@ -3533,6 +3762,13 @@ func (x *DatabaseRuntime) GetStandbySynced() bool {
 	return false
 }
 
+func (x *DatabaseRuntime) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
 // ImportDatabaseRequest names the source: its endpoint (a public address
 // serving TLS for host), login and database, and the target database and
 // owner role here. Sensitive (password): never logged.
@@ -3553,7 +3789,7 @@ type ImportDatabaseRequest struct {
 
 func (x *ImportDatabaseRequest) Reset() {
 	*x = ImportDatabaseRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[39]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3565,7 +3801,7 @@ func (x *ImportDatabaseRequest) String() string {
 func (*ImportDatabaseRequest) ProtoMessage() {}
 
 func (x *ImportDatabaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[39]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3578,7 +3814,7 @@ func (x *ImportDatabaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportDatabaseRequest.ProtoReflect.Descriptor instead.
 func (*ImportDatabaseRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{39}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ImportDatabaseRequest) GetDatabaseId() string {
@@ -3658,7 +3894,7 @@ type DatabaseImportProgress struct {
 
 func (x *DatabaseImportProgress) Reset() {
 	*x = DatabaseImportProgress{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[40]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3670,7 +3906,7 @@ func (x *DatabaseImportProgress) String() string {
 func (*DatabaseImportProgress) ProtoMessage() {}
 
 func (x *DatabaseImportProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[40]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3683,7 +3919,7 @@ func (x *DatabaseImportProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseImportProgress.ProtoReflect.Descriptor instead.
 func (*DatabaseImportProgress) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{40}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *DatabaseImportProgress) GetState() string {
@@ -3733,7 +3969,7 @@ type ResizeDatabaseRequest struct {
 
 func (x *ResizeDatabaseRequest) Reset() {
 	*x = ResizeDatabaseRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[41]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3745,7 +3981,7 @@ func (x *ResizeDatabaseRequest) String() string {
 func (*ResizeDatabaseRequest) ProtoMessage() {}
 
 func (x *ResizeDatabaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[41]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3758,7 +3994,7 @@ func (x *ResizeDatabaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResizeDatabaseRequest.ProtoReflect.Descriptor instead.
 func (*ResizeDatabaseRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{41}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ResizeDatabaseRequest) GetDatabaseId() string {
@@ -3803,7 +4039,7 @@ type TouchDatabaseRequest struct {
 
 func (x *TouchDatabaseRequest) Reset() {
 	*x = TouchDatabaseRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[42]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3815,7 +4051,7 @@ func (x *TouchDatabaseRequest) String() string {
 func (*TouchDatabaseRequest) ProtoMessage() {}
 
 func (x *TouchDatabaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[42]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3828,7 +4064,7 @@ func (x *TouchDatabaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TouchDatabaseRequest.ProtoReflect.Descriptor instead.
 func (*TouchDatabaseRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{42}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *TouchDatabaseRequest) GetDatabaseId() string {
@@ -3853,7 +4089,7 @@ type TouchDatabaseResponse struct {
 
 func (x *TouchDatabaseResponse) Reset() {
 	*x = TouchDatabaseResponse{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[43]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3865,7 +4101,7 @@ func (x *TouchDatabaseResponse) String() string {
 func (*TouchDatabaseResponse) ProtoMessage() {}
 
 func (x *TouchDatabaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[43]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3878,7 +4114,7 @@ func (x *TouchDatabaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TouchDatabaseResponse.ProtoReflect.Descriptor instead.
 func (*TouchDatabaseResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{43}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{47}
 }
 
 type DatabaseUsageRequest struct {
@@ -3892,7 +4128,7 @@ type DatabaseUsageRequest struct {
 
 func (x *DatabaseUsageRequest) Reset() {
 	*x = DatabaseUsageRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[44]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3904,7 +4140,7 @@ func (x *DatabaseUsageRequest) String() string {
 func (*DatabaseUsageRequest) ProtoMessage() {}
 
 func (x *DatabaseUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[44]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3917,7 +4153,7 @@ func (x *DatabaseUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseUsageRequest.ProtoReflect.Descriptor instead.
 func (*DatabaseUsageRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{44}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DatabaseUsageRequest) GetDatabaseId() string {
@@ -3954,7 +4190,7 @@ type DatabaseUsageResponse struct {
 
 func (x *DatabaseUsageResponse) Reset() {
 	*x = DatabaseUsageResponse{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[45]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3966,7 +4202,7 @@ func (x *DatabaseUsageResponse) String() string {
 func (*DatabaseUsageResponse) ProtoMessage() {}
 
 func (x *DatabaseUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[45]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3979,7 +4215,7 @@ func (x *DatabaseUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseUsageResponse.ProtoReflect.Descriptor instead.
 func (*DatabaseUsageResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{45}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *DatabaseUsageResponse) GetActiveSeconds() int64 {
@@ -4027,7 +4263,7 @@ type DatabaseAdminRequest struct {
 
 func (x *DatabaseAdminRequest) Reset() {
 	*x = DatabaseAdminRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[46]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4039,7 +4275,7 @@ func (x *DatabaseAdminRequest) String() string {
 func (*DatabaseAdminRequest) ProtoMessage() {}
 
 func (x *DatabaseAdminRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[46]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4052,7 +4288,7 @@ func (x *DatabaseAdminRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseAdminRequest.ProtoReflect.Descriptor instead.
 func (*DatabaseAdminRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{46}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *DatabaseAdminRequest) GetDatabaseId() string {
@@ -4079,7 +4315,7 @@ type DatabaseAdminResponse struct {
 
 func (x *DatabaseAdminResponse) Reset() {
 	*x = DatabaseAdminResponse{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[47]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4091,7 +4327,7 @@ func (x *DatabaseAdminResponse) String() string {
 func (*DatabaseAdminResponse) ProtoMessage() {}
 
 func (x *DatabaseAdminResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[47]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4104,7 +4340,7 @@ func (x *DatabaseAdminResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseAdminResponse.ProtoReflect.Descriptor instead.
 func (*DatabaseAdminResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{47}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *DatabaseAdminResponse) GetErrorCode() string {
@@ -4129,7 +4365,7 @@ type DeleteDatabaseResponse struct {
 
 func (x *DeleteDatabaseResponse) Reset() {
 	*x = DeleteDatabaseResponse{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[48]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4141,7 +4377,7 @@ func (x *DeleteDatabaseResponse) String() string {
 func (*DeleteDatabaseResponse) ProtoMessage() {}
 
 func (x *DeleteDatabaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[48]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4154,7 +4390,7 @@ func (x *DeleteDatabaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteDatabaseResponse.ProtoReflect.Descriptor instead.
 func (*DeleteDatabaseResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{48}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{52}
 }
 
 var File_onebox_faas_schedd_v1_schedd_proto protoreflect.FileDescriptor
@@ -4395,15 +4631,33 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x16restore_window_seconds\x18\a \x01(\x03R\x14restoreWindowSeconds\x12\x1e\n" +
 	"\n" +
 	"replicated\x18\b \x01(\bR\n" +
-	"replicated\"\xd3\x01\n" +
+	"replicated\"\xef\x01\n" +
 	"\x16RestoreDatabaseRequest\x12K\n" +
 	"\bdatabase\x18\x01 \x01(\v2/.onebox.faas.schedd.v1.ProvisionDatabaseRequestR\bdatabase\x12,\n" +
 	"\x12source_database_id\x18\x02 \x01(\tR\x10sourceDatabaseId\x12>\n" +
-	"\rpoint_in_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vpointInTime\"Z\n" +
+	"\rpoint_in_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vpointInTime\x12\x1a\n" +
+	"\bsnapshot\x18\x04 \x01(\tR\bsnapshot\"\x95\x01\n" +
+	"\x1eCaptureDatabaseSnapshotRequest\x12\x1f\n" +
+	"\vdatabase_id\x18\x01 \x01(\tR\n" +
+	"databaseId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12>\n" +
+	"\rpoint_in_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vpointInTime\"J\n" +
+	"\x13DatabaseSnapshotRef\x12\x1f\n" +
+	"\vdatabase_id\x18\x01 \x01(\tR\n" +
+	"databaseId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\xc2\x01\n" +
+	"\x10DatabaseSnapshot\x12\x1f\n" +
+	"\vdatabase_id\x18\x01 \x01(\tR\n" +
+	"databaseId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12>\n" +
+	"\rpoint_in_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vpointInTime\x129\n" +
+	"\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\" \n" +
+	"\x1eDeleteDatabaseSnapshotResponse\"Z\n" +
 	"\x1aSetDatabaseAlwaysOnRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1b\n" +
-	"\talways_on\x18\x02 \x01(\bR\balwaysOn\"\xed\x05\n" +
+	"\talways_on\x18\x02 \x01(\bR\balwaysOn\"\xa8\x06\n" +
 	"\x0fDatabaseRuntime\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x17\n" +
@@ -4430,7 +4684,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"replicated\x18\x11 \x01(\bR\n" +
 	"replicated\x12&\n" +
 	"\x0fstandby_node_id\x18\x12 \x01(\tR\rstandbyNodeId\x12%\n" +
-	"\x0estandby_synced\x18\x13 \x01(\bR\rstandbySynced\"\xa1\x02\n" +
+	"\x0estandby_synced\x18\x13 \x01(\bR\rstandbySynced\x129\n" +
+	"\n" +
+	"created_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xa1\x02\n" +
 	"\x15ImportDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x12\n" +
@@ -4486,7 +4742,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
 	"WakeMethod\x12\x12\n" +
 	"\x0eWAKE_COLD_BOOT\x10\x00\x12\x10\n" +
-	"\fWAKE_RESTORE\x10\x012\xde\x16\n" +
+	"\fWAKE_RESTORE\x10\x012\xc2\x19\n" +
 	"\x06Schedd\x12O\n" +
 	"\x04Wake\x12\".onebox.faas.schedd.v1.WakeRequest\x1a#.onebox.faas.schedd.v1.WakeResponse\x12j\n" +
 	"\rAdmitInstance\x12+.onebox.faas.schedd.v1.AdmitInstanceRequest\x1a,.onebox.faas.schedd.v1.AdmitInstanceResponse\x12m\n" +
@@ -4515,7 +4771,10 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\rDatabaseUsage\x12+.onebox.faas.schedd.v1.DatabaseUsageRequest\x1a,.onebox.faas.schedd.v1.DatabaseUsageResponse\x12f\n" +
 	"\x0eResizeDatabase\x12,.onebox.faas.schedd.v1.ResizeDatabaseRequest\x1a&.onebox.faas.schedd.v1.DatabaseRuntime\x12m\n" +
 	"\x0eImportDatabase\x12,.onebox.faas.schedd.v1.ImportDatabaseRequest\x1a-.onebox.faas.schedd.v1.DatabaseImportProgress\x12i\n" +
-	"\x14DatabaseImportStatus\x12\".onebox.faas.schedd.v1.DatabaseRef\x1a-.onebox.faas.schedd.v1.DatabaseImportProgressBFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1;scheddpbb\x06proto3"
+	"\x14DatabaseImportStatus\x12\".onebox.faas.schedd.v1.DatabaseRef\x1a-.onebox.faas.schedd.v1.DatabaseImportProgress\x12y\n" +
+	"\x17CaptureDatabaseSnapshot\x125.onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest\x1a'.onebox.faas.schedd.v1.DatabaseSnapshot\x12j\n" +
+	"\x13GetDatabaseSnapshot\x12*.onebox.faas.schedd.v1.DatabaseSnapshotRef\x1a'.onebox.faas.schedd.v1.DatabaseSnapshot\x12{\n" +
+	"\x16DeleteDatabaseSnapshot\x12*.onebox.faas.schedd.v1.DatabaseSnapshotRef\x1a5.onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponseBFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1;scheddpbb\x06proto3"
 
 var (
 	file_onebox_faas_schedd_v1_schedd_proto_rawDescOnce sync.Once
@@ -4530,164 +4789,178 @@ func file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_schedd_v1_schedd_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_onebox_faas_schedd_v1_schedd_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_onebox_faas_schedd_v1_schedd_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_onebox_faas_schedd_v1_schedd_proto_goTypes = []any{
-	(WakeMethod)(0),                       // 0: onebox.faas.schedd.v1.WakeMethod
-	(*LivenessFailedReport)(nil),          // 1: onebox.faas.schedd.v1.LivenessFailedReport
-	(*LivenessFailedAck)(nil),             // 2: onebox.faas.schedd.v1.LivenessFailedAck
-	(*ReportWorkloadOOMRequest)(nil),      // 3: onebox.faas.schedd.v1.ReportWorkloadOOMRequest
-	(*ReportWorkloadOOMAck)(nil),          // 4: onebox.faas.schedd.v1.ReportWorkloadOOMAck
-	(*WakeRequest)(nil),                   // 5: onebox.faas.schedd.v1.WakeRequest
-	(*PlatformIdentity)(nil),              // 6: onebox.faas.schedd.v1.PlatformIdentity
-	(*WakeResponse)(nil),                  // 7: onebox.faas.schedd.v1.WakeResponse
-	(*AdmitInstanceRequest)(nil),          // 8: onebox.faas.schedd.v1.AdmitInstanceRequest
-	(*AdmitInstanceResponse)(nil),         // 9: onebox.faas.schedd.v1.AdmitInstanceResponse
-	(*Touch)(nil),                         // 10: onebox.faas.schedd.v1.Touch
-	(*ReportActivityRequest)(nil),         // 11: onebox.faas.schedd.v1.ReportActivityRequest
-	(*ReportActivityResponse)(nil),        // 12: onebox.faas.schedd.v1.ReportActivityResponse
-	(*ParkInstanceRequest)(nil),           // 13: onebox.faas.schedd.v1.ParkInstanceRequest
-	(*ParkInstanceResponse)(nil),          // 14: onebox.faas.schedd.v1.ParkInstanceResponse
-	(*ForceColdBootNextWakeRequest)(nil),  // 15: onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
-	(*ForceColdBootNextWakeResponse)(nil), // 16: onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
-	(*ForceRestartInstanceRequest)(nil),   // 17: onebox.faas.schedd.v1.ForceRestartInstanceRequest
-	(*ForceRestartInstanceResponse)(nil),  // 18: onebox.faas.schedd.v1.ForceRestartInstanceResponse
-	(*InstanceStatsRow)(nil),              // 19: onebox.faas.schedd.v1.InstanceStatsRow
-	(*ListInstanceStatsRequest)(nil),      // 20: onebox.faas.schedd.v1.ListInstanceStatsRequest
-	(*ListInstanceStatsResponse)(nil),     // 21: onebox.faas.schedd.v1.ListInstanceStatsResponse
-	(*StreamAppLogsRequest)(nil),          // 22: onebox.faas.schedd.v1.StreamAppLogsRequest
-	(*StreamAppLogsResponse)(nil),         // 23: onebox.faas.schedd.v1.StreamAppLogsResponse
-	(*StreamWarmHintsRequest)(nil),        // 24: onebox.faas.schedd.v1.StreamWarmHintsRequest
-	(*StreamWarmHintsResponse)(nil),       // 25: onebox.faas.schedd.v1.StreamWarmHintsResponse
-	(*CapacityReport)(nil),                // 26: onebox.faas.schedd.v1.CapacityReport
-	(*NodeInstanceInventory)(nil),         // 27: onebox.faas.schedd.v1.NodeInstanceInventory
-	(*InstanceTelemetry)(nil),             // 28: onebox.faas.schedd.v1.InstanceTelemetry
-	(*ReportCapacityAck)(nil),             // 29: onebox.faas.schedd.v1.ReportCapacityAck
-	(*EnsureWakeRequest)(nil),             // 30: onebox.faas.schedd.v1.EnsureWakeRequest
-	(*EnsureWakeResponse)(nil),            // 31: onebox.faas.schedd.v1.EnsureWakeResponse
-	(*FrameworkReadyReport)(nil),          // 32: onebox.faas.schedd.v1.FrameworkReadyReport
-	(*FrameworkReadyAck)(nil),             // 33: onebox.faas.schedd.v1.FrameworkReadyAck
-	(*FlowSummary)(nil),                   // 34: onebox.faas.schedd.v1.FlowSummary
-	(*DatabaseRef)(nil),                   // 35: onebox.faas.schedd.v1.DatabaseRef
-	(*ProvisionDatabaseRequest)(nil),      // 36: onebox.faas.schedd.v1.ProvisionDatabaseRequest
-	(*RestoreDatabaseRequest)(nil),        // 37: onebox.faas.schedd.v1.RestoreDatabaseRequest
-	(*SetDatabaseAlwaysOnRequest)(nil),    // 38: onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
-	(*DatabaseRuntime)(nil),               // 39: onebox.faas.schedd.v1.DatabaseRuntime
-	(*ImportDatabaseRequest)(nil),         // 40: onebox.faas.schedd.v1.ImportDatabaseRequest
-	(*DatabaseImportProgress)(nil),        // 41: onebox.faas.schedd.v1.DatabaseImportProgress
-	(*ResizeDatabaseRequest)(nil),         // 42: onebox.faas.schedd.v1.ResizeDatabaseRequest
-	(*TouchDatabaseRequest)(nil),          // 43: onebox.faas.schedd.v1.TouchDatabaseRequest
-	(*TouchDatabaseResponse)(nil),         // 44: onebox.faas.schedd.v1.TouchDatabaseResponse
-	(*DatabaseUsageRequest)(nil),          // 45: onebox.faas.schedd.v1.DatabaseUsageRequest
-	(*DatabaseUsageResponse)(nil),         // 46: onebox.faas.schedd.v1.DatabaseUsageResponse
-	(*DatabaseAdminRequest)(nil),          // 47: onebox.faas.schedd.v1.DatabaseAdminRequest
-	(*DatabaseAdminResponse)(nil),         // 48: onebox.faas.schedd.v1.DatabaseAdminResponse
-	(*DeleteDatabaseResponse)(nil),        // 49: onebox.faas.schedd.v1.DeleteDatabaseResponse
-	(*structpb.Struct)(nil),               // 50: google.protobuf.Struct
-	(*wrapperspb.Int64Value)(nil),         // 51: google.protobuf.Int64Value
-	(*timestamppb.Timestamp)(nil),         // 52: google.protobuf.Timestamp
-	(*wrapperspb.DoubleValue)(nil),        // 53: google.protobuf.DoubleValue
+	(WakeMethod)(0),                        // 0: onebox.faas.schedd.v1.WakeMethod
+	(*LivenessFailedReport)(nil),           // 1: onebox.faas.schedd.v1.LivenessFailedReport
+	(*LivenessFailedAck)(nil),              // 2: onebox.faas.schedd.v1.LivenessFailedAck
+	(*ReportWorkloadOOMRequest)(nil),       // 3: onebox.faas.schedd.v1.ReportWorkloadOOMRequest
+	(*ReportWorkloadOOMAck)(nil),           // 4: onebox.faas.schedd.v1.ReportWorkloadOOMAck
+	(*WakeRequest)(nil),                    // 5: onebox.faas.schedd.v1.WakeRequest
+	(*PlatformIdentity)(nil),               // 6: onebox.faas.schedd.v1.PlatformIdentity
+	(*WakeResponse)(nil),                   // 7: onebox.faas.schedd.v1.WakeResponse
+	(*AdmitInstanceRequest)(nil),           // 8: onebox.faas.schedd.v1.AdmitInstanceRequest
+	(*AdmitInstanceResponse)(nil),          // 9: onebox.faas.schedd.v1.AdmitInstanceResponse
+	(*Touch)(nil),                          // 10: onebox.faas.schedd.v1.Touch
+	(*ReportActivityRequest)(nil),          // 11: onebox.faas.schedd.v1.ReportActivityRequest
+	(*ReportActivityResponse)(nil),         // 12: onebox.faas.schedd.v1.ReportActivityResponse
+	(*ParkInstanceRequest)(nil),            // 13: onebox.faas.schedd.v1.ParkInstanceRequest
+	(*ParkInstanceResponse)(nil),           // 14: onebox.faas.schedd.v1.ParkInstanceResponse
+	(*ForceColdBootNextWakeRequest)(nil),   // 15: onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
+	(*ForceColdBootNextWakeResponse)(nil),  // 16: onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
+	(*ForceRestartInstanceRequest)(nil),    // 17: onebox.faas.schedd.v1.ForceRestartInstanceRequest
+	(*ForceRestartInstanceResponse)(nil),   // 18: onebox.faas.schedd.v1.ForceRestartInstanceResponse
+	(*InstanceStatsRow)(nil),               // 19: onebox.faas.schedd.v1.InstanceStatsRow
+	(*ListInstanceStatsRequest)(nil),       // 20: onebox.faas.schedd.v1.ListInstanceStatsRequest
+	(*ListInstanceStatsResponse)(nil),      // 21: onebox.faas.schedd.v1.ListInstanceStatsResponse
+	(*StreamAppLogsRequest)(nil),           // 22: onebox.faas.schedd.v1.StreamAppLogsRequest
+	(*StreamAppLogsResponse)(nil),          // 23: onebox.faas.schedd.v1.StreamAppLogsResponse
+	(*StreamWarmHintsRequest)(nil),         // 24: onebox.faas.schedd.v1.StreamWarmHintsRequest
+	(*StreamWarmHintsResponse)(nil),        // 25: onebox.faas.schedd.v1.StreamWarmHintsResponse
+	(*CapacityReport)(nil),                 // 26: onebox.faas.schedd.v1.CapacityReport
+	(*NodeInstanceInventory)(nil),          // 27: onebox.faas.schedd.v1.NodeInstanceInventory
+	(*InstanceTelemetry)(nil),              // 28: onebox.faas.schedd.v1.InstanceTelemetry
+	(*ReportCapacityAck)(nil),              // 29: onebox.faas.schedd.v1.ReportCapacityAck
+	(*EnsureWakeRequest)(nil),              // 30: onebox.faas.schedd.v1.EnsureWakeRequest
+	(*EnsureWakeResponse)(nil),             // 31: onebox.faas.schedd.v1.EnsureWakeResponse
+	(*FrameworkReadyReport)(nil),           // 32: onebox.faas.schedd.v1.FrameworkReadyReport
+	(*FrameworkReadyAck)(nil),              // 33: onebox.faas.schedd.v1.FrameworkReadyAck
+	(*FlowSummary)(nil),                    // 34: onebox.faas.schedd.v1.FlowSummary
+	(*DatabaseRef)(nil),                    // 35: onebox.faas.schedd.v1.DatabaseRef
+	(*ProvisionDatabaseRequest)(nil),       // 36: onebox.faas.schedd.v1.ProvisionDatabaseRequest
+	(*RestoreDatabaseRequest)(nil),         // 37: onebox.faas.schedd.v1.RestoreDatabaseRequest
+	(*CaptureDatabaseSnapshotRequest)(nil), // 38: onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest
+	(*DatabaseSnapshotRef)(nil),            // 39: onebox.faas.schedd.v1.DatabaseSnapshotRef
+	(*DatabaseSnapshot)(nil),               // 40: onebox.faas.schedd.v1.DatabaseSnapshot
+	(*DeleteDatabaseSnapshotResponse)(nil), // 41: onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse
+	(*SetDatabaseAlwaysOnRequest)(nil),     // 42: onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
+	(*DatabaseRuntime)(nil),                // 43: onebox.faas.schedd.v1.DatabaseRuntime
+	(*ImportDatabaseRequest)(nil),          // 44: onebox.faas.schedd.v1.ImportDatabaseRequest
+	(*DatabaseImportProgress)(nil),         // 45: onebox.faas.schedd.v1.DatabaseImportProgress
+	(*ResizeDatabaseRequest)(nil),          // 46: onebox.faas.schedd.v1.ResizeDatabaseRequest
+	(*TouchDatabaseRequest)(nil),           // 47: onebox.faas.schedd.v1.TouchDatabaseRequest
+	(*TouchDatabaseResponse)(nil),          // 48: onebox.faas.schedd.v1.TouchDatabaseResponse
+	(*DatabaseUsageRequest)(nil),           // 49: onebox.faas.schedd.v1.DatabaseUsageRequest
+	(*DatabaseUsageResponse)(nil),          // 50: onebox.faas.schedd.v1.DatabaseUsageResponse
+	(*DatabaseAdminRequest)(nil),           // 51: onebox.faas.schedd.v1.DatabaseAdminRequest
+	(*DatabaseAdminResponse)(nil),          // 52: onebox.faas.schedd.v1.DatabaseAdminResponse
+	(*DeleteDatabaseResponse)(nil),         // 53: onebox.faas.schedd.v1.DeleteDatabaseResponse
+	(*structpb.Struct)(nil),                // 54: google.protobuf.Struct
+	(*wrapperspb.Int64Value)(nil),          // 55: google.protobuf.Int64Value
+	(*timestamppb.Timestamp)(nil),          // 56: google.protobuf.Timestamp
+	(*wrapperspb.DoubleValue)(nil),         // 57: google.protobuf.DoubleValue
 }
 var file_onebox_faas_schedd_v1_schedd_proto_depIdxs = []int32{
 	0,  // 0: onebox.faas.schedd.v1.WakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	50, // 1: onebox.faas.schedd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
+	54, // 1: onebox.faas.schedd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
 	6,  // 2: onebox.faas.schedd.v1.WakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	0,  // 3: onebox.faas.schedd.v1.AdmitInstanceResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	50, // 4: onebox.faas.schedd.v1.AdmitInstanceResponse.problem:type_name -> google.protobuf.Struct
+	54, // 4: onebox.faas.schedd.v1.AdmitInstanceResponse.problem:type_name -> google.protobuf.Struct
 	6,  // 5: onebox.faas.schedd.v1.AdmitInstanceResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	10, // 6: onebox.faas.schedd.v1.ReportActivityRequest.touches:type_name -> onebox.faas.schedd.v1.Touch
-	51, // 7: onebox.faas.schedd.v1.InstanceStatsRow.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	51, // 8: onebox.faas.schedd.v1.InstanceStatsRow.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	55, // 7: onebox.faas.schedd.v1.InstanceStatsRow.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	55, // 8: onebox.faas.schedd.v1.InstanceStatsRow.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
 	19, // 9: onebox.faas.schedd.v1.ListInstanceStatsResponse.rows:type_name -> onebox.faas.schedd.v1.InstanceStatsRow
-	52, // 10: onebox.faas.schedd.v1.StreamAppLogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
-	52, // 11: onebox.faas.schedd.v1.StreamAppLogsResponse.written_at:type_name -> google.protobuf.Timestamp
-	52, // 12: onebox.faas.schedd.v1.StreamAppLogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
-	52, // 13: onebox.faas.schedd.v1.StreamWarmHintsResponse.written_at:type_name -> google.protobuf.Timestamp
+	56, // 10: onebox.faas.schedd.v1.StreamAppLogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
+	56, // 11: onebox.faas.schedd.v1.StreamAppLogsResponse.written_at:type_name -> google.protobuf.Timestamp
+	56, // 12: onebox.faas.schedd.v1.StreamAppLogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
+	56, // 13: onebox.faas.schedd.v1.StreamWarmHintsResponse.written_at:type_name -> google.protobuf.Timestamp
 	28, // 14: onebox.faas.schedd.v1.CapacityReport.instances:type_name -> onebox.faas.schedd.v1.InstanceTelemetry
 	27, // 15: onebox.faas.schedd.v1.CapacityReport.instance_inventory:type_name -> onebox.faas.schedd.v1.NodeInstanceInventory
-	51, // 16: onebox.faas.schedd.v1.InstanceTelemetry.resident_bytes:type_name -> google.protobuf.Int64Value
-	53, // 17: onebox.faas.schedd.v1.InstanceTelemetry.cpu_pct:type_name -> google.protobuf.DoubleValue
-	53, // 18: onebox.faas.schedd.v1.InstanceTelemetry.cpu_seconds:type_name -> google.protobuf.DoubleValue
-	53, // 19: onebox.faas.schedd.v1.InstanceTelemetry.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
-	52, // 20: onebox.faas.schedd.v1.InstanceTelemetry.last_request_at:type_name -> google.protobuf.Timestamp
-	51, // 21: onebox.faas.schedd.v1.InstanceTelemetry.net_tx_bytes:type_name -> google.protobuf.Int64Value
-	51, // 22: onebox.faas.schedd.v1.InstanceTelemetry.net_rx_bytes:type_name -> google.protobuf.Int64Value
-	51, // 23: onebox.faas.schedd.v1.InstanceTelemetry.request_count_total:type_name -> google.protobuf.Int64Value
-	51, // 24: onebox.faas.schedd.v1.InstanceTelemetry.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	51, // 25: onebox.faas.schedd.v1.InstanceTelemetry.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	55, // 16: onebox.faas.schedd.v1.InstanceTelemetry.resident_bytes:type_name -> google.protobuf.Int64Value
+	57, // 17: onebox.faas.schedd.v1.InstanceTelemetry.cpu_pct:type_name -> google.protobuf.DoubleValue
+	57, // 18: onebox.faas.schedd.v1.InstanceTelemetry.cpu_seconds:type_name -> google.protobuf.DoubleValue
+	57, // 19: onebox.faas.schedd.v1.InstanceTelemetry.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
+	56, // 20: onebox.faas.schedd.v1.InstanceTelemetry.last_request_at:type_name -> google.protobuf.Timestamp
+	55, // 21: onebox.faas.schedd.v1.InstanceTelemetry.net_tx_bytes:type_name -> google.protobuf.Int64Value
+	55, // 22: onebox.faas.schedd.v1.InstanceTelemetry.net_rx_bytes:type_name -> google.protobuf.Int64Value
+	55, // 23: onebox.faas.schedd.v1.InstanceTelemetry.request_count_total:type_name -> google.protobuf.Int64Value
+	55, // 24: onebox.faas.schedd.v1.InstanceTelemetry.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	55, // 25: onebox.faas.schedd.v1.InstanceTelemetry.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
 	34, // 26: onebox.faas.schedd.v1.InstanceTelemetry.flow_summaries:type_name -> onebox.faas.schedd.v1.FlowSummary
-	51, // 27: onebox.faas.schedd.v1.InstanceTelemetry.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
-	51, // 28: onebox.faas.schedd.v1.InstanceTelemetry.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
+	55, // 27: onebox.faas.schedd.v1.InstanceTelemetry.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
+	55, // 28: onebox.faas.schedd.v1.InstanceTelemetry.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
 	0,  // 29: onebox.faas.schedd.v1.EnsureWakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	50, // 30: onebox.faas.schedd.v1.EnsureWakeResponse.problem:type_name -> google.protobuf.Struct
+	54, // 30: onebox.faas.schedd.v1.EnsureWakeResponse.problem:type_name -> google.protobuf.Struct
 	9,  // 31: onebox.faas.schedd.v1.EnsureWakeResponse.additional_instances:type_name -> onebox.faas.schedd.v1.AdmitInstanceResponse
 	6,  // 32: onebox.faas.schedd.v1.EnsureWakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	36, // 33: onebox.faas.schedd.v1.RestoreDatabaseRequest.database:type_name -> onebox.faas.schedd.v1.ProvisionDatabaseRequest
-	52, // 34: onebox.faas.schedd.v1.RestoreDatabaseRequest.point_in_time:type_name -> google.protobuf.Timestamp
-	52, // 35: onebox.faas.schedd.v1.DatabaseRuntime.restore_target:type_name -> google.protobuf.Timestamp
-	52, // 36: onebox.faas.schedd.v1.DatabaseRuntime.restore_recovered_to:type_name -> google.protobuf.Timestamp
-	52, // 37: onebox.faas.schedd.v1.DatabaseImportProgress.started_at:type_name -> google.protobuf.Timestamp
-	52, // 38: onebox.faas.schedd.v1.DatabaseImportProgress.finished_at:type_name -> google.protobuf.Timestamp
-	52, // 39: onebox.faas.schedd.v1.DatabaseUsageRequest.from:type_name -> google.protobuf.Timestamp
-	52, // 40: onebox.faas.schedd.v1.DatabaseUsageRequest.to:type_name -> google.protobuf.Timestamp
-	5,  // 41: onebox.faas.schedd.v1.Schedd.Wake:input_type -> onebox.faas.schedd.v1.WakeRequest
-	8,  // 42: onebox.faas.schedd.v1.Schedd.AdmitInstance:input_type -> onebox.faas.schedd.v1.AdmitInstanceRequest
-	11, // 43: onebox.faas.schedd.v1.Schedd.ReportActivity:input_type -> onebox.faas.schedd.v1.ReportActivityRequest
-	32, // 44: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:input_type -> onebox.faas.schedd.v1.FrameworkReadyReport
-	13, // 45: onebox.faas.schedd.v1.Schedd.ParkInstance:input_type -> onebox.faas.schedd.v1.ParkInstanceRequest
-	15, // 46: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:input_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
-	17, // 47: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:input_type -> onebox.faas.schedd.v1.ForceRestartInstanceRequest
-	20, // 48: onebox.faas.schedd.v1.Schedd.ListInstanceStats:input_type -> onebox.faas.schedd.v1.ListInstanceStatsRequest
-	22, // 49: onebox.faas.schedd.v1.Schedd.StreamAppLogs:input_type -> onebox.faas.schedd.v1.StreamAppLogsRequest
-	24, // 50: onebox.faas.schedd.v1.Schedd.StreamWarmHints:input_type -> onebox.faas.schedd.v1.StreamWarmHintsRequest
-	26, // 51: onebox.faas.schedd.v1.Schedd.ReportCapacity:input_type -> onebox.faas.schedd.v1.CapacityReport
-	1,  // 52: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:input_type -> onebox.faas.schedd.v1.LivenessFailedReport
-	30, // 53: onebox.faas.schedd.v1.Schedd.EnsureWake:input_type -> onebox.faas.schedd.v1.EnsureWakeRequest
-	3,  // 54: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:input_type -> onebox.faas.schedd.v1.ReportWorkloadOOMRequest
-	36, // 55: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:input_type -> onebox.faas.schedd.v1.ProvisionDatabaseRequest
-	35, // 56: onebox.faas.schedd.v1.Schedd.WakeDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	35, // 57: onebox.faas.schedd.v1.Schedd.ParkDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	43, // 58: onebox.faas.schedd.v1.Schedd.TouchDatabase:input_type -> onebox.faas.schedd.v1.TouchDatabaseRequest
-	47, // 59: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:input_type -> onebox.faas.schedd.v1.DatabaseAdminRequest
-	35, // 60: onebox.faas.schedd.v1.Schedd.DeleteDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	35, // 61: onebox.faas.schedd.v1.Schedd.GetDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	38, // 62: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:input_type -> onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
-	37, // 63: onebox.faas.schedd.v1.Schedd.RestoreDatabase:input_type -> onebox.faas.schedd.v1.RestoreDatabaseRequest
-	45, // 64: onebox.faas.schedd.v1.Schedd.DatabaseUsage:input_type -> onebox.faas.schedd.v1.DatabaseUsageRequest
-	42, // 65: onebox.faas.schedd.v1.Schedd.ResizeDatabase:input_type -> onebox.faas.schedd.v1.ResizeDatabaseRequest
-	40, // 66: onebox.faas.schedd.v1.Schedd.ImportDatabase:input_type -> onebox.faas.schedd.v1.ImportDatabaseRequest
-	35, // 67: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	7,  // 68: onebox.faas.schedd.v1.Schedd.Wake:output_type -> onebox.faas.schedd.v1.WakeResponse
-	9,  // 69: onebox.faas.schedd.v1.Schedd.AdmitInstance:output_type -> onebox.faas.schedd.v1.AdmitInstanceResponse
-	12, // 70: onebox.faas.schedd.v1.Schedd.ReportActivity:output_type -> onebox.faas.schedd.v1.ReportActivityResponse
-	33, // 71: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:output_type -> onebox.faas.schedd.v1.FrameworkReadyAck
-	14, // 72: onebox.faas.schedd.v1.Schedd.ParkInstance:output_type -> onebox.faas.schedd.v1.ParkInstanceResponse
-	16, // 73: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:output_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
-	18, // 74: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:output_type -> onebox.faas.schedd.v1.ForceRestartInstanceResponse
-	21, // 75: onebox.faas.schedd.v1.Schedd.ListInstanceStats:output_type -> onebox.faas.schedd.v1.ListInstanceStatsResponse
-	23, // 76: onebox.faas.schedd.v1.Schedd.StreamAppLogs:output_type -> onebox.faas.schedd.v1.StreamAppLogsResponse
-	25, // 77: onebox.faas.schedd.v1.Schedd.StreamWarmHints:output_type -> onebox.faas.schedd.v1.StreamWarmHintsResponse
-	29, // 78: onebox.faas.schedd.v1.Schedd.ReportCapacity:output_type -> onebox.faas.schedd.v1.ReportCapacityAck
-	2,  // 79: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:output_type -> onebox.faas.schedd.v1.LivenessFailedAck
-	31, // 80: onebox.faas.schedd.v1.Schedd.EnsureWake:output_type -> onebox.faas.schedd.v1.EnsureWakeResponse
-	4,  // 81: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:output_type -> onebox.faas.schedd.v1.ReportWorkloadOOMAck
-	39, // 82: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	39, // 83: onebox.faas.schedd.v1.Schedd.WakeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	39, // 84: onebox.faas.schedd.v1.Schedd.ParkDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	44, // 85: onebox.faas.schedd.v1.Schedd.TouchDatabase:output_type -> onebox.faas.schedd.v1.TouchDatabaseResponse
-	48, // 86: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:output_type -> onebox.faas.schedd.v1.DatabaseAdminResponse
-	49, // 87: onebox.faas.schedd.v1.Schedd.DeleteDatabase:output_type -> onebox.faas.schedd.v1.DeleteDatabaseResponse
-	39, // 88: onebox.faas.schedd.v1.Schedd.GetDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	39, // 89: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	39, // 90: onebox.faas.schedd.v1.Schedd.RestoreDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	46, // 91: onebox.faas.schedd.v1.Schedd.DatabaseUsage:output_type -> onebox.faas.schedd.v1.DatabaseUsageResponse
-	39, // 92: onebox.faas.schedd.v1.Schedd.ResizeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	41, // 93: onebox.faas.schedd.v1.Schedd.ImportDatabase:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
-	41, // 94: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
-	68, // [68:95] is the sub-list for method output_type
-	41, // [41:68] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	56, // 34: onebox.faas.schedd.v1.RestoreDatabaseRequest.point_in_time:type_name -> google.protobuf.Timestamp
+	56, // 35: onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest.point_in_time:type_name -> google.protobuf.Timestamp
+	56, // 36: onebox.faas.schedd.v1.DatabaseSnapshot.point_in_time:type_name -> google.protobuf.Timestamp
+	56, // 37: onebox.faas.schedd.v1.DatabaseSnapshot.created_at:type_name -> google.protobuf.Timestamp
+	56, // 38: onebox.faas.schedd.v1.DatabaseRuntime.restore_target:type_name -> google.protobuf.Timestamp
+	56, // 39: onebox.faas.schedd.v1.DatabaseRuntime.restore_recovered_to:type_name -> google.protobuf.Timestamp
+	56, // 40: onebox.faas.schedd.v1.DatabaseRuntime.created_at:type_name -> google.protobuf.Timestamp
+	56, // 41: onebox.faas.schedd.v1.DatabaseImportProgress.started_at:type_name -> google.protobuf.Timestamp
+	56, // 42: onebox.faas.schedd.v1.DatabaseImportProgress.finished_at:type_name -> google.protobuf.Timestamp
+	56, // 43: onebox.faas.schedd.v1.DatabaseUsageRequest.from:type_name -> google.protobuf.Timestamp
+	56, // 44: onebox.faas.schedd.v1.DatabaseUsageRequest.to:type_name -> google.protobuf.Timestamp
+	5,  // 45: onebox.faas.schedd.v1.Schedd.Wake:input_type -> onebox.faas.schedd.v1.WakeRequest
+	8,  // 46: onebox.faas.schedd.v1.Schedd.AdmitInstance:input_type -> onebox.faas.schedd.v1.AdmitInstanceRequest
+	11, // 47: onebox.faas.schedd.v1.Schedd.ReportActivity:input_type -> onebox.faas.schedd.v1.ReportActivityRequest
+	32, // 48: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:input_type -> onebox.faas.schedd.v1.FrameworkReadyReport
+	13, // 49: onebox.faas.schedd.v1.Schedd.ParkInstance:input_type -> onebox.faas.schedd.v1.ParkInstanceRequest
+	15, // 50: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:input_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
+	17, // 51: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:input_type -> onebox.faas.schedd.v1.ForceRestartInstanceRequest
+	20, // 52: onebox.faas.schedd.v1.Schedd.ListInstanceStats:input_type -> onebox.faas.schedd.v1.ListInstanceStatsRequest
+	22, // 53: onebox.faas.schedd.v1.Schedd.StreamAppLogs:input_type -> onebox.faas.schedd.v1.StreamAppLogsRequest
+	24, // 54: onebox.faas.schedd.v1.Schedd.StreamWarmHints:input_type -> onebox.faas.schedd.v1.StreamWarmHintsRequest
+	26, // 55: onebox.faas.schedd.v1.Schedd.ReportCapacity:input_type -> onebox.faas.schedd.v1.CapacityReport
+	1,  // 56: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:input_type -> onebox.faas.schedd.v1.LivenessFailedReport
+	30, // 57: onebox.faas.schedd.v1.Schedd.EnsureWake:input_type -> onebox.faas.schedd.v1.EnsureWakeRequest
+	3,  // 58: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:input_type -> onebox.faas.schedd.v1.ReportWorkloadOOMRequest
+	36, // 59: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:input_type -> onebox.faas.schedd.v1.ProvisionDatabaseRequest
+	35, // 60: onebox.faas.schedd.v1.Schedd.WakeDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	35, // 61: onebox.faas.schedd.v1.Schedd.ParkDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	47, // 62: onebox.faas.schedd.v1.Schedd.TouchDatabase:input_type -> onebox.faas.schedd.v1.TouchDatabaseRequest
+	51, // 63: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:input_type -> onebox.faas.schedd.v1.DatabaseAdminRequest
+	35, // 64: onebox.faas.schedd.v1.Schedd.DeleteDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	35, // 65: onebox.faas.schedd.v1.Schedd.GetDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	42, // 66: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:input_type -> onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
+	37, // 67: onebox.faas.schedd.v1.Schedd.RestoreDatabase:input_type -> onebox.faas.schedd.v1.RestoreDatabaseRequest
+	49, // 68: onebox.faas.schedd.v1.Schedd.DatabaseUsage:input_type -> onebox.faas.schedd.v1.DatabaseUsageRequest
+	46, // 69: onebox.faas.schedd.v1.Schedd.ResizeDatabase:input_type -> onebox.faas.schedd.v1.ResizeDatabaseRequest
+	44, // 70: onebox.faas.schedd.v1.Schedd.ImportDatabase:input_type -> onebox.faas.schedd.v1.ImportDatabaseRequest
+	35, // 71: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	38, // 72: onebox.faas.schedd.v1.Schedd.CaptureDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest
+	39, // 73: onebox.faas.schedd.v1.Schedd.GetDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.DatabaseSnapshotRef
+	39, // 74: onebox.faas.schedd.v1.Schedd.DeleteDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.DatabaseSnapshotRef
+	7,  // 75: onebox.faas.schedd.v1.Schedd.Wake:output_type -> onebox.faas.schedd.v1.WakeResponse
+	9,  // 76: onebox.faas.schedd.v1.Schedd.AdmitInstance:output_type -> onebox.faas.schedd.v1.AdmitInstanceResponse
+	12, // 77: onebox.faas.schedd.v1.Schedd.ReportActivity:output_type -> onebox.faas.schedd.v1.ReportActivityResponse
+	33, // 78: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:output_type -> onebox.faas.schedd.v1.FrameworkReadyAck
+	14, // 79: onebox.faas.schedd.v1.Schedd.ParkInstance:output_type -> onebox.faas.schedd.v1.ParkInstanceResponse
+	16, // 80: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:output_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
+	18, // 81: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:output_type -> onebox.faas.schedd.v1.ForceRestartInstanceResponse
+	21, // 82: onebox.faas.schedd.v1.Schedd.ListInstanceStats:output_type -> onebox.faas.schedd.v1.ListInstanceStatsResponse
+	23, // 83: onebox.faas.schedd.v1.Schedd.StreamAppLogs:output_type -> onebox.faas.schedd.v1.StreamAppLogsResponse
+	25, // 84: onebox.faas.schedd.v1.Schedd.StreamWarmHints:output_type -> onebox.faas.schedd.v1.StreamWarmHintsResponse
+	29, // 85: onebox.faas.schedd.v1.Schedd.ReportCapacity:output_type -> onebox.faas.schedd.v1.ReportCapacityAck
+	2,  // 86: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:output_type -> onebox.faas.schedd.v1.LivenessFailedAck
+	31, // 87: onebox.faas.schedd.v1.Schedd.EnsureWake:output_type -> onebox.faas.schedd.v1.EnsureWakeResponse
+	4,  // 88: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:output_type -> onebox.faas.schedd.v1.ReportWorkloadOOMAck
+	43, // 89: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	43, // 90: onebox.faas.schedd.v1.Schedd.WakeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	43, // 91: onebox.faas.schedd.v1.Schedd.ParkDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	48, // 92: onebox.faas.schedd.v1.Schedd.TouchDatabase:output_type -> onebox.faas.schedd.v1.TouchDatabaseResponse
+	52, // 93: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:output_type -> onebox.faas.schedd.v1.DatabaseAdminResponse
+	53, // 94: onebox.faas.schedd.v1.Schedd.DeleteDatabase:output_type -> onebox.faas.schedd.v1.DeleteDatabaseResponse
+	43, // 95: onebox.faas.schedd.v1.Schedd.GetDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	43, // 96: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	43, // 97: onebox.faas.schedd.v1.Schedd.RestoreDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	50, // 98: onebox.faas.schedd.v1.Schedd.DatabaseUsage:output_type -> onebox.faas.schedd.v1.DatabaseUsageResponse
+	43, // 99: onebox.faas.schedd.v1.Schedd.ResizeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	45, // 100: onebox.faas.schedd.v1.Schedd.ImportDatabase:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
+	45, // 101: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
+	40, // 102: onebox.faas.schedd.v1.Schedd.CaptureDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DatabaseSnapshot
+	40, // 103: onebox.faas.schedd.v1.Schedd.GetDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DatabaseSnapshot
+	41, // 104: onebox.faas.schedd.v1.Schedd.DeleteDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse
+	75, // [75:105] is the sub-list for method output_type
+	45, // [45:75] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_schedd_v1_schedd_proto_init() }
@@ -4702,7 +4975,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_schedd_v1_schedd_proto_rawDesc), len(file_onebox_faas_schedd_v1_schedd_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   49,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

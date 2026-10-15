@@ -61,6 +61,13 @@ type VMM interface {
 	// Import starts a running database's import of another PostgreSQL
 	// database (import.go).
 	Import(ctx context.Context, node Node, id string, spec ImportSpec) (dbguest.ImportStatus, error)
+	// PutHold, GetHold and DeleteHold manage the holds on a database's
+	// archive through node's dbbackupd (snapshot.go). GetHold of a missing
+	// hold is ErrNotFound; PutHold of a name holding another point is
+	// ErrConflict; DeleteHold of a missing one succeeds.
+	PutHold(ctx context.Context, node Node, id, name string, point time.Time) (ArchiveHold, error)
+	GetHold(ctx context.Context, node Node, id, name string) (ArchiveHold, error)
+	DeleteHold(ctx context.Context, node Node, id, name string) error
 }
 
 // Stable last_error codes.

@@ -42,7 +42,33 @@ type fakeDatabaseRuntime struct {
 	volumes   []dbvm.Volume
 	controlRs dbguest.Response
 	// vols serves ExportVolume and ImportVolume from real volume files.
-	vols *dbvm.Runtime
+	vols  *dbvm.Runtime
+	holds map[string]dbarchive.Hold
+}
+
+func (f *fakeDatabaseRuntime) PutArchiveHold(_ context.Context, id, name string, point time.Time) (dbarchive.Hold, error) {
+	if f.holds == nil {
+		f.holds = map[string]dbarchive.Hold{}
+	}
+	if h, ok := f.holds[id+"/"+name]; ok {
+		if !h.PointInTime.Equal(point) {
+			return dbarchive.Hold{}, fmt.Errorf("dbvm: hold archive: %w", dbarchive.ErrConflict)
+		}
+		return h, nil
+	}
+	h := dbarchive.Hold{Name: name, PointInTime: point, CreatedAt: point.Add(time.Second)}
+	f.holds[id+"/"+name] = h
+	return h, f.err
+}
+func (f *fakeDatabaseRuntime) GetArchiveHold(_ context.Context, id, name string) (dbarchive.Hold, error) {
+	if h, ok := f.holds[id+"/"+name]; ok {
+		return h, f.err
+	}
+	return dbarchive.Hold{}, fmt.Errorf("dbvm: read archive hold: %w", dbarchive.ErrNotFound)
+}
+func (f *fakeDatabaseRuntime) DeleteArchiveHold(_ context.Context, id, name string) error {
+	delete(f.holds, id+"/"+name)
+	return f.err
 }
 
 func (f *fakeDatabaseRuntime) ExportVolume(id string) (*dbvm.VolumeExport, error) {
@@ -247,6 +273,47 @@ func TestPruneDatabaseArchive(t *testing.T) {
 	}
 	if _, err := s.PruneDatabaseArchive(tlsCaller("pgproxyd.faas"), &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: testDatabaseID}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("pgproxyd pruning = %v", err)
+	}
+}
+
+func TestDatabaseArchiveHold(t *testing.T) {
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(&fakeDatabaseRuntime{})
+	const name = "0123456789abcdef0123456789abcdef"
+	point := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	hold := func(action vmmdpb.DatabaseArchiveHoldAction, n string, at *timestamppb.Timestamp) (*vmmdpb.DatabaseArchiveHoldResponse, error) {
+		return s.DatabaseArchiveHold(unixCaller(), &vmmdpb.DatabaseArchiveHoldRequest{DatabaseId: testDatabaseID, Name: n, Action: action, PointInTime: at})
+	}
+	put, get, del := vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_PUT, vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_GET, vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_DELETE
+	if _, err := hold(get, name, nil); status.Code(err) != codes.NotFound {
+		t.Fatalf("get before put = %v", err)
+	}
+	resp, err := hold(put, name, timestamppb.New(point))
+	if err != nil || !resp.GetPointInTime().AsTime().Equal(point) || resp.GetCreatedAt() == nil {
+		t.Fatalf("put = %v, %v", resp, err)
+	}
+	if got, err := hold(get, name, nil); err != nil || !got.GetCreatedAt().AsTime().Equal(resp.GetCreatedAt().AsTime()) {
+		t.Fatalf("get = %v, %v", got, err)
+	}
+	if _, err := hold(put, name, timestamppb.New(point.Add(time.Second))); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("another point = %v", err)
+	}
+	if _, err := hold(del, name, nil); err != nil {
+		t.Fatal(err)
+	}
+	for label, call := range map[string]func() error{
+		"bad name": func() error { _, err := hold(get, "../x", nil); return err },
+		"no point": func() error { _, err := hold(put, name, nil); return err },
+		"no action": func() error {
+			_, err := hold(vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_UNSPECIFIED, name, nil)
+			return err
+		},
+	} {
+		if code := status.Code(call()); code != codes.InvalidArgument {
+			t.Errorf("%s = %v, want InvalidArgument", label, code)
+		}
+	}
+	if _, err := s.DatabaseArchiveHold(tlsCaller("pgproxyd.faas"), &vmmdpb.DatabaseArchiveHoldRequest{DatabaseId: testDatabaseID, Name: name, Action: get}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("pgproxyd reading a hold = %v", err)
 	}
 }
 

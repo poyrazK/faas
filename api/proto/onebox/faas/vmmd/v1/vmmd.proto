@@ -534,6 +534,12 @@ service Vmmd {
   // DatabaseArchiveBytes reports the size of each database's archive on
   // this node, for the restore-history usage meter.
   rpc DatabaseArchiveBytes(DatabaseArchiveBytesRequest) returns (DatabaseArchiveBytesResponse);
+  // DatabaseArchiveHold places, reads or removes a hold in a database's
+  // archive through this node's dbbackupd (ADR-1027 snapshots): pruning
+  // keeps the archive restorable to the hold's point until it is removed.
+  // A read of a missing hold is NotFound; placing a name again with
+  // another point is AlreadyExists.
+  rpc DatabaseArchiveHold(DatabaseArchiveHoldRequest) returns (DatabaseArchiveHoldResponse);
   // ExportDatabaseVolume streams a stopped database's volume for a move to
   // another node: a header with its size, its data extents, then the
   // transfer digest. The database cannot start until the stream ends.
@@ -2640,6 +2646,28 @@ message PruneDatabaseArchiveRequest {
 message PruneDatabaseArchiveResponse {
   int32 backups = 1;
   int32 wal = 2;
+}
+
+enum DatabaseArchiveHoldAction {
+  DATABASE_ARCHIVE_HOLD_ACTION_UNSPECIFIED = 0;
+  DATABASE_ARCHIVE_HOLD_ACTION_PUT         = 1;
+  DATABASE_ARCHIVE_HOLD_ACTION_GET         = 2;
+  DATABASE_ARCHIVE_HOLD_ACTION_DELETE      = 3;
+}
+
+message DatabaseArchiveHoldRequest {
+  string database_id = 1;
+  // 32 lowercase hex characters.
+  string name = 2;
+  DatabaseArchiveHoldAction action = 3;
+  // The instant a put pins.
+  google.protobuf.Timestamp point_in_time = 4;
+}
+
+message DatabaseArchiveHoldResponse {
+  // The hold; unset after a delete.
+  google.protobuf.Timestamp point_in_time = 1;
+  google.protobuf.Timestamp created_at = 2;
 }
 
 message DatabaseArchiveBytesRequest {

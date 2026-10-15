@@ -27,6 +27,9 @@ type RetentionStore interface {
 	Drop(ctx context.Context, databaseID string) error
 	PruneBucket(ctx context.Context, databaseID string, windowSeconds int64) (PruneResult, error)
 	LocalBytes(databaseID string) (int64, error)
+	PutHold(ctx context.Context, databaseID, name string, point time.Time) (Hold, error)
+	GetHold(ctx context.Context, databaseID, name string) (Hold, error)
+	DeleteHold(ctx context.Context, databaseID, name string) error
 }
 
 // Server answers relayed guest streams on dbbackupd's socket.
@@ -145,7 +148,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// handleAdmin serves vmmd's own stream: one OpDrop or OpPrune. Guest
+// handleAdmin serves vmmd's own stream: one admin op. Guest
 // streams never reach it: the relay's header has no Admin.
 func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header) {
 	var req Request
@@ -154,6 +157,10 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 	}
 	if req.Op == OpSync || req.Op == OpRelease {
 		s.handleHandoff(ctx, conn, header, req)
+		return
+	}
+	if req.Op == OpHold || req.Op == OpGetHold || req.Op == OpUnhold {
+		s.handleHold(ctx, conn, header, req)
 		return
 	}
 	if s.Retention == nil || (req.Op != OpDrop && req.Op != OpPrune && req.Op != OpSize) || req.WindowSeconds < 0 {
@@ -182,6 +189,43 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 		s.Log.Info("dbarchive: archive dropped", "database_id", header.DatabaseID)
 	}
 	_ = WriteLine(conn, Response{Error: codeFor(err)})
+}
+
+// handleHold serves OpHold, OpGetHold and OpUnhold.
+func (s *Server) handleHold(ctx context.Context, conn net.Conn, header Header, req Request) {
+	if s.Retention == nil {
+		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return
+	}
+	var hold Hold
+	var err error
+	switch req.Op {
+	case OpHold:
+		point, perr := time.Parse(time.RFC3339Nano, req.Target)
+		if perr != nil || !ValidHoldName(req.Name) {
+			_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+			return
+		}
+		hold, err = s.Retention.PutHold(ctx, header.DatabaseID, req.Name, point)
+		if err == nil {
+			s.Log.Info("dbarchive: hold placed", "database_id", header.DatabaseID, "hold", req.Name, "point_in_time", hold.PointInTime)
+		}
+	case OpGetHold:
+		hold, err = s.Retention.GetHold(ctx, header.DatabaseID, req.Name)
+	default:
+		err = s.Retention.DeleteHold(ctx, header.DatabaseID, req.Name)
+		if err == nil {
+			s.Log.Info("dbarchive: hold removed", "database_id", header.DatabaseID, "hold", req.Name)
+		}
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		s.Log.Warn("dbarchive: hold op failed", "database_id", header.DatabaseID, "op", req.Op, "err", err)
+	}
+	resp := Response{Error: codeFor(err)}
+	if err == nil && req.Op != OpUnhold {
+		resp.Hold = &hold
+	}
+	_ = WriteLine(conn, resp)
 }
 
 // handleHandoff serves OpSync and OpRelease.
@@ -229,6 +273,35 @@ func PruneArchive(ctx context.Context, socketPath, databaseID string, windowSeco
 func ArchiveBytes(ctx context.Context, socketPath, databaseID string) (int64, error) {
 	resp, err := admin(ctx, socketPath, databaseID, Request{Op: OpSize})
 	return resp.Size, err
+}
+
+// PutArchiveHold asks dbbackupd at socketPath to pin point in a
+// database's archive under name.
+func PutArchiveHold(ctx context.Context, socketPath, databaseID, name string, point time.Time) (Hold, error) {
+	return holdOp(ctx, socketPath, databaseID, Request{Op: OpHold, Name: name, Target: point.UTC().Format(time.RFC3339Nano)})
+}
+
+// GetArchiveHold asks dbbackupd at socketPath for a hold; ErrNotFound when
+// there is none.
+func GetArchiveHold(ctx context.Context, socketPath, databaseID, name string) (Hold, error) {
+	return holdOp(ctx, socketPath, databaseID, Request{Op: OpGetHold, Name: name})
+}
+
+// DeleteArchiveHold asks dbbackupd at socketPath to remove a hold.
+func DeleteArchiveHold(ctx context.Context, socketPath, databaseID, name string) error {
+	_, err := admin(ctx, socketPath, databaseID, Request{Op: OpUnhold, Name: name})
+	return err
+}
+
+func holdOp(ctx context.Context, socketPath, databaseID string, req Request) (Hold, error) {
+	resp, err := admin(ctx, socketPath, databaseID, req)
+	if err != nil {
+		return Hold{}, err
+	}
+	if resp.Hold == nil {
+		return Hold{}, errors.New("dbarchive: hold response without a hold")
+	}
+	return *resp.Hold, nil
 }
 
 func admin(ctx context.Context, socketPath, databaseID string, req Request) (Response, error) {

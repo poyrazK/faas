@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
@@ -71,6 +71,53 @@ type fakeVMM struct {
 	imports map[string]dbguest.ImportStatus
 	// down are nodes whose vmmd does not answer.
 	down map[string]bool
+	// holds are archive holds by id/name, as a shared bucket keeps them.
+	holds map[string]ArchiveHold
+}
+
+func (f *fakeVMM) PutHold(_ context.Context, node Node, id, name string, point time.Time) (ArchiveHold, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down[node.ID] {
+		return ArchiveHold{}, errNodeDown
+	}
+	f.onNode = append(f.onNode, "hold:"+name+"@"+node.ID)
+	if h, ok := f.holds[id+"/"+name]; ok {
+		if !h.PointInTime.Equal(point) {
+			return ArchiveHold{}, ErrConflict
+		}
+		return h, nil
+	}
+	if f.holds == nil {
+		f.holds = map[string]ArchiveHold{}
+	}
+	h := ArchiveHold{PointInTime: point, CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	f.holds[id+"/"+name] = h
+	return h, nil
+}
+
+func (f *fakeVMM) GetHold(_ context.Context, node Node, id, name string) (ArchiveHold, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down[node.ID] {
+		return ArchiveHold{}, errNodeDown
+	}
+	h, ok := f.holds[id+"/"+name]
+	if !ok {
+		return ArchiveHold{}, ErrNotFound
+	}
+	return h, nil
+}
+
+func (f *fakeVMM) DeleteHold(_ context.Context, node Node, id, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down[node.ID] {
+		return errNodeDown
+	}
+	f.onNode = append(f.onNode, "unhold:"+name+"@"+node.ID)
+	delete(f.holds, id+"/"+name)
+	return nil
 }
 
 func newFakeVMM() *fakeVMM {

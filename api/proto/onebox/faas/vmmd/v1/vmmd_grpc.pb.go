@@ -80,6 +80,7 @@ const (
 	Vmmd_GrowDatabaseVolume_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/GrowDatabaseVolume"
 	Vmmd_PruneDatabaseArchive_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/PruneDatabaseArchive"
 	Vmmd_DatabaseArchiveBytes_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveBytes"
+	Vmmd_DatabaseArchiveHold_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveHold"
 	Vmmd_ExportDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExportDatabaseVolume"
 	Vmmd_ImportDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ImportDatabaseVolume"
 	Vmmd_SyncDatabaseArchive_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/SyncDatabaseArchive"
@@ -558,6 +559,12 @@ type VmmdClient interface {
 	// DatabaseArchiveBytes reports the size of each database's archive on
 	// this node, for the restore-history usage meter.
 	DatabaseArchiveBytes(ctx context.Context, in *DatabaseArchiveBytesRequest, opts ...grpc.CallOption) (*DatabaseArchiveBytesResponse, error)
+	// DatabaseArchiveHold places, reads or removes a hold in a database's
+	// archive through this node's dbbackupd (ADR-1027 snapshots): pruning
+	// keeps the archive restorable to the hold's point until it is removed.
+	// A read of a missing hold is NotFound; placing a name again with
+	// another point is AlreadyExists.
+	DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiveHoldRequest, opts ...grpc.CallOption) (*DatabaseArchiveHoldResponse, error)
 	// ExportDatabaseVolume streams a stopped database's volume for a move to
 	// another node: a header with its size, its data extents, then the
 	// transfer digest. The database cannot start until the stream ends.
@@ -1221,6 +1228,16 @@ func (c *vmmdClient) DatabaseArchiveBytes(ctx context.Context, in *DatabaseArchi
 	return out, nil
 }
 
+func (c *vmmdClient) DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiveHoldRequest, opts ...grpc.CallOption) (*DatabaseArchiveHoldResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseArchiveHoldResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DatabaseArchiveHold_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
@@ -1787,6 +1804,12 @@ type VmmdServer interface {
 	// DatabaseArchiveBytes reports the size of each database's archive on
 	// this node, for the restore-history usage meter.
 	DatabaseArchiveBytes(context.Context, *DatabaseArchiveBytesRequest) (*DatabaseArchiveBytesResponse, error)
+	// DatabaseArchiveHold places, reads or removes a hold in a database's
+	// archive through this node's dbbackupd (ADR-1027 snapshots): pruning
+	// keeps the archive restorable to the hold's point until it is removed.
+	// A read of a missing hold is NotFound; placing a name again with
+	// another point is AlreadyExists.
+	DatabaseArchiveHold(context.Context, *DatabaseArchiveHoldRequest) (*DatabaseArchiveHoldResponse, error)
 	// ExportDatabaseVolume streams a stopped database's volume for a move to
 	// another node: a header with its size, its data extents, then the
 	// transfer digest. The database cannot start until the stream ends.
@@ -2001,6 +2024,9 @@ func (UnimplementedVmmdServer) PruneDatabaseArchive(context.Context, *PruneDatab
 }
 func (UnimplementedVmmdServer) DatabaseArchiveBytes(context.Context, *DatabaseArchiveBytesRequest) (*DatabaseArchiveBytesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DatabaseArchiveBytes not implemented")
+}
+func (UnimplementedVmmdServer) DatabaseArchiveHold(context.Context, *DatabaseArchiveHoldRequest) (*DatabaseArchiveHoldResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseArchiveHold not implemented")
 }
 func (UnimplementedVmmdServer) ExportDatabaseVolume(*ExportDatabaseVolumeRequest, grpc.ServerStreamingServer[DatabaseVolumeChunk]) error {
 	return status.Error(codes.Unimplemented, "method ExportDatabaseVolume not implemented")
@@ -3015,6 +3041,24 @@ func _Vmmd_DatabaseArchiveBytes_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_DatabaseArchiveHold_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseArchiveHoldRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DatabaseArchiveHold(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DatabaseArchiveHold_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DatabaseArchiveHold(ctx, req.(*DatabaseArchiveHoldRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_ExportDatabaseVolume_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ExportDatabaseVolumeRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -3325,6 +3369,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DatabaseArchiveBytes",
 			Handler:    _Vmmd_DatabaseArchiveBytes_Handler,
+		},
+		{
+			MethodName: "DatabaseArchiveHold",
+			Handler:    _Vmmd_DatabaseArchiveHold_Handler,
 		},
 		{
 			MethodName: "SyncDatabaseArchive",

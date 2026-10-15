@@ -135,6 +135,15 @@ func (unavailableScheduler) ImportDatabase(context.Context, *scheddpb.ImportData
 func (unavailableScheduler) DatabaseImportStatus(context.Context, *scheddpb.DatabaseRef, ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
 	return nil, errDescribeOnly
 }
+func (unavailableScheduler) CaptureDatabaseSnapshot(context.Context, *scheddpb.CaptureDatabaseSnapshotRequest, ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error) {
+	return nil, errDescribeOnly
+}
+func (unavailableScheduler) GetDatabaseSnapshot(context.Context, *scheddpb.DatabaseSnapshotRef, ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error) {
+	return nil, errDescribeOnly
+}
+func (unavailableScheduler) DeleteDatabaseSnapshot(context.Context, *scheddpb.DatabaseSnapshotRef, ...grpc.CallOption) (*scheddpb.DeleteDatabaseSnapshotResponse, error) {
+	return nil, errDescribeOnly
+}
 
 // unavailableVerifiers refuses every write.
 type unavailableVerifiers struct{}

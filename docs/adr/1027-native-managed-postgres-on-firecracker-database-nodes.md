@@ -1102,6 +1102,69 @@ Not yet done:
 - **Grants.** Objects outside schema `public` get no runtime grants, as for
   any native schema.
 
+### Environment-clone snapshots (ADR-590, step 1)
+
+ADR-590's environment clones capture a checkpoint of each source database
+while its writers are held, then fork it. Native databases implement the
+capture and the fork (`SnapshotProvider`, `SnapshotRestoreProvider`,
+`SnapshotRestoreDeletionProvider`) without copying anything at capture
+time.
+
+- **A snapshot is an archive hold.** dbbackupd keeps named holds per
+  database (admin ops `hold`, `get_hold`, `unhold`). A hold records its
+  point and creation time. Pruning moves the retention period's start
+  back to the earliest held point, so the base backup and WAL that reach
+  it stay. With a bucket, holds live there only, so every pruner sees
+  them: the node, the next node after a move, and a node pruning a lost
+  node's archive. Without a bucket they sit beside the node's archive.
+  Dropping a database's archive drops its holds.
+- **Capture.** schedd's `CaptureDatabaseSnapshot` (apid only) does three
+  things:
+  1. Checks the point. It must lie between the database's creation and
+     now, at least 10 minutes inside the archive's retention
+     (max(window, 1 h)), so a concurrent prune cannot pass it.
+  2. Places the hold through the database's node, or any live node with
+     a shared archive.
+  3. Makes the archive reach the point: the database, woken if parked,
+     commits past it and ships that WAL (as a restore's source flush
+     does).
+
+  A retry with the same name and point returns the snapshot, even after
+  the point has aged. Another point under the name is a conflict. A
+  database on a lost node cannot be captured.
+- **Restore.** `RestoreDatabase` takes the snapshot's name. With it, a
+  point outside the source's restore window is accepted while the hold
+  pins exactly that point. Otherwise it is the ordinary point-in-time
+  restore into a new database.
+- **Driver.** The snapshot id is `<source id>/<hold name>`. The hold name
+  is derived from the owning resource id, so a lost capture reply is
+  found again. Snapshots report no expiry, which the clone receipts
+  require, and `RetainSnapshot` changes nothing because a hold already
+  lasts until it is deleted.
+
+  The fork is the database the target owner's id names, with the
+  source's spec. It is `Restored` once recovered and backed up; a failed
+  restore is a conflict. Its deletion is one deterministic operation,
+  schedd's synchronous delete. Deletion first checks that the database
+  is the one the receipts recorded: same lineage and same creation time.
+  `DatabaseRuntime.created_at` now carries that time.
+- **Cost.** A held point keeps older base backups and WAL, metered as the
+  source's history bytes until the snapshot is deleted.
+- **Metal.** `TestMetalSnapshotRestoreOutlivesRetention` runs through the
+  driver, schedd's and vmmd's gRPC handlers and dbbackupd. A commit lands
+  before the point and one after it. Capture takes 317 ms (hold and WAL
+  flush). A newer base backup and a prune whose retention starts after
+  it keep an older backup for the point. The snapshot's restore recovers
+  only the earlier commit in 7.0 s. After the fork and the snapshot are
+  deleted, the next prune leaves only the newest backup.
+  `TestMetalQualifyProviderWithRestore`, `TestMetalSchedulerLifecycle` and
+  `TestMetalRestoreOntoAnotherNodeAfterNodeLoss` still pass.
+
+Not yet done: the clone pipeline's other provider surfaces for native
+databases (copy readers and targets over the restored database, and
+checkpoint connections and maintenance on the source). Until they exist,
+a clone of a native database stops after the fork.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives

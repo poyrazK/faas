@@ -40,6 +40,20 @@ type fakeDatabases struct {
 	shape       dbsched.Shape
 	importSpec  dbsched.ImportSpec
 	importState dbguest.ImportStatus
+	snapshot    dbsched.Snapshot
+	deleted     string
+}
+
+func (f *fakeDatabases) CaptureSnapshot(_ context.Context, id, name string, point time.Time) (dbsched.Snapshot, error) {
+	f.snapshot = dbsched.Snapshot{DatabaseID: id, Name: name, PointInTime: point, CreatedAt: point.Add(time.Second)}
+	return f.snapshot, f.err
+}
+func (f *fakeDatabases) GetSnapshot(context.Context, string, string) (dbsched.Snapshot, error) {
+	return f.snapshot, f.err
+}
+func (f *fakeDatabases) DeleteSnapshot(_ context.Context, id, name string) error {
+	f.deleted = id + "/" + name
+	return f.err
 }
 
 func (f *fakeDatabases) Import(_ context.Context, _ string, spec dbsched.ImportSpec) (dbguest.ImportStatus, error) {
@@ -245,8 +259,43 @@ func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
 		!rt.GetRestoreRecoveredTo().AsTime().Equal(target.Add(-time.Second)) {
 		t.Fatalf("restore = %v, %v", rt, err)
 	}
-	if f.restore.Source != sourceID || !f.restore.Target.Equal(target) || f.restore.MemMiB != 512 || f.restore.RestoreWindowSeconds != 3600 {
+	if f.restore.Source != sourceID || !f.restore.Target.Equal(target) || f.restore.MemMiB != 512 || f.restore.RestoreWindowSeconds != 3600 || f.restore.Snapshot != "" {
 		t.Fatalf("request not relayed: %+v", f.restore)
+	}
+	const snap = "0123456789abcdef0123456789abcdef"
+	if _, err := s.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target), Snapshot: snap}); err != nil || f.restore.Snapshot != snap {
+		t.Fatalf("snapshot restore = %v (%+v)", err, f.restore)
+	}
+	if _, err := s.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target), Snapshot: "../x"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("bad snapshot name = %v", err)
+	}
+}
+
+func TestDatabaseSnapshots(t *testing.T) {
+	const snap = "0123456789abcdef0123456789abcdef"
+	point := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	f := &fakeDatabases{}
+	s := New(nil, nil, nil).WithDatabases(f)
+	ctx := asCaller(callerAPID)
+	got, err := s.CaptureDatabaseSnapshot(ctx, &scheddpb.CaptureDatabaseSnapshotRequest{DatabaseId: testDBID, Name: snap, PointInTime: timestamppb.New(point)})
+	if err != nil || got.GetName() != snap || !got.GetPointInTime().AsTime().Equal(point) || !got.GetCreatedAt().AsTime().Equal(point.Add(time.Second)) {
+		t.Fatalf("capture = %v, %v", got, err)
+	}
+	if _, err := s.CaptureDatabaseSnapshot(ctx, &scheddpb.CaptureDatabaseSnapshotRequest{DatabaseId: testDBID, Name: snap}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("capture without a point = %v", err)
+	}
+	if again, err := s.GetDatabaseSnapshot(ctx, &scheddpb.DatabaseSnapshotRef{DatabaseId: testDBID, Name: snap}); err != nil || again.GetDatabaseId() != testDBID {
+		t.Fatalf("get = %v, %v", again, err)
+	}
+	if _, err := s.DeleteDatabaseSnapshot(ctx, &scheddpb.DatabaseSnapshotRef{DatabaseId: testDBID, Name: snap}); err != nil || f.deleted != testDBID+"/"+snap {
+		t.Fatalf("delete = %v (%s)", err, f.deleted)
+	}
+	f.err = dbsched.ErrNotFound
+	if _, err := s.GetDatabaseSnapshot(ctx, &scheddpb.DatabaseSnapshotRef{DatabaseId: testDBID, Name: snap}); status.Code(err) != codes.NotFound {
+		t.Fatalf("missing snapshot = %v", err)
+	}
+	if _, err := s.GetDatabaseSnapshot(asCaller(callerPgproxy), &scheddpb.DatabaseSnapshotRef{DatabaseId: testDBID, Name: snap}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("pgproxyd reading a snapshot = %v", err)
 	}
 }
 

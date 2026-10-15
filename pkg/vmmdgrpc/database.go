@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"slices"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -38,6 +39,12 @@ type DatabaseRuntime interface {
 	GrowVolume(ctx context.Context, id string, sizeBytes int64) error
 	PruneArchive(ctx context.Context, id string, windowSeconds int64) (dbarchive.PruneResult, error)
 	ArchiveBytes(ctx context.Context, ids []string) (map[string]int64, error)
+	// PutArchiveHold, GetArchiveHold and DeleteArchiveHold manage the
+	// holds that keep a database's archive restorable to a point
+	// (ADR-1027 snapshots).
+	PutArchiveHold(ctx context.Context, id, name string, point time.Time) (dbarchive.Hold, error)
+	GetArchiveHold(ctx context.Context, id, name string) (dbarchive.Hold, error)
+	DeleteArchiveHold(ctx context.Context, id, name string) error
 	// ExportVolume and ImportVolume carry a stopped database's volume to
 	// another node; SyncArchive and ReleaseArchive hand its archive copy
 	// to the bucket (ADR-1027 moves).
@@ -206,6 +213,44 @@ func (s *Server) DatabaseArchiveBytes(ctx context.Context, req *vmmdpb.DatabaseA
 		return nil, s.databaseStatus("archive bytes", err)
 	}
 	return &vmmdpb.DatabaseArchiveBytesResponse{Bytes: sizes}, nil
+}
+
+// DatabaseArchiveHold places, reads or removes a hold in a database's
+// archive for schedd's snapshots.
+func (s *Server) DatabaseArchiveHold(ctx context.Context, req *vmmdpb.DatabaseArchiveHoldRequest) (*vmmdpb.DatabaseArchiveHoldResponse, error) {
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
+	if err != nil {
+		return nil, err
+	}
+	if !dbarchive.ValidHoldName(req.GetName()) {
+		return nil, status.Error(codes.InvalidArgument, "invalid hold name")
+	}
+	var hold dbarchive.Hold
+	switch req.GetAction() {
+	case vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_PUT:
+		if req.GetPointInTime() == nil {
+			return nil, status.Error(codes.InvalidArgument, "a hold needs a point in time")
+		}
+		hold, err = rt.PutArchiveHold(ctx, req.GetDatabaseId(), req.GetName(), req.GetPointInTime().AsTime())
+	case vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_GET:
+		hold, err = rt.GetArchiveHold(ctx, req.GetDatabaseId(), req.GetName())
+	case vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_DELETE:
+		if err := rt.DeleteArchiveHold(ctx, req.GetDatabaseId(), req.GetName()); err != nil {
+			return nil, s.databaseStatus("remove archive hold", err)
+		}
+		return &vmmdpb.DatabaseArchiveHoldResponse{}, nil
+	default:
+		return nil, status.Error(codes.InvalidArgument, "unknown hold action")
+	}
+	switch {
+	case errors.Is(err, dbarchive.ErrNotFound):
+		return nil, status.Error(codes.NotFound, "no such archive hold")
+	case errors.Is(err, dbarchive.ErrConflict):
+		return nil, status.Error(codes.AlreadyExists, "the archive hold pins another point")
+	case err != nil:
+		return nil, s.databaseStatus("archive hold", err)
+	}
+	return &vmmdpb.DatabaseArchiveHoldResponse{PointInTime: timestamppb.New(hold.PointInTime), CreatedAt: timestamppb.New(hold.CreatedAt)}, nil
 }
 
 // maxArchiveSizeBatch bounds one DatabaseArchiveBytes request.

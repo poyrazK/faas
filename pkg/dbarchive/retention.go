@@ -19,7 +19,8 @@ import (
 // the period's start: it and every newer backup stay, and so does all WAL
 // from the anchor's start segment on. Older backups, WAL segments and
 // backup history files go, locally and in the bucket. Timeline history
-// files stay: they are tiny and recovery follows them.
+// files stay: they are tiny and recovery follows them. A hold (holds.go)
+// moves the period's start back to its point.
 
 // PruneResult counts what one pass removed.
 type PruneResult struct {
@@ -112,8 +113,15 @@ const DefaultMinRetention = 24 * time.Hour
 // segment. bucket widens the catalog and the files to the bucket's.
 func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.Time, bucket bool) (PruneResult, error) {
 	var res PruneResult
+	// A hold keeps its point restorable past the retention period.
+	floor, held, err := s.holdFloor(ctx, databaseID)
+	if err != nil {
+		return res, fmt.Errorf("dbarchive: read holds: %w", err)
+	}
+	if held && floor.Before(cutoff) {
+		cutoff = floor
+	}
 	var backups []BackupManifest
-	var err error
 	if bucket {
 		backups, err = s.ListAllBackups(ctx, databaseID)
 	} else {

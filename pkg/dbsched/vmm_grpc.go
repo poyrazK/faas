@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -120,6 +121,50 @@ func (g *GRPCVMM) PruneArchive(ctx context.Context, node Node, id string, window
 	}
 	_, err = c.PruneDatabaseArchive(ctx, &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: id, RestoreWindowSeconds: windowSeconds})
 	return err
+}
+
+// PutHold places a hold on a database's archive through node's dbbackupd.
+func (g *GRPCVMM) PutHold(ctx context.Context, node Node, id, name string, point time.Time) (ArchiveHold, error) {
+	return g.hold(ctx, node, &vmmdpb.DatabaseArchiveHoldRequest{DatabaseId: id, Name: name,
+		Action: vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_PUT, PointInTime: timestamppb.New(point)})
+}
+
+// GetHold reads a hold on a database's archive through node's dbbackupd.
+func (g *GRPCVMM) GetHold(ctx context.Context, node Node, id, name string) (ArchiveHold, error) {
+	return g.hold(ctx, node, &vmmdpb.DatabaseArchiveHoldRequest{DatabaseId: id, Name: name,
+		Action: vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_GET})
+}
+
+// DeleteHold removes a hold on a database's archive through node's
+// dbbackupd.
+func (g *GRPCVMM) DeleteHold(ctx context.Context, node Node, id, name string) error {
+	_, err := g.hold(ctx, node, &vmmdpb.DatabaseArchiveHoldRequest{DatabaseId: id, Name: name,
+		Action: vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_DELETE})
+	return err
+}
+
+func (g *GRPCVMM) hold(ctx context.Context, node Node, req *vmmdpb.DatabaseArchiveHoldRequest) (ArchiveHold, error) {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return ArchiveHold{}, err
+	}
+	resp, err := c.DatabaseArchiveHold(ctx, req)
+	switch status.Code(err) {
+	case codes.OK:
+	case codes.NotFound:
+		return ArchiveHold{}, fmt.Errorf("%w: %w", ErrNotFound, err)
+	case codes.AlreadyExists:
+		return ArchiveHold{}, fmt.Errorf("%w: %w", ErrConflict, err)
+	default:
+		return ArchiveHold{}, err
+	}
+	if req.GetAction() == vmmdpb.DatabaseArchiveHoldAction_DATABASE_ARCHIVE_HOLD_ACTION_DELETE {
+		return ArchiveHold{}, nil
+	}
+	if resp.GetPointInTime() == nil || resp.GetCreatedAt() == nil {
+		return ArchiveHold{}, errors.New("dbsched: hold response without its times")
+	}
+	return ArchiveHold{PointInTime: resp.GetPointInTime().AsTime(), CreatedAt: resp.GetCreatedAt().AsTime()}, nil
 }
 
 // ArchiveBytes sizes the databases' archives on node.

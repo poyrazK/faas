@@ -43,6 +43,13 @@ const (
 	// OpRelease ships them and then drops this node's copy of the archive,
 	// leaving the bucket's. Admin only.
 	OpRelease = "release"
+	// OpHold pins Request.Target in the database's archive under
+	// Request.Name (holds.go); Response.Hold is the hold. Admin only.
+	OpHold = "hold"
+	// OpGetHold returns the hold Request.Name. Admin only.
+	OpGetHold = "get_hold"
+	// OpUnhold removes the hold Request.Name. Admin only.
+	OpUnhold = "unhold"
 )
 
 // Stable error codes in Response.Error.
@@ -121,7 +128,8 @@ type Request struct {
 	Op   string `json:"op"`
 	Name string `json:"name,omitempty"`
 	Size int64  `json:"size,omitempty"`
-	// Target is OpGetBackup's recovery target time (RFC 3339).
+	// Target is OpGetBackup's recovery target time and OpHold's point
+	// (RFC 3339).
 	Target string `json:"target,omitempty"`
 	// WindowSeconds is OpPrune's restore window.
 	WindowSeconds int64 `json:"window_seconds,omitempty"`
@@ -136,6 +144,8 @@ type Response struct {
 	Name string `json:"name,omitempty"`
 	// Pruned is what OpPrune removed.
 	Pruned *PruneResult `json:"pruned,omitempty"`
+	// Hold answers OpHold and OpGetHold.
+	Hold *Hold `json:"hold,omitempty"`
 }
 
 // WriteLine writes v as one JSON line.

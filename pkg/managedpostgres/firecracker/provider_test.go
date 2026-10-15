@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -49,6 +50,8 @@ type fakeScheduler struct {
 	// imports are the import requests; importState is what they report.
 	imports     []*scheddpb.ImportDatabaseRequest
 	importState string
+	// snapshots are held snapshots by database/name.
+	snapshots map[string]*scheddpb.DatabaseSnapshot
 }
 
 func (f *fakeScheduler) ImportDatabase(_ context.Context, in *scheddpb.ImportDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
@@ -136,9 +139,19 @@ func (f *fakeScheduler) RestoreDatabase(_ context.Context, in *scheddpb.RestoreD
 	if rt, ok := f.vms[d.GetDatabaseId()]; ok {
 		return rt, nil
 	}
+	if name := in.GetSnapshot(); name != "" {
+		snap, ok := f.snapshots[in.GetSourceDatabaseId()+"/"+name]
+		if !ok {
+			return nil, status.Error(codes.NotFound, "dbsched: no such snapshot")
+		}
+		if !snap.GetPointInTime().AsTime().Equal(in.GetPointInTime().AsTime()) {
+			return nil, status.Error(codes.FailedPrecondition, "dbsched: snapshot holds another point")
+		}
+	}
 	rt := &scheddpb.DatabaseRuntime{DatabaseId: d.GetDatabaseId(), State: "provisioning", PostgresMajor: d.GetPostgresMajor(),
 		VcpuCount: d.GetVcpuCount(), MemMib: d.GetMemMib(), VolumeBytes: d.GetVolumeBytes(), AlwaysOn: d.GetAlwaysOn(),
-		RestoreWindowSeconds: d.GetRestoreWindowSeconds(), RestoreSourceId: in.GetSourceDatabaseId(), RestoreTarget: in.GetPointInTime()}
+		RestoreWindowSeconds: d.GetRestoreWindowSeconds(), RestoreSourceId: in.GetSourceDatabaseId(), RestoreTarget: in.GetPointInTime(),
+		CreatedAt: timestamppb.New(time.Now().Truncate(time.Microsecond))}
 	f.vms[d.GetDatabaseId()] = rt
 	return rt, nil
 }

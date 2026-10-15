@@ -40,6 +40,9 @@ type DatabaseScheduler interface {
 	Resize(ctx context.Context, id string, shape dbsched.Shape) (dbsched.VM, error)
 	Import(ctx context.Context, id string, spec dbsched.ImportSpec) (dbguest.ImportStatus, error)
 	ImportStatus(ctx context.Context, id string) (dbguest.ImportStatus, error)
+	CaptureSnapshot(ctx context.Context, id, name string, point time.Time) (dbsched.Snapshot, error)
+	GetSnapshot(ctx context.Context, id, name string) (dbsched.Snapshot, error)
+	DeleteSnapshot(ctx context.Context, id, name string) error
 }
 
 // WithDatabases enables the database RPCs.
@@ -91,6 +94,9 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 	if !vm.RestoreRecoveredTo.IsZero() {
 		rt.RestoreRecoveredTo = timestamppb.New(vm.RestoreRecoveredTo)
 	}
+	if !vm.CreatedAt.IsZero() {
+		rt.CreatedAt = timestamppb.New(vm.CreatedAt)
+	}
 	return rt
 }
 
@@ -128,7 +134,8 @@ func (s *Server) RestoreDatabase(ctx context.Context, req *scheddpb.RestoreDatab
 	if req.GetDatabase() == nil || req.GetPointInTime().CheckValid() != nil {
 		return nil, status.Error(codes.InvalidArgument, "restore needs a database and a point in time")
 	}
-	rr := dbsched.RestoreRequest{ProvisionRequest: provisionRequest(req.GetDatabase()), Source: req.GetSourceDatabaseId(), Target: req.GetPointInTime().AsTime()}
+	rr := dbsched.RestoreRequest{ProvisionRequest: provisionRequest(req.GetDatabase()), Source: req.GetSourceDatabaseId(), Target: req.GetPointInTime().AsTime(),
+		Snapshot: req.GetSnapshot()}
 	if err := rr.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -269,6 +276,51 @@ func (s *Server) SetDatabaseAlwaysOn(ctx context.Context, req *scheddpb.SetDatab
 		return nil, s.databaseStatus("set always-on", err)
 	}
 	return databaseRuntime(vm), nil
+}
+
+// CaptureDatabaseSnapshot holds a database's archive at an instant for
+// the managed-Postgres driver's environment clones.
+func (s *Server) CaptureDatabaseSnapshot(ctx context.Context, req *scheddpb.CaptureDatabaseSnapshotRequest) (*scheddpb.DatabaseSnapshot, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetPointInTime().CheckValid() != nil {
+		return nil, status.Error(codes.InvalidArgument, "a snapshot needs a point in time")
+	}
+	snap, err := d.CaptureSnapshot(ctx, req.GetDatabaseId(), req.GetName(), req.GetPointInTime().AsTime())
+	if err != nil {
+		return nil, s.databaseStatus("capture snapshot", err)
+	}
+	return databaseSnapshot(snap), nil
+}
+
+func (s *Server) GetDatabaseSnapshot(ctx context.Context, req *scheddpb.DatabaseSnapshotRef) (*scheddpb.DatabaseSnapshot, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := d.GetSnapshot(ctx, req.GetDatabaseId(), req.GetName())
+	if err != nil {
+		return nil, s.databaseStatus("get snapshot", err)
+	}
+	return databaseSnapshot(snap), nil
+}
+
+func (s *Server) DeleteDatabaseSnapshot(ctx context.Context, req *scheddpb.DatabaseSnapshotRef) (*scheddpb.DeleteDatabaseSnapshotResponse, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.DeleteSnapshot(ctx, req.GetDatabaseId(), req.GetName()); err != nil {
+		return nil, s.databaseStatus("delete snapshot", err)
+	}
+	return &scheddpb.DeleteDatabaseSnapshotResponse{}, nil
+}
+
+func databaseSnapshot(snap dbsched.Snapshot) *scheddpb.DatabaseSnapshot {
+	return &scheddpb.DatabaseSnapshot{DatabaseId: snap.DatabaseID, Name: snap.Name,
+		PointInTime: timestamppb.New(snap.PointInTime), CreatedAt: timestamppb.New(snap.CreatedAt)}
 }
 
 // databaseStatus maps scheduler errors to stable codes and logs the

@@ -44,6 +44,9 @@ type Scheduler interface {
 	ResizeDatabase(ctx context.Context, in *scheddpb.ResizeDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	ImportDatabase(ctx context.Context, in *scheddpb.ImportDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error)
 	DatabaseImportStatus(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error)
+	CaptureDatabaseSnapshot(ctx context.Context, in *scheddpb.CaptureDatabaseSnapshotRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
+	GetDatabaseSnapshot(ctx context.Context, in *scheddpb.DatabaseSnapshotRef, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
+	DeleteDatabaseSnapshot(ctx context.Context, in *scheddpb.DatabaseSnapshotRef, opts ...grpc.CallOption) (*scheddpb.DeleteDatabaseSnapshotResponse, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore

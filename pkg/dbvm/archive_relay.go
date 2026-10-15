@@ -156,6 +156,54 @@ func (r *Runtime) ArchiveBytes(ctx context.Context, ids []string) (map[string]in
 	return out, nil
 }
 
+// PutArchiveHold pins point in a database's archive under name, through
+// dbbackupd's admin header; placing it again returns it unchanged
+// (dbarchive holds).
+func (r *Runtime) PutArchiveHold(ctx context.Context, id, name string, point time.Time) (dbarchive.Hold, error) {
+	if err := validID(id); err != nil {
+		return dbarchive.Hold{}, err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return dbarchive.Hold{}, ErrNoArchive
+	}
+	hold, err := dbarchive.PutArchiveHold(ctx, r.cfg.ArchiveSocket, id, name, point)
+	if err != nil {
+		return hold, fmt.Errorf("dbvm: hold archive: %w", err)
+	}
+	return hold, nil
+}
+
+// GetArchiveHold returns a hold in a database's archive, or an error
+// wrapping dbarchive.ErrNotFound.
+func (r *Runtime) GetArchiveHold(ctx context.Context, id, name string) (dbarchive.Hold, error) {
+	if err := validID(id); err != nil {
+		return dbarchive.Hold{}, err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return dbarchive.Hold{}, ErrNoArchive
+	}
+	hold, err := dbarchive.GetArchiveHold(ctx, r.cfg.ArchiveSocket, id, name)
+	if err != nil {
+		return hold, fmt.Errorf("dbvm: read archive hold: %w", err)
+	}
+	return hold, nil
+}
+
+// DeleteArchiveHold removes a hold from a database's archive; a missing
+// one is success.
+func (r *Runtime) DeleteArchiveHold(ctx context.Context, id, name string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return ErrNoArchive
+	}
+	if err := dbarchive.DeleteArchiveHold(ctx, r.cfg.ArchiveSocket, id, name); err != nil {
+		return fmt.Errorf("dbvm: remove archive hold: %w", err)
+	}
+	return nil
+}
+
 // ErrNoArchive reports a runtime without dbbackupd.
 var ErrNoArchive = errors.New("dbvm: archiving is off on this node")
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
@@ -32,6 +33,9 @@ type RestoreRequest struct {
 	Source string
 	// Target is the instant to recover the source to.
 	Target time.Time
+	// Snapshot names the source's snapshot at Target (snapshot.go), whose
+	// hold keeps Target restorable outside the source's restore window.
+	Snapshot string
 }
 
 // Validate rejects a request that cannot become a restore.
@@ -45,6 +49,9 @@ func (r RestoreRequest) Validate() error {
 	}
 	if source == uuid.MustParse(r.DatabaseID) {
 		return errors.New("dbsched: a database cannot restore into itself")
+	}
+	if r.Snapshot != "" && !dbarchive.ValidHoldName(r.Snapshot) {
+		return errors.New("dbsched: invalid snapshot name")
 	}
 	if r.Target.IsZero() {
 		return errors.New("dbsched: a restore needs a point in time")
@@ -83,6 +90,19 @@ func (s *Scheduler) Restore(ctx context.Context, req RestoreRequest) (VM, error)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return VM{}, err
+	}
+	if req.Snapshot != "" {
+		// The snapshot's hold must pin exactly the target.
+		hold, err := s.getHold(ctx, source, req.Snapshot)
+		if errors.Is(err, ErrNotFound) {
+			return VM{}, fmt.Errorf("%w: no snapshot %s of %s", ErrNotFound, req.Snapshot, source.DatabaseID)
+		}
+		if err != nil {
+			return VM{}, err
+		}
+		if !hold.PointInTime.Equal(req.Target) {
+			return VM{}, fmt.Errorf("%w: snapshot %s holds another point", ErrConflict, req.Snapshot)
+		}
 	}
 	if err := s.restorable(source, req); err != nil {
 		return VM{}, err
@@ -164,7 +184,7 @@ func (s *Scheduler) restorable(source VM, req RestoreRequest) error {
 		return fmt.Errorf("%w: point in time precedes the source", ErrInvalid)
 	case req.Target.After(s.now()):
 		return fmt.Errorf("%w: point in time is in the future", ErrInvalid)
-	case source.RestoreWindowSeconds > 0 && req.Target.Before(s.now().Add(-time.Duration(source.RestoreWindowSeconds)*time.Second)):
+	case req.Snapshot == "" && source.RestoreWindowSeconds > 0 && req.Target.Before(s.now().Add(-time.Duration(source.RestoreWindowSeconds)*time.Second)):
 		// dbbackupd keeps the archive at least this long; older points may
 		// already be pruned.
 		return fmt.Errorf("%w: point in time is outside the source's restore window", ErrInvalid)
@@ -323,11 +343,16 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 }
 
 // flushSource makes the source's archive cover the restore target.
-// Recovery to a time stops only at a commit past it and fails if the
-// archive ends first, so the source (woken if parked) commits after the
-// target and ships that WAL.
 func (s *Scheduler) flushSource(ctx context.Context, vm VM) error {
-	source, err := s.Wake(ctx, vm.RestoreSource)
+	return s.flushArchive(ctx, vm.RestoreSource, vm.RestoreTarget)
+}
+
+// flushArchive makes database id's archive reach after. Recovery to a
+// time stops only at a commit past it and fails if the archive ends
+// first, so the database (woken if parked) commits after it and ships
+// that WAL.
+func (s *Scheduler) flushArchive(ctx context.Context, id string, after time.Time) error {
+	source, err := s.Wake(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -335,7 +360,7 @@ func (s *Scheduler) flushSource(ctx context.Context, vm VM) error {
 	if err != nil {
 		return err
 	}
-	resp, err := s.vmm.Control(ctx, node, source.DatabaseID, dbguest.Request{Op: dbguest.OpFlushWAL, After: vm.RestoreTarget})
+	resp, err := s.vmm.Control(ctx, node, source.DatabaseID, dbguest.Request{Op: dbguest.OpFlushWAL, After: after})
 	_ = s.Touch(ctx, source.DatabaseID)
 	if err != nil || resp.Error != "" {
 		return errors.Join(err, guestError(resp))

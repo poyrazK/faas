@@ -289,6 +289,8 @@ type metalStack struct {
 	client    scheddpb.ScheddClient
 	cfg       Config
 	proxyAddr string
+	rt        *dbvm.Runtime
+	archive   *dbarchive.TieredStore
 }
 
 func newMetalStack(t *testing.T, workdir, base string) *metalStack {
@@ -378,7 +380,7 @@ func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	go func() { _ = proxy.Serve(ctx, ln) }()
-	return &metalStack{p: p, sched: sched, store: store, client: client, cfg: cfg, proxyAddr: ln.Addr().String()}
+	return &metalStack{p: p, sched: sched, store: store, client: client, cfg: cfg, proxyAddr: ln.Addr().String(), rt: rt, archive: tiered}
 }
 
 // connectThroughProxy dials pgproxy with the material as an app would, the

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -135,6 +136,8 @@ type TieredStore struct {
 	// MinRetention is PruneBucket's floor (DefaultMinRetention when zero).
 	MinRetention time.Duration
 	now          func() time.Time
+	// holdsMu serializes hold writes (holds.go).
+	holdsMu sync.Mutex
 }
 
 func (s *TieredStore) OpenWAL(ctx context.Context, databaseID, name string) (io.ReadCloser, int64, error) {

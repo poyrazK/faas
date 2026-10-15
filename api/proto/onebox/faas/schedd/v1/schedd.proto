@@ -346,6 +346,19 @@ service Schedd {
   // DatabaseImportStatus reports the import; a database that stopped
   // since has none. apid only.
   rpc DatabaseImportStatus(DatabaseRef) returns (DatabaseImportProgress);
+  // CaptureDatabaseSnapshot holds a database's archive at an instant once
+  // the archive reaches it (ADR-1027 environment clones): a restore with
+  // the snapshot recovers to that instant until the snapshot is deleted,
+  // past the database's restore window. Capturing the same name and point
+  // again returns the snapshot; another point under the name is
+  // FAILED_PRECONDITION. apid only.
+  rpc CaptureDatabaseSnapshot(CaptureDatabaseSnapshotRequest) returns (DatabaseSnapshot);
+  // GetDatabaseSnapshot reports a snapshot; NOT_FOUND when it, or its
+  // database, is gone. apid only.
+  rpc GetDatabaseSnapshot(DatabaseSnapshotRef) returns (DatabaseSnapshot);
+  // DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
+  // apid only.
+  rpc DeleteDatabaseSnapshot(DatabaseSnapshotRef) returns (DeleteDatabaseSnapshotResponse);
 }
 
 message LivenessFailedReport {
@@ -1190,7 +1203,31 @@ message RestoreDatabaseRequest {
   string source_database_id = 2;
   // The instant to recover the source to; not in the future.
   google.protobuf.Timestamp point_in_time = 3;
+  // The source's snapshot at point_in_time, which keeps it restorable
+  // outside the source's restore window.
+  string snapshot = 4;
 }
+
+message CaptureDatabaseSnapshotRequest {
+  string database_id = 1;
+  // 32 lowercase hex characters, chosen by the caller.
+  string name = 2;
+  google.protobuf.Timestamp point_in_time = 3;
+}
+
+message DatabaseSnapshotRef {
+  string database_id = 1;
+  string name = 2;
+}
+
+message DatabaseSnapshot {
+  string database_id = 1;
+  string name = 2;
+  google.protobuf.Timestamp point_in_time = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message DeleteDatabaseSnapshotResponse {}
 
 message SetDatabaseAlwaysOnRequest {
   string database_id = 1;
@@ -1229,6 +1266,8 @@ message DatabaseRuntime {
   bool replicated = 17;
   string standby_node_id = 18;
   bool standby_synced = 19;
+  // When the database was placed.
+  google.protobuf.Timestamp created_at = 20;
 }
 
 // ImportDatabaseRequest names the source: its endpoint (a public address
