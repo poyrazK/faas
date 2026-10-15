@@ -39,6 +39,18 @@ export function loadPackages(directory) {
   return packages;
 }
 
+// newestStable returns the highest non-prerelease version in npm metadata.
+function newestStable(data) {
+  const parts = v => v.split(".").map(Number);
+  return Object.keys(data?.versions ?? {})
+    .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+    .sort((a, b) => {
+      const [x, y] = [parts(a), parts(b)];
+      return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+    })
+    .pop();
+}
+
 export async function publishPackages(packages, {
   repairOnly = false, registry = REGISTRY, fetchPublic = fetch,
   runNpm = args => {
@@ -109,13 +121,22 @@ export async function publishPackages(packages, {
   async function cleanLatest() {
     if (!prerelease) return;
     for (const { manifest: { name } } of packages) {
-      const latest = (await metadata(name))?.["dist-tags"]?.latest;
+      const data = await metadata(name);
+      const latest = data?.["dist-tags"]?.latest;
       if (latest && !latest.includes("-")) stableTags.set(name, latest);
       if (latest?.includes("-")) {
-        const stable = stableTags.get(name);
-        await runNpm(stable ? ["dist-tag", "add", `${name}@${stable}`, "latest"] :
-          ["dist-tag", "rm", name, "latest"]);
-        log(`${name}: ${stable ? "restored stable latest=" + stable : "removed prerelease latest=" + latest}`);
+        const stable = stableTags.get(name) ?? newestStable(data);
+        if (!stable) {
+          // npm refuses to delete latest (E403), so a package that has
+          // never had a stable release keeps the prerelease npm assigned.
+          // Removing it failed every prerelease publish and froze the rc
+          // channel at 0.1.18-rc.229 (H10-50).
+          log(`${name}: kept latest=${latest}; npm cannot remove latest and no stable release exists`);
+          continue;
+        }
+        stableTags.set(name, stable);
+        await runNpm(["dist-tag", "add", `${name}@${stable}`, "latest"]);
+        log(`${name}: restored stable latest=${stable}`);
       }
     }
   }
@@ -169,8 +190,10 @@ export async function publishPackages(packages, {
   catch (error) { if (!failure) failure = error; else log(`Tag cleanup also failed: ${error.message}`); }
   if (failure) throw failure;
   for (const { manifest: { name } } of packages) {
-    const tags = (await metadata(name))?.["dist-tags"];
-    if (tags?.[tag] !== version || (prerelease && tags?.latest?.includes("-"))) {
+    const data = await metadata(name);
+    const tags = data?.["dist-tags"];
+    const stableExists = stableTags.has(name) || newestStable(data) !== undefined;
+    if (tags?.[tag] !== version || (prerelease && stableExists && tags?.latest?.includes("-"))) {
       throw new Error(`${name}: public dist-tags do not satisfy the release policy`);
     }
   }

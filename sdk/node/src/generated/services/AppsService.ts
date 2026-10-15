@@ -10,6 +10,7 @@ import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
+import type { AppReleaseReview } from '../models/AppReleaseReview.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
@@ -50,6 +51,7 @@ import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestI
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
+import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
@@ -88,6 +90,7 @@ import type { RequestAuditListResponse } from '../models/RequestAuditListRespons
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { RouteAdviceResponse } from '../models/RouteAdviceResponse.js';
+import type { RouteAwakeResponse } from '../models/RouteAwakeResponse.js';
 import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
 import type { RouteCheckHistoryPage } from '../models/RouteCheckHistoryPage.js';
 import type { RouteCustomerUsageResponse } from '../models/RouteCustomerUsageResponse.js';
@@ -122,6 +125,7 @@ import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequiremen
 import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
+import type { SetEnvironmentRouteBudgetsRequest } from '../models/SetEnvironmentRouteBudgetsRequest.js';
 import type { SetObjectStorageBindingReleasePolicyRequest } from '../models/SetObjectStorageBindingReleasePolicyRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
@@ -129,6 +133,8 @@ import type { SetRoutePrioritiesRequest } from '../models/SetRoutePrioritiesRequ
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SetServiceWakeAheadRequest } from '../models/SetServiceWakeAheadRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
+import type { SourceReviewRequest } from '../models/SourceReviewRequest.js';
+import type { SourceReviewResponse } from '../models/SourceReviewResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
@@ -1344,10 +1350,43 @@ export class AppsService {
     });
   }
   /**
+   * Read an atomic app configuration and release review
+   * @returns AppReleaseReview Configuration and selected-scope release identities for reviewed staging
+   * @throws ApiError
+   */
+  public static getAppReleaseReview({
+    slug,
+    environment,
+  }: {
+    /**
+     * Application slug for release review.
+     */
+    slug: string,
+    /**
+     * Registered named environment in the app's project; omit for default.
+     */
+    environment?: string,
+  }): CancelablePromise<AppReleaseReview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-review',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Explain observed app serving health.
-   * Read-only assessment of default-scope HTTP serving deployments,
+   * Read-only assessment of selected-scope HTTP serving deployments,
    * replica readiness, node evidence and the last 5 minutes of request
-   * telemetry scoped to current traffic-bearing default releases. It never wakes
+   * telemetry scoped to current traffic-bearing releases in the selected scope. It never wakes
    * or probes a workload. Structural evidence is available on every plan;
    * request telemetry follows the existing Hobby+ metrics entitlement.
    * Missing, failed, stale or truncated evidence cannot confirm health.
@@ -1361,17 +1400,25 @@ export class AppsService {
    */
   public static getAppHealth({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Registered app environment whose serving health is observed; omit for its default environment.
+     */
+    environment?: string,
   }): CancelablePromise<AppHealthResponse> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/health',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `Authentication required.`,
@@ -1889,17 +1936,31 @@ export class AppsService {
    */
   public static getAppRoutes({
     slug,
+    environment,
+    scope,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Registered named environment; mutually exclusive with scope.
+     */
+    environment?: string,
+    /**
+     * Explicit default scope. Omitting both selectors retains legacy aggregation.
+     */
+    scope?: 'default',
   }): CancelablePromise<AppRoutesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/routes',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
+        'scope': scope,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -4406,6 +4467,47 @@ export class AppsService {
     });
   }
   /**
+   * Resolve a connected GitHub branch or commit and review target release configuration without building.
+   * @returns SourceReviewResponse Immutable source and configuration review, excluding credentials.
+   * @throws ApiError
+   */
+  public static reviewSourceRef({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Application slug for Git source resolution.
+     */
+    slug: string,
+    requestBody: SourceReviewRequest,
+  }): CancelablePromise<SourceReviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/source-review',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Read the production route removal policy.
    * Requires apps:read or admin and completed MFA. An unconfigured app reports revision 0 and mode report.
    * @returns RouteRemovalPolicy Current policy and durable production baseline.
@@ -4774,23 +4876,37 @@ export class AppsService {
   }
   /**
    * Read current production monitoring and recovery progress.
-   * Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. No query parameters are accepted.
+   * Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. An environment selector or scope=default returns an attributed scoped summary, scoped health and explicitly scoped recovery records; aggregate route-monitor evaluations and unscoped restart handoffs are omitted.
    * @returns AppOperationalSummary Independently observed operational facts; unavailable components remain explicit.
    * @throws ApiError
    */
   public static getAppOperationalSummary({
     slug,
+    environment,
+    scope,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Environment whose passive operational summary is requested; omit for the default scope.
+     */
+    environment?: string,
+    /**
+     * Choose default-scope operational evidence; do not combine with an environment selector.
+     */
+    scope?: 'default',
   }): CancelablePromise<AppOperationalSummary> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/operational-summary',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
+        'scope': scope,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -4801,6 +4917,105 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read effective advisory budgets for one environment.
+   * Requires app read access and completed MFA. Defaults to app-budget inheritance. Reports immutable identity, override revision and parent revision. Excludes customer grouping and recovery actions.
+   * @returns EnvironmentRouteBudgets Effective advisory route budgets and their policy source.
+   * @throws ApiError
+   */
+  public static getEnvironmentRouteBudgets({
+    slug,
+    scope,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Select scope=default or one registered environment, exactly one selector is required.
+     */
+    scope?: 'default',
+    /**
+     * Registered named environment; cannot be combined with scope.
+     */
+    environment?: string,
+  }): CancelablePromise<EnvironmentRouteBudgets> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-budgets',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save a reviewed environment budget override or restore inheritance.
+   * Requires deployment write access, completed MFA and account admission. Enabling requires telemetry entitlement. Pins app/environment identities and both revisions atomically. A save increments the override revision and resets completed observation windows, including return to inheritance. Request UUID and body are bound to a durable native receipt; replay returns the original result after later edits. No traffic, release gate, production monitor, incident or automatic rollback changes. Body limit is 16 KiB.
+   * @returns EnvironmentRouteBudgets Saved intent or original replay receipt.
+   * @throws ApiError
+   */
+  public static setEnvironmentRouteBudgets({
+    slug,
+    requestBody,
+    scope,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetEnvironmentRouteBudgetsRequest,
+    /**
+     * Select scope=default or one registered environment, exactly one selector is required.
+     */
+    scope?: 'default',
+    /**
+     * Registered named environment; cannot be combined with scope.
+     */
+    environment?: string,
+  }): CancelablePromise<EnvironmentRouteBudgets> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-budgets',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Enabling requires telemetry entitlement and account admission.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -4932,6 +5147,76 @@ export class AppsService {
         'since': since,
         'until': until,
         'cache_max_age': cacheMaxAge,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Show which routes keep a scale-to-zero app awake.
+   * Read-only awake-time report (ADR-1187). Awake time is the app's billed
+   * running time (plan RAM + 8 MB per running second) from the usage
+   * ledger. It is attributed, minute by minute, to the routes whose
+   * requests restarted the idle timer: a 2xx response from an instance, or
+   * a request that cold-booted it. Requests the gateway answered itself
+   * (edge cache hits, edge answers, rejected credentials) never wake the
+   * app and are not counted.
+   *
+   * For each of the busiest ten routes the report estimates the awake time
+   * and the change in cold wakes had that route's requests never reached
+   * the app, flags routes called at a steady interval (uptime monitors,
+   * pollers), and suggests serving anonymous GET traffic from the edge
+   * cache or calling less often than the idle timeout. Awake time no
+   * request explains (synthetic probes, scheduled prewarm, minimum
+   * instances, queue, cron and waitUntil work) is reported as
+   * unattributed. Minute resolution makes every figure an estimate. Uses
+   * the normal read scopes, completed MFA and the DebugTelemetryEnabled
+   * plan gate.
+   *
+   * @returns RouteAwakeResponse Awake time and the routes that caused it.
+   * @throws ApiError
+   */
+  public static getRouteAwake({
+    slug,
+    since = '168h',
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Start of the awake report window: a positive lookback duration (for example 7d) or an RFC3339 timestamp, clamped to current plan retention.
+     */
+    since?: string,
+    /**
+     * Exclusive end of the window, default now; must be within retained telemetry and not in the future.
+     */
+    until?: string,
+  }): CancelablePromise<RouteAwakeResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/routes/awake',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

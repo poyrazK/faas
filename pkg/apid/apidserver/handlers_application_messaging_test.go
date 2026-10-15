@@ -101,3 +101,26 @@ func TestDeliverAppEventRejectsUnregisteredDestination(t *testing.T) {
 		}
 	}
 }
+
+// TestDeliverAppEventRetryAfterRegisteringIsNotReplayed covers H10-54: a
+// deliver to a destination registered only after the first attempt kept
+// replaying the cached 404 for the same Idempotency-Key for 24 hours.
+func TestDeliverAppEventRetryAfterRegisteringIsNotReplayed(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "checkout-api")
+	hookReq := webhookReq()
+	deliver := func() int {
+		return e.Do(t, http.MethodPost, "/v1/apps/checkout-api/outbox", api.DeliverAppEventRequest{
+			Destination: hookReq.TargetURL,
+			Type:        "order.paid",
+			Data:        json.RawMessage(`{"order_id":"ord_123"}`),
+		}, map[string]string{"Idempotency-Key": "deliver-after-register"}).Code
+	}
+	if code := deliver(); code != http.StatusNotFound {
+		t.Fatalf("first deliver = %d, want 404 before the webhook exists", code)
+	}
+	mustCreateWebhook(t, e, "checkout-api", hookReq)
+	if code := deliver(); code != http.StatusAccepted {
+		t.Fatalf("deliver after registering = %d, want 202 (the cached 404 must not replay)", code)
+	}
+}

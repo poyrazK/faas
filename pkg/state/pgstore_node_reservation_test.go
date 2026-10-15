@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -209,9 +210,16 @@ func TestPgStoreNodeReservationIsPerNode(t *testing.T) {
 			go func(idx int, nodeID string) {
 				defer done.Done()
 				start.Wait()
-				_, err := store.CreateInstance(ctx, app.ID, dep.ID,
-					string(state.StateWaking), admitMB, nodeID, uuid.NewString())
-				errs[idx] = err
+				wakeID := uuid.NewString()
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					_, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateWaking), admitMB, nodeID, wakeID)
+					if !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) || time.Now().After(deadline) {
+						errs[idx] = err
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
 			}(idx, node.ID)
 		}
 	}

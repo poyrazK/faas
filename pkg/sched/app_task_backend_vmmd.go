@@ -44,7 +44,7 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 	}
 	resolved, err := b.resolve(ctx, request)
 	if err != nil {
-		return nil, err
+		return nil, withAppTaskStage("resolve", err)
 	}
 	if resolved.NodeID == "" || resolved.Spec.Instance != request.ID || resolved.Spec.DeploymentID != request.DeploymentID {
 		if resolved.release != nil {
@@ -59,9 +59,9 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			resolved.release()
 		}
 		if cleanupErr != nil {
-			return nil, errors.Join(err, cleanupErr)
+			return nil, withAppTaskStage("vmmd_restore", errors.Join(err, cleanupErr))
 		}
-		return nil, err
+		return nil, withAppTaskStage("vmmd_restore", err)
 	}
 	if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
 		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)

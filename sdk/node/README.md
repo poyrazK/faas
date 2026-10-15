@@ -516,11 +516,10 @@ qualification. See the runnable
 Every mutating call (POST/PUT/PATCH/DELETE) carries an `Idempotency-Key`
 header. The semantic contract is identical to the Go SDK:
 
-- **Auto-mint (default).** The wrapper mints a fresh UUIDv4 on **every
-  attempt**, not per-call. This means each retry sees a fresh key and
-  the server's 24h replay window sees a fresh retry budget per attempt;
-  a retried `CreateApp` is a new logical request from the server's
-  perspective, never a double-bill.
+- **Auto-mint (default).** The wrapper mints a fresh UUIDv4 for each logical
+  mutating call and reuses it across that call's retry attempts. An accepted
+  write whose response fails can therefore be replayed under the same key.
+  Independent calls receive different keys, including concurrent calls.
 - **Opt-in stable key.** For deployments that need to survive across
   processes (CI deploys, retry-batched jobs), pin a stable key so the
   server replays the original response on retry rather than minting
@@ -537,6 +536,18 @@ header. The semantic contract is identical to the Go SDK:
   until reset. Pass a fresh key per logically independent call.
 
 GET/HEAD skip the header — the server doesn't dedupe reads.
+
+Retries are disabled by default. When configured, HTTP 429 and 5xx responses
+retry up to `retry.maxAttempts` total attempts, including JSON Problem responses.
+The delay is the longer of exponential policy backoff and a valid `Retry-After`
+delta-seconds or HTTP-date value. The final response preserves its Problem,
+request ID, and retry metadata. Other 4xx responses and transport failures
+propagate immediately.
+
+Caller cancellation and `timeoutMs` bound the entire call, including retry
+waiting. One-shot `Request` and `ReadableStream` upload bodies are sent once;
+they cannot be automatically replayed. Generated JSON and FormData requests
+retain their body and key across retries.
 
 The `client.setIdempotencyKey` API is the only public stable-key wire-in
 in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
@@ -796,7 +807,7 @@ but does **not** layer a timeout — the caller owns the deadline. Pass
 ## Co-tenant code: the global fetch wrapper
 
 The `FaaSClient` constructor replaces `globalThis.fetch` with the
-wrapper chain (retry → RFC 7807 unwrap → logger → idempotency →
+wrapper chain (idempotency → RFC 7807 unwrap → retry → logger →
 user fetch). This is the only injection point the
 `openapi-typescript-codegen@0.31.0` generator exposes — see
 `src/generated/core/request.ts:219`. **All other `fetch` calls in your
@@ -1117,6 +1128,20 @@ request after an uncertain reply; the returned `queued` receipt describes the
 original decision. Read delivery status separately. Business results and
 execution generations are unaffected. The legacy retry method remains available.
 
+
+
+### Application standards
+
+The public `OrgsService` exposes `previewApplicationStandardAssignment`,
+`getApplicationStandardReview`, `getApplicationStandardOperation`,
+`getApplicationStandardEnrollment`, and `listApplicationStandardExceptions`.
+Configure authentication with `new FaaSClient(baseURL, { token })` before calling
+these generated methods. A preview saves affected applications and blockers
+without activating an assignment. Progress preserves the distinction between
+persisted and observed settings. Enrollment includes the installed exception
+expiry deadline; history includes active, expired or revoked status evaluated
+at the server's `as_of` timestamp and an exclusive UUID cursor. Activation and
+exception mutation APIs remain gated pending runtime acceptance.
 
 ## Object version protection
 

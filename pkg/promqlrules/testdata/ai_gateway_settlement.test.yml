@@ -1,0 +1,38 @@
+# Synthetic coverage for the AI gateway settlement page (ADR-1120): the page
+# must fire when outboundd keeps failing to record usage, and stay quiet while
+# usage records succeed.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "failing AI usage settlement pages"
+    input_series:
+      - series: 'outbound_ai_usage_record_events_total{job="outboundd",instance="compute-a:9112",event="state_error"}'
+        values: '0+1x50'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasAIGatewaySettlementFailing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "AI gateway usage is not being settled"
+              description: "outboundd has failed to record AI usage for 10m. Calls still succeed, but token and cost caps, usage reports and alerts under-count until settlement recovers. Check Postgres for outboundd; close the AI gateway if it does not recover."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 30s
+    name: "settled AI usage stays quiet"
+    input_series:
+      - series: 'outbound_ai_usage_record_events_total{job="outboundd",instance="compute-a:9112",event="recorded"}'
+        values: '0+1x50'
+      - series: 'outbound_ai_usage_record_events_total{job="outboundd",instance="compute-a:9112",event="state_error"}'
+        values: '0x50'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasAIGatewaySettlementFailing

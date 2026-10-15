@@ -17,22 +17,23 @@ import (
 // so snapshot prime failed with `sidecar "heartbeat" has no built layer`.
 // Only registry-image deploys (buildImageLayer) built them.
 func TestBuildLocalOCIAppLayerBuildsCompanionLayers(t *testing.T) {
+	rawLayer := []byte("built app layer")
 	cfg, err := json.Marshal(map[string]any{
 		"architecture": "amd64",
 		"os":           "linux",
 		"config":       map[string]any{"Cmd": []string{"node", "server.js"}},
-		"rootfs":       map[string]any{"type": "layers", "diff_ids": []string{"sha256:" + strings.Repeat("1", 64)}},
+		"rootfs":       map[string]any{"type": "layers", "diff_ids": []string{digestFor(t, rawLayer)}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	layer := gzipBytes(t, []byte("built app layer"))
+	layer := gzipBytes(t, rawLayer)
 	cfgDigest := digestFor(t, cfg)
 	layerDigest := digestFor(t, layer)
-	manifest := minimalManifestBytes(cfgDigest, []string{layerDigest})
+	manifest := minimalManifestBytes(cfg, layer)
 	manifestDigest := digestFor(t, manifest)
 	archive := buildLocalOCIArchive(t, map[string][]byte{
-		"index.json":             minimalIndexBytes(manifestDigest),
+		"index.json":             minimalIndexBytes(manifest),
 		blobPath(manifestDigest): manifest,
 		blobPath(cfgDigest):      cfg,
 		blobPath(layerDigest):    layer,
@@ -71,7 +72,7 @@ func TestBuildLocalOCIAppLayerBuildsCompanionLayers(t *testing.T) {
 	}
 	h.dep = dep
 	handler := New(h.store, h.notif, mp, h.bld, "./init", h.appsR, silentLogger())
-	if err := handler.buildLocalOCIAppLayer(context.Background(), h.app, &h.dep, h.acct); err != nil {
+	if err := handler.buildLocalOCIAppLayer(context.Background(), h.app, &h.dep, h.acct, nil); err != nil {
 		t.Fatalf("buildLocalOCIAppLayer: %v", err)
 	}
 	if h.dep.ImageDigest != manifestDigest {

@@ -26,7 +26,7 @@ func probeSelf(t *testing.T, network, addr string) (int, string, bool) {
 		t.Skipf("cannot listen on %s %s: %v", network, addr, err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	return probeListeningLinux(os.Getpid())
+	return probeListeningLinux(os.Getpid(), 0)
 }
 
 func TestProbeListeningLinux_FindsIPv4Listener(t *testing.T) {
@@ -47,12 +47,31 @@ func TestProbeListeningLinux_FindsDualStackListener(t *testing.T) {
 }
 
 func TestProbeListeningLinux_NoListenerIsNotFound(t *testing.T) {
-	if port, _, ok := probeListeningLinux(os.Getpid()); ok && port != 0 {
+	if port, _, ok := probeListeningLinux(os.Getpid(), 0); ok && port != 0 {
 		// Another test in this binary may still hold a listener; only fail if
 		// nothing else could explain it.
 		t.Logf("probe found port %d with no listener of ours; another test's listener?", port)
 	}
-	if _, _, ok := probeListeningLinux(-1); ok {
+	if _, _, ok := probeListeningLinux(-1, 0); ok {
 		t.Fatal("probe reported a listener for pid -1")
+	}
+}
+
+// H10-56: with two listeners, the expected port is chosen even when /proc
+// lists the other one first.
+func TestProbeListeningLinux_PrefersExpectedPort(t *testing.T) {
+	var ports []int
+	for i := 0; i < 2; i++ {
+		ln, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Skipf("cannot listen: %v", err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		ports = append(ports, ln.Addr().(*net.TCPAddr).Port)
+	}
+	for _, want := range ports {
+		if port, _, ok := probeListeningLinux(os.Getpid(), want); !ok || port != want {
+			t.Errorf("probeListeningLinux(want=%d) = (%d, %v), want the expected port", want, port, ok)
+		}
 	}
 }

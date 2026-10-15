@@ -11,8 +11,206 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const eventSubscriptionCapacityAccount = `-- name: EventSubscriptionCapacityAccount :one
+SELECT plan FROM accounts WHERE id=$1::uuid FOR SHARE
+`
+
+func (q *Queries) EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityAccount, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const eventSubscriptionCapacityCommandBudget = `-- name: EventSubscriptionCapacityCommandBudget :one
+SELECT count(*)::bigint AS retained_receipts,min(retain_until)::timestamptz AS earliest_expiry_at
+FROM event_subscription_capacity_commands
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND retain_until>$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandBudgetParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	ObservedAt     pgtype.Timestamptz
+}
+
+type EventSubscriptionCapacityCommandBudgetRow struct {
+	RetainedReceipts int64
+	EarliestExpiryAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandBudget(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandBudgetParams) (EventSubscriptionCapacityCommandBudgetRow, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandBudget,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.ObservedAt,
+	)
+	var i EventSubscriptionCapacityCommandBudgetRow
+	err := row.Scan(&i.RetainedReceipts, &i.EarliestExpiryAt)
+	return i, err
+}
+
+const eventSubscriptionCapacityCommandGet = `-- name: EventSubscriptionCapacityCommandGet :one
+SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND command_id=$4::uuid AND retain_until>$5::timestamptz
+`
+
+type EventSubscriptionCapacityCommandGetParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandGet(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandGetParams) (EventSubscriptionCapacityCommand, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandGet,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.CommandID,
+		arg.NowAt,
+	)
+	var i EventSubscriptionCapacityCommand
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.CommandID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Request,
+		&i.Receipt,
+		&i.RecordedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const eventSubscriptionCapacityCommandInsert = `-- name: EventSubscriptionCapacityCommandInsert :exec
+INSERT INTO event_subscription_capacity_commands(subscription_id,command_id,account_id,app_id,request,receipt,recorded_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::jsonb,$6::jsonb,$7::timestamptz,$8::timestamptz)
+`
+
+type EventSubscriptionCapacityCommandInsertParams struct {
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandInsert(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandInsertParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacityCommandInsert,
+		arg.SubscriptionID,
+		arg.CommandID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Request,
+		arg.Receipt,
+		arg.RecordedAt,
+		arg.RetainUntil,
+	)
+	return err
+}
+
+const eventSubscriptionCapacityCommandsCount = `-- name: EventSubscriptionCapacityCommandsCount :one
+SELECT count(*)::bigint FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND retain_until>$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandsCountParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandsCount(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandsCountParams) (int64, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandsCount,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventSubscriptionCapacityCommandsExpire = `-- name: EventSubscriptionCapacityCommandsExpire :exec
+DELETE FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND retain_until<=$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandsExpireParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandsExpire(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandsExpireParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacityCommandsExpire,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+	)
+	return err
+}
+
+const eventSubscriptionCapacityOverride = `-- name: EventSubscriptionCapacityOverride :one
+SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND subscription_id::text=$3::text),0)::integer AS max_pending_deliveries
+`
+
+type EventSubscriptionCapacityOverrideParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+func (q *Queries) EventSubscriptionCapacityOverride(ctx context.Context, db DBTX, arg EventSubscriptionCapacityOverrideParams) (int32, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityOverride, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var max_pending_deliveries int32
+	err := row.Scan(&max_pending_deliveries)
+	return max_pending_deliveries, err
+}
+
+const eventSubscriptionCapacitySet = `-- name: EventSubscriptionCapacitySet :exec
+INSERT INTO event_subscription_delivery_controls(subscription_id,account_id,app_id,max_pending_deliveries,updated_at)
+VALUES ($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::timestamptz)
+ON CONFLICT(subscription_id) DO UPDATE SET max_pending_deliveries=excluded.max_pending_deliveries,updated_at=excluded.updated_at
+WHERE event_subscription_delivery_controls.account_id=excluded.account_id AND event_subscription_delivery_controls.app_id=excluded.app_id
+`
+
+type EventSubscriptionCapacitySetParams struct {
+	SubscriptionID       pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	MaxPendingDeliveries int32
+	NowAt                pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacitySet(ctx context.Context, db DBTX, arg EventSubscriptionCapacitySetParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacitySet,
+		arg.SubscriptionID,
+		arg.AccountID,
+		arg.AppID,
+		arg.MaxPendingDeliveries,
+		arg.NowAt,
+	)
+	return err
+}
+
 const eventSubscriptionControlGet = `-- name: EventSubscriptionControlGet :one
-SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
+SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
 `
 
 type EventSubscriptionControlGetParams struct {
@@ -34,6 +232,7 @@ func (q *Queries) EventSubscriptionControlGet(ctx context.Context, db DBTX, arg 
 		&i.WindowCount,
 		&i.UpdatedAt,
 		&i.PausedAt,
+		&i.MaxPendingDeliveries,
 	)
 	return i, err
 }
@@ -140,4 +339,85 @@ type EventSubscriptionControlUsePermitParams struct {
 func (q *Queries) EventSubscriptionControlUsePermit(ctx context.Context, db DBTX, arg EventSubscriptionControlUsePermitParams) error {
 	_, err := db.Exec(ctx, eventSubscriptionControlUsePermit, arg.NowAt, arg.SubscriptionID)
 	return err
+}
+
+const listEventSubscriptionCapacityCommands = `-- name: ListEventSubscriptionCapacityCommands :many
+SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND retain_until>$4::timestamptz AND recorded_at<=$4::timestamptz
+ AND ($5::text='any' OR receipt->>'outcome'=$5::text)
+ AND (NOT $6::boolean OR (recorded_at,command_id)<($7::timestamptz,$8::uuid))
+ORDER BY recorded_at DESC,command_id DESC LIMIT $9::integer
+`
+
+type ListEventSubscriptionCapacityCommandsParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  pgtype.UUID
+	NowAt           pgtype.Timestamptz
+	Outcome         string
+	HasAfter        bool
+	AfterRecordedAt pgtype.Timestamptz
+	AfterCommandID  pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg ListEventSubscriptionCapacityCommandsParams) ([]EventSubscriptionCapacityCommand, error) {
+	rows, err := db.Query(ctx, listEventSubscriptionCapacityCommands,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+		arg.Outcome,
+		arg.HasAfter,
+		arg.AfterRecordedAt,
+		arg.AfterCommandID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionCapacityCommand{}
+	for rows.Next() {
+		var i EventSubscriptionCapacityCommand
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.CommandID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Request,
+			&i.Receipt,
+			&i.RecordedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneEventSubscriptionCapacityCommands = `-- name: PruneEventSubscriptionCapacityCommands :execrows
+WITH expired AS (
+ SELECT subscription_id,command_id FROM event_subscription_capacity_commands WHERE retain_until<=$1::timestamptz
+ ORDER BY retain_until,subscription_id,command_id FOR UPDATE SKIP LOCKED LIMIT $2::integer
+)
+DELETE FROM event_subscription_capacity_commands c USING expired e WHERE c.subscription_id=e.subscription_id AND c.command_id=e.command_id
+`
+
+type PruneEventSubscriptionCapacityCommandsParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg PruneEventSubscriptionCapacityCommandsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventSubscriptionCapacityCommands, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.app_operational_rollback import AppOperationalRollback
     from ..models.runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
@@ -27,6 +29,8 @@ class AppOperationalRecovery:
     restarts_truncated: bool
     rollbacks: list[AppOperationalRollback]
     restarts: list[RuntimeConfigRestartStatusResponse]
+    coverage: str | Unset = UNSET
+    """Explicit scoped summaries include only attributable operations; app-wide restarts are excluded."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +52,8 @@ class AppOperationalRecovery:
             restarts_item = restarts_item_data.to_dict()
             restarts.append(restarts_item)
 
+        coverage = self.coverage
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,6 +66,8 @@ class AppOperationalRecovery:
                 "restarts": restarts,
             }
         )
+        if coverage is not UNSET:
+            field_dict["coverage"] = coverage
 
         return field_dict
 
@@ -91,6 +99,8 @@ class AppOperationalRecovery:
 
             restarts.append(restarts_item)
 
+        coverage = d.pop("coverage", UNSET)
+
         app_operational_recovery = cls(
             rollbacks_available=rollbacks_available,
             restarts_available=restarts_available,
@@ -98,6 +108,7 @@ class AppOperationalRecovery:
             restarts_truncated=restarts_truncated,
             rollbacks=rollbacks,
             restarts=restarts,
+            coverage=coverage,
         )
 
         app_operational_recovery.additional_properties = d

@@ -39,6 +39,9 @@ export function validateRequests(value, { identities = ['alice', 'bob'] } = {}) 
   return value
 }
 export function requestStore(path, options = {}) {
+  const maxBytes = options.maxBytes ?? requestLimit
+  const validate = options.validate ?? validateRequests
+  const empty = options.empty ?? { version: 1, requests: [] }
   let writes = Promise.resolve()
   const read = async (required = false) => {
     let value
@@ -46,22 +49,23 @@ export function requestStore(path, options = {}) {
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
       try {
         const stat = await file.stat()
-        if (!stat.isFile() || stat.size > requestLimit) throw new Error('Request collection must be a regular file under 64 KiB.')
-        const buffer = Buffer.alloc(requestLimit + 1)
+        if (!stat.isFile() || stat.size > maxBytes) throw new Error('Request collection must be a regular file under 64 KiB.')
+        const buffer = Buffer.alloc(maxBytes + 1)
         let length = 0
         while (length < buffer.length) { const { bytesRead } = await file.read(buffer, length, buffer.length - length, length); if (!bytesRead) break; length += bytesRead }
-        if (length > requestLimit) throw new Error('Request collection exceeds 64 KiB.')
-        value = validateRequests(JSON.parse(buffer.subarray(0, length).toString('utf8')), options)
+        if (length > maxBytes) throw new Error('Request collection exceeds 64 KiB.')
+        value = validate(JSON.parse(buffer.subarray(0, length).toString('utf8')), options)
       } finally { await file.close() }
     } catch (error) {
       if (error.code !== 'ENOENT' || required) throw new Error('Cannot read data-api.requests.json; check its format, size and file type.')
-      value = { version: 1, requests: [] }
+      value = JSON.parse(JSON.stringify(empty))
     }
     return { ...value, revision: createHash('sha256').update(JSON.stringify(value)).digest('hex') }
   }
   const save = (value, revision) => {
     const operation = writes.then(async () => {
-      validateRequests(value, options)
+      validate(value, options)
+      if (Buffer.byteLength(JSON.stringify(value,null,2)+'\n') > maxBytes) throw new Error('Collection exceeds its byte limit.')
       if ((await read()).revision !== revision) { const error = new Error('Saved requests changed; reload the collection before saving.'); error.status = 409; throw error }
       try { if (!(await lstat(path)).isFile()) throw new Error('Request collection must be a regular file.') } catch (error) { if (error.code !== 'ENOENT') throw error }
       const temporary = `${path}.${randomBytes(12).toString('hex')}.tmp`

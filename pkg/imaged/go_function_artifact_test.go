@@ -29,7 +29,7 @@ func goArtifactFixture(t *testing.T, source string, config map[string]any) strin
 	}
 	compressed := gzipBytes(t, layer.Bytes())
 	var cfg map[string]any
-	if err := json.Unmarshal(minimalConfigBytes(), &cfg); err != nil {
+	if err := json.Unmarshal(minimalConfigBytes(layer.Bytes()), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg["config"] = config
@@ -38,9 +38,9 @@ func goArtifactFixture(t *testing.T, source string, config map[string]any) strin
 		t.Fatal(err)
 	}
 	cd, ld := digestFor(t, raw), digestFor(t, compressed)
-	manifest := minimalManifestBytes(cd, []string{ld})
+	manifest := minimalManifestBytes(raw, compressed)
 	md := digestFor(t, manifest)
-	return buildLocalOCIArchive(t, map[string][]byte{"index.json": minimalIndexBytes(md), blobPath(md): manifest, blobPath(cd): raw, blobPath(ld): compressed})
+	return buildLocalOCIArchive(t, map[string][]byte{"index.json": minimalIndexBytes(manifest), blobPath(md): manifest, blobPath(cd): raw, blobPath(ld): compressed})
 }
 
 func TestGoFunctionArtifactUsesRailpackCommand(t *testing.T) {

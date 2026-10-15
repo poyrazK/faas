@@ -121,6 +121,7 @@ const CsrfActionSessionRevoke = csrfActionSessionRevoke
 const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
+const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie
@@ -838,6 +839,7 @@ func (r *server) Durable() *durable.Service                          { return &r
 func (r *server) EdgeRules() *edgerules.Service                      { return &r.edgeRules }
 func (r *server) FeatureFlagsEnabled() *bool                         { return &r.featureFlagsEnabled }
 func (r *server) FlagsWorkloadVerifier() **workloadidentity.Verifier { return &r.flagsWorkloadVerifier }
+func (r *server) WorkloadVerifier() **workloadidentity.Verifier      { return &r.workloadVerifier }
 func (r *server) Log() **slog.Logger                                 { return &r.log }
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
@@ -1332,4 +1334,9 @@ var ComposeDockerBuildContext = composeDockerBuildContext
 
 func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
 	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
+}
+
+// WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
+func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
+	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
 }

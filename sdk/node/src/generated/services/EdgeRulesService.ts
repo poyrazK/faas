@@ -539,9 +539,9 @@ export class EdgeRulesService {
      */
     rule?: string,
     /**
-     * Only matched (enforced) or logged (log-mode) events.
+     * Only events with this outcome; detected, warned and blocked are kind=waf detections.
      */
-    outcome?: 'matched' | 'logged',
+    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked',
     /**
      * Duration such as 1h, 24h or 7d.
      */

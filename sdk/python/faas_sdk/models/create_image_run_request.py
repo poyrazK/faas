@@ -34,6 +34,11 @@ class CreateImageRunRequest:
     """Task deadline in seconds; 0 means the plan's Job task timeout ceiling."""
     pull: CreateImageRunRequestPull | Unset = "missing"
     """always re-pulls a cached image so a moved tag is resolved again."""
+    interactive: bool | Unset = UNSET
+    """ADR-1330: hold the command until one client attaches to the run's task. The run has no retries and
+    timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501."""
+    tty: bool | Unset = UNSET
+    """Give the interactive command a pseudo-terminal. Requires interactive."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +64,10 @@ class CreateImageRunRequest:
         if not isinstance(self.pull, Unset):
             pull = self.pull
 
+        interactive = self.interactive
+
+        tty = self.tty
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -78,6 +87,10 @@ class CreateImageRunRequest:
             field_dict["timeout_sec"] = timeout_sec
         if pull is not UNSET:
             field_dict["pull"] = pull
+        if interactive is not UNSET:
+            field_dict["interactive"] = interactive
+        if tty is not UNSET:
+            field_dict["tty"] = tty
 
         return field_dict
 
@@ -110,6 +123,10 @@ class CreateImageRunRequest:
         else:
             pull = check_create_image_run_request_pull(_pull)
 
+        interactive = d.pop("interactive", UNSET)
+
+        tty = d.pop("tty", UNSET)
+
         create_image_run_request = cls(
             image=image,
             entrypoint=entrypoint,
@@ -118,6 +135,8 @@ class CreateImageRunRequest:
             ram_mb=ram_mb,
             timeout_sec=timeout_sec,
             pull=pull,
+            interactive=interactive,
+            tty=tty,
         )
 
         create_image_run_request.additional_properties = d

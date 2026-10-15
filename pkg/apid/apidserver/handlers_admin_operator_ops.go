@@ -172,8 +172,13 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 			"reason":            reason,
 		})
 	}
+	row, err := projectTenantRow(r.Context(), s.store, target, false)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load account summary after operation"))
+		return
+	}
 	writeJSON(w, http.StatusOK, api.ObsAccountMutationResponse{
-		Account:         projectTenantRow(r.Context(), s.store, target, false),
+		Account:         row,
 		Action:          action,
 		RevokedSessions: revokedSessions,
 	})

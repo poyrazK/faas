@@ -76,7 +76,11 @@ type cliAuthHandlers struct {
 // shape as a fresh code. The only 4xx is 429 from the cliAuthLimiter
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
-	code, hash, err := mintCliAuthCodeRaw()
+	code, hash, err := mintBrowserAuthCode(r)
+	if errors.Is(err, errBrowserAuthInput) {
+		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
+		return
+	}
 	if err != nil {
 		h.log.Error("cli_auth.mint", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not mint code"))
@@ -144,9 +148,10 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	expiresAt := time.Now().UTC().Add(cliAuthKeyTTL)
+	label, scopes, ttl := browserAuthCredential(req.Code)
+	expiresAt := time.Now().UTC().Add(ttl)
 	k, err := h.srv.store.CreateAPIKeyWithExpiryAndProvenance(
-		r.Context(), accountID, keyHash, "cli-login", api.ScopesAdminOnly,
+		r.Context(), accountID, keyHash, label, scopes,
 		&expiresAt, clientIPFromRequest(r), logsanitize.Field(r.UserAgent()), nil,
 	)
 	if err != nil {
@@ -164,13 +169,13 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	// the existing NotifyKeyChanged payload convention.
 	h.srv.audit.Emit(r.Context(), "key.created", &accountID, map[string]any{
 		"key_id": k.ID,
-		"scopes": api.ScopesAdminOnly,
+		"scopes": scopes,
 	})
 	// IAM-4 (ADR-035): the exchange itself is an auth.login
 	// success from the customer's perspective. The CLI never set a
 	// cookie; the key is the credential that follows.
 	h.srv.audit.Emit(r.Context(), "auth.login", &accountID, map[string]any{
-		"method": "cli_code",
+		"method": browserAuthAuditMethod(req.Code),
 	})
 
 	acct, err := h.srv.store.AccountByID(r.Context(), accountID)
@@ -202,6 +207,10 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 // and is rejected; a forged token cannot be opened without the
 // 32-byte session key.
 func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("approval") {
+		h.renderPromotionApprovalPage(w, r)
+		return
+	}
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
 		h.renderCliAuthError(w, r, "Code looks malformed", "Codes are 8 characters, like ABCD-1234.")
@@ -240,14 +249,20 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 
+	title := "Authorize CLI session"
+	if isMCPAuthCode(raw) {
+		title = "Authorize MCP connection"
+	}
 	page := dashboard.Page{
-		Title:   "Authorize CLI session",
+		Title:   title,
 		Body:    "cli_auth",
 		Account: dashboardAccountView(acct, 0),
 		Data: map[string]any{
 			"Code":         raw,
 			"CSRFToken":    token,
 			"AccountEmail": acct.Email,
+			"MCP":          isMCPAuthCode(raw),
+			"MCPWrites":    strings.HasPrefix(raw, "MCPW"),
 		},
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
@@ -276,6 +291,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 	if err := r.ParseForm(); err != nil {
 		writeDashboardBadRequest(w, r, "The CLI authorization form could not be read.")
+		return
+	}
+	if r.PostForm.Has("approval") {
+		h.postPromotionApprovalPage(w, r)
 		return
 	}
 	// Resolve the code first so we can pass it as the CSRF subject.
@@ -354,6 +373,13 @@ func mintCliAuthCodeRaw() (string, []byte, error) {
 // Returns ok=false on any shape mismatch.
 func normalizeCliAuthCode(raw string) ([]byte, bool) {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
+	if isMCPAuthCode(normalized) {
+		decoded, err := hex.DecodeString(normalized[4:])
+		if err != nil || len(decoded) != 32 {
+			return nil, false
+		}
+		return api.HashToken(append([]byte(normalized[:4]+":"), decoded...)), true
+	}
 	if len(normalized) != 8 {
 		return nil, false
 	}

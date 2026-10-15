@@ -372,7 +372,7 @@ func TestNativeCaptureSequencePublishesOnlyAfterFreezeAndResume(t *testing.T) {
 	f := nativeCaptureSequence(t)
 	info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
 	want := []string{"begin", "stage:mem", "stage:vmstate", "handoff", "memory:prepare", "pause", "memory:raise", "create", "freeze", "memory:restore", "resume", "put:mem", "put:vmstate", "put:drive", "put:backing"}
-	if err != nil || !reflect.DeepEqual(f.events, want) || info != (SnapshotInfo{MemBytes: 12, VMStateBytes: 16, StoredBytes: 50}) {
+	if err != nil || !reflect.DeepEqual(f.events, want) || !info.Equal(SnapshotInfo{MemBytes: 12, VMStateBytes: 16, StoredBytes: 50}) {
 		t.Fatalf("capture order/info: %v %+v %v", f.events, info, err)
 	}
 	keys := qualificationSnapshotProof(f.incoming, SnapshotInfo{})
@@ -396,7 +396,7 @@ func assertNativeCaptureSequenceClosed(t *testing.T, f *nativeCaptureSequenceFix
 		}
 	}
 	capture, err := f.q.readCapture(f.incoming)
-	if err != nil || capture != f.capture || f.store.ordinary != 0 || f.store.deletes != 0 || f.v.checkEnvironmentQualificationSnapshotSupport() == nil {
+	if err != nil || !reflect.DeepEqual(capture, f.capture) || f.store.ordinary != 0 || f.store.deletes != 0 || f.v.checkEnvironmentQualificationSnapshotSupport() == nil {
 		t.Fatal("internal producer supplied completion, legacy effects or an enabled native gate", err)
 	}
 }
@@ -407,13 +407,13 @@ func TestNativeCaptureSequenceUncertainStepNeverReplaysOrPromotes(t *testing.T) 
 			f := nativeCaptureSequence(t)
 			f.fail = step
 			info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
-			if err == nil || info != (SnapshotInfo{}) || !nativeCaptureStoppedAt(f.events, step) {
+			if err == nil || !info.IsZero() || !nativeCaptureStoppedAt(f.events, step) {
 				t.Fatal("uncertain step continued effects or returned capture evidence", f.events, info, err)
 			}
 			assertNativeCaptureSequenceClosed(t, f)
 			before := append([]string(nil), f.events...)
 			f.fail = ""
-			if info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing); err == nil || info != (SnapshotInfo{}) || !reflect.DeepEqual(f.events, before) {
+			if info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing); err == nil || !info.IsZero() || !reflect.DeepEqual(f.events, before) {
 				t.Fatal("retry replayed an uncertain capture effect", f.events, info, err)
 			}
 		})
@@ -456,7 +456,7 @@ func TestNativeCaptureSequenceRejectsIncompletePreflightBeforeIntentOrEffects(t 
 			case "cancelled":
 				cancel()
 			}
-			if info, err := f.v.captureEnvironmentQualificationSnapshot(ctx, f.owner.Lease, f.backing); err == nil || info != (SnapshotInfo{}) || len(f.events) != 0 || len(f.store.blobs) != 0 {
+			if info, err := f.v.captureEnvironmentQualificationSnapshot(ctx, f.owner.Lease, f.backing); err == nil || !info.IsZero() || len(f.events) != 0 || len(f.store.blobs) != 0 {
 				t.Fatal("incomplete native preflight started a capture", f.events, info, err)
 			}
 		})
@@ -521,7 +521,7 @@ func TestNativeCaptureSequenceCancellationAndAuthorityLossPreventCompletion(t *t
 					return nil
 				}
 				info, err := f.v.captureEnvironmentQualificationSnapshot(ctx, f.owner.Lease, f.backing)
-				if err == nil || info != (SnapshotInfo{}) || !nativeCaptureStoppedAt(f.events, step) {
+				if err == nil || !info.IsZero() || !nativeCaptureStoppedAt(f.events, step) {
 					t.Fatal("authority loss continued effects or supplied evidence", f.events, info, err)
 				}
 				assertNativeCaptureSequenceClosed(t, f)
@@ -559,7 +559,7 @@ func TestNativeCaptureSequenceDescriptorCloseFailureRetainsIncompleteCohort(t *t
 				return f.frozen.Close()
 			}
 			info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
-			if err == nil || info != (SnapshotInfo{}) || len(f.store.blobs) != 4 {
+			if err == nil || !info.IsZero() || len(f.store.blobs) != 4 {
 				t.Fatal("descriptor close failure promoted or deleted uncertain objects", info, err)
 			}
 			assertNativeCaptureSequenceClosed(t, f)
@@ -602,7 +602,7 @@ func TestNativeCaptureSequenceRequiresEveryOriginalReceiptAtCompletion(t *testin
 		return nil
 	}
 	info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
-	if err == nil || info != (SnapshotInfo{}) || len(f.store.blobs) != 4 {
+	if err == nil || !info.IsZero() || len(f.store.blobs) != 4 {
 		t.Fatal("complete cohort borrowed a missing original receipt", info, err)
 	}
 	assertNativeCaptureSequenceClosed(t, f)

@@ -1237,6 +1237,9 @@ type Handler struct {
 	// / InvalidateAll) and is wired by the db.Notify handler in
 	// commit 14.
 	responseCache *ResponseCache
+	// contentObserver compares anonymous GET responses on routes without a
+	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
 	// one background wake + origin fetch repopulates the entry.
@@ -1421,6 +1424,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// ratelimit.go::bucket.pinned).
 		routeConsumerLimiter: NewLimiterWithLRU(EdgeRuleConsumerCacheCap),
 		accountLimiter:       NewLimiter(),
+		contentObserver:      newContentObserver(api.RouteContentObserverMaxURLs),
 		gate:                 NewWakeGate(api.WakeQueueCap, time.Duration(api.WakeQueueTTLSeconds)*time.Second),
 		admissionQueue: newWakeAdmissionQueue(
 			api.GatewayWakeAdmissionParallelism,
@@ -6544,6 +6548,13 @@ haveApp:
 		// stash, the gate-failure path would have to
 		// re-run the matcher (the rule was already
 		// resolved above, no point doing it twice).
+	} else if !deploymentSmoke && rule == nil && sidecarName == "" && h.contentObserver != nil && contentObservable(r) {
+		// No cache rule: observe whether this anonymous GET response repeats
+		// (ADR-1188). The tee only hashes; observe() records the outcome once
+		// the origin response is complete.
+		tee := newContentTee(w, h.contentObserver, app.ID, r)
+		w = tee
+		r = r.WithContext(withContentTee(r.Context(), tee))
 	}
 
 	// Resolve a selector when sidecarName != "". Existing sidecar selectors
@@ -7883,6 +7894,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentTag:                        target.DeploymentTag,
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
+				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {

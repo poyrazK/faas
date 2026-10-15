@@ -25,17 +25,20 @@ const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url')
 function world({ breakIsolation = false } = {}) {
   const apps = new Map(), deleted = []
   const users = new Map(), notes = [], sessions = new Map()
-  let adminCalls = 0, sessionSeq = 0, woke = false
+  let adminCalls = 0, sessionSeq = 0, parkedSeen = false, woke = false, signing = '0A1B2C3D'
+  const revoked = new Set()
+  const kid = id => `gregale-${id.toLowerCase()}`
   const json = (status, body) => new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
   const issue = (iss, user) => {
     const session = `session-${++sessionSeq}`
     sessions.set(session, user.id)
     const iat = Math.floor(Date.now() / 1000)
-    return { access_token: `${encode({ alg: 'ES256', kid: 'k1' })}.${encode({ iss, aud: 'authenticated', sub: user.id, session_id: session, iat, exp: iat + 600 })}.sig`, refresh_token: `refresh:${session}`, user: { id: user.id } }
+    return { access_token: `${encode({ alg: 'ES256', kid: kid(signing) })}.${encode({ iss, aud: 'authenticated', sub: user.id, session_id: session, iat, exp: iat + 600 })}.sig`, refresh_token: `refresh:${session}`, user: { id: user.id } }
   }
   const caller = init => {
     const token = /^Bearer (.+)$/.exec(init?.headers?.Authorization ?? '')?.[1]
     if (!token || !token.includes('.')) return null
+    if (revoked.has(JSON.parse(Buffer.from(token.split('.')[0], 'base64url')).kid)) return null
     const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url'))
     const user = [...users.values()].find(u => u.id === claims.sub)
     return { claims, active: sessions.get(claims.session_id) === claims.sub && !user?.banned }
@@ -52,6 +55,12 @@ function world({ breakIsolation = false } = {}) {
     if (rest[0] === 'deploy') return JSON.stringify(receipt('migrate'))
     if (rest[0] === 'data-api' && rest[1] === 'create') { assert.ok(rest.includes('--auth')); return JSON.stringify(receipt('api')) }
     if (key.startsWith('auth admin-key create')) return JSON.stringify({ id: '0A1B2C3D', key: 'gaak_' + 'Q'.repeat(43) })
+    if (key === 'auth keys rotate') {
+      const previous = signing
+      signing = 'FFFF0001'
+      return JSON.stringify({ id: signing, kid: kid(signing), state: 'signing', previous })
+    }
+    if (key === 'auth keys revoke') { revoked.add(kid(rest[4])); return JSON.stringify({ id: rest[4], kid: kid(rest[4]), state: 'removing' }) }
     if (rest[0] === 'auth' && rest[1] === 'import') {
       assert.equal(options.stdin, 'gaak_' + 'Q'.repeat(43))
       const record = JSON.parse((await readFile(rest[rest.indexOf('--file') + 1], 'utf8')).trim())
@@ -74,7 +83,7 @@ function world({ breakIsolation = false } = {}) {
     const build = /^\/v1\/builds\/(.+)\/provenance$/.exec(path)
     if (build) return { build_id: build[1], builder_node_id: 'native-builder', source_sha256: sha }
     const instances = /^\/v1\/apps\/([^/]+)\/instances$/.exec(path)
-    if (instances) return [{ id: 'i-1', deployment_id: 'dep-auth', wake_id: 'w-1', state: woke ? 'RUNNING' : 'PARKED', ram_mb: 128 }]
+    if (instances) return [{ id: 'i-1', deployment_id: 'dep-auth', wake_id: 'w-1', state: woke ? 'RUNNING' : (parkedSeen = true, 'PARKED'), ram_mb: 128 }]
     if (path.startsWith('/v1/usage/storage')) return { items: [{ app_id: [...apps.values()][0].id, snapshot_bytes: 90e6, layer_bytes: 40e6 }] }
     const app = /^\/v1\/apps\/([^/?]+)$/.exec(path)
     if (app && method === 'DELETE') { deleted.push(app[1]); return null }
@@ -87,7 +96,8 @@ function world({ breakIsolation = false } = {}) {
     const iss = `${url.origin}/auth/v1`
     const route = `${init.method ?? 'GET'} ${url.pathname}`
     if (route === 'GET /healthz') return json(200, { ready: true })
-    if (route === 'GET /auth/v1/.well-known/jwks.json') return json(200, { keys: [{ kty: 'EC', crv: 'P-256', kid: 'k1', x: 'x', y: 'y' }] })
+    if (route === 'GET /auth/v1/.well-known/jwks.json') return json(200, { keys: [{ kty: 'EC', crv: 'P-256', kid: kid(signing), x: 'x', y: 'y' }] })
+    if (route === 'GET /auth/v1/user') return caller(init) ? json(200, {}) : json(401, {})
     if (route === 'POST /auth/v1/signup') {
       const user = { id: `user-${users.size + 1}`, email: body.email, password: body.password }
       users.set(body.email, user)
@@ -102,7 +112,8 @@ function world({ breakIsolation = false } = {}) {
       if (url.searchParams.get('grant_type') === 'refresh_token') return sessions.has(body.refresh_token.slice(8)) ? json(200, {}) : json(400, { error_code: 'refresh_token_not_found' })
       const user = users.get(body.email)
       if (!user || user.banned || user.password !== body.password) return json(400, { error_code: 'invalid_credentials' })
-      woke = true
+      // Parked once observed; the next sign-in wakes it.
+      woke = parkedSeen
       return json(200, issue(iss, user))
     }
     if (url.pathname === '/rest/v1/notes') {
@@ -151,7 +162,7 @@ test('the complete journey passes, records evidence without secrets and cleans u
   const report = await canary.run()
   assert.equal(report.result, 'passed')
   assert.deepEqual(report.checks, ['staging_account', 'database_ready', 'auth_native_build', 'auth_ready_with_es256_jwks', 'migration_binding_ready', 'rls_migration_native_build', 'data_api_native_build',
-    'signup_issues_verifiable_tokens', 'data_api_rls_isolation', 'global_sign_out_revokes_at_next_request', 'owner_admin_key', 'user_import', 'admin_ban_revokes_at_next_request', 'park_and_wake_sign_in', 'plan_memory_and_storage'])
+    'signup_issues_verifiable_tokens', 'data_api_rls_isolation', 'global_sign_out_revokes_at_next_request', 'owner_admin_key', 'user_import', 'admin_ban_revokes_at_next_request', 'signing_key_rotation', 'park_and_wake_sign_in', 'plan_memory_and_storage'])
   assert.deepEqual(report.deployments.map(d => d.app), [`${canary.prefix}-auth`, `${canary.prefix}-migrate`, `${canary.prefix}-api`])
   assert.equal(report.plan.ram_mb, 128)
   assert.deepEqual(report.storage, { snapshot_bytes: 90e6, layer_bytes: 40e6 })

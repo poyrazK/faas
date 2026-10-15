@@ -104,7 +104,7 @@ func TestQueueLeaseWorkloadTokenRecordsInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *(*e.S()).FlagsWorkloadVerifier(), err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer); err != nil {
+	if *(*e.S()).WorkloadVerifier(), err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer); err != nil {
 		t.Fatal(err)
 	}
 	bearer := func(audience string) map[string]string {

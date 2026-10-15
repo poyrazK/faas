@@ -4693,7 +4693,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	auditLogWriteTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_audit_log_write_total",
-		Help: "Count of events-table appends the audit emit path completed, labelled by endpoint and kind. /v1/admin/obs/health reads this via PromQL `sum(increase(audit_log_write_total[5m]))` to report 5-minute throughput. Single-registry: registered on every daemon; only the audit emit site (pkg/audit.Auditor.Emit / EmitResult) increments via AuditLogWriteTotal.",
+		Help: "Count of events-table appends the audit emit path completed, labelled by endpoint and kind. /v1/admin/obs/health reads this via PromQL `sum(increase(apid_audit_log_write_total[5m]))` to report 5-minute throughput. Single-registry: registered on every daemon; only the audit emit site (pkg/audit.Auditor.Emit / EmitResult) increments via AuditLogWriteTotal.",
 	}, []string{"endpoint", "kind"})
 	auditLogWriteFailuresTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_audit_log_write_failures_total",
