@@ -58,7 +58,7 @@ its retry policy are validated before goroutines start. Workers recovering unbou
 Bound publications use their persisted policy; worker retry settings cannot
 override it.
 
-Empty polls wait IdleMin, then double the wait up to IdleMax. A nonempty result or
+Empty or scope-paused polls wait IdleMin, then double the wait up to IdleMax. A nonempty result or
 error resets idle backoff. Published, blocked, and durably unconfirmed results
 allow immediate progress on another row. Storage errors, lost claims and other
 operation errors wait ErrorBackoff to avoid a hot failure loop. Poll waits stop
@@ -101,6 +101,7 @@ not create a transport, persist notifications, or retry callbacks.
 
 | Outcome | Meaning |
 | --- | --- |
+| `paused` | Scope pause observed before claiming; once per worker per consecutive paused polling episode |
 | `published` | Gregale acceptance was confirmed and local settlement returned successfully |
 | `unconfirmed` | Uncertainty was saved with a later retry schedule |
 | `blocked` | A deadline, attempt limit or permanent rejection blocked the row |
@@ -109,7 +110,7 @@ not create a transport, persist notifications, or retry callbacks.
 | `error` | Another operation error, including cancellation or timeout |
 
 ErrorCode provides stable local details: `commit_unknown`, `store_failed`,
-`operation_timeout`, `operation_canceled`, `claim_lost`, `unconfirmed`, a blocked
+`operation_timeout`, `operation_canceled`, `claim_lost`, `publishing_paused`, `unconfirmed`, a blocked
 row's LastCode, or `recovery_failed`. Storage failures take precedence over an
 unconfirmed error when settlement could not be saved. Ordinary canceled claim
 operations during shutdown are suppressed; uncertain commits and failures after
@@ -128,3 +129,13 @@ storage error never proves an event was not accepted. Recovery continues after
 per-row and storage failures until cancellation; operators can cancel from their
 own supervisor when intervention is required. No new ordering, retention or
 business-side-effect guarantee is introduced.
+
+## Scope pause
+
+Workers honor [durable publishing controls](event-outbox-publishing-control.md)
+before each claim. Paused polls do not consume attempts and back off like idle
+polls. Local paused callbacks are observations, not durable scope-change events;
+concurrent workers may each report the pause, and errors can start a new episode.
+A resume is noticed on a later poll, with up to IdleMax polling delay. Already
+committed claims can settle after a pause. Install the control schema and replace
+older workers before relying on this fence.

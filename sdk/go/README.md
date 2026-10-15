@@ -1284,3 +1284,8 @@ Use `SaveEventOutboxWithRetryPolicy` for per-publication retry settings and
 `GetEventOutboxRetryPolicy` to read their current revision. Guarded
 `SetEventOutboxRetryPolicy` changes are always recorded in control history.
 See [saved policies and required migration](../../docs/event-outbox-stored-retry-policy.md).
+
+`SetEventOutboxPublishingPaused` controls app-scoped publishing with guarded,
+replayable command receipts. `GetEventOutboxPublishingControl` reads current
+state; command lookup/history APIs retain interventions separately from per-row
+controls. See [pause fencing and upgrade](../../docs/event-outbox-publishing-control.md).

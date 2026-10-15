@@ -131,7 +131,11 @@ func WatchEventOutboxHealth(ctx context.Context, db *sql.DB, accountID, appID st
 				emit := func(change, why string) {
 					notify(EventOutboxAlert{AccountID: account, AppID: app, Metric: conditions[i].metric, Change: change, Reason: why, At: now, Value: value, Threshold: conditions[i].threshold, Health: snapshot})
 				}
-				conditions[i].update(value, reason, now, options.Sustain, emit)
+				conditionReason := reason
+				if conditionReason == "" && health.PublishingPaused && (conditions[i].metric == "due_backlog" || conditions[i].metric == "stalled_recovery") {
+					conditionReason = "publishing_paused"
+				}
+				conditions[i].update(value, conditionReason, now, options.Sustain, emit)
 			}
 			timer.Reset(options.PollInterval)
 		}

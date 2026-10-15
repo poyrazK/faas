@@ -295,3 +295,10 @@ Recovery uses the saved policy over worker defaults. `SetEventOutboxRetryPolicy`
 provides guarded, audited adoption and revision for unresolved work without
 resetting attempts or deadlines. See [saved policies and required rollout](event-outbox-stored-retry-policy.md)
 before upgrading existing workers.
+
+## Scope publishing pause
+
+Use `SetEventOutboxPublishingPaused` for guarded, durable app-scope pause/resume.
+Workers stop claiming while existing claims can finish; keys, schedules and
+deadlines remain unchanged. See [publishing controls and required upgrade](event-outbox-publishing-control.md)
+for command history and pause-aware health semantics.

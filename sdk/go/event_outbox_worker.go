@@ -120,6 +120,7 @@ func RunEventOutboxWorker(ctx context.Context, db *sql.DB, client *Client, accou
 
 func runEventOutboxWorker(ctx, drainCtx context.Context, db *sql.DB, client *Client, account, app string, worker int, options EventOutboxWorkerOptions, notify func(context.Context, EventOutboxWorkerEvent)) {
 	idle := options.IdleMin
+	wasPaused := false
 	for ctx.Err() == nil {
 		claimCtx, cancelClaim := context.WithTimeout(ctx, options.OperationTimeout)
 		deliveryCtx, cancelDelivery := context.WithTimeout(drainCtx, options.OperationTimeout)
@@ -129,7 +130,12 @@ func runEventOutboxWorker(ctx, drainCtx context.Context, db *sql.DB, client *Cli
 		if claimed {
 			status, err = claim.publish(deliveryCtx, db, client, claim.request, options.Recovery)
 		}
-		if errors.Is(err, ErrEventOutboxEmpty) {
+		paused := errors.Is(err, ErrEventOutboxPublishingPaused)
+		if errors.Is(err, ErrEventOutboxEmpty) || paused {
+			if paused && !wasPaused && notify != nil {
+				notify(deliveryCtx, eventOutboxWorkerOutcome(account, app, worker, status, err))
+			}
+			wasPaused = paused
 			cancelDelivery()
 			if !eventOutboxWorkerWait(ctx, idle) {
 				return
@@ -137,6 +143,7 @@ func runEventOutboxWorker(ctx, drainCtx context.Context, db *sql.DB, client *Cli
 			idle = min(options.IdleMax, 2*idle)
 			continue
 		}
+		wasPaused = false
 		// Shutdown cancellation of an uncommitted claim is not a storage incident.
 		// Unknown commits remain reportable because a lease may have been committed.
 		if !claimed && ctx.Err() != nil && status.ProducerKey == "" && !errors.Is(err, ErrEventOutboxCommitUnknown) && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
@@ -177,6 +184,8 @@ func eventOutboxWorkerOutcome(account, app string, worker int, status EventOutbo
 		out.Status = &status
 	}
 	switch {
+	case errors.Is(err, ErrEventOutboxPublishingPaused):
+		out.Outcome, out.ErrorCode = "paused", "publishing_paused"
 	case errors.Is(err, ErrEventOutboxCommitUnknown):
 		out.Outcome, out.ErrorCode = "storage_error", "commit_unknown"
 	case errors.Is(err, ErrEventOutboxStore):

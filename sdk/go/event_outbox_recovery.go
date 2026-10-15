@@ -102,6 +102,18 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 	}
 	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))`, eventOutboxPublishingLock(account, app))
+	if err != nil {
+		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
+	}
+	var paused bool
+	err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT paused FROM public.gregale_event_outbox_publishing_controls WHERE account_id=$1::uuid AND app_id=$2::uuid),false)`, account, app).Scan(&paused)
+	if err != nil {
+		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
+	}
+	if paused {
+		return eventOutboxClaim{}, zero, ErrEventOutboxPublishingPaused
+	}
 	var digest []byte
 	var expired bool
 	err = tx.QueryRowContext(ctx, `SELECT producer_key,app_slug,request_body,request_digest,retry_until<=clock_timestamp(),attempts FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed') AND next_attempt_at<=clock_timestamp() AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) ORDER BY next_attempt_at,producer_key LIMIT 1 FOR UPDATE SKIP LOCKED`, account, app).Scan(&claim.key, &claim.slug, &claim.body, &digest, &expired, &claim.attempts)

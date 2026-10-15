@@ -42,13 +42,15 @@ interval; supported ranges are 1–10,000 rows and one second–24 hours.
   other stored-state counts; it is not a new stored state.
 - `Due`, `Leased`, and `Scheduled` cover active pending/unconfirmed work whose
   retry deadline is still in the future. Live claims are leased. Work without a
-  live claim is due once eligible, otherwise scheduled.
+  live claim is due once eligible while publishing is enabled, otherwise future
+  work is scheduled. Eligible work held by a scope pause is counted in PausedDue.
 - Eligibility is the latest of creation, next attempt, and claim expiry. `Stalled`
   counts active work overdue for at least `StallAfter`; blocked, expired,
-  future-scheduled, and live-claimed work cannot be stalled.
+  future-scheduled, live-claimed, and scope-paused work cannot be stalled.
 - `ExpiredClaims` counts elapsed claims and can overlap expired or due work.
 - Oldest outstanding age includes blocked, expired, scheduled and leased work.
-  Oldest eligible time and overdue age include only currently due active work.
+  Oldest eligible time and overdue age include eligible active work waiting
+  without a live claim, including PausedDue while publishing is paused.
 
 The query reads at most `ScanLimit+1` matching rows, aggregates the first
 `ScanLimit`, and sets `Truncated` when an extra row exists. Invalid timestamp
@@ -112,3 +114,23 @@ Explicitly re-run `faas.EventOutboxSchema` to install the partial
 platform migrations, or clone registry entries change. Helpers do not perform DDL.
 Application permissions and retention remain operator-owned; deleting unresolved
 rows can remove them from subsequent summaries without proving publication.
+
+## Publishing pause
+
+Health includes PublishingPaused, PublishingRevision and optional
+PublishingUpdatedAt from the same database snapshot as the sampled rows. A
+missing scope row means enabled revision zero; missing storage is an error.
+PublishingUpdatedAt in the future invalidates completeness. PausedDue counts
+unexpired, eligible pending/unconfirmed rows without a live claim held by the
+pause. Due and Stalled are zero while paused; Leased, Scheduled, Blocked, Expired,
+and outstanding ages continue to describe retained work.
+
+For fresh complete paused observations, due_backlog and stalled_recovery watches
+emit unknown/confirmation_lost with reason publishing_paused rather than resolving
+or confirming a stall. Invalid evidence retains its ordinary failure reason.
+Blocked and expired watches continue. Resuming requires fresh sustained proof
+before a due/stall condition can fire again. Pause time still contributes to
+eligibility age; no schedule or deadline is moved.
+
+Install [publishing-control storage](event-outbox-publishing-control.md) before
+upgrading health readers or claim workers. Older workers do not enforce pauses.
