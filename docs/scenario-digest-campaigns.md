@@ -330,18 +330,16 @@ counts on each side, additional leaf runs, and repetitions needed after
 accounting for resilience.runs. Without reports, both sides start at zero.
 The baseline option requires a current report.
 
-Suggestions are argument arrays, labeled baseline or current. A command's
-repeat count never exceeds 20. Larger deficits produce separate batches; at
-most 20 commands per side/context are shown, with remaining repetitions
-reported explicitly. Run suggestions on the intended source revision for that
-side. Use fresh report paths, then combine the receipt arrays with that side's
-existing report before reevaluating coverage. Planning does not update reports.
+Top-level batches contain argument arrays, labeled baseline or current. Each
+repeat count is at most 20, with at most 20 batches per shared scenario/profile/side
+group. Entries reference shared batch IDs; execute each top-level batch once.
+Remaining deficits are reported explicitly. Run each side at its intended source
+revision, use fresh report paths, and merge receipts into that side before
+reevaluating coverage. Planning does not update reports.
 
-The runner executes a full scenario matrix, even when an entry names one
-case. Suggestions for different entries are independent and may duplicate work;
-they are not a minimal campaign or a total cost estimate. Existing resource
-guards, budgets, and cleanup rules still apply to execution. Collecting new
-evidence and keeping baseline provenance are separate from reviewing this plan.
+The runner executes the full matrix even when a requirement names one case.
+The cost-aware allocation below accounts for sibling cases and campaign runs.
+Existing resource guards, budgets, and cleanup rules still apply to execution.
 
 Entry statuses are covered, needs_runs, unsatisfiable, unsupported,
 needs_review, or unavailable_configuration. Absent scenarios, steps, phases,
@@ -774,3 +772,39 @@ environments or an authenticated attestation of an edited report. Execution
 must still meet every coverage and environment requirement. No original report
 or manifest is modified. Invalid preflight inputs return 1; unresolved valid
 observations remain informational blocked entries.
+
+
+### Cost-aware coverage batches
+
+Policy planning now emits canonical top-level `batches`. Execute each batch once;
+entry `planned.batch_ids` references shared batches rather than duplicating
+commands. Requirements for the same scenario, profile and revision side share
+the maximum required repetitions. Baseline and current executions stay separate.
+Each command still executes every matrix case and all campaign repetitions.
+
+```sh
+gregale test policy plan --policy campaign-policy.yaml --manifest gregale-test.yaml \
+  --from current.json --baseline baseline.json \
+  --plan-max-runs 100 --plan-max-deployments 200 --plan-max-workload-minutes 1000
+```
+
+The three nonnegative budgets apply to the whole plan; zero means unlimited.
+Runs count native leaf executions, including unselected matrix cases.
+Deployments include the primary workload and every declared service for each
+leaf. Workload minutes conservatively assume every workload lives for the whole
+scenario timeout (15 minutes by default), rounded up per repetition. These are
+planning estimates, not measured usage or billing, and existing execution guards
+remain in force.
+
+The planner allocates groups by increasing estimated workload minutes, then
+deployments, scenario, profile and side. This deterministic heuristic does not
+guarantee globally optimal coverage. It shows at most twenty batches of up to
+twenty repetitions per group. Per-entry planned runs are capped at the requested
+deficit; remaining runs include any budget, output-cap, declaration or environment
+gaps. Observed coverage counts remain unchanged. Planned coverage is conditional
+on the executions actually producing qualifying assertion evidence.
+
+Preflight and environment blockers are applied before allocation; budgeting
+cannot waive them. Historical configurations without a reproducible manifest
+remain gaps. Use fresh report paths, execute each side at its intended revision,
+merge the resulting receipts into that side, and reevaluate the policy.

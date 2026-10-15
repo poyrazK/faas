@@ -11,6 +11,8 @@ import (
 )
 
 type testCampaignPolicyPlan struct {
+	Costs *testCampaignPlanCosts `json:"costs,omitempty"`
+	Batches []testCampaignCostBatch `json:"batches,omitempty"`
 	Preflight *testPlanPreflightSummary `json:"preflight,omitempty"`
 	Environments []testEnvironmentPlanEntry `json:"environment_requirements"`
 	SchemaVersion int                          `json:"schema_version"`
@@ -20,6 +22,7 @@ type testCampaignPolicyPlan struct {
 }
 
 type testCampaignPolicyPlanEntry struct {
+	Planned *testCampaignPlannedCoverage `json:"planned,omitempty"`
 	EnvironmentBlockers []testEnvironmentPlanBlocker `json:"environment_blockers"`
 	Requirement       string              `json:"requirement"`
 	Configuration     string              `json:"configuration_sha256,omitempty"`
@@ -55,6 +58,9 @@ func cmdTestPolicyPlan(args []string) int {
 	targetsPath := fs.String("targets", "", "original mapping used for preflight")
 	preflightSide := fs.String("preflight-side", "current", "side whose platform prerequisites may be resolved")
 	preflightAge := fs.Duration("preflight-max-age", 15*time.Minute, "maximum preflight age (1s..1h)")
+	maxRuns := fs.Int64("plan-max-runs", 0, "maximum planned leaf executions across both sides (0 unlimited)")
+	maxDeployments := fs.Int64("plan-max-deployments", 0, "maximum planned workload deployments (0 unlimited)")
+	maxMinutes := fs.Int64("plan-max-workload-minutes", 0, "maximum estimated workload minutes (0 unlimited)")
 	path := fs.String("policy", "", "YAML campaign policy")
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "scenario manifest")
 	from := fs.String("from", "", "optional current raw JSON report")
@@ -106,6 +112,9 @@ func cmdTestPolicyPlan(args []string) int {
 	plan, err := buildTestCampaignPolicyPlan(policy, manifest.Scenarios, *manifestPath, before, after, preflight)
 	if err != nil {
 		return printErr("Could not plan coverage", err)
+	}
+	if err := optimizeTestCampaignPlan(&plan, manifest.Scenarios, *manifestPath, testCampaignPlanBudget{Runs: *maxRuns, Deployments: *maxDeployments, WorkloadMinutes: *maxMinutes}); err != nil {
+		return printErr("Could not budget coverage plan", err)
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
