@@ -30,6 +30,7 @@ var (
 
 // EventOutboxStatus excludes event data, request digest and claim capability.
 type EventOutboxStatus struct {
+	AppSlug        string     `json:"app_slug"`
 	ProducerKey    string     `json:"producer_key"`
 	State          string     `json:"state"`
 	Attempts       int64      `json:"attempts"`
@@ -42,12 +43,12 @@ type EventOutboxStatus struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-const eventOutboxStatusColumns = `producer_key,state,attempts,next_attempt_at,retry_until,claim_expires_at,accepted_at,last_code,created_at,updated_at`
+const eventOutboxStatusColumns = `producer_key,app_slug,state,attempts,next_attempt_at,retry_until,claim_expires_at,accepted_at,last_code,created_at,updated_at`
 
 func eventOutboxStatus(row eventIntentScanner) (EventOutboxStatus, error) {
 	var s EventOutboxStatus
 	var claim, accepted sql.NullTime
-	err := row.Scan(&s.ProducerKey, &s.State, &s.Attempts, &s.NextAttemptAt, &s.RetryUntil, &claim, &accepted, &s.LastCode, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.ProducerKey, &s.AppSlug, &s.State, &s.Attempts, &s.NextAttemptAt, &s.RetryUntil, &claim, &accepted, &s.LastCode, &s.CreatedAt, &s.UpdatedAt)
 	if claim.Valid {
 		s.ClaimExpiresAt = &claim.Time
 	}
@@ -78,7 +79,7 @@ func SaveEventOutbox(ctx context.Context, tx *sql.Tx, accountID, appID, slug str
 	if retryWindow == 0 {
 		retryWindow = 7 * 24 * time.Hour
 	}
-	if retryWindow < time.Second || retryWindow > 7*24*time.Hour || retryWindow%time.Millisecond != 0 || len(slug) == 0 || len(slug) > 256 || strings.TrimSpace(slug) != slug || strings.ContainsAny(slug, "/\\?#\x00") || len(request.Data) > 1048576 || request.Validate() != nil || strings.TrimSpace(request.Type) == "" || len(request.Type) > 256 || len(request.SchemaVersion) > 64 || request.ExpectedAppID != "" && request.ExpectedAppID != app {
+	if retryWindow < time.Second || retryWindow > 7*24*time.Hour || retryWindow%time.Millisecond != 0 || !eventOutboxSlug(slug) || len(request.Data) > 1048576 || request.Validate() != nil || strings.TrimSpace(request.Type) == "" || len(request.Type) > 256 || len(request.SchemaVersion) > 64 || request.ExpectedAppID != "" && request.ExpectedAppID != app {
 		return zero, ErrInvalidEventConsumerRequest
 	}
 	request.ExpectedAppID = app
@@ -114,7 +115,7 @@ func SaveEventOutbox(ctx context.Context, tx *sql.Tx, accountID, appID, slug str
 // GetEventOutboxStatus reads retained local state, not consumer delivery success.
 func GetEventOutboxStatus(ctx context.Context, db *sql.DB, accountID, appID, key string) (EventOutboxStatus, error) {
 	var zero EventOutboxStatus
-	if ctx == nil || db == nil || (AppPublishEventRequest{Key: key, Data: json.RawMessage(`null`)}).Validate() != nil {
+	if ctx == nil || db == nil || !eventOutboxKey(key) {
 		return zero, ErrInvalidEventConsumerRequest
 	}
 	account, app, err := eventIntentScope(accountID, appID)

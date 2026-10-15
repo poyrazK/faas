@@ -1254,3 +1254,8 @@ in the business transaction; `RecoverNextEventOutbox` publishes retained due wor
 with leased recovery. Install the application-owned `EventOutboxSchema` explicitly.
 See [the event outbox contract](../../docs/event-outbox.md), including the required
 server identity guard and bounded retry/retention policy.
+
+Use `ReconcileEventOutbox` to confirm a saved request from retained matching
+acceptance without publishing, `ResumeEventOutbox` for explicit guarded control
+within the original deadline, and `ListEventOutbox` for paginated unresolved
+metadata. Unavailable verification never automatically resumes publication.

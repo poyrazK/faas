@@ -29,3 +29,7 @@ CREATE TABLE IF NOT EXISTS public.gregale_event_outbox (
 CREATE INDEX IF NOT EXISTS gregale_event_outbox_due
  ON public.gregale_event_outbox(account_id,app_id,next_attempt_at,producer_key)
  WHERE state IN ('pending','unconfirmed');
+-- Re-run the opt-in DDL to install this index for an existing outbox.
+CREATE INDEX IF NOT EXISTS gregale_event_outbox_unresolved
+ ON public.gregale_event_outbox(account_id,app_id,producer_key COLLATE "C")
+ WHERE state IN ('blocked','unconfirmed');
