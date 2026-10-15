@@ -19,6 +19,7 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
 		Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode), RouteWeights: card.RouteWeights,
 		PlanID: card.PlanID, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		BaseFeeMillicentsPerMonth: card.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: card.MinimumMillicentsPerMonth,
 	}
 }
 
@@ -79,8 +80,8 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
 	}
-	if req.IncludedUnitsPerMonth < 0 {
-		return invalid("included_units_per_month must be non-negative")
+	if req.IncludedUnitsPerMonth < 0 || req.BaseFeeMillicentsPerMonth < 0 || req.MinimumMillicentsPerMonth < 0 {
+		return invalid("included_units_per_month, base_fee_millicents_per_month and minimum_millicents_per_month must be non-negative")
 	}
 	if err := state.ValidateAPIConsumerRouteWeights(req.RouteWeights); err != nil {
 		return invalid(strings.TrimPrefix(err.Error(), "rate card route weights: ") + " (route_weights)")
@@ -96,7 +97,7 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 	if problem := tierModeProblem(req.TierMode, len(req.Tiers)); problem != nil {
 		return problem
 	}
-	if problem := rateCardUnitProblem(req, effectiveFrom, existing); problem != nil {
+	if problem := rateCardUnitProblem(req); problem != nil {
 		return problem
 	}
 	// Plan prices (ADR-953) are never backdated either: assignments price
@@ -104,22 +105,22 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 	// minutes that statements may already have billed. Compute and
 	// response-size cards (ADR-1308) re-price minutes the same way.
 	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0 || req.PlanID != "" ||
-		(req.Unit != "" && req.Unit != state.APIConsumerRateCardUnitRequest)
+		(req.Unit != "" && req.Unit != state.APIConsumerRateCardUnitRequest) || req.BaseFeeMillicentsPerMonth > 0 || req.MinimumMillicentsPerMonth > 0
 	for _, card := range existing {
 		positional = positional || card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" ||
-			card.Unit != state.APIConsumerRateCardUnitRequest
+			card.Unit != state.APIConsumerRateCardUnitRequest || card.MonthlyFees()
 	}
 	if positional && effectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
-		return invalid("effective_from cannot be in the past once a rate card includes units, tiers, route weights, plans, or compute or response-size units")
+		return invalid("effective_from cannot be in the past once a rate card includes units, tiers, route weights, plans, monthly fees, or compute or response-size units")
 	}
 	return nil
 }
 
-// rateCardUnitProblem checks a card's unit (ADR-1308): known, without route
-// weights unless it prices requests, and changing the price history's unit
-// only at a UTC month boundary, so allowances and tiers never count two
-// kinds of unit in one month.
-func rateCardUnitProblem(req api.CreateAPIConsumerRateCardRequest, effectiveFrom time.Time, existing []state.APIConsumerRateCard) *api.Problem {
+// rateCardUnitProblem checks a card's unit (ADR-1308, ADR-1318): known, and
+// without route weights unless it prices requests. Cards of different units
+// are parallel price histories (ADR-1317), so a new unit can start at any
+// minute.
+func rateCardUnitProblem(req api.CreateAPIConsumerRateCardRequest) *api.Problem {
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
 	}
@@ -128,20 +129,10 @@ func rateCardUnitProblem(req api.CreateAPIConsumerRateCardRequest, effectiveFrom
 		unit = state.APIConsumerRateCardUnitRequest
 	}
 	if !state.ValidAPIConsumerRateCardUnit(unit) {
-		return invalid("unit must be request, compute_second or response_megabyte")
+		return invalid("unit must be request, compute_second, response_megabyte, or app:<meter> with a lowercase meter name")
 	}
 	if unit != state.APIConsumerRateCardUnitRequest && len(req.RouteWeights) > 0 {
 		return invalid("route_weights apply to request cards only")
-	}
-	var previous *state.APIConsumerRateCard
-	for i, card := range existing {
-		if card.PlanID == req.PlanID && card.EffectiveFrom.Before(effectiveFrom) &&
-			(previous == nil || card.EffectiveFrom.After(previous.EffectiveFrom)) {
-			previous = &existing[i]
-		}
-	}
-	if previous != nil && previous.Unit != unit && !effectiveFrom.Equal(billing.MonthStart(effectiveFrom)) {
-		return invalid("a card that changes the unit must start at a UTC month boundary (effective_from on the 1st at 00:00 UTC)")
 	}
 	return nil
 }
@@ -234,6 +225,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 		AccountID: acct.ID, AppID: app.ID, Currency: req.Currency, PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
 		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit, TierMode: req.TierMode,
+		BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -309,6 +301,8 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 			ChargedUnits:           bucket.ChargedUnits,
 			TierUnits:              bucket.TierUnits,
 			AmountMillicents:       bucket.AmountMillicents,
+			Trial:                  bucket.Trial,
+			Unit:                   bucket.Unit,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -339,10 +333,15 @@ func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consu
 			return billing.APIConsumerUsageQuote{}, fmt.Errorf("list usage: %w", err)
 		}
 	}
-	if usage, err = s.weightConsumerUsage(ctx, cards, usage, accountID, appID, consumerID, billing.MonthStart(since), until); err != nil {
-		return billing.APIConsumerUsageQuote{}, fmt.Errorf("weight route usage: %w", err)
+	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(since), until)
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load route and meter usage: %w", err)
 	}
-	return billing.QuoteAPIConsumerUsageFrom(cards, usage, since)
+	opts, err := s.consumerQuoteOptions(ctx, accountID, appID, consumerID)
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, err
+	}
+	return billing.QuoteConsumerUsage(cards, usage, inputs, since, opts)
 }
 
 func isUpperASCIICurrency(currency string) bool {
@@ -354,25 +353,40 @@ func isUpperASCIICurrency(currency string) bool {
 	return true
 }
 
-// weightConsumerUsage converts minutes into the units the effective cards
-// price: route-weighted requests (ADR-952), or compute seconds and response
-// megabytes (ADR-1308). Route rows are read only when some card weights
-// routes.
-func (s *server) weightConsumerUsage(ctx context.Context, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket,
-	accountID, appID, consumerID string, since, until time.Time) ([]state.APIConsumerUsageBucket, error) {
-	weighted := false
+// consumerUsageInputs loads what a consumer's cards price beyond usage
+// minutes: route counts when a card weights routes (ADR-952), and the app's
+// reported units for each app meter a card prices (ADR-1318).
+func (s *server) consumerUsageInputs(ctx context.Context, cards []state.APIConsumerRateCard,
+	accountID, appID, consumerID string, since, until time.Time) (billing.ConsumerUsageInputs, error) {
+	var in billing.ConsumerUsageInputs
+	if !until.After(since) {
+		return in, nil
+	}
+	weighted, meters := false, map[string]bool{}
 	for _, card := range cards {
 		weighted = weighted || len(card.RouteWeights) > 0
+		if meter, ok := state.AppMeterOfUnit(card.Unit); ok {
+			meters[meter] = true
+		}
 	}
-	routeStore, ok := s.store.(state.ConsumerRouteUsageStore)
-	if weighted && ok && until.After(since) {
+	if routeStore, ok := s.store.(state.ConsumerRouteUsageStore); weighted && ok {
 		routes, err := routeStore.ListAPIConsumerRouteUsage(ctx, accountID, appID, consumerID, since, until)
 		if err != nil {
-			return nil, err
+			return in, err
 		}
-		if usage, err = billing.WeightAPIConsumerUsage(cards, usage, routes); err != nil {
-			return nil, err
-		}
+		in.Routes = routes
 	}
-	return billing.MeterAPIConsumerUsage(cards, usage), nil
+	meterStore, ok := s.store.(state.ConsumerMeterUsageStore)
+	if !ok || len(meters) == 0 {
+		return in, nil
+	}
+	in.Meters = map[string][]state.APIConsumerMeterUsageBucket{}
+	for meter := range meters {
+		rows, err := meterStore.ListAPIConsumerMeterUsage(ctx, accountID, appID, consumerID, meter, since, until)
+		if err != nil {
+			return in, err
+		}
+		in.Meters[meter] = rows
+	}
+	return in, nil
 }

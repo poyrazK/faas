@@ -26,6 +26,10 @@ export type StatementInvoiceExportResponse = {
    * What the provider was asked to do with the invoice when the export began (ADR-1311).
    */
   collection?: 'none' | 'send' | 'charge';
+  /**
+   * Whether Stripe Tax calculated this invoice's tax (ADR-1313).
+   */
+  automatic_tax?: boolean;
   created_at: string;
   completed_at?: string;
   source_kind?: 'app_consumer' | 'platform_tenant';

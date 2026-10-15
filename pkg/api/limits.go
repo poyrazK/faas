@@ -239,6 +239,21 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
+// Consumer controls (ADR-1314, ADR-1315).
+const (
+	// ConsumerTrialMaxDays bounds one consumer's free trial.
+	ConsumerTrialMaxDays = 365
+	// ConsumerOverdueBlockMaxDays bounds how long after its due date an
+	// unpaid invoice blocks its consumer.
+	ConsumerOverdueBlockMaxDays = 365
+	// apid recomputes overdue holds this often; payment status itself is
+	// synced on the ADR-1302 schedule.
+	ConsumerOverdueCheckInterval = 5 * time.Minute
+	// An invoice holding its consumer has its payment status read at least
+	// this often, so paying it lifts the hold within minutes.
+	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+)
+
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
 // (ADR-1307).
 const PlatformTenantPlansMax = 100

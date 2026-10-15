@@ -105,6 +105,7 @@ type AccountBillingConnection struct {
 	ApiUrl       pgtype.Text
 	Collection   string
 	DaysUntilDue int32
+	AutomaticTax bool
 }
 
 // Operator-issued EUR-cent credits; one credit cent offsets one GB-RAM-hour of overage at the current public rate.
@@ -276,6 +277,15 @@ type ApiConsumer struct {
 	PlatformTenantManaged bool
 }
 
+// Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).
+type ApiConsumerBillingPolicy struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	BlockOverdueAfterDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type ApiConsumerCreditApplication struct {
 	GrantID          pgtype.UUID
 	StatementID      pgtype.UUID
@@ -297,6 +307,27 @@ type ApiConsumerCreditGrant struct {
 	ExpiresAt           pgtype.Timestamptz
 	VoidedAt            pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+}
+
+// Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).
+type ApiConsumerMeterUsageMinute struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	ConsumerKey string
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Units       int64
+	UpdatedAt   pgtype.Timestamptz
+}
+
+// API consumers the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1315).
+type ApiConsumerOverdueHold struct {
+	ConsumerID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	ExportID   pgtype.UUID
+	DueAt      pgtype.Timestamptz
+	Since      pgtype.Timestamptz
 }
 
 // Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).
@@ -350,8 +381,10 @@ type ApiConsumerRateCard struct {
 	// Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.
 	RouteWeights []byte
 	// Plan whose price history this card belongs to; NULL is the app default plan.
-	PlanID   pgtype.UUID
-	TierMode string
+	PlanID                    pgtype.UUID
+	TierMode                  string
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -379,6 +412,17 @@ type ApiConsumerSpendCap struct {
 	NextCheckAt          pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+}
+
+// One free trial per API consumer (ADR-1314): usage in [starts_at, ends_at) is priced at zero.
+type ApiConsumerTrial struct {
+	ConsumerID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	StartsAt   pgtype.Timestamptz
+	EndsAt     pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 // One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.
@@ -444,6 +488,7 @@ type ApiConsumerUsageStatement struct {
 	// Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.
 	Revision                int32
 	CreditAppliedMillicents int64
+	Fees                    []byte
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -8869,6 +8914,7 @@ type UsageStatementInvoiceExport struct {
 	OverdueNotifiedAt    pgtype.Timestamptz
 	Collection           string
 	DaysUntilDue         int32
+	AutomaticTax         bool
 }
 
 type WarmHint struct {

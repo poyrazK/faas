@@ -22,5 +22,9 @@ export type PutBillingConnectionRequest = {
    * With collection send, days until a sent invoice is due.
    */
   days_until_due?: number;
+  /**
+   * Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer addresses.
+   */
+  automatic_tax?: boolean;
 };
 

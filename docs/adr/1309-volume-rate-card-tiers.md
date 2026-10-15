@@ -11,11 +11,8 @@
   - **Quotes.** A quote within a month prices at the step that month's usage has reached so far.
 - **Why:** Volume pricing ("all units at the rate of the tier you reach") is the other common API price shape. ADR-951 rejected it because crossing a boundary re-prices every earlier minute. ADR-951's exact re-rating and ADR-975's whole-month re-pricing now handle that: a revision carries the per-minute differences, and statements of tiered cards already cover whole months.
 - **Consequences:**
-  - **Late usage across a boundary.** After a month is finalized, late usage that moves it into a cheaper step would lower the total. The adjustment returns 409 (`ErrAPIConsumerChargeDecreased`, `ErrTenantChargeDecreased`), because Gregale never issues credits. The late units stay unbilled until reconciled by hand.
-    - Late usage within the billed step, or into a step with a higher total, bills normally.
-    - Month-end billing runs finalize after the month closes, so this needs usage that arrives after finalization and crosses a boundary.
+  - **Late usage across a boundary.** After a month is finalized, late usage that moves it into a cheaper step would lower the total, and Gregale never issues credits. ADR-1312 keeps the billed step for such adjustments; late usage within the billed step, or into a step with a higher total, bills normally.
   - **Cliffs are the seller's choice.** A volume ladder can make a month's total fall as usage grows (for example, 1,000 units at 10 cost more than 1,001 at 9). Gregale prices exactly what the ladder says and does not smooth it.
   - **Spend caps.** Spend caps (ADR-1306) re-price the month to date every minute. A month whose total falls when it crosses a boundary therefore lifts a cap at the next check.
 - **Rejected alternatives:**
-  - Locking a finalized month's step and billing late units at that price keeps adjustments non-negative. It needs pricing to read finalized statements and charges more than the ladder says.
   - Allowing only ladders whose total never falls at a boundary would rule out ordinary volume discounts.

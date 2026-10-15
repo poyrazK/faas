@@ -156,6 +156,9 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 		event.ResponseBytes < 0 || event.ResponseBytes > event.RequestCount*MaxUsageResponseBytesPerRequest {
 		return fmt.Errorf("consumer usage: compute_ms and response_bytes must be non-negative and bounded per request")
 	}
+	if err := validateMeterUnits(event); err != nil {
+		return err
+	}
 	tenantSource := event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != ""
 	if (event.ComputeMS > 0 || event.ResponseBytes > 0) && ((event.ConsumerKey == AnonymousConsumerKey && !tenantSource) || event.BillableUnits == 0) {
 		return fmt.Errorf("consumer usage: compute and response size belong to billable consumer or tenant-source requests")
@@ -257,6 +260,7 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.ComputeMS += event.ComputeMS
 	bucket.ResponseBytes += event.ResponseBytes
 	m.apiConsumerUsage[key] = bucket
+	m.recordMeterUnitsLocked(event)
 	if route := billingRouteFor(event); route != "" {
 		routeKey := consumerRouteUsageKey(event.AccountID, event.AppID, event.ConsumerKey, route, event.WindowStart)
 		routeBucket := m.apiConsumerRouteUsage[routeKey]

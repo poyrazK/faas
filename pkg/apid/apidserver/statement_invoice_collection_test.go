@@ -48,14 +48,17 @@ func TestStatementInvoiceCollection(t *testing.T) {
 		"lago send":         {"lago", api.PutBillingConnectionRequest{SecretKey: "lago-key-1234", APIURL: lagoURL, Collection: "send"}},
 		"days without send": {"stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ", Collection: "charge", DaysUntilDue: 7}},
 		"unknown mode":      {"stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ", Collection: "dun"}},
+		"lago tax":          {"lago", api.PutBillingConnectionRequest{SecretKey: "lago-key-1234", APIURL: lagoURL, AutomaticTax: true}},
 	} {
 		if res := f.e.Do(t, http.MethodPut, "/v1/account/billing-connections/"+c.provider, c.req, nil); res.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("%s: %d %s, want 422", name, res.Code, res.Body)
 		}
 	}
-	res := f.e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ", Collection: "charge"}, nil)
+	res := f.e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ",
+		Collection: "charge", AutomaticTax: true}, nil)
 	var conn api.BillingConnectionResponse
-	if err := json.Unmarshal(res.Body.Bytes(), &conn); err != nil || res.Code != http.StatusOK || conn.Collection != "charge" || conn.DaysUntilDue != 30 {
+	if err := json.Unmarshal(res.Body.Bytes(), &conn); err != nil || res.Code != http.StatusOK || conn.Collection != "charge" || conn.DaysUntilDue != 30 ||
+		!conn.AutomaticTax {
 		t.Fatalf("connect charge: %d %s", res.Code, res.Body)
 	}
 
@@ -72,7 +75,7 @@ func TestStatementInvoiceCollection(t *testing.T) {
 		t.Fatalf("charge run = %+v, collection = %v, finalized = %v", run.Counts, f.stripe.collection, f.stripe.finalized)
 	}
 	chargedPath := "/v1/apps/collected/consumers/" + charged.ID + "/usage-statements/" + items["cus_CHARGE1"].StatementID + "/invoice"
-	if export := exportStatement(t, f, chargedPath, api.CreateStatementInvoiceRequest{}, http.StatusOK); export.Collection != "charge" {
+	if export := exportStatement(t, f, chargedPath, api.CreateStatementInvoiceRequest{}, http.StatusOK); export.Collection != "charge" || !export.AutomaticTax {
 		t.Fatalf("charged export = %+v", export)
 	}
 

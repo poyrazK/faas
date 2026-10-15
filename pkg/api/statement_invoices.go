@@ -24,6 +24,9 @@ type PutBillingConnectionRequest struct {
 	// (Stripe and Lago). DaysUntilDue applies to send; default 30.
 	Collection   string `json:"collection,omitempty"`
 	DaysUntilDue int    `json:"days_until_due,omitempty"`
+	// AutomaticTax has Stripe calculate tax on exported invoices (ADR-1313;
+	// Stripe only).
+	AutomaticTax bool `json:"automatic_tax,omitempty"`
 }
 
 // BillingConnectionResponse describes a stored payment-provider key without
@@ -37,6 +40,7 @@ type BillingConnectionResponse struct {
 	// (ADR-1311).
 	Collection   string    `json:"collection"`
 	DaysUntilDue int       `json:"days_until_due"`
+	AutomaticTax bool      `json:"automatic_tax"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -65,9 +69,12 @@ type StatementInvoiceExportResponse struct {
 	Livemode     bool   `json:"livemode"`
 	// Collection is what the provider was asked to do with the invoice
 	// (ADR-1311): none, send or charge.
-	Collection  string     `json:"collection,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	Collection string `json:"collection,omitempty"`
+	// AutomaticTax reports whether Stripe calculated the invoice's tax
+	// (ADR-1313).
+	AutomaticTax bool       `json:"automatic_tax,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 	// Payment fields follow the provider invoice (ADR-1302).
 	SourceKind           string     `json:"source_kind,omitempty"`
 	PaymentStatus        string     `json:"payment_status,omitempty"`

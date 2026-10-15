@@ -49,6 +49,8 @@ class StatementInvoiceExportResponse:
     dashboard_url: str | Unset = UNSET
     collection: StatementInvoiceExportResponseCollection | Unset = UNSET
     """What the provider was asked to do with the invoice when the export began (ADR-1311)."""
+    automatic_tax: bool | Unset = UNSET
+    """Whether Stripe Tax calculated this invoice's tax (ADR-1313)."""
     completed_at: datetime.datetime | Unset = UNSET
     source_kind: StatementInvoiceExportResponseSourceKind | Unset = UNSET
     payment_status: StatementInvoiceExportResponsePaymentStatus | Unset = UNSET
@@ -89,6 +91,8 @@ class StatementInvoiceExportResponse:
         collection: str | Unset = UNSET
         if not isinstance(self.collection, Unset):
             collection = self.collection
+
+        automatic_tax = self.automatic_tax
 
         completed_at: str | Unset = UNSET
         if not isinstance(self.completed_at, Unset):
@@ -142,6 +146,8 @@ class StatementInvoiceExportResponse:
             field_dict["dashboard_url"] = dashboard_url
         if collection is not UNSET:
             field_dict["collection"] = collection
+        if automatic_tax is not UNSET:
+            field_dict["automatic_tax"] = automatic_tax
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
         if source_kind is not UNSET:
@@ -194,6 +200,8 @@ class StatementInvoiceExportResponse:
             collection = UNSET
         else:
             collection = check_statement_invoice_export_response_collection(_collection)
+
+        automatic_tax = d.pop("automatic_tax", UNSET)
 
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset
@@ -257,6 +265,7 @@ class StatementInvoiceExportResponse:
             invoice_id=invoice_id,
             dashboard_url=dashboard_url,
             collection=collection,
+            automatic_tax=automatic_tax,
             completed_at=completed_at,
             source_kind=source_kind,
             payment_status=payment_status,

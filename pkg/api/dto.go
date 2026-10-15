@@ -1273,6 +1273,54 @@ type DeclaredRoute struct {
 type CreateAPIConsumerRequest struct {
 	ExternalRef string `json:"external_ref"`
 	Name        string `json:"name"`
+	// TrialDays starts the consumer's one free trial at the next UTC minute
+	// (ADR-1314); 0 means none.
+	TrialDays int `json:"trial_days,omitempty"`
+}
+
+// PutAPIConsumerTrialRequest starts a consumer's trial or moves the end of
+// a running one (ADR-1314). Set days (from the trial's start) or ends_at.
+type PutAPIConsumerTrialRequest struct {
+	Days   int        `json:"days,omitempty"`
+	EndsAt *time.Time `json:"ends_at,omitempty"`
+}
+
+// APIConsumerTrialResponse is a consumer's free trial: usage in
+// [starts_at, ends_at) is priced at zero (ADR-1314).
+type APIConsumerTrialResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	StartsAt   time.Time `json:"starts_at"`
+	EndsAt     time.Time `json:"ends_at"`
+	Active     bool      `json:"active"`
+}
+
+// PutAPIConsumerBillingPolicyRequest sets an app's overdue rule (ADR-1315):
+// consumers whose exported invoice is unpaid block_overdue_after_days after
+// its due date are refused until it is paid or voided.
+type PutAPIConsumerBillingPolicyRequest struct {
+	BlockOverdueAfterDays *int `json:"block_overdue_after_days"`
+}
+
+// APIConsumerBillingPolicyResponse is an app's overdue rule.
+type APIConsumerBillingPolicyResponse struct {
+	AppID                 string    `json:"app_id"`
+	BlockOverdueAfterDays int       `json:"block_overdue_after_days"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// APIConsumerOverdueHoldResponse is one consumer the gateway refuses
+// because of an overdue invoice.
+type APIConsumerOverdueHoldResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	ExportID   string    `json:"export_id"`
+	DueAt      time.Time `json:"due_at"`
+	Since      time.Time `json:"since"`
+}
+
+// APIConsumerOverdueHoldListResponse lists an app's blocked consumers,
+// oldest due date first.
+type APIConsumerOverdueHoldListResponse struct {
+	Holds []APIConsumerOverdueHoldResponse `json:"holds"`
 }
 
 // APIConsumerResponse is the public representation of an API consumer.
@@ -1372,6 +1420,12 @@ type CreateAPIConsumerRateCardRequest struct {
 	// prices each unit at its position's step; volume prices every unit at
 	// the step the month's total reaches.
 	TierMode string `json:"tier_mode,omitempty"`
+	// BaseFeeMillicentsPerMonth is a fixed charge per consumer per UTC
+	// month, and MinimumMillicentsPerMonth a minimum usage charge, topped
+	// up when usage costs less (ADR-1316). The card in force when a
+	// consumer's month starts sets both for that month.
+	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1396,8 +1450,11 @@ type APIConsumerRateCardResponse struct {
 	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
-	EffectiveFrom          time.Time                 `json:"effective_from"`
-	CreatedAt              time.Time                 `json:"created_at"`
+	// Monthly base fee and minimum spend per consumer (ADR-1316).
+	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	EffectiveFrom             time.Time `json:"effective_from"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 // APIConsumerRateCardListResponse wraps an app's rate-card history in
@@ -1420,6 +1477,10 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	// TierUnits splits billable_units across a tiered card's steps.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the bucket's price stream when it is not request (ADR-1317).
+	Unit string `json:"unit,omitempty"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1462,6 +1523,19 @@ type APIConsumerUsageStatementBucketResponse struct {
 	// never is.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the bucket's price stream when it is not request (ADR-1317).
+	Unit string `json:"unit,omitempty"`
+}
+
+// APIConsumerStatementFeeResponse is a statement's monthly base fee or
+// minimum-spend top-up (ADR-1316). A minimum top-up in an adjustment can be
+// negative when late usage covers part of it.
+type APIConsumerStatementFeeResponse struct {
+	Kind             string `json:"kind"`
+	RateCardID       string `json:"rate_card_id"`
+	AmountMillicents int64  `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
@@ -1481,9 +1555,12 @@ type APIConsumerUsageStatementResponse struct {
 	AmountMillicents int64                                     `json:"amount_millicents"`
 	Priced           bool                                      `json:"priced"`
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
-	AsOf             string                                    `json:"as_of"`
-	CreatedAt        time.Time                                 `json:"created_at"`
-	FinalizedAt      *time.Time                                `json:"finalized_at,omitempty"`
+	// Fees are the month's base fee and minimum top-up (ADR-1316);
+	// amount_millicents includes them.
+	Fees        []APIConsumerStatementFeeResponse `json:"fees,omitempty"`
+	AsOf        string                            `json:"as_of"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	FinalizedAt *time.Time                        `json:"finalized_at,omitempty"`
 	// CreditAppliedMillicents is prepaid credit drawn when the statement was
 	// finalized; AmountDueMillicents is what is left to bill (ADR-1306).
 	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`

@@ -127,6 +127,7 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 		DiscoveredRoute: req.GetDiscoveredRoute(),
 		BillingRoute:    req.GetBillingRoute(),
 		ComputeMS:       req.GetComputeMs(),
+		MeterUnits:      req.GetMeterUnits(),
 		ResponseBytes:   req.GetResponseBytes(),
 	}
 	if req.GetDiscoveredAtUnixMs() != 0 {
@@ -158,6 +159,7 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 		AuditRecorded: event.Audit != nil, DiscoveryRecorded: event.DiscoveredRoute != "",
 		SurfaceAttributionSupported: true, JwtTenantAttributionSupported: true,
 		ResourceUsageRecorded: true,
+		MeterUsageRecorded:    true,
 	}, nil
 }
 

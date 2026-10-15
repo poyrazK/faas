@@ -782,6 +782,9 @@ type APIConsumerUsageEvent struct {
 	// rate cards that price compute time or response size (ADR-1308).
 	ComputeMS     int64
 	ResponseBytes int64
+	// MeterUnits are the units the app reported for a billable consumer
+	// request, by meter (ADR-1318).
+	MeterUnits map[string]int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -904,9 +907,20 @@ type APIConsumerRateCard struct {
 	RouteWeights map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
 	// to (ADR-953); empty is the app default plan.
-	PlanID        string
-	EffectiveFrom time.Time
-	CreatedAt     time.Time
+	PlanID string
+	// BaseFeeMillicentsPerMonth and MinimumMillicentsPerMonth are a fixed
+	// monthly charge and a minimum monthly usage charge per consumer
+	// (ADR-1316), taken from the card in force when the consumer's month
+	// starts.
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	EffectiveFrom             time.Time
+	CreatedAt                 time.Time
+}
+
+// MonthlyFees reports whether the card charges a base fee or a minimum.
+func (c APIConsumerRateCard) MonthlyFees() bool {
+	return c.BaseFeeMillicentsPerMonth > 0 || c.MinimumMillicentsPerMonth > 0
 }
 
 // Route weight bounds: a card weights at most this many route labels, each
@@ -1048,6 +1062,12 @@ type APIConsumerUsageStatementBucket struct {
 	// already-billed units into another step.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial, priced at zero
+	// (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the price stream a bucket belongs to when it is not request
+	// (ADR-1317): a minute carries one bucket per unit its cards price.
+	Unit string `json:"unit,omitempty"`
 }
 
 // Charged returns the units this bucket bills at its price.
@@ -1081,9 +1101,12 @@ type APIConsumerUsageStatement struct {
 	AmountMillicents int64
 	Priced           bool
 	Buckets          []APIConsumerUsageStatementBucket
-	AsOf             time.Time
-	CreatedAt        time.Time
-	FinalizedAt      *time.Time
+	// Fees are the month's base fee and minimum-spend top-up (ADR-1316);
+	// AmountMillicents includes them.
+	Fees        []APIConsumerStatementFee
+	AsOf        time.Time
+	CreatedAt   time.Time
+	FinalizedAt *time.Time
 	// CreditAppliedMillicents is prepaid credit drawn down when the
 	// statement was finalized (ADR-1306).
 	CreditAppliedMillicents int64
@@ -1138,7 +1161,24 @@ type APIConsumerUsageStatementInput struct {
 	AmountMillicents int64
 	Priced           bool
 	Buckets          []APIConsumerUsageStatementBucket
+	Fees             []APIConsumerStatementFee
 	AsOf             time.Time
+}
+
+// Statement fee kinds (ADR-1316).
+const (
+	StatementFeeBase    = "base_fee"
+	StatementFeeMinimum = "minimum"
+)
+
+// APIConsumerStatementFee is one month-level charge of a statement: the
+// card's monthly base fee, or the top-up to its minimum spend. In an
+// adjustment a minimum top-up can be negative, when late usage covers part
+// of the minimum it already billed; the revision total never is.
+type APIConsumerStatementFee struct {
+	Kind             string `json:"kind"`
+	RateCardID       string `json:"rate_card_id"`
+	AmountMillicents int64  `json:"amount_millicents"`
 }
 
 // Active reports whether the key is in an authentication-eligible

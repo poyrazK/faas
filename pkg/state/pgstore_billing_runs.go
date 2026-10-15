@@ -209,7 +209,15 @@ func (s *PgStore) DiscoverBillingRunItems(ctx context.Context, runID, owner, ten
 			billed as (
 				select distinct app_id, consumer_key from api_consumer_usage_minutes
 				 where account_id = $2::uuid and consumer_key <> '__anonymous__' and billable_units > 0
-				   and window_start >= $3 and window_start < $4)
+				   and window_start >= $3 and window_start < $4
+				union
+				-- A card with a base fee or minimum bills consumers without
+				-- usage too (ADR-1316).
+				select c.app_id, c.id::text from api_consumers c
+				 where c.account_id = $2::uuid and c.created_at < $4 and (c.revoked_at is null or c.revoked_at >= $3)
+				   and exists (select 1 from api_consumer_rate_cards r
+				                where r.app_id = c.app_id and r.effective_from < $4
+				                  and (r.base_fee_millicents_per_month > 0 or r.minimum_millicents_per_month > 0)))
 			insert into billing_run_items (run_id, source_kind, source_id, app_id, external_ref, outcome, reason, next_attempt_at, updated_at)
 			select $1::uuid, 'app_consumer', c.id, c.app_id, c.external_ref,
 			       case when $5::boolean and a.app_id is not null then 'skipped' else 'pending' end,

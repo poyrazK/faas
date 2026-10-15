@@ -34,6 +34,8 @@ class BillingConnectionResponse:
     """What the provider does with exported invoices (ADR-1311)."""
     days_until_due: int | Unset = UNSET
     """Days until a sent invoice is due."""
+    automatic_tax: bool | Unset = UNSET
+    """Whether Stripe Tax calculates tax on the connection's exports (ADR-1313)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +57,8 @@ class BillingConnectionResponse:
 
         days_until_due = self.days_until_due
 
+        automatic_tax = self.automatic_tax
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +76,8 @@ class BillingConnectionResponse:
             field_dict["collection"] = collection
         if days_until_due is not UNSET:
             field_dict["days_until_due"] = days_until_due
+        if automatic_tax is not UNSET:
+            field_dict["automatic_tax"] = automatic_tax
 
         return field_dict
 
@@ -99,6 +105,8 @@ class BillingConnectionResponse:
 
         days_until_due = d.pop("days_until_due", UNSET)
 
+        automatic_tax = d.pop("automatic_tax", UNSET)
+
         billing_connection_response = cls(
             provider=provider,
             key_last4=key_last4,
@@ -108,6 +116,7 @@ class BillingConnectionResponse:
             api_url=api_url,
             collection=collection,
             days_until_due=days_until_due,
+            automatic_tax=automatic_tax,
         )
 
         billing_connection_response.additional_properties = d

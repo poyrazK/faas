@@ -11,9 +11,17 @@ export type APIConsumerRateCardResponse = {
   app_id: string;
   currency: string;
   /**
-   * What the card prices (ADR-1308): billable requests, or their compute seconds or response megabytes rounded to the nearest whole unit per consumer minute.
+   * What the card prices (ADR-1308, ADR-1318): billable requests, their compute seconds or response megabytes, or the units of an app meter.
    */
-  unit: 'request' | 'compute_second' | 'response_megabyte';
+  unit: string;
+  /**
+   * The card's fixed monthly charge per consumer (ADR-1316).
+   */
+  base_fee_millicents_per_month?: number;
+  /**
+   * The card's minimum monthly usage charge per consumer (ADR-1316).
+   */
+  minimum_millicents_per_month?: number;
   price_millicents_per_unit: number;
   included_units_per_month: number;
   tiers?: Array<APIConsumerRateCardTier>;

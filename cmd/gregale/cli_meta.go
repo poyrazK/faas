@@ -532,6 +532,7 @@ var cliCommands = []cliCommand{
 				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
 				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
 				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
+				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
 			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
 			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
@@ -2643,6 +2644,7 @@ var cliCommands = []cliCommand{
 			{Name: "create", Short: "Register an API consumer", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "external-ref", Short: "stable consumer reference", Value: "REF", Req: true},
 				{Name: "name", Short: "consumer display name", Value: "TEXT", Req: true},
+				{Name: "trial-days", Short: "free trial from the next minute: usage is priced at zero for this many days", Value: "N"},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},
@@ -2675,9 +2677,11 @@ var cliCommands = []cliCommand{
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
 				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
-				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, per consumer minute rounded to the nearest unit", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per consumer minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
 				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
-			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume"}},
+				{Name: "base-fee-millicents", Short: "fixed charge per consumer per UTC month, billed by the month's statement", Value: "N"},
+				{Name: "minimum-millicents", Short: "minimum usage charge per consumer per UTC month; the statement tops up the difference", Value: "N"},
+			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -2726,6 +2730,18 @@ var cliCommands = []cliCommand{
 				{Name: "monthly-cap-millicents", Short: "cap in millicents; 0 allows prepaid usage only", Value: "N", Req: true},
 			}, Examples: []string{"gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-millicents 0"}},
 			{Name: "spend-cap-delete", Short: "Remove a consumer's spend cap", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "trial", Short: "Show a consumer's free trial", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "trial-set", Short: "Start a consumer's one free trial at the next minute, or move the end of a running one", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "days", Short: "trial length from its start", Value: "N"},
+				{Name: "ends-at", Short: "trial end (UTC minute, not in the past)", Value: "RFC3339"},
+			}, Examples: []string{"gregale consumers trial-set my-api CONSUMER_ID --days 14"}},
+			{Name: "trial-end", Short: "End a consumer's running trial at the next minute", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "billing-policy", Short: "Show the app's overdue-invoice rule", Positionals: []string{"<slug>"}},
+			{Name: "billing-policy-set", Short: "Refuse consumers whose exported invoice is unpaid some days after its due date", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "block-overdue-after-days", Short: "days past the due date before the gateway answers 402 (0 blocks at once)", Value: "N", Req: true},
+			}, Examples: []string{"gregale consumers billing-policy-set my-api --block-overdue-after-days 14"}},
+			{Name: "billing-policy-delete", Short: "Stop blocking consumers for overdue invoices; holds lift within minutes", Positionals: []string{"<slug>"}},
+			{Name: "overdue-holds", Short: "List consumers the gateway refuses because of an overdue invoice", Positionals: []string{"<slug>"}},
 		},
 	},
 	{

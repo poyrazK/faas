@@ -87,7 +87,7 @@ func addsWithinInt64(total, delta int64) bool {
 // allowance units and each ladder step become their own lines and every line
 // stays exactly units × price.
 func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
-	usage []state.APIConsumerUsageBucket, routes TenantRouteUsage) (map[string]*tenantLine, string, error) {
+	usage []state.APIConsumerUsageBucket, routes TenantRouteUsage, opts QuoteOptions) (map[string]*tenantLine, string, error) {
 	ordered := append([]state.APIConsumerUsageBucket(nil), usage...)
 	sort.Slice(ordered, func(i, j int) bool {
 		if !ordered[i].WindowStart.Equal(ordered[j].WindowStart) {
@@ -171,7 +171,7 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 		}
 		// Each subject minute rounds its own compute time or response size
 		// (ADR-1310), as a consumer minute does (ADR-1308).
-		quote, err := QuoteAPIConsumerUsageFrom(asApp, MeterAPIConsumerUsage(asApp, weighted), time.Time{})
+		quote, err := QuoteAPIConsumerUsageWith(asApp, MeterAPIConsumerUsage(asApp, weighted), time.Time{}, opts)
 		if err != nil {
 			return nil, "", err
 		}
@@ -299,7 +299,7 @@ func tenantCardAt(cards []state.PlatformTenantRateCard, minute time.Time) *state
 func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, asOf time.Time, revision int,
 	priorStatus state.APIConsumerUsageStatementStatus, usageDelta, monthUsage []state.APIConsumerUsageBucket,
 	cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
-	previous []state.PlatformTenantStatement, routes TenantRouteUsage) (state.PlatformTenantStatementInput, error) {
+	previous []state.PlatformTenantStatement, routes TenantRouteUsage, opts ...QuoteOptions) (state.PlatformTenantStatementInput, error) {
 	in := state.PlatformTenantStatementInput{AccountID: accountID, TenantID: tenantID, PeriodStart: start, PeriodEnd: end,
 		AsOf: asOf, Revision: revision, PriorStatus: priorStatus, Repriced: true, Weighted: tenantWeightsInForce(tenantCards, start, end)}
 	if !IsCalendarMonth(start, end) {
@@ -317,7 +317,11 @@ func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, a
 	if len(in.Coverage) == 0 {
 		return in, ErrNoNewTenantUsage
 	}
-	current, currency, err := priceTenantMonth(cardsByApp, tenantCards, monthUsage, routes)
+	var options QuoteOptions
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+	current, currency, err := priceTenantMonth(cardsByApp, tenantCards, monthUsage, routes, options)
 	if err != nil {
 		return in, err
 	}
@@ -381,6 +385,43 @@ func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, a
 	}
 	sort.SliceStable(in.Lines, func(i, j int) bool { return in.Lines[i].WindowStart.Before(in.Lines[j].WindowStart) })
 	return in, nil
+}
+
+// LockedTenantVolumeSteps returns, for each volume tenant card (ADR-1309)
+// the month's finalized revisions billed, the ladder step they billed it at
+// (ADR-1312): the highest step whose price carries net positive units.
+func LockedTenantVolumeSteps(cards []state.PlatformTenantRateCard, previous []state.PlatformTenantStatement, start, end time.Time) map[string]int {
+	tiers := map[string][]state.APIConsumerRateCardTier{}
+	for _, card := range cards {
+		if len(card.Tiers) > 0 && card.TierMode == state.RateCardTierModeVolume {
+			tiers[card.ID] = card.Tiers
+		}
+	}
+	net := map[string]map[int64]int64{}
+	for _, statement := range previous {
+		if statement.Status != state.APIConsumerUsageStatementFinalized || !statement.PeriodStart.Equal(start) || !statement.PeriodEnd.Equal(end) {
+			continue
+		}
+		for _, line := range statement.Lines {
+			if tiers[line.PlatformTenantRateCardID] == nil {
+				continue
+			}
+			if net[line.PlatformTenantRateCardID] == nil {
+				net[line.PlatformTenantRateCardID] = map[int64]int64{}
+			}
+			net[line.PlatformTenantRateCardID][line.PriceMillicentsPerUnit] += line.BillableUnits
+		}
+	}
+	locked := map[string]int{}
+	for cardID, byPrice := range net {
+		for step := len(tiers[cardID]) - 1; step >= 0; step-- {
+			if byPrice[tiers[cardID][step].PriceMillicentsPerUnit] > 0 {
+				locked[cardID] = step
+				break
+			}
+		}
+	}
+	return locked
 }
 
 // statementRawUnits is the request units a finalized statement covered:

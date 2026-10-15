@@ -116,6 +116,16 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	if err != nil {
 		return false, err
 	}
+	for meter, units := range event.MeterUnits {
+		if _, err := tx.Exec(ctx, `
+			insert into api_consumer_meter_usage_minutes (account_id, app_id, consumer_key, meter, window_start, units)
+			values ($1::uuid, $2::uuid, $3, $4, $5, $6)
+			on conflict (account_id, app_id, consumer_key, meter, window_start) do update
+			set units = api_consumer_meter_usage_minutes.units + excluded.units, updated_at = now()`,
+			event.AccountID, event.AppID, event.ConsumerKey, meter, event.WindowStart.UTC(), units); err != nil {
+			return false, err
+		}
+	}
 	if route := billingRouteFor(event); route != "" {
 		_, err = tx.Exec(ctx, `
 			insert into api_consumer_route_usage_minutes

@@ -64,12 +64,28 @@ func TestConsumerComputePricing(t *testing.T) {
 		t.Fatalf("statement = %+v", statement)
 	}
 
+	// adr: 1317 — a request card added mid-month prices requests alongside
+	// compute instead of replacing it: one bucket per unit and minute.
 	later := from.Add(5 * time.Minute)
-	if later.Day() == 1 && later.Hour() == 0 && later.Minute() == 0 {
-		return
-	}
 	if res := e.Do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{Currency: "EUR", PriceMillicentsPerUnit: 1,
-		EffectiveFrom: &later}, nil); res.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("mid-month switch back to requests: %d %s, want 422", res.Code, res.Body)
+		EffectiveFrom: &later}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("request card beside compute: %d %s", res.Code, res.Body)
+	}
+	at := later.Add(time.Minute)
+	if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{EventID: uuid.NewString(),
+		AccountID: (*e.Acct()).ID, AppID: consumer.AppID, ConsumerKey: consumer.ID, WindowStart: at,
+		RequestCount: 2, BillableUnits: 2, ComputeMS: 3000}); err != nil {
+		t.Fatal(err)
+	}
+	until := at.Add(time.Minute)
+	res = e.Do(t, http.MethodPost, "/v1/apps/metered/consumers/"+consumer.ID+"/usage-statements",
+		api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &at, PeriodEnd: &until}, nil)
+	var both api.APIConsumerUsageStatementResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &both); err != nil || res.Code != http.StatusCreated {
+		t.Fatalf("two-unit statement: %d %s", res.Code, res.Body)
+	}
+	// 2 requests at 1 and 3 compute seconds at 100.
+	if len(both.Buckets) != 2 || both.Buckets[0].Unit != "" || both.Buckets[1].Unit != "compute_second" || both.AmountMillicents != 302 {
+		t.Fatalf("two-unit statement = %+v", both)
 	}
 }

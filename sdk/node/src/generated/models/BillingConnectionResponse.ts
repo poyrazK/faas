@@ -25,6 +25,10 @@ export type BillingConnectionResponse = {
    * Days until a sent invoice is due.
    */
   days_until_due?: number;
+  /**
+   * Whether Stripe Tax calculates tax on the connection's exports (ADR-1313).
+   */
+  automatic_tax?: boolean;
   created_at: string;
   updated_at: string;
 };

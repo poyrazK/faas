@@ -335,6 +335,10 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
+	apiConsumerTrials                    map[string]APIConsumerTrial            // ADR-1314
+	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket // ADR-1318
+	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy    // ADR-1315, by app
+	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold      // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse

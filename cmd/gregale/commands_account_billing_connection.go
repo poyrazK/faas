@@ -18,7 +18,7 @@ import (
 // stdinReader is swapped by tests.
 var stdinReader io.Reader = os.Stdin
 
-const accountBillingConnectionUsage = "usage: gregale account billing-connection {connect|status|disconnect} {stripe|paddle|lago} [--api-url URL] [--collection none|send|charge] [--days-until-due N]  (connect reads the key from stdin)"
+const accountBillingConnectionUsage = "usage: gregale account billing-connection {connect|status|disconnect} {stripe|paddle|lago} [--api-url URL] [--collection none|send|charge] [--days-until-due N] [--automatic-tax]  (connect reads the key from stdin)"
 
 // cmdAccountBillingConnection manages the account's billing provider keys
 // for statement invoice exports (ADR-1300, ADR-1305): connect reads the key
@@ -28,6 +28,7 @@ func cmdAccountBillingConnection(args []string) int {
 	apiURL := fs.String("api-url", "", "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)")
 	collection := fs.String("collection", "", "what the provider does with exported invoices: none (drafts, default), send (Stripe) or charge (Stripe, Lago) (connect)")
 	daysUntilDue := fs.Int("days-until-due", 0, "days until a sent invoice is due, 1-365 (connect --collection send; default 30)")
+	automaticTax := fs.Bool("automatic-tax", false, "have Stripe Tax calculate tax on exported invoices (connect; Stripe only)")
 	if len(args) < 2 {
 		PrintUsage(osStderr, accountBillingConnectionUsage, "account")
 		return 1
@@ -55,7 +56,7 @@ func cmdAccountBillingConnection(args []string) int {
 			return printErr("Invalid "+provider+" key", err)
 		}
 		conn, err := client.PutBillingConnection(ctx, provider, api.PutBillingConnectionRequest{SecretKey: key, APIURL: strings.TrimSpace(*apiURL),
-			Collection: strings.TrimSpace(*collection), DaysUntilDue: *daysUntilDue})
+			Collection: strings.TrimSpace(*collection), DaysUntilDue: *daysUntilDue, AutomaticTax: *automaticTax})
 		if err != nil {
 			return printErr("Could not connect "+provider, err)
 		}

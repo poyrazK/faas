@@ -30,8 +30,11 @@ func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, ChargedUnits: bucket.Charged(),
-			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents,
+			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents, Trial: bucket.Trial, Unit: bucket.Unit,
 		})
+	}
+	for _, fee := range statement.Fees {
+		out.Fees = append(out.Fees, api.APIConsumerStatementFeeResponse{Kind: fee.Kind, RateCardID: fee.RateCardID, AmountMillicents: fee.AmountMillicents})
 	}
 	return out
 }
@@ -199,29 +202,41 @@ func (s *server) planAPIConsumerUsageStatement(ctx context.Context, accountID, a
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	if billing.TieredCardEffectiveIn(cards, start, end) && !billing.IsCalendarMonth(start, end) {
+	if (billing.TieredCardEffectiveIn(cards, start, end) || billing.MonthlyFeeCardEffectiveIn(cards, start, end)) && !billing.IsCalendarMonth(start, end) {
 		return state.APIConsumerUsageStatementInput{}, false, errTieredStatementPeriod
 	}
-	if usage, err = s.weightConsumerUsage(ctx, cards, usage, accountID, appID, consumerID, billing.MonthStart(start), end); err != nil {
-		return state.APIConsumerUsageStatementInput{}, false, err
-	}
-	current, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, start)
+	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(start), end)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	quote, err := billing.APIConsumerStatementDelta(current, revisions)
+	opts, err := s.consumerQuoteOptions(ctx, accountID, appID, consumerID)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	if len(quote.Buckets) == 0 && len(revisions) > 0 {
+	quote, err := consumerStatementDelta(cards, usage, inputs, start, revisions, opts)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	consumer, err := s.store.GetAPIConsumerByID(ctx, accountID, consumerID)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	var fees []state.APIConsumerStatementFee
+	if consumer.RevokedAt == nil || !consumer.RevokedAt.Before(start) {
+		fees = billing.APIConsumerStatementFees(cards, start, end, consumer.CreatedAt, opts, revisions, quote.Buckets)
+	}
+	if len(quote.Buckets) == 0 && len(fees) == 0 && len(revisions) > 0 {
 		return state.APIConsumerUsageStatementInput{}, true, nil
 	}
 	input := state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
 		PeriodStart: start, PeriodEnd: end, Revision: len(revisions) + 1, Currency: quote.Currency,
 		BillableUnits: quote.BillableUnits, UnpricedUnits: quote.UnpricedUnits,
-		AmountMillicents: quote.AmountMillicents, Priced: quote.Priced,
-		Buckets: make([]state.APIConsumerUsageStatementBucket, 0, len(quote.Buckets)), AsOf: time.Now().UTC(),
+		AmountMillicents: quote.AmountMillicents, Priced: quote.Priced || (len(fees) > 0 && quote.UnpricedUnits == 0),
+		Buckets: make([]state.APIConsumerUsageStatementBucket, 0, len(quote.Buckets)), Fees: fees, AsOf: time.Now().UTC(),
+	}
+	for _, fee := range fees {
+		input.AmountMillicents += fee.AmountMillicents
 	}
 	if len(revisions) > 0 {
 		input.PriorStatus = revisions[len(revisions)-1].Status
@@ -232,6 +247,48 @@ func (s *server) planAPIConsumerUsageStatement(ctx context.Context, accountID, a
 	return input, false, nil
 }
 
+// consumerStatementDelta prices a period and bills what finalized revisions
+// have not. If exact re-rating would lower what they charged, because late
+// usage moved a volume month into a cheaper step, the volume cards keep the
+// step those revisions billed (ADR-1312).
+func consumerStatementDelta(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, inputs billing.ConsumerUsageInputs,
+	start time.Time, revisions []state.APIConsumerUsageStatement, opts billing.QuoteOptions) (billing.APIConsumerUsageQuote, error) {
+	current, err := billing.QuoteConsumerUsage(cards, usage, inputs, start, opts)
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, err
+	}
+	quote, err := billing.APIConsumerStatementDelta(current, revisions)
+	if !errors.Is(err, billing.ErrAPIConsumerChargeDecreased) {
+		return quote, err
+	}
+	locked := billing.LockedVolumeSteps(cards, revisions)
+	if len(locked) == 0 {
+		return quote, err
+	}
+	opts.VolumeSteps = locked
+	if current, err = billing.QuoteConsumerUsage(cards, usage, inputs, start, opts); err != nil {
+		return billing.APIConsumerUsageQuote{}, err
+	}
+	return billing.APIConsumerStatementDelta(current, revisions)
+}
+
+// consumerQuoteOptions are how a consumer's usage is priced beyond its
+// cards: its trial (ADR-1314).
+func (s *server) consumerQuoteOptions(ctx context.Context, accountID, appID, consumerID string) (billing.QuoteOptions, error) {
+	trials, ok := s.store.(state.APIConsumerTrialStore)
+	if !ok {
+		return billing.QuoteOptions{}, nil
+	}
+	trial, err := trials.GetAPIConsumerTrial(ctx, accountID, appID, consumerID)
+	if errors.Is(err, state.ErrNotFound) {
+		return billing.QuoteOptions{}, nil
+	}
+	if err != nil {
+		return billing.QuoteOptions{}, fmt.Errorf("load consumer trial: %w", err)
+	}
+	return billing.QuoteOptions{TrialStart: trial.StartsAt, TrialEnd: trial.EndsAt}, nil
+}
+
 // statementBucketFromCharge persists a priced minute; charged_units is
 // recorded only for priced buckets, where it determines the amount.
 func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) state.APIConsumerUsageStatementBucket {
@@ -239,7 +296,7 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 		WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
 		RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 		PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
-		TierUnits: bucket.TierUnits,
+		TierUnits: bucket.TierUnits, Trial: bucket.Trial, Unit: bucket.Unit,
 	}
 	if bucket.RateCardID != "" {
 		charged := bucket.ChargedUnits
@@ -249,9 +306,10 @@ func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) stat
 }
 
 // errTieredStatementPeriod rejects a non-month period priced by a tiered
-// card: re-rating across statements of one month would need credits
-// (ADR-951).
-var errTieredStatementPeriod = errors.New("tiered rate cards require calendar-month statement periods")
+// card, where re-rating across statements of one month would need credits
+// (ADR-951), or by a card with monthly fees, billed once per month
+// (ADR-1316).
+var errTieredStatementPeriod = errors.New("tiered rate cards and monthly fees require calendar-month statement periods")
 
 func (s *server) getAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, consumer, store, ok := s.apiConsumerUsageStatementStore(w, r, acct)

@@ -105,7 +105,7 @@ func (s *Service) statementInvoiceStore(w http.ResponseWriter, acct state.Accoun
 
 func billingConnectionResponse(c state.BillingConnection) api.BillingConnectionResponse {
 	return api.BillingConnectionResponse{Provider: c.Provider, KeyLast4: c.KeyLast4, Livemode: c.Livemode, APIURL: c.APIURL,
-		Collection: c.Collection, DaysUntilDue: c.DaysUntilDue, CreatedAt: c.CreatedAt.UTC(), UpdatedAt: c.UpdatedAt.UTC()}
+		Collection: c.Collection, DaysUntilDue: c.DaysUntilDue, AutomaticTax: c.AutomaticTax, CreatedAt: c.CreatedAt.UTC(), UpdatedAt: c.UpdatedAt.UTC()}
 }
 
 func unknownProviderProblem() *api.Problem {
@@ -154,13 +154,14 @@ func (s *Service) PutBillingConnection(w http.ResponseWriter, r *http.Request, a
 	}
 	stored, err := store.PutBillingConnection(r.Context(), state.BillingConnection{AccountID: acct.ID, Provider: name,
 		SealedSecret: sealed, KeyLast4: conn.key[len(conn.key)-4:], Livemode: conn.livemode, APIURL: conn.apiURL,
-		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue})
+		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue, AutomaticTax: conn.automaticTax})
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not store the "+p.title()+" key"))
 		return
 	}
 	s.Host.Audit(r.Context(), "billing_connection.updated", acct.ID, map[string]any{"provider": name,
-		"key_last4": stored.KeyLast4, "livemode": stored.Livemode, "api_url": stored.APIURL, "collection": stored.Collection})
+		"key_last4": stored.KeyLast4, "livemode": stored.Livemode, "api_url": stored.APIURL, "collection": stored.Collection,
+		"automatic_tax": stored.AutomaticTax})
 	httpkit.WriteJSON(w, http.StatusOK, billingConnectionResponse(stored))
 }
 
@@ -178,6 +179,10 @@ func parseConnection(name string, p provider, req api.PutBillingConnectionReques
 	if conn.collection, conn.daysUntilDue, err = parseCollection(name, req); err != nil {
 		return connection{}, providerProblem(http.StatusUnprocessableEntity, "Bad collection", err.Error())
 	}
+	if req.AutomaticTax && name != state.BillingProviderStripe {
+		return connection{}, providerProblem(http.StatusUnprocessableEntity, "Bad automatic_tax", "automatic_tax applies to Stripe connections only")
+	}
+	conn.automaticTax = req.AutomaticTax
 	if name != state.BillingProviderLago {
 		if strings.TrimSpace(req.APIURL) != "" {
 			return connection{}, providerProblem(http.StatusUnprocessableEntity, "Bad api_url", "api_url applies to Lago connections only")
@@ -275,7 +280,7 @@ type statementInvoiceSource struct {
 func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.StatementInvoiceExportResponse {
 	out := api.StatementInvoiceExportResponse{StatementID: e.StatementID, Provider: e.Provider, Customer: e.Customer,
 		Status: e.Status, InvoiceID: e.ProviderInvoiceID, Currency: e.Currency, AmountMinor: e.AmountMinor,
-		Livemode: e.Livemode, Collection: e.Collection, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt,
+		Livemode: e.Livemode, Collection: e.Collection, AutomaticTax: e.AutomaticTax, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt,
 		SourceKind: e.SourceKind, PaymentStatus: e.PaymentStatus, AmountPaidMinor: e.AmountPaidMinor,
 		AmountRemainingMinor: e.AmountRemainingMinor, DueAt: e.DueAt, PaidAt: e.PaidAt,
 		HostedInvoiceURL: e.HostedInvoiceURL, StatusSyncedAt: e.StatusSyncedAt, Overdue: e.Overdue(time.Now())}
@@ -329,7 +334,7 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	export, resumed, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: src.kind,
 		StatementID: src.statementID, Provider: providerName, Customer: src.customer,
 		Currency: src.invoice.Currency, AmountMinor: src.invoice.TotalMinor, Livemode: conn.livemode,
-		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue})
+		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue, AutomaticTax: conn.automaticTax})
 	if errors.Is(err, state.ErrConflict) {
 		return state.StatementInvoiceExport{}, exportConflict("an export for this statement already targets another customer or provider")
 	}
@@ -393,7 +398,7 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 		return connection{}, api.ErrInternal("could not open the stored " + p.title() + " key; reconnect " + p.title())
 	}
 	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, collection: stored.Collection,
-		daysUntilDue: stored.DaysUntilDue}, nil
+		daysUntilDue: stored.DaysUntilDue, automaticTax: stored.AutomaticTax}, nil
 }
 
 func (s *Service) openKey(accountID string, stored state.BillingConnection) (string, bool) {
@@ -414,12 +419,19 @@ type statementInvoiceItem struct {
 func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem {
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
-		description := fmt.Sprintf("%d usage units at %s %s each", line.Units, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
+		noun := unitNoun(line.Unit)
+		description := fmt.Sprintf("%d %s at %s %s each", line.Units, noun, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
 		switch {
 		case line.Credit:
 			description = "Prepaid credit applied"
+		case line.Fee == state.StatementFeeBase:
+			description = "Monthly base fee"
+		case line.Fee == state.StatementFeeMinimum && line.AmountMillicents < 0:
+			description = "Minimum monthly spend, reduced by later usage"
+		case line.Fee == state.StatementFeeMinimum:
+			description = "Minimum monthly spend top-up"
 		case line.PriceMillicentsPerUnit == 0:
-			description = fmt.Sprintf("%d usage units included at no charge", line.Units)
+			description = fmt.Sprintf("%d %s included at no charge", line.Units, noun)
 		}
 		items = append(items, statementInvoiceItem{amount: line.AmountMinor, description: description})
 	}
@@ -427,6 +439,20 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 		items = append(items, statementInvoiceItem{amount: inv.RoundingMinor, description: "Rounding to the nearest cent"})
 	}
 	return items
+}
+
+// unitNoun names an invoice line's units (ADR-1317, ADR-1318).
+func unitNoun(unit string) string {
+	switch unit {
+	case state.APIConsumerRateCardUnitComputeSecond:
+		return "compute seconds"
+	case state.APIConsumerRateCardUnitResponseMegabyte:
+		return "response megabytes"
+	}
+	if meter, ok := state.AppMeterOfUnit(unit); ok {
+		return strings.ReplaceAll(meter, "_", " ")
+	}
+	return "usage units"
 }
 
 // formatMillicentsDecimal renders 1/100000 currency units exactly, e.g.

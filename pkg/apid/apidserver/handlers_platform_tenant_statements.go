@@ -191,8 +191,20 @@ func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenant
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
-	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, time.Now().UTC(), revision, priorStatus,
+	now := time.Now().UTC()
+	in, err := billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, now, revision, priorStatus,
 		usageDelta, monthUsage, cards, tenantCards, previous, routes)
+	if !errors.Is(err, billing.ErrTenantChargeDecreased) {
+		return in, err
+	}
+	// Late usage moved a volume month into a cheaper step: keep the step
+	// finalized revisions billed (ADR-1312).
+	locked := billing.LockedTenantVolumeSteps(tenantCards, previous, start, end)
+	if len(locked) == 0 {
+		return in, err
+	}
+	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, now, revision, priorStatus,
+		usageDelta, monthUsage, cards, tenantCards, previous, routes, billing.QuoteOptions{VolumeSteps: locked})
 }
 
 // tenantRouteUsage loads each subject's route counts when a tenant card

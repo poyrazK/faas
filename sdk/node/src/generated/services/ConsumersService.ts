@@ -2,9 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APIConsumerBillingPolicyResponse } from '../models/APIConsumerBillingPolicyResponse.js';
 import type { APIConsumerCreditListResponse } from '../models/APIConsumerCreditListResponse.js';
 import type { APIConsumerCreditResponse } from '../models/APIConsumerCreditResponse.js';
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
+import type { APIConsumerOverdueHoldListResponse } from '../models/APIConsumerOverdueHoldListResponse.js';
 import type { APIConsumerPlanAssignmentListResponse } from '../models/APIConsumerPlanAssignmentListResponse.js';
 import type { APIConsumerPlanAssignmentResponse } from '../models/APIConsumerPlanAssignmentResponse.js';
 import type { APIConsumerPlanListResponse } from '../models/APIConsumerPlanListResponse.js';
@@ -13,6 +15,7 @@ import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateC
 import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
 import type { APIConsumerSpendCapResponse } from '../models/APIConsumerSpendCapResponse.js';
+import type { APIConsumerTrialResponse } from '../models/APIConsumerTrialResponse.js';
 import type { APIConsumerUsageAlertListResponse } from '../models/APIConsumerUsageAlertListResponse.js';
 import type { APIConsumerUsageCompletenessResponse } from '../models/APIConsumerUsageCompletenessResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
@@ -34,7 +37,9 @@ import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerReques
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
 import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
+import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
 import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -1253,6 +1258,223 @@ export class ConsumersService {
       path: {
         'slug': slug,
         'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read a consumer's free trial (ADR-1314).
+   * @returns APIConsumerTrialResponse The consumer's trial.
+   * @throws ApiError
+   */
+  public static getApiConsumerTrial({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose free trial is read or changed.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Start a consumer's one free trial, or move the end of a running one.
+   * Usage in the trial is priced at zero and consumes no included units.
+   * A new trial starts at the next UTC minute; a running trial's end can
+   * move, never before the next minute. A consumer whose trial has ended
+   * cannot get another (409).
+   *
+   * @returns APIConsumerTrialResponse The stored trial.
+   * @throws ApiError
+   */
+  public static putApiConsumerTrial({
+    slug,
+    consumerId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose free trial is read or changed.
+     */
+    consumerId: string,
+    requestBody: PutAPIConsumerTrialRequest,
+  }): CancelablePromise<APIConsumerTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid trial length or end.`,
+      },
+    });
+  }
+  /**
+   * End a consumer's running trial at the next minute.
+   * @returns void
+   * @throws ApiError
+   */
+  public static endApiConsumerTrial({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose free trial is read or changed.
+     */
+    consumerId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the app's overdue-invoice rule (ADR-1315).
+   * @returns APIConsumerBillingPolicyResponse The app's overdue rule.
+   * @throws ApiError
+   */
+  public static getApiConsumerBillingPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIConsumerBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Refuse consumers whose exported invoice is unpaid some days after its due date.
+   * Every 5 minutes apid places a hold on each consumer whose exported
+   * invoice is open or uncollectible with an amount left at least
+   * block_overdue_after_days past its due date, and lifts holds that no
+   * longer apply. The gateway answers a held consumer with 402
+   * `consumer_invoice_overdue`.
+   *
+   * @returns APIConsumerBillingPolicyResponse The stored rule.
+   * @throws ApiError
+   */
+  public static putApiConsumerBillingPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutAPIConsumerBillingPolicyRequest,
+  }): CancelablePromise<APIConsumerBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Days outside 0 to 365.`,
+      },
+    });
+  }
+  /**
+   * Remove the app's overdue rule; holds lift at the next check.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiConsumerBillingPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the consumers the gateway refuses because of an overdue invoice.
+   * @returns APIConsumerOverdueHoldListResponse The app's held consumers, oldest due date first.
+   * @throws ApiError
+   */
+  public static listApiConsumerOverdueHolds({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIConsumerOverdueHoldListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-overdue-holds',
+      path: {
+        'slug': slug,
       },
       errors: {
         401: `code: unauthorized`,

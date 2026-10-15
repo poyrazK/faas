@@ -42,6 +42,11 @@ type StatementInvoiceLine struct {
 	AmountMinor int64
 	// Credit marks the negative line for prepaid credit (ADR-1306).
 	Credit bool
+	// Fee is the statement fee kind of a base fee or minimum top-up line
+	// (ADR-1316); Units is zero.
+	Fee string
+	// Unit is what the line's units are when not requests (ADR-1317).
+	Unit string
 }
 
 // StatementInvoice is a statement converted to invoice items. RoundingMinor
@@ -57,6 +62,7 @@ type StatementInvoice struct {
 type invoiceLineKey struct {
 	rateCardID, tenantCardID string
 	price                    int64
+	fee, unit                string
 }
 
 func (inv *StatementInvoice) add(key invoiceLineKey, units int64, lines map[invoiceLineKey]*StatementInvoiceLine) error {
@@ -69,7 +75,8 @@ func (inv *StatementInvoice) add(key invoiceLineKey, units int64, lines map[invo
 	}
 	line := lines[key]
 	if line == nil {
-		line = &StatementInvoiceLine{RateCardID: key.rateCardID, PlatformTenantRateCardID: key.tenantCardID, PriceMillicentsPerUnit: key.price}
+		line = &StatementInvoiceLine{RateCardID: key.rateCardID, PlatformTenantRateCardID: key.tenantCardID, PriceMillicentsPerUnit: key.price,
+			Unit: key.unit}
 		lines[key] = line
 	}
 	if !addsWithinInt64(line.Units, units) || !addsWithinInt64(line.AmountMillicents, amount) {
@@ -102,19 +109,31 @@ func AppStatementInvoice(statement state.APIConsumerUsageStatement, cards []stat
 				return inv, fmt.Errorf("%w: rate card %s ladder changed", ErrStatementNotInvoiceable, bucket.RateCardID)
 			}
 			for i, units := range bucket.TierUnits {
-				if err := inv.add(invoiceLineKey{rateCardID: bucket.RateCardID, price: ladder[i].PriceMillicentsPerUnit}, units, lines); err != nil {
+				if err := inv.add(invoiceLineKey{rateCardID: bucket.RateCardID, price: ladder[i].PriceMillicentsPerUnit, unit: bucket.Unit}, units, lines); err != nil {
 					return inv, err
 				}
 			}
 			continue
 		}
 		charged := bucket.Charged()
-		if err := inv.add(invoiceLineKey{rateCardID: bucket.RateCardID}, bucket.BillableUnits-charged, lines); err != nil {
+		if err := inv.add(invoiceLineKey{rateCardID: bucket.RateCardID, unit: bucket.Unit}, bucket.BillableUnits-charged, lines); err != nil {
 			return inv, err
 		}
-		if err := inv.add(invoiceLineKey{rateCardID: bucket.RateCardID, price: bucket.PriceMillicentsPerUnit}, charged, lines); err != nil {
+		if err := inv.add(invoiceLineKey{rateCardID: bucket.RateCardID, price: bucket.PriceMillicentsPerUnit, unit: bucket.Unit}, charged, lines); err != nil {
 			return inv, err
 		}
+	}
+	for _, fee := range statement.Fees {
+		key := invoiceLineKey{rateCardID: fee.RateCardID, fee: fee.Kind}
+		line := lines[key]
+		if line == nil {
+			line = &StatementInvoiceLine{RateCardID: fee.RateCardID, Fee: fee.Kind}
+			lines[key] = line
+		}
+		if !addsWithinInt64(line.AmountMillicents, fee.AmountMillicents) {
+			return inv, fmt.Errorf("billing: statement invoice line overflow")
+		}
+		line.AmountMillicents += fee.AmountMillicents
 	}
 	inv, err := finishStatementInvoice(inv, lines, statement.AmountMillicents)
 	if err != nil || statement.CreditAppliedMillicents == 0 {
@@ -181,6 +200,9 @@ func finishStatementInvoice(inv StatementInvoice, lines map[invoiceLineKey]*Stat
 		a, b := inv.Lines[i], inv.Lines[j]
 		if a.PlatformTenantRateCardID+a.RateCardID != b.PlatformTenantRateCardID+b.RateCardID {
 			return a.PlatformTenantRateCardID+a.RateCardID < b.PlatformTenantRateCardID+b.RateCardID
+		}
+		if a.Fee != b.Fee {
+			return a.Fee < b.Fee
 		}
 		return a.PriceMillicentsPerUnit < b.PriceMillicentsPerUnit
 	})

@@ -124,10 +124,11 @@ func TestCollectedInvoice(t *testing.T) {
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
 	ctx := context.Background()
 	if _, err := c.CreateInvoice(ctx, "rk_test_x", "idem", InvoiceParams{Customer: "cus_1", Currency: "EUR",
-		CollectionMethod: "send_invoice", DaysUntilDue: 14}); err != nil {
+		CollectionMethod: "send_invoice", DaysUntilDue: 14, AutomaticTax: true}); err != nil {
 		t.Fatal(err)
 	}
-	if got := forms["/v1/invoices"]; got["collection_method"] != "send_invoice" || got["days_until_due"] != "14" || got["auto_advance"] != "false" {
+	if got := forms["/v1/invoices"]; got["collection_method"] != "send_invoice" || got["days_until_due"] != "14" || got["auto_advance"] != "false" ||
+		got["automatic_tax[enabled]"] != "true" {
 		t.Fatalf("invoice form = %v", got)
 	}
 	if err := c.FinalizeInvoice(ctx, "rk_test_x", "idem-finalize", "in_1"); err != nil {

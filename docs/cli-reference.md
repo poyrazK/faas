@@ -770,13 +770,14 @@ Account-wide SLO panel
 
 Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin
 
-`gregale account billing-connection [--api-url <URL>] [--collection <MODE>] [--days-until-due <N>] {connect|status|disconnect} {stripe|paddle|lago}`
+`gregale account billing-connection [--api-url <URL>] [--collection <MODE>] [--days-until-due <N>] [--automatic-tax] {connect|status|disconnect} {stripe|paddle|lago}`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--api-url <URL>` | Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com) |  |
 | `--collection <MODE>` | what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none) | one of `none` · `send` · `charge` |
 | `--days-until-due <N>` | days until a sent invoice is due (connect --collection send; default 30) |  |
+| `--automatic-tax` | have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only) |  |
 
 Examples:
 
@@ -7296,12 +7297,13 @@ List an app&#39;s API consumers
 
 Register an API consumer
 
-`gregale consumers create --external-ref <REF> --name <TEXT> <slug>`
+`gregale consumers create --external-ref <REF> --name <TEXT> [--trial-days <N>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--external-ref <REF>` | stable consumer reference | required |
 | `--name <TEXT>` | consumer display name | required |
+| `--trial-days <N>` | free trial from the next minute: usage is priced at zero for this many days |  |
 
 ### consumers info
 
@@ -7383,7 +7385,7 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>] [--base-fee-millicents <N>] [--minimum-millicents <N>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7394,14 +7396,18 @@ Add an immutable per-request price version
 | `--weight <METHOD /template=N>` | count each request on a route as N units; unlisted routes count 1 |  |
 | `--plan <NAME>` | add the price to a consumer plan instead of the app default |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, per consumer minute rounded to the nearest unit | one of `request` · `compute_second` · `response_megabyte` |
+| `--unit <UNIT>` | what the price is per: request, compute_second or response_megabyte (rounded per consumer minute), or app:&lt;meter&gt; for units the app reports in Gregale-Usage; cards of different units price side by side |  |
 | `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
+| `--base-fee-millicents <N>` | fixed charge per consumer per UTC month, billed by the month&#39;s statement |  |
+| `--minimum-millicents <N>` | minimum usage charge per consumer per UTC month; the statement tops up the difference |  |
 
 Examples:
 
 ```sh
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --unit app:output_tokens
 ```
 
 ### consumers statements
@@ -7569,6 +7575,69 @@ gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-
 Remove a consumer&#39;s spend cap
 
 `gregale consumers spend-cap-delete <slug> <consumer-id>`
+
+### consumers trial
+
+Show a consumer&#39;s free trial
+
+`gregale consumers trial <slug> <consumer-id>`
+
+### consumers trial-set
+
+Start a consumer&#39;s one free trial at the next minute, or move the end of a running one
+
+`gregale consumers trial-set [--days <N>] [--ends-at <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--days <N>` | trial length from its start |  |
+| `--ends-at <RFC3339>` | trial end (UTC minute, not in the past) |  |
+
+Examples:
+
+```sh
+gregale consumers trial-set my-api CONSUMER_ID --days 14
+```
+
+### consumers trial-end
+
+End a consumer&#39;s running trial at the next minute
+
+`gregale consumers trial-end <slug> <consumer-id>`
+
+### consumers billing-policy
+
+Show the app&#39;s overdue-invoice rule
+
+`gregale consumers billing-policy <slug>`
+
+### consumers billing-policy-set
+
+Refuse consumers whose exported invoice is unpaid some days after its due date
+
+`gregale consumers billing-policy-set --block-overdue-after-days <N> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--block-overdue-after-days <N>` | days past the due date before the gateway answers 402 (0 blocks at once) | required |
+
+Examples:
+
+```sh
+gregale consumers billing-policy-set my-api --block-overdue-after-days 14
+```
+
+### consumers billing-policy-delete
+
+Stop blocking consumers for overdue invoices; holds lift within minutes
+
+`gregale consumers billing-policy-delete <slug>`
+
+### consumers overdue-holds
+
+List consumers the gateway refuses because of an overdue invoice
+
+`gregale consumers overdue-holds <slug>`
 
 
 ## platform-tenants

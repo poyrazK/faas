@@ -12,10 +12,6 @@ from ..models.api_consumer_rate_card_response_tier_mode import (
     APIConsumerRateCardResponseTierMode,
     check_api_consumer_rate_card_response_tier_mode,
 )
-from ..models.api_consumer_rate_card_response_unit import (
-    APIConsumerRateCardResponseUnit,
-    check_api_consumer_rate_card_response_unit,
-)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,13 +29,17 @@ class APIConsumerRateCardResponse:
     id: UUID
     app_id: UUID
     currency: str
-    unit: APIConsumerRateCardResponseUnit
-    """What the card prices (ADR-1308): billable requests, or their compute seconds or response megabytes rounded
-    to the nearest whole unit per consumer minute."""
+    unit: str
+    """What the card prices (ADR-1308, ADR-1318): billable requests, their compute seconds or response megabytes,
+    or the units of an app meter."""
     price_millicents_per_unit: int
     included_units_per_month: int
     effective_from: datetime.datetime
     created_at: datetime.datetime
+    base_fee_millicents_per_month: int | Unset = UNSET
+    """The card's fixed monthly charge per consumer (ADR-1316)."""
+    minimum_millicents_per_month: int | Unset = UNSET
+    """The card's minimum monthly usage charge per consumer (ADR-1316)."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     tier_mode: APIConsumerRateCardResponseTierMode | Unset = UNSET
     """How the ladder prices a consumer's month (ADR-1309)."""
@@ -55,7 +55,7 @@ class APIConsumerRateCardResponse:
 
         currency = self.currency
 
-        unit: str = self.unit
+        unit = self.unit
 
         price_millicents_per_unit = self.price_millicents_per_unit
 
@@ -64,6 +64,10 @@ class APIConsumerRateCardResponse:
         effective_from = self.effective_from.isoformat()
 
         created_at = self.created_at.isoformat()
+
+        base_fee_millicents_per_month = self.base_fee_millicents_per_month
+
+        minimum_millicents_per_month = self.minimum_millicents_per_month
 
         tiers: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tiers, Unset):
@@ -98,6 +102,10 @@ class APIConsumerRateCardResponse:
                 "created_at": created_at,
             }
         )
+        if base_fee_millicents_per_month is not UNSET:
+            field_dict["base_fee_millicents_per_month"] = base_fee_millicents_per_month
+        if minimum_millicents_per_month is not UNSET:
+            field_dict["minimum_millicents_per_month"] = minimum_millicents_per_month
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
         if tier_mode is not UNSET:
@@ -121,7 +129,7 @@ class APIConsumerRateCardResponse:
 
         currency = d.pop("currency")
 
-        unit = check_api_consumer_rate_card_response_unit(d.pop("unit"))
+        unit = d.pop("unit")
 
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
@@ -130,6 +138,10 @@ class APIConsumerRateCardResponse:
         effective_from = datetime.datetime.fromisoformat(d.pop("effective_from"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        base_fee_millicents_per_month = d.pop("base_fee_millicents_per_month", UNSET)
+
+        minimum_millicents_per_month = d.pop("minimum_millicents_per_month", UNSET)
 
         _tiers = d.pop("tiers", UNSET)
         tiers: list[APIConsumerRateCardTier] | Unset = UNSET
@@ -170,6 +182,8 @@ class APIConsumerRateCardResponse:
             included_units_per_month=included_units_per_month,
             effective_from=effective_from,
             created_at=created_at,
+            base_fee_millicents_per_month=base_fee_millicents_per_month,
+            minimum_millicents_per_month=minimum_millicents_per_month,
             tiers=tiers,
             tier_mode=tier_mode,
             route_weights=route_weights,

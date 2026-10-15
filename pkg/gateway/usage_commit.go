@@ -62,6 +62,8 @@ type usageEventInput struct {
 	// consumer and tenant-source requests (ADR-1308, ADR-1310); zero
 	// elsewhere.
 	computeMS, responseBytes int64
+	// meterUnits are the units the app reported (ADR-1318).
+	meterUnits map[string]int64
 }
 
 // usageEvent builds the outbox event for one request (ADR-234). The event ID
@@ -89,6 +91,9 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 		event.BillingRoute = billingRouteFrom(r)
 		if billableUnits > 0 {
 			event.ComputeMS, event.ResponseBytes = max(in.computeMS, 0), max(in.responseBytes, 0)
+			if event.ConsumerID != "" && len(in.meterUnits) > 0 {
+				event.MeterUnits = in.meterUnits
+			}
 		}
 	}
 	if h.requestAuditEnabled || h.apiDiscoveryEnabled {
@@ -175,7 +180,8 @@ func (c *usageCommit) commit(status int, responseBytes int64) error {
 	now := time.Now()
 	event := c.h.usageEvent(c.r, usageEventInput{eventID: c.eventID, accountID: c.accountID, appID: c.appID,
 		attr: c.attr, status: status, at: now, latencyMS: int(now.Sub(startTime(c.r)) / time.Millisecond),
-		requestID: requestIDFrom(c.r), target: c.target, computeMS: c.computeMS(now), responseBytes: responseBytes})
+		requestID: requestIDFrom(c.r), target: c.target, computeMS: c.computeMS(now), responseBytes: responseBytes,
+		meterUnits: c.evidence.meterUnits()})
 	c.billable = event.BillableUnits > 0
 	if err := c.h.usageOutbox.Enqueue(event); err != nil {
 		c.err = fmt.Errorf("%w: %w", errUsageNotDurable, err)

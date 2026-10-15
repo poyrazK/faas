@@ -194,6 +194,13 @@ func (s *PgStore) GetAPIConsumerPlanPolicy(ctx context.Context, accountID, appID
 	if err == nil {
 		policy.attachSpendCap(spendCap, at)
 	}
+	hold, held, err := s.apiConsumerOverdueHold(ctx, accountID, consumerID)
+	if err != nil {
+		return APIConsumerPlanPolicy{}, err
+	}
+	if held {
+		policy.OverdueBlocked, policy.OverdueDueAt = true, hold.DueAt
+	}
 	return policy, nil
 }
 

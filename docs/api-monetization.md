@@ -98,7 +98,8 @@ A consumer who stays under 10,000 requests pays nothing. One who makes
 - **Late usage.** Late usage that keeps the month in its step, or moves it to
   a step with a higher total, is billed as an adjustment. If late usage
   arrives after the month is finalized and would move it to a cheaper step,
-  the adjustment fails with 409, because Gregale never issues credits.
+  the adjustment bills it at the step already billed, because Gregale never
+  issues credits.
 
 ### Route weights
 
@@ -149,11 +150,88 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 900 
   are not measured, like any other unbillable request.
 - **Works with the rest.** Free units and tiers count seconds or megabytes,
   and plans can price either. Route weights apply to request cards only. A
-  compute or response-size card cannot take effect in the past, and switching
-  a price history to another unit must start on the 1st of a month at
-  00:00 UTC.
+  compute or response-size card cannot take effect in the past.
 - **Plan limits still count requests.** A plan's monthly cap and per-minute
   limit are enforced at the edge in requests, whatever the card's unit.
+
+### Units your app counts
+
+Charge for what only your app knows, such as tokens or images. Report the
+units in a `Gregale-Usage` response header, and price them with a card whose
+unit is `app:<meter>`:
+
+```http
+Gregale-Usage: input_tokens=1200, output_tokens=332
+```
+
+```bash
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --unit app:output_tokens --included-units 100000
+```
+
+- **Meters.** Names are lowercase letters, digits and underscores, up to 32
+  characters. A request reports at most 8 meters, each up to 10^12 units.
+  Repeated meters add up and malformed pairs are ignored.
+- **Streaming.** On a streamed response, send `Gregale-Usage` as a trailer
+  so units counted while streaming are included. A response with a
+  `Content-Length` must use the header.
+- **Private.** Gregale removes the header or trailer before the response
+  reaches your customer.
+- **What counts.** Only billable consumer requests are counted. Anonymous
+  traffic and requests your customer isn't billed for are ignored.
+
+### Several units at once
+
+Cards of different units price side by side. Add a compute or token card and
+your request card keeps charging too:
+
+```bash
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 20
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second
+```
+
+- **Separate counts.** Each unit has its own free units, tiers and volume
+  steps. A statement shows one line per unit for each minute.
+- **Stopping a unit.** To stop charging a unit, add a card for it at price 0.
+- **Customer-wide cards** still price one unit at a time.
+
+### Monthly base fee and minimum spend
+
+Add a subscription to usage pricing, or commit customers to a minimum:
+
+```bash
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 \
+  --included-units 100000 --base-fee-millicents 4900000 --minimum-millicents 10000000
+```
+
+That is EUR 49.00 a month including 100,000 requests, then EUR 0.0005 per
+request, and at least EUR 100.00 of usage a month.
+
+- **Which card.** The card in force when a consumer's month starts (the 1st
+  at 00:00 UTC, or when the consumer was created) sets that month's fee and
+  minimum. There is no proration.
+- **Minimum.** When usage costs less than the minimum, the statement adds a
+  top-up for the difference. Late usage lowers the top-up instead of adding
+  to the total.
+- **Every consumer pays.** Billing runs include consumers without usage in
+  apps whose cards charge fees.
+- **Whole months.** Statements priced by such a card must cover one
+  calendar month.
+
+### Free trials
+
+Give a new consumer a free trial: its usage is priced at zero and doesn't use
+up included units.
+
+```bash
+gregale consumers create my-api --external-ref acme --name Acme --trial-days 14
+gregale consumers trial-set my-api CONSUMER_ID --days 30
+gregale consumers trial-end my-api CONSUMER_ID
+```
+
+- **One trial.** A consumer gets one trial. It starts at the next minute and
+  can be extended or ended early, never backdated.
+- **Fees.** A month that starts during the trial has no base fee or minimum.
+- **Limits still apply.** Plan limits are enforced during a trial.
 
 ### Plans
 
@@ -332,6 +410,9 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   never passes through Gregale. Each export keeps the mode it started with.
   With `send` or `charge`, an export or billing run reaches your customers
   directly, so check prices and customer IDs on a draft first.
+- **Tax.** Connect Stripe with `--automatic-tax` to have Stripe Tax add tax
+  to each exported invoice. It needs Stripe Tax set up and customer
+  addresses. Gregale's statement totals stay net of tax.
 - **Handoff.** The export records the statement's handoff with the provider's
   invoice ID, so the usual rule that a revision is invoiced once applies. A
   statement exports to one provider only.
@@ -454,6 +535,26 @@ gregale consumers spend-cap my-api CONSUMER_ID
   two minutes of traffic. The refused requests are not billed.
 - **Currency.** The cap is compared with the month to date in its own
   currency only.
+- **Usage only.** Caps count usage charges, not base fees or minimums.
+
+### Overdue invoices
+
+Stop serving customers who don't pay. Once an exported invoice is unpaid a
+number of days after its due date, the gateway refuses that consumer with
+`402 consumer_invoice_overdue` until the invoice is paid or voided:
+
+```bash
+gregale consumers billing-policy-set my-api --block-overdue-after-days 14
+gregale consumers overdue-holds my-api
+```
+
+- **What counts.** Exported invoices that are open or uncollectible with an
+  amount left. Drafts have no due date and never count.
+- **Timing.** Holds are recomputed every 5 minutes. While an invoice holds
+  its consumer, Gregale checks its payment every 15 minutes, so paying lifts
+  the hold within about 20 minutes.
+- **Lifting all holds.** `billing-policy-delete` removes the rule; holds lift
+  at the next check.
 
 ## Let customers see their own billing
 
@@ -541,8 +642,11 @@ gregale platform-tenants plan-history --id TENANT_ID
 
 ## Limits
 
-- Units are requests, optionally weighted by route, or the compute seconds or
-  response megabytes of billable requests, for app and customer-wide cards.
+- Units are requests, optionally weighted by route, the compute seconds or
+  response megabytes of billable requests, or units your app reports. App
+  cards can price several units at once. Customer-wide cards price one
+  unit at a time and can't price app-reported units, base fees, minimums
+  or trials.
 - Usage recorded before an upgrade has no compute time, response size or
   route for surface and JWT-rule requests, so it prices as zero seconds and
   megabytes and weight 1.
@@ -577,6 +681,13 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1307](adr/1307-platform-tenant-route-weights-and-plans.md),
 [ADR-1308](adr/1308-consumer-compute-and-response-size-pricing.md),
 [ADR-1309](adr/1309-volume-rate-card-tiers.md),
+[ADR-1312](adr/1312-locked-volume-steps.md),
+[ADR-1313](adr/1313-stripe-automatic-tax-on-exports.md),
+[ADR-1314](adr/1314-api-consumer-trials.md),
+[ADR-1315](adr/1315-block-consumers-with-overdue-invoices.md),
+[ADR-1316](adr/1316-monthly-base-fee-and-minimum-spend.md),
+[ADR-1317](adr/1317-parallel-unit-price-streams.md),
+[ADR-1318](adr/1318-app-reported-usage-units.md),
 [ADR-1310](adr/1310-platform-tenant-resource-pricing-and-source-routes.md), and
 [ADR-1311](adr/1311-statement-invoice-collection.md) for the billing rules.
 

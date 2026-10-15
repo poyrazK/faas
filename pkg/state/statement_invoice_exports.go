@@ -80,6 +80,8 @@ type BillingConnection struct {
 	// DaysUntilDue when a sent invoice falls due.
 	Collection   string
 	DaysUntilDue int
+	// AutomaticTax has Stripe calculate tax on exported invoices (ADR-1313).
+	AutomaticTax bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -104,6 +106,9 @@ type StatementInvoiceExport struct {
 	// the export began (ADR-1311), so a resumed export keeps it.
 	Collection   string
 	DaysUntilDue int
+	// AutomaticTax is the connection's Stripe tax setting when the export
+	// began (ADR-1313).
+	AutomaticTax bool
 	CreatedAt    time.Time
 	CompletedAt  *time.Time
 	// Payment fields mirror the provider invoice (ADR-1302); PaymentStatus is
@@ -156,7 +161,8 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 		return fmt.Errorf("%w: unknown statement source %q", ErrInvalidArgument, e.SourceKind)
 	}
 	if !ValidBillingProvider(e.Provider) || e.Customer == "" || !isUpperASCIICurrency(e.Currency) ||
-		!ValidCollection(e.Provider, e.Collection) || e.DaysUntilDue < 1 || e.DaysUntilDue > 365 {
+		!ValidCollection(e.Provider, e.Collection) || e.DaysUntilDue < 1 || e.DaysUntilDue > 365 ||
+		(e.AutomaticTax && e.Provider != BillingProviderStripe) {
 		return fmt.Errorf("%w: invalid statement invoice export", ErrInvalidArgument)
 	}
 	return nil
@@ -167,7 +173,8 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 func validateBillingConnection(c BillingConnection) error {
 	if !ValidBillingProvider(c.Provider) || len(c.KeyLast4) != 4 || len(c.SealedSecret) == 0 ||
 		(c.APIURL != "" && (len(c.APIURL) > 512 || !strings.HasPrefix(c.APIURL, "https://"))) ||
-		!ValidCollection(c.Provider, c.Collection) || c.DaysUntilDue < 1 || c.DaysUntilDue > 365 {
+		!ValidCollection(c.Provider, c.Collection) || c.DaysUntilDue < 1 || c.DaysUntilDue > 365 ||
+		(c.AutomaticTax && c.Provider != BillingProviderStripe) {
 		return ErrInvalidArgument
 	}
 	return nil
@@ -306,14 +313,15 @@ func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection)
 		return BillingConnection{}, err
 	}
 	err := s.pool.QueryRow(ctx, `insert into account_billing_connections
-			(account_id, provider, sealed_secret, key_last4, livemode, api_url, collection, days_until_due)
-		values ($1::uuid, $2, $3, $4, $5, nullif($6, ''), $7, $8)
+			(account_id, provider, sealed_secret, key_last4, livemode, api_url, collection, days_until_due, automatic_tax)
+		values ($1::uuid, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9)
 		on conflict (account_id, provider) do update
 		   set sealed_secret = excluded.sealed_secret, key_last4 = excluded.key_last4,
 		       livemode = excluded.livemode, api_url = excluded.api_url, collection = excluded.collection,
-		       days_until_due = excluded.days_until_due, updated_at = now()
+		       days_until_due = excluded.days_until_due, automatic_tax = excluded.automatic_tax, updated_at = now()
 		returning created_at, updated_at`,
-		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL, c.Collection, c.DaysUntilDue).Scan(&c.CreatedAt, &c.UpdatedAt)
+		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL, c.Collection, c.DaysUntilDue, c.AutomaticTax).
+		Scan(&c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return BillingConnection{}, fmt.Errorf("put billing connection: %w", err)
 	}
@@ -324,9 +332,9 @@ func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection)
 func (s *PgStore) GetBillingConnection(ctx context.Context, accountID, provider string) (BillingConnection, error) {
 	c := BillingConnection{AccountID: accountID, Provider: provider}
 	err := s.pool.QueryRow(ctx, `select sealed_secret, key_last4, livemode, coalesce(api_url, ''), collection, days_until_due,
-		created_at, updated_at
+		automatic_tax, created_at, updated_at
 		from account_billing_connections where account_id = $1::uuid and provider = $2`, accountID, provider).
-		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.Collection, &c.DaysUntilDue, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.Collection, &c.DaysUntilDue, &c.AutomaticTax, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingConnection{}, ErrNotFound
 	}
@@ -351,14 +359,14 @@ func (s *PgStore) DeleteBillingConnection(ctx context.Context, accountID, provid
 const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, provider, customer, status,
 	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at,
 	coalesce(payment_status, ''), amount_paid_minor, amount_remaining_minor, due_at, paid_at,
-	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due`
+	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due, automatic_tax`
 
 func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 	var e StatementInvoiceExport
 	err := row.Scan(&e.ID, &e.AccountID, &e.SourceKind, &e.StatementID, &e.Provider, &e.Customer, &e.Status,
 		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt,
 		&e.PaymentStatus, &e.AmountPaidMinor, &e.AmountRemainingMinor, &e.DueAt, &e.PaidAt,
-		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue)
+		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue, &e.AutomaticTax)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
@@ -379,11 +387,12 @@ func (s *PgStore) BeginStatementInvoiceExport(ctx context.Context, e StatementIn
 		return StatementInvoiceExport{}, false, err
 	}
 	created, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `insert into usage_statement_invoice_exports
-			(account_id, source_kind, statement_id, provider, customer, currency, amount_minor, livemode, collection, days_until_due)
-		values ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
+			(account_id, source_kind, statement_id, provider, customer, currency, amount_minor, livemode, collection, days_until_due, automatic_tax)
+		values ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11)
 		on conflict (source_kind, statement_id) do nothing
 		returning `+statementInvoiceExportCols,
-		e.AccountID, e.SourceKind, e.StatementID, e.Provider, e.Customer, e.Currency, e.AmountMinor, e.Livemode, e.Collection, e.DaysUntilDue))
+		e.AccountID, e.SourceKind, e.StatementID, e.Provider, e.Customer, e.Currency, e.AmountMinor, e.Livemode, e.Collection, e.DaysUntilDue,
+		e.AutomaticTax))
 	if err == nil {
 		return created, false, nil
 	}

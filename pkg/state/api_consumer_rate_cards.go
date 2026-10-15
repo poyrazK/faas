@@ -19,10 +19,13 @@ const (
 	APIConsumerRateCardUnitResponseMegabyte = "response_megabyte"
 )
 
-// ValidAPIConsumerRateCardUnit reports whether unit is a known card unit.
+// ValidAPIConsumerRateCardUnit reports whether unit is a known card unit:
+// request, compute_second, response_megabyte, or an app meter "app:<name>"
+// (ADR-1318).
 func ValidAPIConsumerRateCardUnit(unit string) bool {
+	_, app := AppMeterOfUnit(unit)
 	return unit == APIConsumerRateCardUnitRequest || unit == APIConsumerRateCardUnitComputeSecond ||
-		unit == APIConsumerRateCardUnitResponseMegabyte
+		unit == APIConsumerRateCardUnitResponseMegabyte || app
 }
 
 // Ladder modes (ADR-1309): graduated prices each unit at the step its
@@ -78,6 +81,9 @@ type APIConsumerRateCardInput struct {
 	Unit string
 	// TierMode is how Tiers price a month; empty means graduated (ADR-1309).
 	TierMode string
+	// Monthly base fee and minimum spend per consumer (ADR-1316).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
 }
 
 // normalizeAPIConsumerRateCardInput validates a version and derives the
@@ -105,7 +111,7 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 		}
 		in.PriceMillicentsPerUnit = in.Tiers[len(in.Tiers)-1].PriceMillicentsPerUnit
 	}
-	if in.IncludedUnitsPerMonth < 0 {
+	if in.IncludedUnitsPerMonth < 0 || in.BaseFeeMillicentsPerMonth < 0 || in.MinimumMillicentsPerMonth < 0 {
 		return in, ErrInvalidArgument
 	}
 	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", in.AccountID, in.AppID, in.Currency, in.PriceMillicentsPerUnit, in.EffectiveFrom); err != nil {

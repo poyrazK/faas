@@ -15,6 +15,7 @@ from ..models.api_consumer_usage_statement_response_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
     from ..models.api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
 
 
@@ -42,6 +43,8 @@ class APIConsumerUsageStatementResponse:
     as_of: datetime.datetime
     created_at: datetime.datetime
     currency: str | Unset = UNSET
+    fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
+    """The month's base fees and minimum top-ups (ADR-1316); amount_millicents includes them."""
     finalized_at: datetime.datetime | None | Unset = UNSET
     credit_applied_millicents: int | Unset = UNSET
     """Prepaid credit drawn when the statement was finalized (ADR-1306)."""
@@ -81,6 +84,13 @@ class APIConsumerUsageStatementResponse:
 
         currency = self.currency
 
+        fees: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.fees, Unset):
+            fees = []
+            for fees_item_data in self.fees:
+                fees_item = fees_item_data.to_dict()
+                fees.append(fees_item)
+
         finalized_at: None | str | Unset
         if isinstance(self.finalized_at, Unset):
             finalized_at = UNSET
@@ -114,6 +124,8 @@ class APIConsumerUsageStatementResponse:
         )
         if currency is not UNSET:
             field_dict["currency"] = currency
+        if fees is not UNSET:
+            field_dict["fees"] = fees
         if finalized_at is not UNSET:
             field_dict["finalized_at"] = finalized_at
         if credit_applied_millicents is not UNSET:
@@ -125,6 +137,7 @@ class APIConsumerUsageStatementResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
         from ..models.api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
 
         d = dict(src_dict)
@@ -160,6 +173,15 @@ class APIConsumerUsageStatementResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         currency = d.pop("currency", UNSET)
+
+        _fees = d.pop("fees", UNSET)
+        fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
+        if _fees is not UNSET:
+            fees = []
+            for fees_item_data in _fees:
+                fees_item = APIConsumerStatementFeeResponse.from_dict(fees_item_data)
+
+                fees.append(fees_item)
 
         def _parse_finalized_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -197,6 +219,7 @@ class APIConsumerUsageStatementResponse:
             as_of=as_of,
             created_at=created_at,
             currency=currency,
+            fees=fees,
             finalized_at=finalized_at,
             credit_applied_millicents=credit_applied_millicents,
             amount_due_millicents=amount_due_millicents,

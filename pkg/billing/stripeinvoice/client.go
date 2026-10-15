@@ -142,6 +142,9 @@ type InvoiceParams struct {
 	// DaysUntilDue days later. Empty leaves Stripe's default.
 	CollectionMethod string
 	DaysUntilDue     int
+	// AutomaticTax has Stripe Tax calculate the invoice's tax (ADR-1313);
+	// it needs Stripe Tax set up and a customer address.
+	AutomaticTax bool
 }
 
 // Invoice is the part of a Stripe invoice an export records.
@@ -165,6 +168,9 @@ func (c *Client) CreateInvoice(ctx context.Context, key, idempotencyKey string, 
 	}
 	if p.CollectionMethod == "send_invoice" {
 		form.Set("days_until_due", strconv.Itoa(p.DaysUntilDue))
+	}
+	if p.AutomaticTax {
+		form.Set("automatic_tax[enabled]", "true")
 	}
 	for k, v := range p.Metadata {
 		form.Set("metadata["+k+"]", v)

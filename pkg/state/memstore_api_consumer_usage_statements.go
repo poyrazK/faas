@@ -78,6 +78,7 @@ func (m *MemStore) CreateAPIConsumerUsageStatement(_ context.Context, input APIC
 		Currency: input.Currency, BillableUnits: input.BillableUnits, UnpricedUnits: input.UnpricedUnits,
 		AmountMillicents: input.AmountMillicents, Priced: input.Priced,
 		Buckets: append([]APIConsumerUsageStatementBucket(nil), input.Buckets...), AsOf: input.AsOf, CreatedAt: now,
+		Fees: slices.Clone(input.Fees),
 	}
 	m.apiConsumerUsageStatements[statement.ID] = statement
 	return cloneAPIConsumerUsageStatement(statement), true, nil

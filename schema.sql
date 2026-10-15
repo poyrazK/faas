@@ -3158,7 +3158,9 @@ CREATE TABLE public.account_billing_connections (
     api_url text,
     collection text DEFAULT 'none'::text NOT NULL,
     days_until_due integer DEFAULT 30 NOT NULL,
+    automatic_tax boolean DEFAULT false NOT NULL,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
+    CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
@@ -15546,6 +15548,27 @@ CREATE TABLE public.alert_rules (
 
 
 --
+-- Name: api_consumer_billing_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_billing_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    block_overdue_after_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_billing_policies_days_chk CHECK (((block_overdue_after_days >= 0) AND (block_overdue_after_days <= 365)))
+);
+
+
+--
+-- Name: TABLE api_consumer_billing_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_billing_policies IS 'Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).';
+
+
+--
 -- Name: api_consumer_credit_applications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15588,6 +15611,53 @@ CREATE TABLE public.api_consumer_credit_grants (
 --
 
 COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to an API consumer; finalized statements draw it down oldest-expiring first (ADR-1306).';
+
+
+--
+-- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_meter_usage_minutes (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_key text NOT NULL,
+    meter text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_meter_usage_minutes_consumer_key_chk CHECK ((consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT api_consumer_meter_usage_minutes_meter_chk CHECK ((meter ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT api_consumer_meter_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_meter_usage_minutes_units_chk CHECK ((units >= 0))
+);
+
+
+--
+-- Name: TABLE api_consumer_meter_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_meter_usage_minutes IS 'Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).';
+
+
+--
+-- Name: api_consumer_overdue_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_overdue_holds (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    export_id uuid NOT NULL,
+    due_at timestamp with time zone NOT NULL,
+    since timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE api_consumer_overdue_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_overdue_holds IS 'API consumers the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1315).';
 
 
 --
@@ -15687,14 +15757,17 @@ CREATE TABLE public.api_consumer_rate_cards (
     route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
     plan_id uuid,
     tier_mode text DEFAULT 'graduated'::text NOT NULL,
+    base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
+    CONSTRAINT api_consumer_rate_cards_monthly_fees_chk CHECK (((base_fee_millicents_per_month >= 0) AND (minimum_millicents_per_month >= 0))),
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
     CONSTRAINT api_consumer_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
     CONSTRAINT api_consumer_rate_cards_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
-    CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
+    CONSTRAINT api_consumer_rate_cards_unit_chk CHECK (((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])) OR (unit ~ '^app:[a-z][a-z0-9_]{0,31}$'::text)))
 );
 
 
@@ -15781,6 +15854,30 @@ CREATE TABLE public.api_consumer_spend_caps (
 --
 
 COMMENT ON TABLE public.api_consumer_spend_caps IS 'Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).';
+
+
+--
+-- Name: api_consumer_trials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_trials (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    starts_at timestamp with time zone NOT NULL,
+    ends_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_trials_minute_chk CHECK (((starts_at = (date_trunc('minute'::text, (starts_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (ends_at = (date_trunc('minute'::text, (ends_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT api_consumer_trials_window_chk CHECK (((ends_at > starts_at) AND ((ends_at - starts_at) <= '365 days'::interval)))
+);
+
+
+--
+-- Name: TABLE api_consumer_trials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_trials IS 'One free trial per API consumer (ADR-1314): usage in [starts_at, ends_at) is priced at zero.';
 
 
 --
@@ -15904,9 +16001,11 @@ CREATE TABLE public.api_consumer_usage_statements (
     finalized_at timestamp with time zone,
     revision integer DEFAULT 1 NOT NULL,
     credit_applied_millicents bigint DEFAULT 0 NOT NULL,
+    fees jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
     CONSTRAINT api_consumer_usage_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= amount_millicents))),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
+    CONSTRAINT api_consumer_usage_statements_fees_chk CHECK (((jsonb_typeof(fees) = 'array'::text) AND (jsonb_array_length(fees) <= 64))),
     CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT api_consumer_usage_statements_period_chk CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT api_consumer_usage_statements_revision_chk CHECK ((revision > 0)),
@@ -18981,6 +19080,8 @@ CREATE TABLE public.usage_statement_invoice_exports (
     overdue_notified_at timestamp with time zone,
     collection text DEFAULT 'none'::text NOT NULL,
     days_until_due integer DEFAULT 30 NOT NULL,
+    automatic_tax boolean DEFAULT false NOT NULL,
+    CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT usage_statement_invoice_exports_collection_chk CHECK (((collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text])) AND ((days_until_due >= 1) AND (days_until_due <= 365)))),
     CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
     CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
@@ -32082,6 +32183,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_billing_policies api_consumer_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_billing_policies
+    ADD CONSTRAINT api_consumer_billing_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: api_consumer_credit_applications api_consumer_credit_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32095,6 +32204,22 @@ ALTER TABLE ONLY public.api_consumer_credit_applications
 
 ALTER TABLE ONLY public.api_consumer_credit_grants
     ADD CONSTRAINT api_consumer_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_meter_usage_minutes
+    ADD CONSTRAINT api_consumer_meter_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, meter, window_start);
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_pkey PRIMARY KEY (consumer_id);
 
 
 --
@@ -32167,6 +32292,14 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 ALTER TABLE ONLY public.api_consumer_spend_caps
     ADD CONSTRAINT api_consumer_spend_caps_pkey PRIMARY KEY (consumer_id);
+
+
+--
+-- Name: api_consumer_trials api_consumer_trials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_trials
+    ADD CONSTRAINT api_consumer_trials_pkey PRIMARY KEY (consumer_id);
 
 
 --
@@ -39268,6 +39401,13 @@ CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_cred
 
 
 --
+-- Name: api_consumer_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_overdue_holds_app_idx ON public.api_consumer_overdue_holds USING btree (account_id, app_id, due_at);
+
+
+--
 -- Name: api_consumer_plan_assignments_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -39282,17 +39422,17 @@ CREATE INDEX api_consumer_rate_cards_account_app_effective_idx ON public.api_con
 
 
 --
--- Name: api_consumer_rate_cards_default_effective_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: api_consumer_rate_cards_default_unit_effective_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX api_consumer_rate_cards_default_effective_uniq ON public.api_consumer_rate_cards USING btree (app_id, effective_from) WHERE (plan_id IS NULL);
+CREATE UNIQUE INDEX api_consumer_rate_cards_default_unit_effective_uniq ON public.api_consumer_rate_cards USING btree (app_id, unit, effective_from) WHERE (plan_id IS NULL);
 
 
 --
--- Name: api_consumer_rate_cards_plan_effective_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: api_consumer_rate_cards_plan_unit_effective_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, effective_from) WHERE (plan_id IS NOT NULL);
+CREATE UNIQUE INDEX api_consumer_rate_cards_plan_unit_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, unit, effective_from) WHERE (plan_id IS NOT NULL);
 
 
 --
@@ -50231,6 +50371,22 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_billing_policies api_consumer_billing_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_billing_policies
+    ADD CONSTRAINT api_consumer_billing_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_billing_policies api_consumer_billing_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_billing_policies
+    ADD CONSTRAINT api_consumer_billing_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_credit_applications api_consumer_credit_applications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50268,6 +50424,38 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 ALTER TABLE ONLY public.api_consumer_credit_grants
     ADD CONSTRAINT api_consumer_credit_grants_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_meter_usage_minutes
+    ADD CONSTRAINT api_consumer_meter_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_export_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_export_id_fkey FOREIGN KEY (export_id) REFERENCES public.usage_statement_invoice_exports(id) ON DELETE CASCADE;
 
 
 --
@@ -50388,6 +50576,22 @@ ALTER TABLE ONLY public.api_consumer_spend_caps
 
 ALTER TABLE ONLY public.api_consumer_spend_caps
     ADD CONSTRAINT api_consumer_spend_caps_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_trials api_consumer_trials_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_trials
+    ADD CONSTRAINT api_consumer_trials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_trials api_consumer_trials_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_trials
+    ADD CONSTRAINT api_consumer_trials_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

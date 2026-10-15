@@ -72,6 +72,52 @@ func TestVolumeStatementDelta(t *testing.T) {
 	if _, err := APIConsumerStatementDelta(cheaper, prior); !errors.Is(err, ErrAPIConsumerChargeDecreased) {
 		t.Fatalf("delta into a cheaper step: %v, want ErrAPIConsumerChargeDecreased", err)
 	}
+	// adr: 1312 — keeping the billed step bills the late units at its price.
+	locked := LockedVolumeSteps(cards, prior)
+	if locked[cards[0].ID] != 1 {
+		t.Fatalf("locked steps = %v, want step 1", locked)
+	}
+	kept, err := QuoteAPIConsumerUsageWith(cards, []state.APIConsumerUsageBucket{usageAt(m0, 7), usageAt(m1, 4)}, time.Time{},
+		QuoteOptions{VolumeSteps: locked})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, err = APIConsumerStatementDelta(kept, prior)
+	if err != nil || delta.BillableUnits != 4 || delta.AmountMillicents != 400 {
+		t.Fatalf("locked delta = %+v, %v; want 4 late units at 100", delta, err)
+	}
+}
+
+// adr: 1312 — a tenant volume month keeps its billed step when late usage
+// would move it to a cheaper one.
+func TestLockedTenantVolumeStep(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	app := uuid.NewString()
+	ladder := volumeCard(start).Tiers
+	card := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", Unit: state.PlatformTenantRateCardUnitRequest,
+		Tiers: ladder, TierMode: state.RateCardTierModeVolume, PriceMillicentsPerUnit: 10, EffectiveFrom: start}
+	minute := start.Add(time.Hour)
+	first := []state.APIConsumerUsageBucket{tenantBucket(app, "c1", minute, 7)}
+	rev1, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", first, first, nil,
+		[]state.PlatformTenantRateCard{card}, nil, nil)
+	if err != nil || rev1.AmountMillicents != 700 {
+		t.Fatalf("revision 1 = %+v, %v", rev1, err)
+	}
+	finalized := []state.PlatformTenantStatement{{Status: state.APIConsumerUsageStatementFinalized, PeriodStart: start, PeriodEnd: end,
+		BillableUnits: rev1.BillableUnits, AmountMillicents: rev1.AmountMillicents, Lines: rev1.Lines, Coverage: rev1.Coverage}}
+	late := []state.APIConsumerUsageBucket{tenantBucket(app, "c1", minute.Add(time.Minute), 5)}
+	month := append(first, late...)
+	if _, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 2, state.APIConsumerUsageStatementFinalized,
+		late, month, nil, []state.PlatformTenantRateCard{card}, finalized, nil); !errors.Is(err, ErrTenantChargeDecreased) {
+		t.Fatalf("exact re-pricing: %v, want ErrTenantChargeDecreased", err)
+	}
+	locked := LockedTenantVolumeSteps([]state.PlatformTenantRateCard{card}, finalized, start, end)
+	rev2, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 2, state.APIConsumerUsageStatementFinalized,
+		late, month, nil, []state.PlatformTenantRateCard{card}, finalized, nil, QuoteOptions{VolumeSteps: locked})
+	if err != nil || rev2.BillableUnits != 5 || rev2.AmountMillicents != 500 {
+		t.Fatalf("locked revision = %+v, %v; want 5 late units at 100", rev2, err)
+	}
 }
 
 // adr: 1310 — a tenant compute card prices each subject minute's compute
@@ -143,5 +189,26 @@ func TestBuildPlatformTenantMonthStatementWeightsSourceRoutes(t *testing.T) {
 	// Surface: 1 + 2 × 5 = 11; the JWT rule's unweighted route counts 2.
 	if rev.BillableUnits != 13 || rev.AmountMillicents != 1300 {
 		t.Fatalf("revision = %+v", rev)
+	}
+}
+
+// adr: 1314 — trial minutes are priced at zero and consume no included
+// units, so the allowance starts counting after the trial.
+func TestQuotePricesTrialMinutesFree(t *testing.T) {
+	cards := []state.APIConsumerRateCard{allowanceCard(allowanceStart, 100, 5)}
+	trialEnd := allowanceStart.Add(2 * time.Minute)
+	quote, err := QuoteAPIConsumerUsageWith(cards, []state.APIConsumerUsageBucket{
+		usageAt(allowanceStart, 7),
+		usageAt(allowanceStart.Add(time.Minute), 3),
+		usageAt(trialEnd, 8), // 5 free, 3 at 100
+	}, time.Time{}, QuoteOptions{TrialStart: allowanceStart, TrialEnd: trialEnd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.Buckets[0].Trial || !quote.Buckets[1].Trial || quote.Buckets[2].Trial || quote.Buckets[0].RateCardID == "" {
+		t.Fatalf("buckets = %+v", quote.Buckets)
+	}
+	if !slices.Equal(chargedUnits(quote), []int64{0, 0, 3}) || quote.AmountMillicents != 300 || !quote.Priced {
+		t.Fatalf("quote = %+v", quote)
 	}
 }

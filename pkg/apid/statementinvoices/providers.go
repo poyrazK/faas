@@ -34,6 +34,7 @@ type connection struct {
 	// (ADR-1311).
 	collection   string
 	daysUntilDue int
+	automaticTax bool
 }
 
 // provider is one billing system statements export to (ADR-1305).
@@ -168,7 +169,7 @@ func (p stripeProvider) push(ctx context.Context, conn connection, export *state
 	if export.ProviderInvoiceID == "" {
 		invoice, err := p.client.CreateInvoice(ctx, conn.key, "gregale-"+export.ID+"-invoice", stripeinvoice.InvoiceParams{
 			Customer: export.Customer, Currency: export.Currency, Description: periodDescription(src), Metadata: metadata,
-			CollectionMethod: stripeCollectionMethod(export.Collection), DaysUntilDue: export.DaysUntilDue})
+			CollectionMethod: stripeCollectionMethod(export.Collection), DaysUntilDue: export.DaysUntilDue, AutomaticTax: export.AutomaticTax})
 		if err != nil {
 			return stripeCallProblem(err)
 		}

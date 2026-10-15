@@ -381,6 +381,7 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 		}
 	}
 	if run.Includes(BillingRunSourceAppConsumers) {
+		m.discoverFeeConsumersLocked(run, add)
 		for _, bucket := range m.apiConsumerUsage {
 			consumer, ok := m.apiConsumers[bucket.ConsumerKey]
 			if !inMonth(bucket) || bucket.ConsumerKey == AnonymousConsumerKey || !ok || consumer.AppID != bucket.AppID {
@@ -405,6 +406,25 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 	run.DiscoveredAt = &discovered
 	m.billingRuns[runID] = run
 	return nil
+}
+
+// discoverFeeConsumersLocked adds the consumers of apps whose cards charge
+// a base fee or minimum (ADR-1316): they owe it without usage.
+func (m *MemStore) discoverFeeConsumersLocked(run BillingRun, add func(BillingRunItem)) {
+	feeApps := map[string]bool{}
+	for _, card := range m.apiConsumerRateCards {
+		if card.AccountID == run.AccountID && card.MonthlyFees() && card.EffectiveFrom.Before(run.PeriodEnd) {
+			feeApps[card.AppID] = true
+		}
+	}
+	for _, consumer := range m.apiConsumers {
+		if consumer.AccountID != run.AccountID || !feeApps[consumer.AppID] || !consumer.CreatedAt.Before(run.PeriodEnd) ||
+			(consumer.RevokedAt != nil && consumer.RevokedAt.Before(run.PeriodStart)) {
+			continue
+		}
+		add(BillingRunItem{SourceKind: StatementSourceAppConsumer, SourceID: consumer.ID, AppID: consumer.AppID,
+			ExternalRef: consumer.ExternalRef, Outcome: BillingRunItemPending})
+	}
 }
 
 func (m *MemStore) ListDueBillingRunItems(_ context.Context, runID, owner string, now time.Time, limit int) ([]BillingRunItem, error) {

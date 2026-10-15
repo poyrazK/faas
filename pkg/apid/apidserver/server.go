@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
+	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
@@ -84,6 +85,7 @@ type server struct {
 	billingRuns                            billingruns.Service       // ADR-1301; Host wired in newServer
 	consumerBilling                        consumerbilling.Service   // ADR-1304; Host wired in newServer
 	consumerCredits                        consumercredits.Service   // ADR-1306; Host wired in newServer
+	consumerControls                       consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
 	tenantPlans                            tenantplans.Service       // ADR-1307; Host wired in newServer
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
@@ -1205,6 +1207,7 @@ func newServerWithDeps(
 	s.billingRuns.Host = billingRunsHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
 	s.consumerCredits.Host = consumerCreditsHost{s}
+	s.consumerControls.Host = consumerControlsHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
@@ -1797,6 +1800,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.GetSpendCap))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.PutSpendCap))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.DeleteSpendCap))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTrial)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTrial))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTrial))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetBillingPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutBillingPolicy))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteBillingPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageAlerts))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageCompleteness))))

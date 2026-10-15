@@ -60,6 +60,11 @@ type APIConsumerPlanPolicy struct {
 	SpendCapMillicents int64
 	SpendDueMillicents int64
 	SpendCurrency      string
+	// OverdueBlocked is set, on any plan, while the consumer has an
+	// exported invoice its app's policy considers overdue (ADR-1315);
+	// OverdueDueAt is that invoice's due date.
+	OverdueBlocked bool
+	OverdueDueAt   time.Time
 }
 
 func (p *APIConsumerPlanPolicy) attachSpendCap(c APIConsumerSpendCap, at time.Time) {
@@ -316,6 +321,9 @@ func (m *MemStore) GetAPIConsumerPlanPolicy(_ context.Context, accountID, appID,
 	var policy APIConsumerPlanPolicy
 	if c, ok := m.apiConsumerSpendCaps[consumerID]; ok && c.AccountID == accountID {
 		policy.attachSpendCap(c, at)
+	}
+	if hold, ok := m.apiConsumerOverdueHold(consumerID); ok && hold.AccountID == accountID {
+		policy.OverdueBlocked, policy.OverdueDueAt = true, hold.DueAt
 	}
 	plan, ok := m.apiConsumerPlans[planID]
 	if planID == "" || !ok {

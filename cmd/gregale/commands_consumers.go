@@ -19,75 +19,88 @@ import (
 // consumerVerbPositionals is the dispatcher's source of truth for the
 // `gregale consumers` verb set and each verb's positional arguments.
 var consumerVerbPositionals = map[string][]string{
-	"list":               {"slug"},
-	"create":             {"slug"},
-	"info":               {"slug", "consumer-id"},
-	"revoke":             {"slug", "consumer-id"},
-	"keys":               {"slug", "consumer-id"},
-	"key-create":         {"slug", "consumer-id"},
-	"key-revoke":         {"slug", "consumer-id", "key-id"},
-	"usage":              {"slug", "consumer-id"},
-	"quote":              {"slug", "consumer-id"},
-	"completeness":       {"slug", "consumer-id"},
-	"rate-cards":         {"slug"},
-	"rate-card-create":   {"slug"},
-	"statements":         {"slug", "consumer-id"},
-	"statement-draft":    {"slug", "consumer-id"},
-	"statement-show":     {"slug", "consumer-id", "statement-id"},
-	"statement-finalize": {"slug", "consumer-id", "statement-id"},
-	"statement-handoff":  {"slug", "consumer-id", "statement-id"},
-	"statement-export":   {"slug", "consumer-id", "statement-id"},
-	"plans":              {"slug"},
-	"plan-create":        {"slug"},
-	"plan-update":        {"slug"},
-	"set-plan":           {"slug", "consumer-id"},
-	"plan-history":       {"slug", "consumer-id"},
-	"usage-alerts":       {"slug", "consumer-id"},
-	"credits":            {"slug", "consumer-id"},
-	"credit-grant":       {"slug", "consumer-id"},
-	"credit-void":        {"slug", "consumer-id", "credit-id"},
-	"spend-cap":          {"slug", "consumer-id"},
-	"spend-cap-set":      {"slug", "consumer-id"},
-	"spend-cap-delete":   {"slug", "consumer-id"},
+	"list":                  {"slug"},
+	"create":                {"slug"},
+	"info":                  {"slug", "consumer-id"},
+	"revoke":                {"slug", "consumer-id"},
+	"keys":                  {"slug", "consumer-id"},
+	"key-create":            {"slug", "consumer-id"},
+	"key-revoke":            {"slug", "consumer-id", "key-id"},
+	"usage":                 {"slug", "consumer-id"},
+	"quote":                 {"slug", "consumer-id"},
+	"completeness":          {"slug", "consumer-id"},
+	"rate-cards":            {"slug"},
+	"rate-card-create":      {"slug"},
+	"statements":            {"slug", "consumer-id"},
+	"statement-draft":       {"slug", "consumer-id"},
+	"statement-show":        {"slug", "consumer-id", "statement-id"},
+	"statement-finalize":    {"slug", "consumer-id", "statement-id"},
+	"statement-handoff":     {"slug", "consumer-id", "statement-id"},
+	"statement-export":      {"slug", "consumer-id", "statement-id"},
+	"plans":                 {"slug"},
+	"plan-create":           {"slug"},
+	"plan-update":           {"slug"},
+	"set-plan":              {"slug", "consumer-id"},
+	"plan-history":          {"slug", "consumer-id"},
+	"usage-alerts":          {"slug", "consumer-id"},
+	"credits":               {"slug", "consumer-id"},
+	"credit-grant":          {"slug", "consumer-id"},
+	"credit-void":           {"slug", "consumer-id", "credit-id"},
+	"spend-cap":             {"slug", "consumer-id"},
+	"spend-cap-set":         {"slug", "consumer-id"},
+	"spend-cap-delete":      {"slug", "consumer-id"},
+	"trial":                 {"slug", "consumer-id"},
+	"trial-set":             {"slug", "consumer-id"},
+	"trial-end":             {"slug", "consumer-id"},
+	"billing-policy":        {"slug"},
+	"billing-policy-set":    {"slug"},
+	"billing-policy-delete": {"slug"},
+	"overdue-holds":         {"slug"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
 type consumerFlags struct {
-	externalRef, name, scopes, expires string
-	since, until                       string
-	currency, effectiveFrom            string
-	priceMillicents, includedUnits     int64
-	periodStart, periodEnd, month      string
-	invoiceID                          string
-	customer, provider                 string
-	amountMillicents                   int64
-	monthlyCapMillicents               int64
-	note, unit, tierMode               string
-	tiers                              multiFlag
-	weights                            multiFlag
-	plan                               string
-	maxPerMinute, maxPerMonth          int64
-	alertAt                            string
+	externalRef, name, scopes, expires   string
+	since, until                         string
+	currency, effectiveFrom              string
+	priceMillicents, includedUnits       int64
+	periodStart, periodEnd, month        string
+	invoiceID                            string
+	customer, provider                   string
+	amountMillicents                     int64
+	monthlyCapMillicents                 int64
+	note, unit, tierMode                 string
+	trialDays                            int
+	endsAt                               string
+	blockOverdueAfterDays                int
+	baseFeeMillicents, minimumMillicents int64
+	tiers                                multiFlag
+	weights                              multiFlag
+	plan                                 string
+	maxPerMinute, maxPerMonth            int64
+	alertAt                              string
 }
 
 var consumerVerbFlags = map[string][]string{
-	"create":            {"external-ref", "name"},
-	"key-create":        {"name", "scopes", "expires"},
-	"usage":             {"since", "until"},
-	"quote":             {"since", "until"},
-	"completeness":      {"period-start", "period-end", "month"},
-	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode"},
-	"plan-create":       {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
-	"plan-update":       {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
-	"set-plan":          {"plan", "effective-from"},
-	"statement-draft":   {"period-start", "period-end", "month"},
-	"statement-handoff": {"invoice-id"},
-	"statement-export":  {"customer", "provider"},
-	"credit-grant":      {"currency", "amount-millicents", "expires", "note"},
-	"spend-cap-set":     {"currency", "monthly-cap-millicents"},
+	"create":             {"external-ref", "name", "trial-days"},
+	"trial-set":          {"days", "ends-at"},
+	"billing-policy-set": {"block-overdue-after-days"},
+	"key-create":         {"name", "scopes", "expires"},
+	"usage":              {"since", "until"},
+	"quote":              {"since", "until"},
+	"completeness":       {"period-start", "period-end", "month"},
+	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents"},
+	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
+	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
+	"set-plan":           {"plan", "effective-from"},
+	"statement-draft":    {"period-start", "period-end", "month"},
+	"statement-handoff":  {"invoice-id"},
+	"statement-export":   {"customer", "provider"},
+	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
+	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -112,8 +125,14 @@ func cmdConsumers(args []string) int {
 	fs.Int64Var(&f.amountMillicents, "amount-millicents", 0, "prepaid credit in millicents; 100000 = 1.00 (credit-grant)")
 	fs.Int64Var(&f.monthlyCapMillicents, "monthly-cap-millicents", -1, "monthly spend cap in millicents after prepaid credit; 0 allows prepaid usage only (spend-cap-set)")
 	fs.StringVar(&f.note, "note", "", "note shown with the credit (credit-grant)")
-	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second or response_megabyte (rate-card-create)")
+	fs.IntVar(&f.trialDays, "trial-days", 0, "free trial length in days from the next minute (create)")
+	fs.IntVar(&f.trialDays, "days", 0, "trial length in days from its start (trial-set)")
+	fs.StringVar(&f.endsAt, "ends-at", "", "trial end, RFC3339 UTC minute (trial-set)")
+	fs.IntVar(&f.blockOverdueAfterDays, "block-overdue-after-days", -1, "refuse consumers whose invoice is unpaid this many days after its due date (billing-policy-set)")
+	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second, response_megabyte or app:<meter> (rate-card-create)")
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume (rate-card-create)")
+	fs.Int64Var(&f.baseFeeMillicents, "base-fee-millicents", 0, "fixed charge per consumer per UTC month; 100000 = 1.00 (rate-card-create)")
+	fs.Int64Var(&f.minimumMillicents, "minimum-millicents", 0, "minimum usage charge per consumer per UTC month, topped up when usage costs less (rate-card-create)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
@@ -185,12 +204,15 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 	if req, handled, err := buildConsumerCreditRequest(verb, f); handled {
 		return req, err
 	}
+	if req, handled, err := buildConsumerControlRequest(verb, f); handled {
+		return req, err
+	}
 	switch verb {
 	case "create":
 		if strings.TrimSpace(f.externalRef) == "" || strings.TrimSpace(f.name) == "" {
 			return nil, errors.New("--external-ref and --name are required")
 		}
-		return api.CreateAPIConsumerRequest{ExternalRef: f.externalRef, Name: f.name}, nil
+		return api.CreateAPIConsumerRequest{ExternalRef: f.externalRef, Name: f.name, TrialDays: f.trialDays}, nil
 	case "plan-create":
 		if strings.TrimSpace(f.name) == "" {
 			return nil, errors.New("--name is required")
@@ -257,6 +279,7 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 		return req, err
 	}
 	req.Unit, req.TierMode = strings.TrimSpace(f.unit), strings.TrimSpace(f.tierMode)
+	req.BaseFeeMillicentsPerMonth, req.MinimumMillicentsPerMonth = f.baseFeeMillicents, f.minimumMillicents
 	req.RouteWeights, err = parseRouteWeights(f.weights)
 	return req, err
 }
@@ -409,6 +432,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 		return out, err
 	}
 	if out, handled, err := callConsumerCredits(ctx, client, verb, args, request); handled {
+		return out, err
+	}
+	if out, handled, err := callConsumerControls(ctx, client, verb, args, request); handled {
 		return out, err
 	}
 	switch verb {

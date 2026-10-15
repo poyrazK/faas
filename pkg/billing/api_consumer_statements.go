@@ -141,9 +141,9 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 	}
 	delta := APIConsumerUsageQuote{Currency: current.Currency, Buckets: make([]APIConsumerUsageChargeBucket, 0, len(current.Buckets))}
 	for _, bucket := range current.Buckets {
-		minute := bucket.WindowStart.UTC().Unix()
-		prior := covered[minute]
-		delete(covered, minute)
+		key := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit}
+		prior := covered[key]
+		delete(covered, key)
 		if bucket.BillableUnits < prior.units || bucket.ChargedUnits < prior.charged {
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
@@ -170,14 +170,53 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 	return delta, nil
 }
 
-func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[int64]statementCoverage, error) {
-	covered := map[int64]statementCoverage{}
+// LockedVolumeSteps returns, for each volume card (ADR-1309) its finalized
+// revisions billed, the ladder step they billed it at (ADR-1312). Pricing a
+// period's late usage at that step keeps an adjustment from lowering what
+// finalized revisions charged; callers use it only when exact re-rating
+// would.
+func LockedVolumeSteps(cards []state.APIConsumerRateCard, revisions []state.APIConsumerUsageStatement) map[string]int {
+	volume := map[string]bool{}
+	for _, card := range cards {
+		volume[card.ID] = len(card.Tiers) > 0 && card.TierMode == state.RateCardTierModeVolume
+	}
+	net := map[string][]int64{}
 	for _, statement := range revisions {
 		if statement.Status != state.APIConsumerUsageStatementFinalized {
 			continue
 		}
 		for _, bucket := range statement.Buckets {
-			minute := bucket.WindowStart.UTC().Unix()
+			if volume[bucket.RateCardID] && bucket.TierUnits != nil {
+				net[bucket.RateCardID] = addTierUnits(net[bucket.RateCardID], bucket.TierUnits)
+			}
+		}
+	}
+	locked := map[string]int{}
+	for cardID, units := range net {
+		for step := len(units) - 1; step >= 0; step-- {
+			if units[step] > 0 {
+				locked[cardID] = step
+				break
+			}
+		}
+	}
+	return locked
+}
+
+// coverageKey is one minute of one price stream (ADR-1317).
+type coverageKey struct {
+	minute int64
+	unit   string
+}
+
+func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[coverageKey]statementCoverage, error) {
+	covered := map[coverageKey]statementCoverage{}
+	for _, statement := range revisions {
+		if statement.Status != state.APIConsumerUsageStatementFinalized {
+			continue
+		}
+		for _, bucket := range statement.Buckets {
+			minute := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit}
 			prior := covered[minute]
 			if prior.units > maxInt64-bucket.BillableUnits || prior.charged > maxInt64-bucket.Charged() {
 				return nil, fmt.Errorf("billing: API consumer statement coverage overflow")

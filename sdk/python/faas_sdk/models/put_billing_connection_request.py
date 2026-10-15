@@ -30,6 +30,9 @@ class PutBillingConnectionRequest:
     Lago charge through its payment provider. Paddle supports none only."""
     days_until_due: int | Unset = 30
     """With collection send, days until a sent invoice is due."""
+    automatic_tax: bool | Unset = False
+    """Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer
+    addresses."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +45,8 @@ class PutBillingConnectionRequest:
             collection = self.collection
 
         days_until_due = self.days_until_due
+
+        automatic_tax = self.automatic_tax
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -56,6 +61,8 @@ class PutBillingConnectionRequest:
             field_dict["collection"] = collection
         if days_until_due is not UNSET:
             field_dict["days_until_due"] = days_until_due
+        if automatic_tax is not UNSET:
+            field_dict["automatic_tax"] = automatic_tax
 
         return field_dict
 
@@ -75,11 +82,14 @@ class PutBillingConnectionRequest:
 
         days_until_due = d.pop("days_until_due", UNSET)
 
+        automatic_tax = d.pop("automatic_tax", UNSET)
+
         put_billing_connection_request = cls(
             secret_key=secret_key,
             api_url=api_url,
             collection=collection,
             days_until_due=days_until_due,
+            automatic_tax=automatic_tax,
         )
 
         put_billing_connection_request.additional_properties = d
