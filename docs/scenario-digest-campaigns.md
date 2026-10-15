@@ -309,3 +309,54 @@ Lint with both reports shows requirement results and
 validate requirement definitions. Preview stays informational; a gated
 comparison returns 2 when any explicit requirement fails. Existing policies
 without `required_coverage` retain their behavior.
+
+## Coverage-driven campaign planning
+
+```sh
+gregale test policy plan --policy regression-policy.yaml --manifest gregale-test.yaml
+gregale test policy plan --policy regression-policy.yaml --manifest gregale-test.yaml --from current.json --baseline previous.json
+```
+
+The read-only planner emits informational JSON. It reads and expands the
+manifest using the existing manifest reader, including assertion profiles,
+outage cycles, seeded campaigns, and fault sweeps. It never invokes setup,
+application commands, provisioning, or test execution.
+
+Each required coverage entry is matched to native lifecycle profiles and exact
+manifest case/configuration fingerprints. With no profile selector, the plan
+includes warm, cold, and restored. Existing evidence-covered runs are counted
+only for matching fingerprints and contexts. Output shows the minimum, covered
+counts on each side, additional leaf runs, and repetitions needed after
+accounting for resilience.runs. Without reports, both sides start at zero.
+The baseline option requires a current report.
+
+Suggestions are argument arrays, labeled baseline or current. A command's
+repeat count never exceeds 20. Larger deficits produce separate batches; at
+most 20 commands per side/context are shown, with remaining repetitions
+reported explicitly. Run suggestions on the intended source revision for that
+side. Use fresh report paths, then combine the receipt arrays with that side's
+existing report before reevaluating coverage. Planning does not update reports.
+
+The runner executes a full scenario matrix, even when an entry names one
+case. Suggestions for different entries are independent and may duplicate work;
+they are not a minimal campaign or a total cost estimate. Existing resource
+guards, budgets, and cleanup rules still apply to execution. Collecting new
+evidence and keeping baseline provenance are separate from reviewing this plan.
+
+Entry statuses are covered, needs_runs, unsatisfiable, unsupported,
+needs_review, or unavailable_configuration. Absent scenarios, steps, phases,
+assertions, cases, and explicitly requested fingerprints are flagged.
+Historical observed contexts that cannot be regenerated from this manifest
+remain visible and require their original manifest. Local/simulated coverage
+planning is unsupported because current digest fingerprints describe native
+runs. Resource assertion placement (connection leaks and pool exhaustion)
+requires manual review and receives no execution suggestion.
+
+Declaration checks establish that evidence can be requested, not that runtime
+traffic or fault matches will satisfy coverage. A required phase uses its
+exact name and selected staged step; phase-only checks do not invent assertion
+budgets. Existing coverage checks remain the source of truth after execution.
+
+Planning returns 0 even with blocked entries, like preview. Invalid policies,
+manifests, reports, options, or stdout errors return 1. No requirements produces
+an empty plan. Shell output redirection must use a separate file.
