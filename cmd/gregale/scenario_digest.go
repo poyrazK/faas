@@ -14,6 +14,8 @@ import (
 
 func cmdTestDigest(args []string) int {
 	fs := newFlagSet("test digest", flag.ContinueOnError)
+	baseline := fs.String("baseline", "", "optional previous JSON report")
+	baselineEvidence := fs.String("baseline-evidence-url", "", "HTTPS URL of the baseline HTML report")
 	from := fs.String("from", "", "saved JSON scenario report")
 	markdown := fs.String("markdown", "", "write a Markdown CI digest")
 	evidence := fs.String("evidence-url", "", "public HTTPS URL of the matching HTML report")
@@ -39,6 +41,10 @@ func cmdTestDigest(args []string) int {
 		return printErr("Could not read scenario report", err)
 	}
 	body := renderTestDigest(receipts, *limit, origin)
+	body, err = appendTestDigestBaseline(body, receipts, *baseline, *baselineEvidence, *markdown, origin, *limit)
+	if err != nil {
+		return printErr("Could not compare baseline", err)
+	}
 	if err := os.WriteFile(*markdown, []byte(body), 0o600); err != nil {
 		return printErr("Could not write digest", err)
 	}

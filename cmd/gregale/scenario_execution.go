@@ -160,6 +160,7 @@ func executeTestRunPlan(ctx context.Context, client *Client, plan testRunPlan) t
 				receipt.Replay.Version = testFaultReplayVersion(receipt.Replay)
 			}
 		}
+		recordTestDigestConfiguration(&receipt, plan)
 		return receipt
 	}
 }

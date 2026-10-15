@@ -199,6 +199,7 @@ type testRunReceipt struct {
 	ReplayOf               string                             `json:"replay_of,omitempty"`
 	FailureDiagnostics     *testRecoveryFailureDiagnostics    `json:"failure_diagnostics,omitempty"`
 	RecoveryRegression     *testRecoveryRegressionEvidence    `json:"recovery_regression,omitempty"`
+	ConfigurationSHA256    string                             `json:"configuration_sha256,omitempty"`
 	RecoveryWorkloadSHA256 string                             `json:"recovery_workload_sha256,omitempty"`
 	SweepRegression        *testSweepRegressionEvidence       `json:"sweep_regression,omitempty"`
 	Sweep                  *testFaultSweepSetting             `json:"sweep,omitempty"`

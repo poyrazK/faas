@@ -2161,6 +2161,51 @@ This example assumes the preceding test step wrote `results.json`. It preserves
 that step's failure status. Replay path placeholders still need the original
 JSON report and scenario manifest.
 
+### Compare failure groups with a saved CI baseline
+
+```sh
+gregale test digest --from current.json --baseline previous.json --markdown summary.md
+```
+
+The digest appends groups that are `newly_observed`, `persisting`,
+`no_longer_observed`, or `not_comparable`. It shows both failed/executed
+sample counts, comparable frequency changes in percentage points, and baseline
+and current worst observed values with their associated limits. Counts from
+multiple top-level receipts in the same context are combined. These are
+descriptive first-recorded-failure frequencies, not statistical significance
+or a new CI pass/fail gate.
+
+A missing group is not automatically resolved. Both reports must execute the
+same scenario/profile/engine/case and include the selected step, phase and
+assertion. A phase must have positive recorded actual duration. Fault groups
+also require the same captured fault-kind signature, complete rule-match
+records, positive matches and the configured match minimums. If a group is
+absent on one side, its actual assertion must be recorded as passing in every
+executed run of that context. This prevents an earlier failure from hiding an
+unpassed later assertion. Missing contexts, skipped-only cases, absent phases,
+assertions or match evidence are not comparable.
+
+A context must have one matching configuration fingerprint across both reports.
+Native run receipts now retain `configuration_sha256` on successful as well as
+failed runs without making ordinary successful runs replayable. Reduced replays
+use their reduced configuration digest. Older replay metadata can supply a
+fallback fingerprint; older passing reports without one remain not comparable.
+Contexts mixing multiple fingerprints, including mixed seed configurations,
+are conservatively not comparable in this first version. Changed thresholds,
+traffic or fault policies must not silently appear as application improvements.
+
+Optional `--evidence-url` and `--baseline-evidence-url` link to the matching
+current and baseline HTML reports. The baseline URL requires `--baseline` and
+has the same HTTPS/path restrictions as the current URL. Each changed group
+retains supporting evidence references and an available replay example, using
+the baseline selector when no current failed occurrence exists. Replace the
+report/manifest path placeholders with the files from the indicated side.
+
+New groups appear first, then persisting groups ordered by frequency increase,
+groups no longer observed, and groups lacking comparability. Category totals
+remain visible even when `--limit` omits detailed rows. Neither source report
+may alias the output. Existing digests without `--baseline` are unchanged.
+
 ### Recovery regressions between CI runs
 
 Set a recovery regression budget on a resilience scenario:
