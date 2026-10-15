@@ -148,6 +148,14 @@ func (m *MemStore) StampOperationExecutionAttempt(_ context.Context, id, instanc
 	}
 	inv.InstanceID = instanceID
 	m.invocations[id] = inv
+	data := m.operationMemoryLocked()
+	key := operationAttemptKey{operation: data.executions[id], generation: data.generations[id], attempt: attempt}
+	if data.attemptInstances == nil {
+		data.attemptInstances = map[operationAttemptKey]string{}
+	}
+	if _, placed := data.attemptInstances[key]; !placed {
+		data.attemptInstances[key] = instanceID
+	}
 	return nil
 }
 

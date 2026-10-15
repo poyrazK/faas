@@ -2199,6 +2199,17 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_attempt_instances",
+    "columns": [
+      "attempt",
+      "generation",
+      "instance_id",
+      "operation_id",
+      "placed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_code_pins",
     "columns": [
       "app_id",

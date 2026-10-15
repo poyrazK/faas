@@ -32,6 +32,13 @@ type operationMemory struct {
 	workflowStates         map[string]operationWorkflowStateRecord
 	workflowStateReports   map[string]operationWorkflowStateReceipt
 	webhooks               *operationWebhookMemory
+	attemptInstances       map[operationAttemptKey]string
+}
+
+// operationAttemptKey names one HTTP attempt of one execution generation.
+type operationAttemptKey struct {
+	operation           string
+	generation, attempt int
 }
 
 func (m *MemStore) operationMemoryLocked() *operationMemory {

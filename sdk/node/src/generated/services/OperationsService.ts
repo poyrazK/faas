@@ -43,6 +43,7 @@ import type { OperationSubjectSignalResponse } from '../models/OperationSubjectS
 import type { OperationSubmissionLookupRequest } from '../models/OperationSubmissionLookupRequest.js';
 import type { OperationSubmissionLookupResponse } from '../models/OperationSubmissionLookupResponse.js';
 import type { OperationTenantIdentity } from '../models/OperationTenantIdentity.js';
+import type { OperationTimelineResponse } from '../models/OperationTimelineResponse.js';
 import type { OperationWorkflowActionPreviewRequest } from '../models/OperationWorkflowActionPreviewRequest.js';
 import type { OperationWorkflowActionPreviewResponse } from '../models/OperationWorkflowActionPreviewResponse.js';
 import type { OperationWorkflowArtifactResponse } from '../models/OperationWorkflowArtifactResponse.js';
@@ -115,6 +116,65 @@ export class OperationsService {
       },
       query: {
         'after': after,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one chronological history of an operation.
+   * Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own position, so pages never skip or repeat a record while the operation runs. Attempt entries are snapshots at read time. HTTP attempts carry an instance log window for the archived log route; workflow step attempts do not. Platform tenants read events instead.
+   * @returns OperationTimelineResponse Chronological timeline page with a continuation cursor while records remain.
+   * @throws ApiError
+   */
+  public static getOperationTimeline({
+    slug,
+    id,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Maximum timeline entries in this page.
+     */
+    limit?: number,
+    /**
+     * Operation-bound continuation cursor from next_cursor.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationTimelineResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operations/{id}/timeline',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

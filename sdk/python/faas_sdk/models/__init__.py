@@ -2405,6 +2405,8 @@ from .operation_approval_spec_approver import OperationApprovalSpecApprover
 from .operation_artifact_request import OperationArtifactRequest
 from .operation_artifact_upload_request import OperationArtifactUploadRequest
 from .operation_artifact_upload_response import OperationArtifactUploadResponse
+from .operation_attempt_logs import OperationAttemptLogs
+from .operation_attempt_logs_correlation import OperationAttemptLogsCorrelation
 from .operation_business_compensation import OperationBusinessCompensation
 from .operation_business_compensation_payload import OperationBusinessCompensationPayload
 from .operation_business_compensation_payload_kind import OperationBusinessCompensationPayloadKind
@@ -2513,6 +2515,12 @@ from .operation_submission_scope import OperationSubmissionScope
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_timeline_attempt import OperationTimelineAttempt
+from .operation_timeline_attempt_outcome import OperationTimelineAttemptOutcome
+from .operation_timeline_entry import OperationTimelineEntry
+from .operation_timeline_entry_kind import OperationTimelineEntryKind
+from .operation_timeline_response import OperationTimelineResponse
+from .operation_timeline_response_state import OperationTimelineResponseState
 from .operation_usage import OperationUsage
 from .operation_waiting_state import OperationWaitingState
 from .operation_waiting_state_approver import OperationWaitingStateApprover
@@ -7055,6 +7063,8 @@ __all__ = (
     "OperationArtifactRequest",
     "OperationArtifactUploadRequest",
     "OperationArtifactUploadResponse",
+    "OperationAttemptLogs",
+    "OperationAttemptLogsCorrelation",
     "OperationBusinessCompensation",
     "OperationBusinessCompensationPayload",
     "OperationBusinessCompensationPayloadKind",
@@ -7163,6 +7173,12 @@ __all__ = (
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationTimelineAttempt",
+    "OperationTimelineAttemptOutcome",
+    "OperationTimelineEntry",
+    "OperationTimelineEntryKind",
+    "OperationTimelineResponse",
+    "OperationTimelineResponseState",
     "OperationUsage",
     "OperationWaitingState",
     "OperationWaitingStateApprover",

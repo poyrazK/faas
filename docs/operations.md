@@ -642,6 +642,29 @@ again. An identical accepted recovery request remains replayable with its origin
 revision. Completion notification recovery stays independent.
 See [ADR-660](adr/660-operation-recovery-inspection.md).
 
+## Read one operation's history
+
+`GET /v1/apps/{slug}/operations/{id}/timeline` merges an Operation's events, HTTP
+execution attempts, workflow step attempts and completion delivery attempts into
+one page ordered by time. It requires account read scope and MFA; platform tenants
+read events instead.
+
+```sh
+gregale customer-operations timeline OPERATION_ID --app exports --all
+gregale customer-operations timeline OPERATION_ID --app exports --all --logs
+```
+
+Each source pages after its own position, so following `next_cursor` never skips
+or repeats a record while the Operation runs. Attempt entries are read-time
+snapshots: a running attempt is not repeated once it ends, so follow live work
+with events. Each HTTP attempt names the instance that ran it, its time window
+and the UTC archive days to read with `gregale logs --archive`. That is an
+instance window, not request-exact correlation. Workflow step attempts carry
+timing and outcome only, because the gateway chooses their instance. When event
+history has expired, `events_expired` is set and attempts and deliveries remain.
+Attempt history is kept for at most 30 days. See
+[ADR-1195](adr/1195-unified-operation-timeline.md).
+
 ## Bounded preview admission
 
 The local continuation adds the operator TOML setting
