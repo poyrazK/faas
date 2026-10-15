@@ -332,6 +332,19 @@ taken while this request was in flight"
 Streaming responses and WebSocket upgrades are long-lived by design and are
 never reported.
 
+### Automatic CPU capture when an instance uses its whole CPU limit
+
+When an instance's CPU use stays at 90% or more of its CPU limit for 30
+seconds, Gregale captures 10 seconds of CPU from it automatically
+(`trigger: cpu_saturation`, at most once per app every 15 minutes). The
+capture records how hard and how long the instance was pinned, such as
+`CPU use at 98% of the 500m limit for 30s`, and its CPU profile shows where
+that time went.
+
+The limit is the app's sustained CPU limit (`cpu_millicores`). The extra CPU
+granted while an instance starts never counts, and a dip shorter than 5
+seconds does not restart the 30 seconds.
+
 ### Get notified about automatic captures
 
 Captures that Gregale takes on its own, and captures followed by an OOM
@@ -344,7 +357,7 @@ The same captures are sent to app webhooks:
 
 | Event | Sent when |
 |---|---|
-| `profile.capture_ready` | an automatic capture (memory pressure, slow request), or any capture linked to an OOM kill, finishes with at least one profile |
+| `profile.capture_ready` | an automatic capture (memory pressure, slow request, CPU saturation), or any capture linked to an OOM kill, finishes with at least one profile |
 | `profile.capture_oom_linked` | an OOM kill is linked to a capture that had already finished |
 
 Each event is sent once per capture. A webhook with no event filter receives
@@ -461,9 +474,10 @@ records accepted, duplicate, invalid, limited and unavailable uploads. Add a
 local scrape or an existing private metrics tunnel for this loopback endpoint.
 
 On-demand captures need no Pyroscope backend. Set `FAAS_PROFILING_ON_DEMAND=1`
-for apid (captures API) and imaged (stamps dormant collectors into new
-deployments), apply the `profile_captures` migration, and release guest-init,
-vmmd, schedd and the managed runtime bases together. Existing deployments gain
+for apid (captures API), imaged (stamps dormant collectors into new
+deployments), gatewayd-internal (slow-request captures) and schedd
+(CPU-saturation captures), apply the `profile_captures` migrations, and release
+guest-init, vmmd, schedd and the managed runtime bases together. Existing deployments gain
 collectors on their next deploy. Continuous heap profiles additionally need
 the Pyroscope backend above; they are stored as
 `memory:inuse_space:bytes:space:bytes` under the same tenant selectors.

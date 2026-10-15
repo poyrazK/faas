@@ -8,13 +8,18 @@ import (
 )
 
 // Capture triggers (ADR-1155): a person or API client, guest-init reporting
-// memory pressure on the instance, or the gateway reporting a slow request.
+// memory pressure on the instance, the gateway reporting a slow request, or
+// schedd seeing the instance use its whole CPU quota.
 const (
 	ProfileCaptureTriggerManual         = "manual"
 	ProfileCaptureTriggerMemoryPressure = "memory_pressure"
 	// ProfileCaptureTriggerSlowRequest marks a stack snapshot taken while a
 	// request was in flight longer than ProfileCaptureSlowRequestAfter.
 	ProfileCaptureTriggerSlowRequest = "slow_request"
+	// ProfileCaptureTriggerCPUSaturation marks a CPU capture taken after the
+	// instance used ProfileCPUSaturationPercent of its CPU quota for
+	// ProfileCPUSaturationAfter.
+	ProfileCaptureTriggerCPUSaturation = "cpu_saturation"
 )
 
 // On-demand profile capture statuses (ADR-1155).
@@ -79,9 +84,9 @@ type ProfileCapture struct {
 	Kinds               []string `json:"kinds"`
 	DurationSeconds     int      `json:"duration_seconds"`
 	RequestedInstanceID string   `json:"requested_instance_id,omitempty"`
-	// Trigger is manual, memory_pressure or slow_request; TriggerDetail
-	// explains an automatic capture ("guest memory available fell to 31 MiB
-	// of 246 MiB").
+	// Trigger is manual, memory_pressure, slow_request or cpu_saturation;
+	// TriggerDetail explains an automatic capture ("guest memory available
+	// fell to 31 MiB of 246 MiB").
 	Trigger       string                  `json:"trigger,omitempty"`
 	TriggerDetail string                  `json:"trigger_detail,omitempty"`
 	InstanceID    string                  `json:"instance_id,omitempty"`

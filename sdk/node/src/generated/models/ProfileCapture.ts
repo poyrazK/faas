@@ -14,9 +14,9 @@ export type ProfileCapture = {
   duration_seconds: number;
   requested_instance_id?: string;
   /**
-   * Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory
+   * Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds.
    */
-  trigger?: 'manual' | 'memory_pressure' | 'slow_request';
+  trigger?: 'manual' | 'memory_pressure' | 'slow_request' | 'cpu_saturation';
   /**
    * The x-faas-request-id of the in-flight request that started a slow_request capture.
    */
@@ -36,7 +36,7 @@ export type ProfileCapture = {
   reason?: string;
   profiles: Array<ProfileCaptureProfile>;
   /**
-   * The capture ended early
+   * The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.
    */
   partial?: boolean;
   /**

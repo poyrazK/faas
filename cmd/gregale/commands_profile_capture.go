@@ -136,6 +136,9 @@ func printProfileCapture(c api.ProfileCapture) int {
 			_, err = fmt.Fprintf(osStdout, "Request: gregale debug requests show <slug> %s\n", c.RequestID)
 		}
 	}
+	if err == nil && c.Trigger == api.ProfileCaptureTriggerCPUSaturation {
+		_, err = fmt.Fprintf(osStdout, "Captured automatically on CPU saturation: %s\n", c.TriggerDetail)
+	}
 	if err == nil && c.InstanceID != "" {
 		_, err = fmt.Fprintf(osStdout, "Instance %s, deployment %s, %d instrumented process(es)\n", c.InstanceID, c.DeploymentID, c.Processes)
 	}

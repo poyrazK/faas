@@ -1,8 +1,9 @@
 from typing import Literal
 
-ProfileCaptureTrigger = Literal["manual", "memory_pressure", "slow_request"]
+ProfileCaptureTrigger = Literal["cpu_saturation", "manual", "memory_pressure", "slow_request"]
 
 PROFILE_CAPTURE_TRIGGER_VALUES: set[ProfileCaptureTrigger] = {
+    "cpu_saturation",
     "manual",
     "memory_pressure",
     "slow_request",

@@ -75,6 +75,8 @@ func ProfileCaptureTriggerLabel(trigger string) string {
 		return "memory pressure"
 	case api.ProfileCaptureTriggerSlowRequest:
 		return "slow request"
+	case api.ProfileCaptureTriggerCPUSaturation:
+		return "CPU saturation"
 	}
 	return "manual"
 }

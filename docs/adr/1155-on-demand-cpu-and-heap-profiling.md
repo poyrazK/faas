@@ -229,6 +229,32 @@ introduced. Volume stays bounded by the capture quotas:
 one automatic capture per app and trigger per minimum interval, 60 captures
 per account per hour.
 
+## Amendment: automatic CPU capture on CPU saturation
+
+Memory and latency incidents leave a capture; a runaway loop or a traffic
+spike that holds an instance at its CPU limit did not. schedd's instance
+stats poller already receives each instance's host cgroup CPU use from
+vmmd, and schedd's admission ledger holds each instance's sustained CPU quota
+(`cpu_millicores`), so the check reads neither the store nor the guest:
+
+- An instance is saturated while its CPU use is at least
+  `ProfileCPUSaturationPercent` (90%) of its sustained quota. A startup
+  boost makes the quota unknown, so boosted instances never count. A dip
+  shorter than `ProfileCPUSaturationGrace` (5 s) keeps the episode; a
+  longer dip, an unknown quota or the instance leaving the snapshot ends it.
+- An episode lasting `ProfileCPUSaturationAfter` (30 s) calls schedd once,
+  which queues a CPU capture of `ProfileCaptureCPUSaturationDuration`
+  (10 s) with trigger `cpu_saturation`, at most once per app per
+  `ProfileCaptureCPUSaturationMinInterval` (15 min), under the same account
+  quota and single-active rules as every capture. The capture is announced
+  like the other automatic captures.
+- schedd enables this only with `FAAS_PROFILING_ON_DEMAND=1`.
+
+The quota is the one admitted with the instance: a live CPU-limit change
+applies to instances started afterwards. On a multi-node control plane, an
+instance on a node whose schedd did not admit it has no quota there and is
+not checked.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

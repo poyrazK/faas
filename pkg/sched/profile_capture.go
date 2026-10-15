@@ -94,6 +94,21 @@ func (e *Engine) QueueSlowRequestCapture(ctx context.Context, instanceID, reques
 	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureSlowRequestMinInterval)
 }
 
+// QueueCPUSaturationCapture turns an instance the stats poller saw at its
+// CPU quota for ProfileCPUSaturationAfter into one automatic CPU capture of
+// that instance (ADR-1155), so the profile shows what used the CPU.
+func (e *Engine) QueueCPUSaturationCapture(ctx context.Context, instanceID string, usedMillicores, quotaMillicores int, sustained time.Duration) (bool, string, error) {
+	if quotaMillicores <= 0 {
+		return false, "instance has no CPU quota", nil
+	}
+	capture := api.ProfileCapture{Kinds: []string{api.ProfileKindCPU},
+		DurationSeconds: int(api.ProfileCaptureCPUSaturationDuration / time.Second),
+		Trigger:         api.ProfileCaptureTriggerCPUSaturation,
+		TriggerDetail: fmt.Sprintf("CPU use at %d%% of the %dm limit for %s",
+			usedMillicores*100/quotaMillicores, quotaMillicores, sustained.Round(time.Second))}
+	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureCPUSaturationMinInterval)
+}
+
 func truncateRunes(s string, n int) string {
 	if r := []rune(s); len(r) > n {
 		return string(r[:n])

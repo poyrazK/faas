@@ -144,7 +144,7 @@ func (a pressureApp) subscribeCaptureWebhook(t *testing.T) {
 // assertCaptureNotified expects exactly one profile.capture_ready event for
 // the capture, naming the OOM kill when wantOOM, and no
 // profile.capture_oom_linked: a kill during the capture is announced with it.
-func (a pressureApp) assertCaptureNotified(t *testing.T, captureID string, wantOOM bool) {
+func (a pressureApp) assertCaptureNotified(t *testing.T, captureID, trigger string, wantOOM bool) {
 	t.Helper()
 	const q = `SELECT event, payload FROM app_webhook_event_outbox WHERE app_id = $1::text::uuid AND source_id = $2::text::uuid
 		UNION ALL SELECT event, payload FROM app_webhook_deliveries WHERE app_id = $1::text::uuid AND payload->'capture'->>'id' = $2::text`
@@ -179,7 +179,7 @@ func (a pressureApp) assertCaptureNotified(t *testing.T, captureID string, wantO
 	if len(events) != 1 || events[0] != string(state.AppWebhookEventProfileCaptureReady) {
 		t.Fatalf("capture %s notifications = %v; want one profile.capture_ready", captureID, events)
 	}
-	if payload.Capture.ID != captureID || payload.Capture.Trigger != api.ProfileCaptureTriggerMemoryPressure || (payload.Capture.OOMKilledAt != nil) != wantOOM ||
+	if payload.Capture.ID != captureID || payload.Capture.Trigger != trigger || (payload.Capture.OOMKilledAt != nil) != wantOOM ||
 		payload.CapturePath != "/dashboard/apps/"+a.slug+"/profiles/captures/"+captureID {
 		t.Fatalf("capture notification = %+v; want the capture (OOM=%v) and its page", payload, wantOOM)
 	}
@@ -250,7 +250,7 @@ func TestProfileCaptureMemoryPressureMetal(t *testing.T) {
 		t.Fatalf("automatic capture = %+v; want a ready heap capture of the pressured instance", auto)
 	}
 	assertCaptureFunction(t, h, key, slug, auto.ID, "heap", "profileFixtureGrow")
-	a.assertCaptureNotified(t, auto.ID, false)
+	a.assertCaptureNotified(t, auto.ID, api.ProfileCaptureTriggerMemoryPressure, false)
 
 	if _, s := doGetWithHost(t, client, url+"release", host, 10*time.Second); s != http.StatusNoContent {
 		t.Fatalf("release: status=%d", s)
@@ -289,7 +289,37 @@ func TestProfileCaptureOOMMetal(t *testing.T) {
 	}
 	t.Logf("capture %s: OOM-killed at %s (%d MB of %d MB), %d profile(s)", auto.ID, auto.OOMKilledAt, auto.OOMPeakMB, auto.OOMPlanMB, len(auto.Profiles))
 	assertCaptureFunction(t, a.h, a.key, a.slug, auto.ID, "heap", "profileFixtureGrow")
-	a.assertCaptureNotified(t, auto.ID, true)
+	a.assertCaptureNotified(t, auto.ID, api.ProfileCaptureTriggerMemoryPressure, true)
+}
+
+// TestProfileCaptureCPUSaturationMetal holds the fixture at its CPU limit and
+// expects schedd's stats poller to queue an automatic CPU capture (ADR-1155):
+// vmmd cgroup CPU stats → schedd poller → queued capture → vmmd capture.
+func TestProfileCaptureCPUSaturationMetal(t *testing.T) {
+	a := startPressureApp(t, "profcpu")
+	if b, s := doGetWithHost(t, a.client, a.url+"spin?s=90&cpus=2", a.host, 10*time.Second); s != http.StatusAccepted {
+		t.Fatalf("spin: status=%d body=%q", s, b)
+	}
+	var auto *api.ProfileCapture
+	for deadline := time.Now().Add(api.ProfileCPUSaturationAfter + 40*time.Second); auto == nil && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Second)
+		for _, c := range a.captures(t) {
+			if c.Trigger == api.ProfileCaptureTriggerCPUSaturation {
+				auto = &c
+				break
+			}
+		}
+	}
+	if auto == nil {
+		t.Fatal("no automatic CPU capture while the fixture held its CPU limit")
+	}
+	t.Logf("automatic capture %s queued: %s", auto.ID, auto.TriggerDetail)
+	a.waitCapture(t, auto, 60*time.Second, func(c *api.ProfileCapture) bool { return c.Done() })
+	if auto.Status != api.ProfileCaptureReady || len(auto.Kinds) != 1 || auto.Kinds[0] != api.ProfileKindCPU || !strings.Contains(auto.TriggerDetail, "CPU use at") {
+		t.Fatalf("automatic capture = %+v; want a ready CPU capture of the saturated instance", auto)
+	}
+	assertCaptureFunction(t, a.h, a.key, a.slug, auto.ID, "cpu", "profileFixtureSpin")
+	a.assertCaptureNotified(t, auto.ID, api.ProfileCaptureTriggerCPUSaturation, false)
 }
 
 // TestProfileCaptureSlowRequestMetal holds a request in the fixture past the

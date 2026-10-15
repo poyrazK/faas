@@ -104,6 +104,35 @@ func serveHang(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("released\n"))
 }
 
+//go:noinline
+func profileFixtureSpin(d time.Duration) uint64 {
+	x := uint64(1)
+	for deadline := time.Now().Add(d); time.Now().Before(deadline); {
+		for i := 0; i < 10000; i++ {
+			x = x*2862933555777941757 + 3037000493
+		}
+	}
+	return x
+}
+
+// serveSpin burns CPUs in the background and answers at once, so the
+// instance sits at its CPU limit without a slow request: GET
+// /spin?s=60&cpus=2 burns two CPUs for 60 seconds.
+func serveSpin(w http.ResponseWriter, r *http.Request) {
+	s, err := strconv.Atoi(r.URL.Query().Get("s"))
+	if err != nil || s < 1 || s > 300 {
+		s = 60
+	}
+	cpus, err := strconv.Atoi(r.URL.Query().Get("cpus"))
+	if err != nil || cpus < 1 || cpus > 4 {
+		cpus = 1
+	}
+	for range cpus {
+		go profileFixtureSpin(time.Duration(s) * time.Second)
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // serveWork burns CPU and retains heap so captures have known hot frames:
 // GET /work?ms=50&retain=8.
 func serveWork(w http.ResponseWriter, r *http.Request) {

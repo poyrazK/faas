@@ -208,6 +208,18 @@ const (
 	ProfileCaptureSlowRequestReportEvery = time.Minute
 	ProfileCaptureSlowRequestMinInterval = 15 * time.Minute
 	ProfileCaptureSlowRequestDuration    = 5 * time.Second
+	// Automatic CPU captures on CPU saturation (ADR-1155). schedd's stats
+	// poller counts an instance saturated while its host CPU use is at least
+	// ProfileCPUSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than ProfileCPUSaturationGrace does not end the episode. An episode
+	// lasting ProfileCPUSaturationAfter queues one CPU capture of
+	// ProfileCaptureCPUSaturationDuration, at most once per app per
+	// ProfileCaptureCPUSaturationMinInterval.
+	ProfileCPUSaturationPercent            = 90
+	ProfileCPUSaturationAfter              = 30 * time.Second
+	ProfileCPUSaturationGrace              = 5 * time.Second
+	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
+	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
 	// ProfileCaptureMaxKinds bounds the kinds one capture collects.
 	ProfileCaptureMaxKinds = 3
 	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.

@@ -39,7 +39,8 @@ class ProfileCapture:
     requested_instance_id: UUID | Unset = UNSET
     trigger: ProfileCaptureTrigger | Unset = UNSET
     """Who started the capture; memory_pressure captures are queued automatically when an instance runs low on
-    memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds."""
+    memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation
+    captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds."""
     request_id: str | Unset = UNSET
     """The x-faas-request-id of the in-flight request that started a slow_request capture."""
     request_trace_id: str | Unset = UNSET
