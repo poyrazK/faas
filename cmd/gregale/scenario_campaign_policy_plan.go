@@ -10,6 +10,7 @@ import (
 )
 
 type testCampaignPolicyPlan struct {
+	Environments []testEnvironmentPlanEntry `json:"environment_requirements"`
 	SchemaVersion int                          `json:"schema_version"`
 	Informational bool                         `json:"informational"`
 	Notes []string `json:"notes"`
@@ -17,6 +18,7 @@ type testCampaignPolicyPlan struct {
 }
 
 type testCampaignPolicyPlanEntry struct {
+	EnvironmentBlockers []testEnvironmentPlanBlocker `json:"environment_blockers"`
 	Requirement       string              `json:"requirement"`
 	Configuration     string              `json:"configuration_sha256,omitempty"`
 	Context           testFailureGroupKey `json:"context"`
@@ -234,6 +236,12 @@ func buildTestCampaignPolicyPlan(policy testCampaignPolicy, scenarios map[string
 			}
 		}
 	}
+	environments, err := buildTestEnvironmentPlan(policy, scenarios, before, after)
+	if err != nil {
+		return plan, err
+	}
+	plan.Environments = environments
+	applyTestEnvironmentPlan(&plan)
 	return plan, nil
 }
 

@@ -595,3 +595,64 @@ Lint with both reports emits required_environment_failed warnings and results;
 without both reports it validates definitions only. Preview remains informational.
 Gated comparisons return 2 for unmet requirements, even when the two environments
 are compatible. Existing policies without this section retain their behavior.
+
+## Environment-aware coverage planning
+
+The existing read-only policy planner now includes required_environments:
+
+```sh
+gregale test policy plan --policy regression-policy.yaml --manifest gregale-test.yaml --from current.json --baseline previous.json
+```
+
+The environment_requirements array shows each matching manifest
+configuration/context, manifest checks, fields needing platform observations,
+version evidence requirements, and separate baseline/current actions. It is
+also emitted for policies with no required_coverage entries.
+
+Manifest checks cover workload presence, declared Postgres use, fixture labels,
+fixture failure counts, and TCP ports. Checks show expected versus declared
+values and whether a declaration needs changing. Explicit false/zero/empty-port
+expectations retain their meaning. Port ordering does not cause differences.
+
+Resources, app type, and runtime labels are not inferred from source paths or
+scenario declarations. Matching report evidence is required for those values.
+A plan records the original expected/observed evidence and receipt references.
+Report evidence is an observation at capture time, not a live platform probe.
+
+Side actions distinguish:
+
+- manifest_change_required: fix workload/dependency declarations first;
+- platform_evidence_required: confirm resources/runtime on the platform;
+- platform_change_required: correct recorded mismatches and replace the bad batch;
+- report_evidence_required: replace receipts with missing required evidence;
+- version_evidence_required: current native capture cannot collect the required
+  precise platform/runtime versions;
+- collect_execution_evidence: declarations match and runs can record proof;
+- ready: existing matching report evidence satisfies the expectations;
+- ready_existing_evidence: recorded versions satisfy the requirement, but extra
+  runs cannot currently collect new version evidence.
+
+Unsupported engines, absent cases/fingerprints, and historical configurations
+without a matching manifest remain explicit blockers. Missing matching reports
+are not treated as proof that resources or versions are correct. Existing
+noncompliant executed receipts set report_replacement_required: adding more
+repetitions does not remove their failures from an every-run requirement.
+
+Coverage entries include side-specific environment_blockers. Blocked command
+batches are removed; an unblocked side can still receive suggestions.
+environment_blocked and partially_environment_blocked explain the resulting
+coverage status. Counts of already recorded coverage are retained. Existing
+version evidence does not block a fully covered entry, but does block suggestions
+for new runs that cannot collect required versions.
+
+A scenario command runs its full matrix. Environment prerequisites on one case
+therefore suppress commands for sibling cases in the same scenario/profile.
+Prerequisites are conservative: unresolved historical environments can require
+review of the original manifest before collecting additional evidence.
+
+The planner does not modify resources, dependencies, manifests, or report files.
+It makes no platform calls and provisions nothing. Readiness concerns only the
+explicit requirements and available observations; it does not establish general
+environment equivalence. Planning remains informational and returns 0 for
+blocked entries. Existing plans without environment requirements retain their
+run suggestions.

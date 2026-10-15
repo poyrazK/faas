@@ -38,6 +38,7 @@ type testWorkloadExpectation struct {
 }
 
 type testRequiredEnvironmentIssue struct {
+	Code string `json:"code"`
 	ReceiptIndex *int `json:"receipt_index"`
 	RunID string `json:"run_id,omitempty"`
 	Field string `json:"field"`
@@ -153,14 +154,16 @@ func testRequiredEnvironmentRun(r testRunReceipt, root int, expected testEnviron
 			return
 		}
 		valid = false
+		code := "mismatch"
 		reason := "recorded value differs from required value"
 		if !known {
+			code = "unavailable"
 			reason = "required evidence is unavailable"
 			right = json.RawMessage("null")
 		}
 		index := root
 		addTestRequiredEnvironmentIssue(side, testRequiredEnvironmentIssue{
-			ReceiptIndex: &index, RunID: r.RunID, Field: field, Expected: left, Observed: right, Reason: reason,
+			Code: code, ReceiptIndex: &index, RunID: r.RunID, Field: field, Expected: left, Observed: right, Reason: reason,
 		})
 	}
 	if testDigestScopeFingerprint([]testRunReceipt{r}) == "" {
@@ -272,7 +275,7 @@ func evaluateTestRequiredEnvironments(policy testCampaignPolicy, before, after [
 				if !exists { value = emptyTestRequiredEnvironmentSide() }
 				if value.ExecutedRuns == 0 {
 					addTestRequiredEnvironmentIssue(&value, testRequiredEnvironmentIssue{
-						Field: "executed_runs", Expected: json.RawMessage("1"), Observed: json.RawMessage("0"), Reason: "no matching executed context",
+						Code: "missing_context", Field: "executed_runs", Expected: json.RawMessage("1"), Observed: json.RawMessage("0"), Reason: "no matching executed context",
 					})
 				}
 				counts[side] = value
