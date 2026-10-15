@@ -369,3 +369,47 @@ func TestLoadConfig_MeasuredAdmissionOff(t *testing.T) {
 		t.Fatal("measured_admission = false left measured admission on")
 	}
 }
+
+// adr: 1027 — the manifest-rendered database scheduler file sits beside
+// schedd.toml; the table may come from only one of them.
+func TestLoadConfig_DatabaseSchedulerFile(t *testing.T) {
+	dir := t.TempDir()
+	dbFile := filepath.Join(dir, "schedd-database.toml")
+	if err := os.WriteFile(dbFile, []byte(`[database_scheduler]
+shared_archive = true
+[[database_scheduler.nodes]]
+id = "db-1"
+target_url = "tcp://10.42.0.5:50051"
+admission_ceiling_mb = 48000
+volume_capacity_bytes = 3000000000000
+postgres_majors = [16, 17]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_SCHEDD_DATABASE_CONFIG", dbFile)
+	cfg, err := LoadConfig(filepath.Join(dir, "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.DatabaseScheduler
+	if d == nil || !d.SharedArchive || len(d.Nodes) != 1 || d.Nodes[0].ID != "db-1" || d.Nodes[0].AdmissionCeilingMB != 48000 || len(d.Nodes[0].PostgresMajors) != 2 {
+		t.Fatalf("database scheduler = %+v", d)
+	}
+	main := filepath.Join(dir, "schedd.toml")
+	if err := os.WriteFile(main, []byte("[database_scheduler]\nidle_timeout = \"5m\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(main); err == nil {
+		t.Fatal("[database_scheduler] in both files was accepted")
+	}
+	if err := os.WriteFile(dbFile, []byte("node_name = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(filepath.Join(dir, "missing.toml")); err == nil {
+		t.Fatal("a database file without the table was accepted")
+	}
+	t.Setenv("FAAS_SCHEDD_DATABASE_CONFIG", filepath.Join(dir, "absent.toml"))
+	if _, err := LoadConfig(filepath.Join(dir, "missing.toml")); err == nil {
+		t.Fatal("a missing database file was accepted")
+	}
+}

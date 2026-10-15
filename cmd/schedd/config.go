@@ -472,7 +472,7 @@ func LoadConfig(path string) (*Config, error) {
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			applyRoutingEnv()
-			return c, nil
+			return c, loadDatabaseSchedulerFile(c)
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
 	}
@@ -496,5 +496,34 @@ func LoadConfig(path string) (*Config, error) {
 		c.NodeName = v
 	}
 	applyRoutingEnv()
-	return c, nil
+	return c, loadDatabaseSchedulerFile(c)
+}
+
+// loadDatabaseSchedulerFile reads [database_scheduler] from the file
+// FAAS_SCHEDD_DATABASE_CONFIG names (ADR-1027). Ansible renders that file
+// from the deployment manifest's database hosts, beside the operator's
+// schedd.toml; the table may live in only one of them.
+func loadDatabaseSchedulerFile(c *Config) error {
+	path := os.Getenv("FAAS_SCHEDD_DATABASE_CONFIG")
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // operator-configured path
+	if err != nil {
+		return fmt.Errorf("schedd: read FAAS_SCHEDD_DATABASE_CONFIG: %w", err)
+	}
+	var file struct {
+		DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+	}
+	if err := toml.Unmarshal(b, &file); err != nil {
+		return fmt.Errorf("schedd: parse %q: %w", path, err)
+	}
+	if file.DatabaseScheduler == nil {
+		return fmt.Errorf("schedd: %q has no [database_scheduler]", path)
+	}
+	if c.DatabaseScheduler != nil {
+		return fmt.Errorf("schedd: [database_scheduler] is in both the config and %q", path)
+	}
+	c.DatabaseScheduler = file.DatabaseScheduler
+	return nil
 }

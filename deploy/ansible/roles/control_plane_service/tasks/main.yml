@@ -437,6 +437,39 @@
     group: root
     mode: "0644"
 
+# ADR-1027: schedd's database scheduler, from the manifest's database hosts
+# (faas_schedd_database_scheduler, rendered by `gregalectl manifest ansible`).
+# A fleet without database hosts keeps neither file.
+- name: control_plane_service — render schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: schedd-database.toml.j2
+    dest: /etc/faas/schedd-database.toml
+    owner: root
+    group: faas
+    mode: "0640"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — point schedd at its database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-database.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — remove schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    - /etc/faas/schedd-database.toml
+  when: faas_schedd_database_scheduler is not defined
+
 # Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
 # shared block checks ALL new per-daemon secret files (schedd +
 # meterd belong to this role; the others are checked here too as

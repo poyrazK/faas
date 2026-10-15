@@ -1,0 +1,148 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/manifest"
+)
+
+// Native managed PostgreSQL (ADR-1027) in the generated Ansible tree. The
+// manifest's database hosts become the database_nodes group, and every
+// role that reaches them gets their addresses from the same manifest:
+//   - the control plane: schedd's [database_scheduler] and pgproxyd's
+//     access to the verifier table;
+//   - each database node: its vmmd listener, pgproxyd's schedd target and
+//     its cancel instance id and peers;
+//   - compute nodes (managed_postgres.app_route): the app route to every
+//     pgproxyd.
+
+// manifestDatabasePort is pgproxyd's listener on every database node.
+const manifestDatabasePort = 5432
+
+// manifestDatabaseRoutePort is gatewayd-internal's app-route forwarder,
+// bound beside its service proxy on the tenant bridge.
+const manifestDatabaseRoutePort = 10083
+
+type manifestDatabase struct {
+	host     manifest.Host
+	address  string
+	vmmdPort int
+	// instanceID tags pgproxyd's cancel keys: 1.. in manifest order.
+	instanceID int
+}
+
+type manifestDatabases struct {
+	config      *manifest.ManagedPostgres
+	nodes       []manifestDatabase
+	overlayCIDR string
+}
+
+func renderManifestDatabases(m *manifest.Manifest) (manifestDatabases, error) {
+	out := manifestDatabases{config: m.ManagedPostgres, overlayCIDR: m.Overlay.CIDR}
+	for i, h := range m.Fleet.DatabaseHosts() {
+		address, port, err := manifest.ParseHostPort(h.Address)
+		if err != nil {
+			return manifestDatabases{}, fmt.Errorf("database host %s: %w", h.Name, err)
+		}
+		if h.Database == nil || m.ManagedPostgres == nil {
+			return manifestDatabases{}, fmt.Errorf("database host %s needs its database block and managed_postgres", h.Name)
+		}
+		out.nodes = append(out.nodes, manifestDatabase{host: h, address: address, vmmdPort: port, instanceID: i + 1})
+	}
+	return out, nil
+}
+
+// hostVars is what host needs to reach the database nodes, or to be one.
+func (d manifestDatabases) hostVars(host manifest.Host, scheddTarget string) string {
+	if len(d.nodes) == 0 {
+		return ""
+	}
+	switch host.Role {
+	case roleControlPlane:
+		return d.controlPlaneVars()
+	case roleComputeOnly:
+		if d.config.AppRoute {
+			return d.computeVars()
+		}
+	case manifest.RoleDatabase:
+		return d.nodeVars(host, scheddTarget)
+	}
+	return ""
+}
+
+func (d manifestDatabases) controlPlaneVars() string {
+	var b strings.Builder
+	b.WriteString("# ADR-1027: schedd's database scheduler, from the manifest's database hosts.\n")
+	b.WriteString("faas_schedd_database_scheduler:\n")
+	fmt.Fprintf(&b, "  shared_archive: %t\n", d.config.SharedArchive)
+	b.WriteString("  nodes:\n")
+	var cidrs []string
+	for _, n := range d.nodes {
+		db := n.host.Database
+		fmt.Fprintf(&b, "    - id: %q\n", n.host.Name)
+		fmt.Fprintf(&b, "      target_url: %q\n", "tcp://"+net.JoinHostPort(n.address, strconv.Itoa(n.vmmdPort)))
+		fmt.Fprintf(&b, "      admission_ceiling_mb: %d\n", db.AdmissionCeilingMB)
+		fmt.Fprintf(&b, "      volume_capacity_bytes: %d\n", db.VolumeCapacityBytes)
+		if db.BootSlots > 0 {
+			fmt.Fprintf(&b, "      boot_slots: %d\n", db.BootSlots)
+		}
+		if len(db.PostgresMajors) > 0 {
+			majors := make([]string, len(db.PostgresMajors))
+			for i, major := range db.PostgresMajors {
+				majors[i] = strconv.Itoa(major)
+			}
+			fmt.Fprintf(&b, "      postgres_majors: [%s]\n", strings.Join(majors, ", "))
+		}
+		cidrs = appendHostCIDR(cidrs, n.address, d.overlayCIDR)
+	}
+	// pgproxyd reads role verifiers as faas_pgproxyd from these sources.
+	fmt.Fprintf(&b, "faas_postgres_pgproxyd_cidrs: [%s]\n", quotedYAMLList(cidrs))
+	return b.String()
+}
+
+func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) string {
+	var self manifestDatabase
+	for _, n := range d.nodes {
+		if n.host.Name == host.Name {
+			self = n
+		}
+	}
+	var b strings.Builder
+	b.WriteString("# ADR-1027: this database node, from the manifest.\n")
+	fmt.Fprintf(&b, "database_vmmd_overlay_ip: %q\n", self.address)
+	fmt.Fprintf(&b, "database_vmmd_port: %d\n", self.vmmdPort)
+	if d.overlayCIDR != "" {
+		fmt.Fprintf(&b, "database_node_overlay_cidrs: [%q]\n", d.overlayCIDR)
+	}
+	fmt.Fprintf(&b, "pgproxyd_host_suffix: %q\n", d.config.HostSuffix)
+	fmt.Fprintf(&b, "pgproxyd_schedd_target: %q\n", scheddTarget)
+	fmt.Fprintf(&b, "pgproxyd_instance_id: %d\n", self.instanceID)
+	if len(d.nodes) == 1 {
+		b.WriteString("pgproxyd_cancel_peers: {}\n")
+		return b.String()
+	}
+	b.WriteString("pgproxyd_cancel_peers:\n")
+	for _, n := range d.nodes {
+		if n.host.Name != host.Name {
+			fmt.Fprintf(&b, "  %d: %q\n", n.instanceID, net.JoinHostPort(n.address, strconv.Itoa(manifestDatabasePort)))
+		}
+	}
+	return b.String()
+}
+
+func (d manifestDatabases) computeVars() string {
+	upstreams := make([]string, len(d.nodes))
+	for i, n := range d.nodes {
+		upstreams[i] = net.JoinHostPort(n.address, strconv.Itoa(manifestDatabasePort))
+	}
+	var b strings.Builder
+	b.WriteString("# ADR-1027: the app route from guests to pgproxyd, from the manifest.\n")
+	b.WriteString("faas_database_route_enabled: true\n")
+	fmt.Fprintf(&b, "gatewayd_database_route_listen: \"{{ gatewayd_service_proxy_listen | regex_replace(':[0-9]+$', ':%d') }}\"\n", manifestDatabaseRoutePort)
+	fmt.Fprintf(&b, "gatewayd_database_route_upstreams: [%s]\n", quotedYAMLList(upstreams))
+	fmt.Fprintf(&b, "gatewayd_database_route_host_suffix: %q\n", d.config.HostSuffix)
+	return b.String()
+}

@@ -434,10 +434,32 @@ Metal: `TestMetalDatabaseNodeMode` runs vmmd in database mode. It served
 RPCs immediately, built the PostgreSQL 17 base from the pinned image in
 12.2 s, refused a compute RPC, and ran a database from create to delete.
 
-Still manual: issuing the public `*.<suffix>` certificate (pgproxyd takes
-it as files); schedd's `[database_scheduler]` and gatewayd's
-`database_route_upstreams` on the control plane and compute nodes; and
-database hosts are not yet a manifest role.
+**Manifest role.** Database hosts are fleet hosts with role `database`,
+each with a `database` block of scheduler facts (`admission_ceiling_mb`,
+`volume_capacity_bytes`, optional `boot_slots` and `postgres_majors`). A
+fleet with any database host needs a `managed_postgres` section
+(`host_suffix`, `shared_archive`, `app_route`). `gregalectl manifest
+ansible` derives the rest from the hosts' addresses:
+- **Inventory.** The `database_nodes` group.
+- **Each database node:** `database_vmmd_overlay_ip`, the vmmd port, the
+  overlay CIDR, pgproxyd's host suffix and schedd target, and its cancel
+  `instance_id` (1… in manifest order) with the other nodes as
+  `cancel_peers`.
+- **Control plane:** `faas_schedd_database_scheduler` (rendered to
+  `/etc/faas/schedd-database.toml`; schedd reads it through
+  `FAAS_SCHEDD_DATABASE_CONFIG`, and refuses the table in both files),
+  and `faas_postgres_pgproxyd_cidrs`.
+- **Compute nodes, with `app_route`:** the nftables and vmmd switches
+  (`FAAS_VMMD_DATABASE_ROUTE_ENABLED`) and gatewayd-internal's forwarder
+  on port 10083 of its service-proxy address, with every pgproxyd as an
+  upstream.
+
+A database node has no shared role identity in the private hosts map:
+schedd binds its vmmd certificate to `<name>.faas`. A fleet without
+database hosts renders exactly as before.
+
+Still manual: pgproxyd's public `*.<suffix>` certificate (files), the
+`faas_pgproxyd` password and DSN, and each node's PKI bundle.
 
 ### Durability: WAL archiving, base backups, point-in-time restore
 

@@ -688,6 +688,15 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.ServiceTCPEnabled = parsed
 	}
+	// ADR-1027: Ansible sets it from the manifest's managed_postgres.app_route,
+	// with the nftables role's faas_database_route_enabled.
+	if v := os.Getenv("FAAS_VMMD_DATABASE_ROUTE_ENABLED"); v != "" {
+		parsed, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
 	}

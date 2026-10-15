@@ -1,0 +1,19 @@
+# Managed by Ansible (control_plane_service) from the deployment manifest's
+# database hosts (ADR-1027). schedd reads it through
+# FAAS_SCHEDD_DATABASE_CONFIG; schedd.toml must not repeat the table.
+[database_scheduler]
+shared_archive = {{ faas_schedd_database_scheduler.shared_archive | default(false) | bool | lower }}
+{% for node in faas_schedd_database_scheduler.nodes %}
+
+[[database_scheduler.nodes]]
+id = "{{ node.id }}"
+target_url = "{{ node.target_url }}"
+admission_ceiling_mb = {{ node.admission_ceiling_mb | int }}
+volume_capacity_bytes = {{ node.volume_capacity_bytes | int }}
+{% if node.boot_slots is defined %}
+boot_slots = {{ node.boot_slots | int }}
+{% endif %}
+{% if node.postgres_majors is defined %}
+postgres_majors = [{{ node.postgres_majors | map('int') | join(', ') }}]
+{% endif %}
+{% endfor %}

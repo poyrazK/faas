@@ -62,6 +62,35 @@ route is public. This is the portable source of truth; public Cloudflare DNS
 is never used for private transport names. Do not copy a server IP into the
 committed `deploy/ansible/host_vars` files.
 
+Hosts with role `database` are native managed-PostgreSQL nodes (ADR-1027).
+Each carries a `database` block (`admission_ceiling_mb`,
+`volume_capacity_bytes`, optional `boot_slots` and `postgres_majors`), and
+the fleet then needs a `managed_postgres` section:
+
+```yaml
+fleet:
+  hosts:
+    - name: db-1
+      role: database
+      address: 10.42.0.5:50051     # its vmmd; pgproxyd listens on 5432
+      database:
+        admission_ceiling_mb: 48000
+        volume_capacity_bytes: 3000000000000
+managed_postgres:
+  host_suffix: db.gregale.dev    # clients connect to <database-id>.<suffix>
+  shared_archive: true           # every dbbackupd shares one bucket
+  app_route: true                # guests reach pgproxyd at 198.18.0.1:5432
+```
+
+The generator renders the `database_nodes` inventory group and each node's
+vmmd and pgproxyd settings, including pgproxyd's cancel instance id and
+peers. The control plane gets schedd's `[database_scheduler]` (written to
+`/etc/faas/schedd-database.toml`) and pgproxyd's access to the verifier
+table. With `app_route`, compute nodes get the route to every pgproxyd.
+Still per deployment: pgproxyd's `*.<host_suffix>` certificate, the
+`faas_pgproxyd` password and DSN, and each node's PKI bundle (see
+`deploy/ansible/database_node.yml`).
+
 `public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
 customer custom domains. It renders `faas_custom_domain_*` for the control
 plane only: the `public_edge` role adds Caddy's on-demand TLS site (asking
