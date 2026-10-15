@@ -56,7 +56,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth/secrets":
 			list := api.AppSecretListResponse{}
 			if resume {
-				list.Secrets = []api.AppSecretResponse{{Key: authSigningKeysName}, {Key: authJWTSecretName}, {Key: authEventsKeyName}}
+				list.Secrets = []api.AppSecretResponse{{Key: authSigningKeyPrefix + "0A1B2C3D"}, {Key: authSignerPrefix + "0A1B2C3D"}, {Key: authJWTSecretName}, {Key: authEventsKeyName}}
 			}
 			writeJSONTest(w, list)
 		case r.Method == "POST" && r.URL.Path == "/v1/keys":
@@ -131,13 +131,22 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	if minted != wantMinted {
 		t.Fatalf("minted %d workflow keys, want %d", minted, wantMinted)
 	}
-	_, keys := secrets[authSigningKeysName]
+	// A new app gets one key and the marker that makes it sign.
+	keys, signers := 0, 0
+	for name := range secrets {
+		if authSigningKeyName.MatchString(name) {
+			keys++
+			if _, ok := secrets[authSignerPrefix+strings.TrimPrefix(name, authSigningKeyPrefix)]; ok {
+				signers++
+			}
+		}
+	}
 	_, secret := secrets[authJWTSecretName]
-	if resume && (keys || secret) {
+	if resume && (keys != 0 || secret) {
 		t.Fatal("resume replaced signing material that already signed sessions")
 	}
-	if !resume && (!keys || !secret) {
-		t.Fatal("create did not seal signing material")
+	if !resume && (keys != 1 || signers != 1 || !secret) {
+		t.Fatalf("create sealed %d keys and %d signer markers", keys, signers)
 	}
 }
 
@@ -169,21 +178,21 @@ func TestAuthAccountVerbsPointToLogin(t *testing.T) {
 	}
 }
 
-func TestNewAuthSigningKeysAreConsistentES256(t *testing.T) {
-	value, err := newAuthSigningKeys()
+func TestNewAuthSigningKeyIsConsistentES256(t *testing.T) {
+	id, value, err := newAuthSigningKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var keys []map[string]any
-	if err := json.Unmarshal([]byte(value), &keys); err != nil || len(keys) != 1 {
-		t.Fatalf("keys = %s: %v", value, err)
+	var key map[string]any
+	if err := json.Unmarshal([]byte(value), &key); err != nil {
+		t.Fatalf("key = %s: %v", value, err)
 	}
-	key := keys[0]
-	if key["kty"] != "EC" || key["crv"] != "P-256" || key["alg"] != "ES256" || !regexp.MustCompile(`^gregale-[0-9a-f]{16}$`).MatchString(fmt.Sprint(key["kid"])) {
-		t.Fatalf("unexpected key header: %v", key)
+	if !authAdminKeyID.MatchString(id) || key["kty"] != "EC" || key["crv"] != "P-256" || key["alg"] != "ES256" || key["kid"] != "gregale-"+strings.ToLower(id) {
+		t.Fatalf("unexpected key header %s: %v", id, key)
 	}
-	if ops, _ := key["key_ops"].([]any); len(ops) != 2 || ops[0] != "sign" || ops[1] != "verify" {
-		t.Fatalf("key_ops = %v", key["key_ops"])
+	// The Auth app assigns key_ops from the signer marker.
+	if _, ok := key["key_ops"]; ok {
+		t.Fatalf("key_ops stored with the key: %v", key["key_ops"])
 	}
 	decode := func(name string) []byte {
 		b, err := base64.RawURLEncoding.DecodeString(fmt.Sprint(key[name]))
@@ -200,8 +209,8 @@ func TestNewAuthSigningKeysAreConsistentES256(t *testing.T) {
 	if string(point[1:33]) != string(decode("x")) || string(point[33:65]) != string(decode("y")) {
 		t.Fatal("public coordinates do not match the private scalar")
 	}
-	other, _ := newAuthSigningKeys()
-	if other == value {
+	otherID, other, _ := newAuthSigningKey()
+	if other == value || otherID == id {
 		t.Fatal("key generation repeated")
 	}
 	if secret, err := randomAuthSecret(); err != nil || len(secret) < 32 {
@@ -218,7 +227,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch} {
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}

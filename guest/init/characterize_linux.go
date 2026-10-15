@@ -303,14 +303,23 @@ func probeListeningLinux(pid, want int) (int, string, bool) {
 	if len(ownedInodes) == 0 {
 		return 0, "", false
 	}
-	// IPv4 listeners before IPv6 ones, as before; the expected port wins in
-	// either family.
-	sockets := append(scanListenSockets("/proc/net/tcp", ownedInodes), scanListenSockets("/proc/net/tcp6", ownedInodes)...)
-	s, ok, _ := pickListenSocket(sockets, want)
-	if !ok {
-		return 0, "", false
+	// The expected port wins in either family; otherwise the first IPv4
+	// listener, then the first IPv6 one, as before (H10-56).
+	port4, addr4, ok4, exact4 := scanListeningFileFor("/proc/net/tcp", ownedInodes, want)
+	if exact4 {
+		return port4, addr4, true
 	}
-	return s.Port, listenSocketAddr(s), true
+	port6, addr6, ok6, exact6 := scanListeningFileFor("/proc/net/tcp6", ownedInodes, want)
+	if exact6 {
+		return port6, addr6, true
+	}
+	if ok4 {
+		return port4, addr4, true
+	}
+	if ok6 {
+		return port6, addr6, true
+	}
+	return 0, "", false
 }
 
 // countOutboundLinux returns the number of ESTABLISHED TCP

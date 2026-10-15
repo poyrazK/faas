@@ -6,14 +6,16 @@ import type { AppHealthCapacity } from './AppHealthCapacity.js';
 import type { AppHealthCheck } from './AppHealthCheck.js';
 import type { AppHealthRequests } from './AppHealthRequests.js';
 /**
- * Read-only observed health of default-scope HTTP serving workloads.
+ * Read-only observed health of selected-scope HTTP serving workloads.
  */
 export type AppHealthResponse = {
+  project_id?: string;
+  environment_id?: string;
   app_id: string;
   status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
   phase: 'serving' | 'idle' | 'starting' | 'deploying' | 'stopped' | 'not_deployed' | 'maintenance' | 'unsupported' | 'unknown';
   summary: string;
-  scope: 'default';
+  scope: string;
   evaluated_at: string;
   /**
    * Maximum age before clients must reconfirm this assessment.

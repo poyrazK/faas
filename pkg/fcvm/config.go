@@ -446,10 +446,13 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 		NetworkInterfaces: network,
 		Entropy:           &Entropy{},
 		VsockDevice:       NewVsockDevice(slot),
-		// SkipReady is also used by networkless execution guests, but their
-		// layer is caller-supplied runtime state and must remain private. Only
+		// SkipReady is also used by networkless execution guests and app
+		// tasks. An execution layer is caller-supplied runtime state, and an
+		// app task boots the deployment's signed, node-cached layer: both must
+		// get a private copy. A hard link would let the task write into the
+		// cached layer, which the next prime then refuses as tampered. Only
 		// builder scratch images may use the hard-link optimization.
-		EphemeralWritable: s.SkipReady && !s.Networkless,
+		EphemeralWritable: s.SkipReady && !s.Networkless && !s.AppTask,
 	}
 }
 

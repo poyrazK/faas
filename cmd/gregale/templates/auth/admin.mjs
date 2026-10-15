@@ -31,7 +31,7 @@ function keyMatches(hashes, header) {
   return hashes.reduce((found, hash) => timingSafeEqual(hash, presented) || found, false)
 }
 
-// signingKey picks the one ES256 key in AUTH_JWT_KEYS that signs. GoTrue
+// signingKey picks the one ES256 key in GOTRUE_JWT_KEYS that signs. GoTrue
 // accepts only its configured asymmetric methods, so HS256 is refused.
 export function signingKey(keys) {
   const jwk = JSON.parse(keys).find(key => Array.isArray(key.key_ops) && key.key_ops.includes('sign'))

@@ -12,7 +12,7 @@ package main
 
 import (
 	"bytes"
-	"net"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,37 +299,12 @@ func TestScanEstablishedFile_MissingFileIsZero(t *testing.T) {
 	}
 }
 
-func TestPickListenSocket(t *testing.T) {
-	echo := listenSocket{IP: net.IPv4zero, Port: 5432}
-	app := listenSocket{IP: net.IPv4zero, Port: 8080}
-	normalized := listenSocket{IP: net.IPv4zero, Port: 3000}
-	for _, tc := range []struct {
-		name      string
-		sockets   []listenSocket
-		want      int
-		got       listenSocket
-		ok, exact bool
-	}{
-		{name: "expected port listed after another", sockets: []listenSocket{echo, app}, want: 8080, got: app, ok: true, exact: true},
-		{name: "expected port listed first", sockets: []listenSocket{app, echo}, want: 8080, got: app, ok: true, exact: true},
-		{name: "only another port", sockets: []listenSocket{echo}, want: 8080, got: echo, ok: true},
-		{name: "normalized app on its own port", sockets: []listenSocket{normalized}, want: 8080, got: normalized, ok: true},
-		{name: "no expected port", sockets: []listenSocket{echo, app}, want: 0, got: echo, ok: true},
-		{name: "no listener", want: 8080},
-	} {
-		got, ok, exact := pickListenSocket(tc.sockets, tc.want)
-		if got.Port != tc.got.Port || ok != tc.ok || exact != tc.exact {
-			t.Errorf("%s: pickListenSocket = %+v ok=%v exact=%v, want port %d ok=%v exact=%v", tc.name, got, ok, exact, tc.got.Port, tc.ok, tc.exact)
-		}
-	}
-}
-
 func TestProbeListening_NoChildEarlyOut(t *testing.T) {
 	// pid <= 0 short-circuits — caller polls again. Pin the contract
 	// so a regression to "scan all inodes anyway" doesn't silently
 	// observe an init-script-spawned daemon and misclassify.
 	for _, pid := range []int{-1, 0} {
-		if port, _, ok := probeListening(pid, api.DefaultAppPort); ok || port != 0 {
+		if port, _, ok := probeListening(pid, 0); ok || port != 0 {
 			t.Errorf("probeListening(%d) = (%d, _, %v), want (0, _, false)", pid, port, ok)
 		}
 	}
@@ -418,5 +393,38 @@ func TestScanListeningFile_SkipsDebuggerPortWhileDebugging(t *testing.T) {
 		if port, _, ok := scanListeningFile(path, owned); !ok || port != tc.want {
 			t.Fatalf("debugging=%t: port = %d (ok=%t), want %d", tc.debugging, port, ok, tc.want)
 		}
+	}
+}
+
+// TestScanListeningFileFor_PrefersExpectedPort covers H10-56: an app serving
+// HTTP on 8080 and raw TCP on 7000 was characterized on 7000 because /proc
+// listed it first, and portnorm then tried to redirect 8080 to 7000.
+func TestScanListeningFileFor_PrefersExpectedPort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "net_tcp")
+	content := strings.Join([]string{
+		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+		" 0: 00000000:1B58 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 111 1 0000000000000000 100 0 0 10 0",
+		" 1: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 222 1 0000000000000000 100 0 0 10 0",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fake proc/net/tcp: %v", err)
+	}
+	owned := map[uint64]struct{}{111: {}, 222: {}}
+	for _, tc := range []struct {
+		want, port int
+		exact      bool
+	}{
+		{want: 8080, port: 8080, exact: true},
+		{want: 9999, port: 7000, exact: false},
+		{want: 0, port: 7000, exact: false},
+	} {
+		port, addr, ok, exact := scanListeningFileFor(path, owned, tc.want)
+		if !ok || port != tc.port || exact != tc.exact || !strings.HasSuffix(addr, fmt.Sprintf(":%d", tc.port)) {
+			t.Errorf("scanListeningFileFor(want=%d) = (%d, %q, %v, %v), want (%d, _, true, %v)", tc.want, port, addr, ok, exact, tc.port, tc.exact)
+		}
+	}
+	if port, _, ok := scanListeningFile(path, owned); !ok || port != 7000 {
+		t.Errorf("scanListeningFile = (%d, %v), want the first listener 7000", port, ok)
 	}
 }

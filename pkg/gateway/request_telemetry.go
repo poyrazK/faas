@@ -59,6 +59,9 @@ type RequestTelemetryRow struct {
 	// ordinary production aggregation or the bounded ring (ADR-429).
 	preserveExact    bool
 	FlagEvidenceJSON string
+	// ContentOutcome is how an anonymous GET body compared with the previous
+	// response for its URL (ADR-1188); empty when not observed.
+	ContentOutcome string
 	// EventID identifies the collapsed usage increment represented by this
 	// row. It is generated once at the recorder boundary and retained through
 	// publisher retries for idempotent apid ledger writes.

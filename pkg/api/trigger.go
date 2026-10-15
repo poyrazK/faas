@@ -268,6 +268,9 @@ type UpdateTriggerRequest struct {
 //	              next_fire_at is in the future
 //	"dead_letter" attempts == max_attempts OR poisoned; row in
 //	              trigger_dead_letter
+//
+// Attempts counts failed deliveries only, so a record delivered on its
+// first try has 0.
 type TriggerRecord struct {
 	ID               string     `json:"id"`
 	TriggerID        string     `json:"trigger_id"`

@@ -238,7 +238,9 @@ func cmdStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
 	if page.WakeP95MS == nil {
-		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+		// The status query reports a p95 only from 20 platform wakes in 30
+		// minutes, and omits it when Prometheus is unreachable (H10-46).
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
 	}
@@ -483,8 +485,7 @@ func envPush(args []string) int {
 		// or process substitution. Same line cap (64 KB) — Scale's
 		// SecretValueMaxBytes (32 KB) plus the key name fits, anything
 		// larger truncates and the apid byte cap rejects.
-		scanner := bufio.NewScanner(osStdin)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++
@@ -499,7 +500,7 @@ func envPush(args []string) int {
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			return printErr("Read stdin", err)
+			return printErr("Read stdin", keyValueScanErr(err))
 		}
 	} else {
 		f, err := openCustomerFile(*in)
@@ -510,8 +511,7 @@ func envPush(args []string) int {
 		// Reuse parseSecretsPair from commands3.go (single '=' split, same
 		// edge cases). Skip blanks + comments ourselves so the parser sees
 		// only candidate lines.
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(f))
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++
@@ -526,7 +526,7 @@ func envPush(args []string) int {
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
 		if err := scanner.Err(); err != nil {
-			return printErr("Read .env", err)
+			return printErr("Read .env", keyValueScanErr(err))
 		}
 	}
 	if len(pairs) == 0 {

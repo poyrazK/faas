@@ -12,12 +12,23 @@ import (
 )
 
 func (s *server) getAppOperationalSummary(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if r.URL.RawQuery != "" {
-		api.WriteProblem(w, api.ErrValidation("operational summary does not accept query parameters"))
-		return
-	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	app, env, scope, selected, problem := s.telemetryEnvironment(w, r, acct, app)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if selected {
+		out := s.scopedOperationalSummary(r.Context(), acct, app, env, scope)
+		if problem := s.scopedTelemetryIdentity(r.Context(), acct, app, env); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.appOperationalSummary(r.Context(), acct, app))

@@ -8,8 +8,8 @@
 // The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from
 // `src/generated/core/OpenAPI.ts` — the `FaaSClient` constructor
 // sets these once at construction time. Mutating methods receive a
-// fresh `Idempotency-Key` per attempt via the fetch wrapper stack
-// installed on `globalThis.fetch` (see `client.ts`).
+// fresh `Idempotency-Key` per logical call, preserved across retries, via
+// the fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
 
 // Generated surface.
 export {
@@ -505,3 +505,37 @@ export { defineDurableEntityClientContract, durableEntityClient, type DurableEnt
 
 export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement, defineDurableSessionEntity, durableSessionFrame, durableSessionRequestID, decodeDurableSessionCommand, DURABLE_ENTITY_MAX_SESSIONS, type DurableSessionCommand, type DurableSessionFrame, type DurableSessionState } from './durable-entity-session.js';
 export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';
+
+export type { EventExecutionReconciliation } from './generated/models/EventExecutionReconciliation.js';
+
+export type { EventExecutionLineageCase } from './generated/models/EventExecutionLineageCase.js';
+export type { EventExecutionLineageCases } from './generated/models/EventExecutionLineageCases.js';
+export type { RetryEventExecutionLineageCaseRequest } from './generated/models/RetryEventExecutionLineageCaseRequest.js';
+
+export type { EventExecutionLineageRetrySelection } from './generated/models/EventExecutionLineageRetrySelection.js';
+export type { CreateEventExecutionLineageRetryJobRequest } from './generated/models/CreateEventExecutionLineageRetryJobRequest.js';
+export type { EventExecutionLineageRetryJobItem } from './generated/models/EventExecutionLineageRetryJobItem.js';
+export type { EventExecutionLineageRetryJob } from './generated/models/EventExecutionLineageRetryJob.js';
+
+export type { CancelEventExecutionLineageRetryJobRequest } from './generated/models/CancelEventExecutionLineageRetryJobRequest.js';
+
+export type { EventExecutionLineageCaseBackfill } from './generated/models/EventExecutionLineageCaseBackfill.js';
+export type { RequestEventExecutionLineageCaseBackfillRequest } from './generated/models/RequestEventExecutionLineageCaseBackfillRequest.js';
+
+export type { ControlEventExecutionLineageCaseBackfillRequest } from './generated/models/ControlEventExecutionLineageCaseBackfillRequest.js';
+
+export type { EventExecutionLineageRetryJobSummary } from './generated/models/EventExecutionLineageRetryJobSummary.js';
+export type { EventExecutionLineageRetryJobs } from './generated/models/EventExecutionLineageRetryJobs.js';
+
+export type { ControlEventExecutionLineageRetryJobRequest } from './generated/models/ControlEventExecutionLineageRetryJobRequest.js';
+
+export type { EventExecutionLineageRetryJobControlReceipt } from './generated/models/EventExecutionLineageRetryJobControlReceipt.js';
+export type { EventExecutionLineageRetryJobControls } from './generated/models/EventExecutionLineageRetryJobControls.js';
+export type { EventExecutionLineageRetryJobAttentionOptions } from './generated/models/EventExecutionLineageRetryJobAttentionOptions.js';
+export type { EventExecutionLineageRetryJobAttentionPage } from './generated/models/EventExecutionLineageRetryJobAttentionPage.js';
+export type { EventExecutionLineageRetryJobHealth } from './generated/models/EventExecutionLineageRetryJobHealth.js';
+export type { EventExecutionLineageRetryJobHealthSample } from './generated/models/EventExecutionLineageRetryJobHealthSample.js';
+export type { EventExecutionLineageRetryJobControlFilters } from './generated/models/EventExecutionLineageRetryJobControlFilters.js';
+
+export { eventConsumerDeliveryContextFromHeaders, EventConsumerDeliveryContextUnavailableError,
+  type EventConsumerDeliveryContext } from './event-consumer-delivery-context.js';
