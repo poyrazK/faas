@@ -1391,6 +1391,8 @@ func readyWhenClosed(ctx context.Context, signal *gateway.ReadySignal, done <-ch
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR-733 5xx capture requests; registered with gatewayOps below.
+	crashCaptureRequests := newCrashCaptureRequestCounter()
 	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
@@ -1599,7 +1601,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			targets := make([]gateway.Target, 0, len(instances))
 			readinessInstanceIDs := make([]string, 0, len(instances))
 			for _, instance := range instances {
-				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
+				if !gatewayRoutable(instance) {
 					continue
 				}
 				port, ok := live[instance.DeploymentID]
@@ -1677,8 +1679,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return gateway.Target{}, false, err
 			}
 			for _, instance := range instances {
-				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
-					instance.ID == "" || instance.NodeID == "" {
+				if instance.DeploymentID != deploymentID || !gatewayRoutable(instance) {
 					continue
 				}
 				return gateway.Target{
@@ -1688,6 +1689,33 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}, true, nil
 			}
 			return gateway.Target{}, false, nil
+		}).
+		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
+		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
+		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
+		// ADR-732: route a fork request only when the fork, its token and
+		// its instance all check out (gateway.ForkTargetFromState).
+		WithForkTargetLoader(func(ctx context.Context, appID, forkID, token string) (gateway.Target, bool, error) {
+			fork, err := pgStore.AppForkForApp(ctx, appID, forkID)
+			if errors.Is(err, state.ErrNotFound) || (err == nil && fork.InstanceID == nil) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			instance, err := pgStore.InstanceByID(ctx, *fork.InstanceID)
+			if errors.Is(err, state.ErrNotFound) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			dep, err := pgStore.DeploymentByID(ctx, instance.DeploymentID)
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			target, ok := gateway.ForkTargetFromState(fork, instance, schedpkg.DeploymentRuntimePort(dep), token, time.Now())
+			return target, ok, nil
 		}).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
@@ -2149,6 +2177,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	gatewayOps := wire.NewOpsMetrics("gatewayd")
 	wire.BootStamps(ctx, "gatewayd-internal", gatewayOps)
 	wire.RegisterDefaultOps(gatewayOps)
+	gatewayOps.Registry().MustRegister(crashCaptureRequests)
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)

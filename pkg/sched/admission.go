@@ -186,6 +186,11 @@ const (
 	// ledger after a restart: Request.FrozenChargeMB of RAM, no vCPU, CPU or
 	// concurrency. A live freeze converts a reservation with Freeze instead.
 	KindFrozen
+	// KindFork is a quarantined production fork (ADR-732). It holds real
+	// node RAM/vCPU for its whole TTL but never serves traffic, so it must
+	// not consume the app's request-concurrency budget (invariant 1) while
+	// still counting toward the RAM ceiling (invariant 2).
+	KindFork
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -193,7 +198,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindFork
 }
 
 // Request is an admission request for one instance (a wake or a build).

@@ -531,6 +531,9 @@ func (f *fakeVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskR
 func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
 	panic("ExecuteAppTask: not stubbed")
 }
+func (f *fakeVmmdClient) ExecForkCommand(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecForkCommand: not stubbed")
+}
 func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed")
 }

@@ -362,6 +362,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Wake. Empty slice = no allowlist rule (current behaviour).
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -453,6 +454,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			StorageKey:        snap.GetStorageKey(),
 			VMStateStorageKey: snap.GetVmstateStorageKey(),
 			MemBytes:          snap.GetMemBytes(),
+			CaptureID:         snap.GetCaptureId(),
+			SealedKey:         snap.GetSealedKey(),
 		}
 	}
 	return wr, nil
@@ -536,6 +539,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// mirrors it so deploy primes the same egress policy.
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
