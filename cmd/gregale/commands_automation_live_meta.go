@@ -14,10 +14,28 @@ func automationLiveCLISubs() []cliSub {
 		cliFlag{Name: "confirm-real-actions", Bool: true, Req: true, Short: "confirm this case can perform real actions"},
 		cliFlag{Name: "wait", Bool: true, Short: "wait and require a current passing assertion verdict"})
 	return []cliSub{
+		{Name: "suite", Short: "Run selected live cases sequentially with resumable private progress", Flags: automationLiveSuiteCLIFlags()},
 		{Name: "list", Short: "Read current target IDs and recent live verifications", Flags: flags()},
 		{Name: "start", Short: "Explicitly start one saved case against real handlers", Flags: append(start, wait...)},
 		{Name: "show", Short: "Read one verification without requiring a verdict", Flags: flags(run)},
 		{Name: "check", Short: "Check a terminal verification and require a current passing verdict", Flags: flags(run)},
 		{Name: "wait", Short: "Observe an existing run, check assertions and require a current passing verdict", Flags: append(flags(run), wait...)},
+	}
+}
+
+func automationLiveSuiteCLIFlags() []cliFlag {
+	return []cliFlag{
+		{Name: "app", Value: "SLUG", Short: "app slug for a new suite"},
+		{Name: "name", Value: "NAME", Short: "automation name for a new suite"},
+		{Name: "case", Value: "NAME", Short: "explicit case selection; repeat in execution order, at most 32"},
+		{Name: "expected-version", Value: "N", Short: "saved automation version for a new suite"},
+		{Name: "expected-published-version", Value: "N", Short: "published revision for a new suite"},
+		{Name: "expected-deployment-id", Value: "UUID", Short: "live default deployment UUID for a new suite"},
+		{Name: "idempotency-key", Value: "KEY", Short: "stable suite key for a new suite"},
+		{Name: "journal", Value: "PATH", Short: "new private progress file; required for a new suite"},
+		{Name: "resume", Value: "PATH", Short: "continue the original selection from this suite journal"},
+		{Name: "confirm-real-actions", Bool: true, Req: true, Short: "confirm execution of remaining selected cases"},
+		{Name: "timeout", Value: "DURATION", Short: "total invocation deadline (default 5m, up to 1h)"},
+		{Name: "poll-interval", Value: "DURATION", Short: "poll interval (default 3s, 1s to 1m)"},
 	}
 }

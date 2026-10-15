@@ -267,6 +267,68 @@ for request/protocol failures. Reports contain identifiers, states and mismatch
 field names; input/output bodies, expected values and raw errors are excluded.
 These observations do not grant publication receipts or authorize future targets.
 
+### Run a resumable live verification suite from CI
+
+Use `live suite` to run an explicitly ordered selection of up to 32 saved cases
+against one frozen target. Each case can execute real actions. Review the cases
+and integrations before confirming them:
+
+```sh
+gregale automations live suite --app billing --name paid-invoice \
+  --case happy --case expected-failure \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --idempotency-key deploy-42-suite --journal suite-progress.json \
+  --confirm-real-actions --timeout 15m --json > suite-result.json
+```
+
+The CLI validates all selected cases before execution, then admits them
+sequentially. A case must have a current passing assertion report before the next
+case starts. Failed assertions or an unavailable/outdated verdict stop the suite.
+A pending run is observed until the total invocation deadline. The final gate
+refreshes every run and the target; an earlier passing observation changed by an
+external continuation cannot establish overall success.
+
+Keep `suite-progress.json` as a private CI artifact, including after timeout or a
+failed request. It records the original selection and per-case admission keys,
+accepted run IDs and safe observations. Progress is persisted before admission
+and between cases. It contains no sample inputs, output values or credentials.
+Restore Unix permissions to `0600` if the artifact service changes them, and keep
+the journal and its adjacent `.lock` path stable while a command is running.
+Only one CLI process may own that journal at a time.
+
+Continue the original suite explicitly:
+
+```sh
+gregale automations live suite --resume suite-progress.json \
+  --confirm-real-actions --timeout 15m --json > suite-result.json
+```
+
+Resume rechecks recorded runs and can admit remaining selected cases. It requires
+the original API endpoint, app identity and target. It does not accept new case
+or target flags. Missing accepted runs stop rather than start replacements. When
+admission was unconfirmed, resume reuses the original request and key; it refuses
+to replay an uncertain admission after 24 hours. Preserve server verification
+records while recovering a suite: idempotent replay depends on their retention.
+Inspect older uncertain admissions before explicitly planning new work.
+
+The total invocation deadline defaults to 5 minutes and is configurable up to
+1 hour. Polling defaults to 3 seconds (allowed 1 second–1 minute); each request
+has a 10-second deadline. Timeout or interruption stops observation and does not
+cancel admitted work. The command never automatically retries workflow execution,
+continues a workflow or cancels it.
+
+After journal preparation, `--json` emits one `schema_version: 1` report with
+`outcome`, `exit_code`, target, `summary`, ordered `cases` and a shell-quoted
+`resume` command. Summary counts include `selected`, `passed`, `failed`, `pending`,
+`not_started` and `unresolved`; each case retains its last safe observation and
+timestamp when available. Historical passing rows in a stopped report are not an
+overall success: gate on the command exit and top-level outcome. Exit 0 means all
+selected cases passed; assertion outcomes use 1, HTTP failures retain exits 2–6,
+overall timeout uses 124 and interruption uses 130. Setup failures use ordinary
+CLI diagnostics. Reports omit keys, payloads and raw errors; observations do not
+provide publication receipts or an atomic server snapshot of every run.
+
 ### Configure and preview a scheduled report
 
 Choose **scheduled-report**, enter its schedule and an IANA timezone, and replace
