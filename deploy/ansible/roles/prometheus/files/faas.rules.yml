@@ -834,8 +834,8 @@ groups:
     rules:
       - alert: FaasHostDiskSpaceLow
         expr: |
-          node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
-            / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+          node_filesystem_avail_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_size_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
             < 0.15
         for: 15m
         labels:
@@ -850,8 +850,8 @@ groups:
 
       - alert: FaasHostDiskSpaceCritical
         expr: |
-          node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
-            / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+          node_filesystem_avail_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_size_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
             < 0.05
         for: 5m
         labels:
@@ -867,12 +867,12 @@ groups:
       - alert: FaasHostDiskFillingFast
         expr: |
           (
-            node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
-              / node_filesystem_size_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            node_filesystem_avail_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+              / node_filesystem_size_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
               < 0.25
           )
           and
-          predict_linear(node_filesystem_avail_bytes{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}[6h], 4 * 3600) < 0
+          predict_linear(node_filesystem_avail_bytes{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}[6h], 4 * 3600) < 0
         for: 30m
         labels:
           severity: page
@@ -886,8 +886,8 @@ groups:
 
       - alert: FaasHostInodesLow
         expr: |
-          node_filesystem_files_free{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
-            / node_filesystem_files{job=~"node|node-compute",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+          node_filesystem_files_free{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
+            / node_filesystem_files{job=~"node|node-compute|node-database",fstype!~"tmpfs|ramfs|devtmpfs|overlay|squashfs|iso9660|vfat",device!~"/dev/loop.*"}
             < 0.10
         for: 15m
         labels:
@@ -901,7 +901,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostDiskSpace.md"
 
       - alert: FaasHostMemoryLow
-        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute"} / node_memory_MemTotal_bytes{job=~"node|node-compute"} < 0.10
+        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute|node-database"} / node_memory_MemTotal_bytes{job=~"node|node-compute|node-database"} < 0.10
         for: 15m
         labels:
           severity: warn
@@ -914,7 +914,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
 
       - alert: FaasHostMemoryCritical
-        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute"} / node_memory_MemTotal_bytes{job=~"node|node-compute"} < 0.05
+        expr: node_memory_MemAvailable_bytes{job=~"node|node-compute|node-database"} / node_memory_MemTotal_bytes{job=~"node|node-compute|node-database"} < 0.05
         for: 5m
         labels:
           severity: page
@@ -927,7 +927,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostMemoryLow.md"
 
       - alert: FaasHostClockUnsynchronized
-        expr: node_timex_sync_status{job=~"node|node-compute"} == 0
+        expr: node_timex_sync_status{job=~"node|node-compute|node-database"} == 0
         for: 15m
         labels:
           severity: warn
@@ -940,7 +940,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
 
       - alert: FaasHostClockSkew
-        expr: abs(node_timex_offset_seconds{job=~"node|node-compute"}) > 0.5
+        expr: abs(node_timex_offset_seconds{job=~"node|node-compute|node-database"}) > 0.5
         for: 10m
         labels:
           severity: warn
@@ -953,7 +953,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostClock.md"
 
       - alert: FaasHostExporterDown
-        expr: up{job=~"node|node-compute"} == 0
+        expr: up{job=~"node|node-compute|node-database"} == 0
         for: 5m
         labels:
           severity: page

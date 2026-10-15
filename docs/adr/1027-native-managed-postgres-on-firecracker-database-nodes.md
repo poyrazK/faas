@@ -386,7 +386,8 @@ are not a fourth manifest box role yet.
     the platform's sandbox. Its secrets are owner-only files in
     `/etc/faas/pgproxyd/` (public TLS key, decoy key, database URL), and it
     refuses group- or world-readable ones.
-  - It is `Type=notify` with a 60 s watchdog. `127.0.0.1:9109` serves
+  - It is `Type=notify` with a 60 s watchdog. Its ops listener (port 9109;
+    see Monitoring below) serves
     `/healthz`, `/readyz` (control-plane database ping, schedd connection,
     listener) and `/metrics` (`pgproxyd_sessions_total{result}`,
     `pgproxyd_active_sessions`, `pgproxyd_wake_seconds`).
@@ -465,6 +466,36 @@ to create the role, so the two cannot drift.
 
 Still manual: pgproxyd's public `*.<suffix>` certificate (files), the
 `faas_pgproxyd_postgres_password` Vault value, and each node's PKI bundle.
+
+**Monitoring.** Control-plane Prometheus scrapes every database node.
+Database nodes are not compute-registry rows, so apid's HTTP-SD never
+lists them. The manifest renders `prom_database_targets` (node name and
+address) instead, and the Prometheus role scrapes each target as
+`node-database` (node_exporter, 9100), `vmmd-database` (9104),
+`pgproxyd` (9109) and `dbbackupd` (9110), labelled `node`.
+- Each daemon binds its ops listener to the node's overlay address
+  (`database_node_metrics_host`); without the manifest they stay on
+  loopback. The node's firewall admits those four ports from
+  `database_node_metrics_cidrs` (the control plane) only, ahead of the
+  overlay-wide accept, so compute nodes cannot read them.
+- `database_node.yml` now runs `node_exporter`. The host disk, inode,
+  memory, clock and exporter alerts cover job `node-database`.
+  node_exporter's XFS parse check runs only where `/proc/fs/xfs/stat`
+  exists.
+- `database_nodes.rules.yml` (runbook `FaasDatabaseNodes.md`, promtool
+  fixture beside it):
+  - `FaasDatabaseNodeDaemonDown` pages, under ADR-1236's first rule
+    (customers failing now). pgproxyd is the only way into a node's
+    databases, and nothing wakes without vmmd.
+  - Five warns: `FaasDatabaseArchiveKeeperDown` (dbbackupd),
+    `FaasDatabaseArchiveOffNodeStale` (`dbarchive_pending_oldest_seconds`
+    above 15 min), `FaasDatabaseArchivePruneFailing` (two failed passes
+    in 3 h), `FaasDatabaseWakeRefusals` (over 20% of authenticated
+    sessions answered `57P03`) and `FaasDatabaseWakeSlow` (wake p95
+    above 5 s).
+  - The archive alerts are warn, like `PgBackupStale`: nothing is lost
+    until the node is.
+- No series carries a database or account id.
 
 ### Durability: WAL archiving, base backups, point-in-time restore
 

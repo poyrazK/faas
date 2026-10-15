@@ -13,7 +13,7 @@ vmmd_client_cert_path = "/etc/faas/tls/pgproxyd/vmmd-client.crt"
 vmmd_client_key_path = "/etc/faas/tls/pgproxyd/vmmd-client.key"
 vmmd_client_ca_path = "/etc/faas/tls/ca/ca.crt"
 verifier_cache_ttl = "{{ pgproxyd_verifier_cache_ttl }}"
-ops_addr = "127.0.0.1:9109"
+ops_addr = "{{ pgproxyd_ops_addr }}"
 instance_id = {{ pgproxyd_instance_id | int }}
 {% if pgproxyd_cancel_peers | length > 0 %}
 

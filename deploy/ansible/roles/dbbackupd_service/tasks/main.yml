@@ -105,7 +105,7 @@
 
 - name: dbbackupd_service — wait for readiness
   ansible.builtin.uri:
-    url: http://127.0.0.1:9110/readyz
+    url: "http://{{ dbbackupd_ops_addr }}/readyz"
     status_code: 200
   register: dbbackupd_ready
   retries: 30

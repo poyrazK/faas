@@ -152,7 +152,7 @@
 
 - name: pgproxyd_service — wait for readiness
   ansible.builtin.uri:
-    url: http://127.0.0.1:9109/readyz
+    url: "http://{{ pgproxyd_ops_addr }}/readyz"
     status_code: 200
   register: pgproxyd_ready
   retries: 30

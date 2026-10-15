@@ -8,6 +8,10 @@ pgproxyd_enabled: false
 pgproxyd_host_suffix: ""
 pgproxyd_listen_addr: ":5432"
 pgproxyd_verifier_cache_ttl: "30s"
+# /healthz, /readyz and /metrics: loopback unless the manifest sets
+# database_node_metrics_host (the overlay address control-plane Prometheus
+# scrapes; the database_node firewall admits only the control plane).
+pgproxyd_ops_addr: "{{ database_node_metrics_host | default('127.0.0.1') }}:9109"
 
 # Control-plane schedd over the overlay, authenticated with the
 # pgproxyd.faas client leaf (e.g. "tcp://100.64.0.10:7444").

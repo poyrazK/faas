@@ -2,7 +2,7 @@
 # database VMs only.
 role = "database"
 listen_addr = "tcp://{{ database_vmmd_overlay_ip }}:{{ database_vmmd_port }}"
-metrics_addr = "127.0.0.1:9104"
+metrics_addr = "{{ database_vmmd_metrics_addr }}"
 tls_cert_path = "/etc/faas/tls/vmmd/server.crt"
 tls_key_path = "/etc/faas/tls/vmmd/server.key"
 tls_ca_path = "/etc/faas/tls/ca/ca.crt"

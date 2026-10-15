@@ -3,8 +3,14 @@
 # listener; the overlay carries schedd -> vmmd and gatewayd -> pgproxyd.
 # Database VMs have no network interface, so nothing is forwarded.
 
-# Overlay ranges trusted for every port (schedd, the app route, metrics).
+# Overlay ranges trusted for every port but the metrics ports (schedd,
+# the app route, cancel forwarding).
 database_node_overlay_cidrs: "{{ overlay_cidrs | default([]) }}"
+# Sources allowed to scrape the node's metrics ports (control-plane
+# Prometheus; the manifest renders the control plane's address). Empty
+# keeps them loopback-only, even from the overlay.
+database_node_metrics_cidrs: []
+database_node_metrics_ports: [9100, 9104, 9109, 9110]
 # Sources allowed to reach SSH. Empty keeps SSH reachable only over the
 # overlay.
 database_node_ssh_cidrs: []

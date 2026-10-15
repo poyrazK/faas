@@ -252,6 +252,17 @@
     mode: "0644"
   notify: reload prometheus
 
+# ADR-1027 native database-node alerts, beside the scrape jobs the
+# manifest's prom_database_targets render.
+- name: prometheus — drop database_nodes.rules.yml (ADR-1027)
+  ansible.builtin.copy:
+    src: database_nodes.rules.yml
+    dest: /etc/prometheus/database_nodes.rules.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: reload prometheus
+
 # ADR-098 §9.A meterd data-upstream alerts (issue #951). Source lives
 # at pkg/promqlrules/data_placement.yaml (canonical, per the C8 plan
 # from ADR-098's PR-cluster outline — colocated with the fixture +

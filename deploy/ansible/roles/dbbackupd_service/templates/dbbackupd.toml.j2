@@ -1,7 +1,7 @@
 # Managed by Ansible (dbbackupd_service). ADR-1027 durability.
 socket_path = "{{ dbbackupd_socket_path }}"
 store_dir = "{{ dbbackupd_store_dir }}"
-ops_addr = "127.0.0.1:9110"
+ops_addr = "{{ dbbackupd_ops_addr }}"
 min_retention = "{{ dbbackupd_min_retention }}"
 prune_interval = "{{ dbbackupd_prune_interval }}"
 {% if dbbackupd_s3_bucket | length > 0 %}

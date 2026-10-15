@@ -6,6 +6,10 @@
 # tcp://<this>:50051). Required.
 database_vmmd_overlay_ip: ""
 database_vmmd_port: 50051
+# /metrics and /readyz. The manifest sets database_node_metrics_host to the
+# overlay address so control-plane Prometheus scrapes it; the database_node
+# firewall admits only database_node_metrics_cidrs to it.
+database_vmmd_metrics_addr: "{{ database_node_metrics_host | default('127.0.0.1') }}:9104"
 # Persistent volumes, one file per database: put this on the local NVMe.
 database_vmmd_volume_root: /srv/db/volumes
 # PostgreSQL major -> image pinned to its linux/amd64 manifest digest (the

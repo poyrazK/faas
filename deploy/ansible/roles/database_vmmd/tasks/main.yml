@@ -108,7 +108,7 @@
 # fresh node (image pull plus ext4 build).
 - name: database_vmmd — wait for every base
   ansible.builtin.uri:
-    url: http://127.0.0.1:9104/readyz
+    url: "http://{{ database_vmmd_metrics_addr }}/readyz"
     status_code: 200
   register: database_vmmd_ready
   retries: 60

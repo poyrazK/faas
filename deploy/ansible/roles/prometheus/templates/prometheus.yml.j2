@@ -40,6 +40,9 @@ rule_files:
   # absent the alerts are simply skipped (Prometheus tolerates a
   # missing rule_files entry). Runbook: docs/ops/h2c-rollback.md.
   - /etc/prometheus/bridge.rules.yml
+  # ADR-1027 native database nodes (pgproxyd, vmmd, dbbackupd). Inert on
+  # a fleet without database nodes: no series match.
+  - /etc/prometheus/database_nodes.rules.yml
 
 # Alertmanager — loopback-only, dialed from the Prometheus binary on the
 # same box. Wired here so the operator's pager sees what the dashboard
@@ -120,6 +123,20 @@ scrape_configs:
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
 {% endif %}
+{% endif %}
+{% if prom_database_targets | default([]) | length > 0 %}
+  # ADR-1027 database nodes, listed by the manifest: they are schedd's
+  # database-scheduler nodes, not compute-registry rows. Each daemon binds
+  # its overlay address, which the node's firewall opens to this host only.
+{% for db_job in prom_database_jobs %}
+  - job_name: "{{ db_job.job }}"
+    static_configs:
+{% for tgt in prom_database_targets %}
+      - targets: ["{{ tgt.host }}:{{ db_job.port }}"]
+        labels:
+          node: "{{ tgt.node }}"
+{% endfor %}
+{% endfor %}
 {% endif %}
 {% if prom_loki_metrics_target | default('') | length > 0 %}
   # Dedicated Loki meta-monitoring. The /metrics endpoint is intentionally

@@ -17,7 +17,10 @@ import (
 //   - each database node: its vmmd listener, pgproxyd's schedd target and
 //     its cancel instance id and peers;
 //   - compute nodes (managed_postgres.app_route): the app route to every
-//     pgproxyd.
+//     pgproxyd;
+//   - monitoring: control-plane Prometheus scrapes each database node's
+//     node_exporter, vmmd, pgproxyd and dbbackupd on its overlay address,
+//     which the node's firewall opens to the control plane only.
 
 // manifestDatabasePort is pgproxyd's listener on every database node.
 const manifestDatabasePort = 5432
@@ -115,6 +118,12 @@ func (d manifestDatabases) controlPlaneVars() string {
 	}
 	// pgproxyd reads role verifiers as faas_pgproxyd from these sources.
 	fmt.Fprintf(&b, "faas_postgres_pgproxyd_cidrs: [%s]\n", quotedYAMLList(cidrs))
+	// Database nodes are schedd's, not compute-registry rows, so
+	// Prometheus scrapes them from this static list.
+	b.WriteString("prom_database_targets:\n")
+	for _, n := range d.nodes {
+		fmt.Fprintf(&b, "  - node: %q\n    host: %q\n", n.host.Name, urlHost(n.address))
+	}
 	return b.String()
 }
 
@@ -139,6 +148,8 @@ func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) str
 	fmt.Fprintf(&b, "pgproxyd_db_url: \"postgres://faas_pgproxyd:{{ faas_pgproxyd_postgres_password | urlencode | replace('/', '%%2F') }}@%s/faas?sslmode=disable\"\n",
 		net.JoinHostPort(d.controlPlane, strconv.Itoa(manifestControlPlanePostgresPort)))
 	fmt.Fprintf(&b, "pgproxyd_instance_id: %d\n", self.instanceID)
+	fmt.Fprintf(&b, "database_node_metrics_host: %q\n", urlHost(self.address))
+	fmt.Fprintf(&b, "database_node_metrics_cidrs: [%s]\n", quotedYAMLList(appendHostCIDR(nil, d.controlPlane, d.overlayCIDR)))
 	if len(d.nodes) == 1 {
 		b.WriteString("pgproxyd_cancel_peers: {}\n")
 		return b.String()
@@ -150,6 +161,14 @@ func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) str
 		}
 	}
 	return b.String()
+}
+
+// urlHost is address as the host part of host:port.
+func urlHost(address string) string {
+	if strings.Contains(address, ":") {
+		return "[" + address + "]"
+	}
+	return address
 }
 
 func (d manifestDatabases) computeVars() string {

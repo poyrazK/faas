@@ -40,7 +40,8 @@ type Config struct {
 	VmmdClientCAPath   string `toml:"vmmd_client_ca_path"`
 	// VerifierCacheTTL bounds how long a removed role keeps working.
 	VerifierCacheTTL time.Duration `toml:"verifier_cache_ttl"`
-	// OpsAddr serves /healthz, /readyz and /metrics on loopback.
+	// OpsAddr serves /healthz, /readyz and /metrics: loopback by default,
+	// the overlay address where control-plane Prometheus scrapes it.
 	OpsAddr string `toml:"ops_addr"`
 	// Transaction pooling on <database-id>-pooler.<host_suffix>:
 	// pool_max_servers caps each database's pooled server connections

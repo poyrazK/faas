@@ -60,7 +60,8 @@
 
 # Order: release + mTLS + firewall, then Firecracker with the release's
 # signed guest kernel, then the archive keeper, then vmmd in database mode
-# (which archives through it when dbbackupd_enabled), then pgproxyd.
+# (which archives through it when dbbackupd_enabled), then pgproxyd, then
+# node_exporter for the host alerts.
 - name: Converge database nodes
   hosts: database_nodes
   become: true
@@ -73,3 +74,4 @@
     - role: dbbackupd_service
     - role: database_vmmd
     - role: pgproxyd_service
+    - role: node_exporter

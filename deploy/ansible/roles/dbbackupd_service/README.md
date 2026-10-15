@@ -30,6 +30,9 @@ Files written on the host:
 Deleting a database deletes its archive (local and bucket) before vmmd
 deletes its volume.
 
-Operations: `/healthz`, `/readyz` and `/metrics` on `127.0.0.1:9110`.
+Operations: `/healthz`, `/readyz` and `/metrics` on `dbbackupd_ops_addr`:
+port 9110 on the overlay address when the manifest renders
+`database_node_metrics_host` (control-plane Prometheus job `dbbackupd`),
+loopback otherwise.
 `dbarchive_pending_oldest_seconds` is the off-node recovery point: how old
 the oldest archive file still only on this node is.

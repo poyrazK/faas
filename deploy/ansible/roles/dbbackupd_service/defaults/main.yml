@@ -9,6 +9,10 @@ dbbackupd_enabled: false
 # Local archive on the node's NVMe, next to the volumes.
 dbbackupd_store_dir: /srv/db/archive
 dbbackupd_socket_path: /run/faas-dbbackupd/dbbackupd.sock
+# /healthz, /readyz and /metrics: loopback unless the manifest sets
+# database_node_metrics_host (the overlay address control-plane Prometheus
+# scrapes; the database_node firewall admits only the control plane).
+dbbackupd_ops_addr: "{{ database_node_metrics_host | default('127.0.0.1') }}:9110"
 
 # Every archive restores to any point this far back; a database's restore
 # window keeps more. Pruned hourly, locally and in the bucket.

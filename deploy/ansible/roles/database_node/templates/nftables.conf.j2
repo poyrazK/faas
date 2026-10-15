@@ -11,6 +11,13 @@ table inet faas_database_node {
     ct state invalid drop
     meta l4proto { icmp, ipv6-icmp } accept
     tcp dport 5432 accept
+    # Metrics and readiness (node_exporter, vmmd, pgproxyd, dbbackupd) are
+    # for control-plane Prometheus only; other overlay members, compute
+    # nodes among them, never read them.
+{% for cidr in database_node_metrics_cidrs %}
+    {{ 'ip6' if ':' in cidr else 'ip' }} saddr {{ cidr }} tcp dport { {{ database_node_metrics_ports | join(', ') }} } accept
+{% endfor %}
+    tcp dport { {{ database_node_metrics_ports | join(', ') }} } drop
 {% for cidr in database_node_overlay_cidrs %}
     {{ 'ip6' if ':' in cidr else 'ip' }} saddr {{ cidr }} accept
 {% endfor %}

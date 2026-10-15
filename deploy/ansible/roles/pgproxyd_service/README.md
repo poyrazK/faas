@@ -33,6 +33,8 @@ Files written on the host:
   `pgproxyd.faas` mTLS leaves.
 
 Operations: `/healthz`, `/readyz` and `/metrics` are served on
-`127.0.0.1:9109`. Metrics: `pgproxyd_sessions_total{result}`,
+`pgproxyd_ops_addr`: port 9109 on the overlay address when the manifest
+renders `database_node_metrics_host` (control-plane Prometheus job
+`pgproxyd`), loopback otherwise. Metrics: `pgproxyd_sessions_total{result}`,
 `pgproxyd_active_sessions`, `pgproxyd_wake_seconds`,
 `pgproxyd_cancel_requests_total{result}`.

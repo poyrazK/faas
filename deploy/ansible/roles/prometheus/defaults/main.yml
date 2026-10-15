@@ -45,6 +45,15 @@ prom_compute_metrics_discovery_refresh_interval: "15s"
 # defence if an operator registers more nodes than the topology validator
 # permits; Prometheus must not accept an unbounded HTTP-SD response.
 prom_compute_metrics_target_limit: 1000
+# ADR-1027 database nodes: the manifest renders prom_database_targets
+# ({node, host} per database host) on the control plane; each target is
+# scraped once per daemon below.
+prom_database_targets: []
+prom_database_jobs:
+  - {job: node-database, port: 9100}
+  - {job: vmmd-database, port: 9104}
+  - {job: pgproxyd, port: 9109}
+  - {job: dbbackupd, port: 9110}
 prom_compute_promtail_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/promtail-targets"
 # Promtail is installed only when the operator has provisioned the dedicated
 # Loki transport and mTLS credentials. Keep both local and compute Promtail

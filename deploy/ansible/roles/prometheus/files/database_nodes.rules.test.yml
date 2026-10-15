@@ -1,0 +1,170 @@
+# ADR-1027: database-node alerts fire on their symptom and stay quiet on
+# healthy nodes.
+rule_files:
+  - database_nodes.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a down pgproxyd pages, a down dbbackupd warns
+    interval: 1m
+    input_series:
+      - series: up{job="pgproxyd",instance="10.42.0.5:9109",node="db-1"}
+        values: 0+0x20
+      - series: up{job="pgproxyd",instance="10.42.0.6:9109",node="db-2"}
+        values: 1+0x20
+      - series: up{job="vmmd-database",instance="10.42.0.6:9104",node="db-2"}
+        values: 1+0x20
+      - series: up{job="dbbackupd",instance="10.42.0.6:9110",node="db-2"}
+        values: 0+0x20
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FaasDatabaseNodeDaemonDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FaasDatabaseNodeDaemonDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: database-node
+              family: database_nodes
+              job: pgproxyd
+              instance: 10.42.0.5:9109
+              node: db-1
+            exp_annotations:
+              summary: pgproxyd on database node db-1 is down
+              description: Control-plane Prometheus cannot scrape pgproxyd on db-1. Every database on the node is unreachable (pgproxyd) or cannot wake (vmmd) until it recovers; production-class databases fail over to their standbys once the node stops answering schedd.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 9m
+        alertname: FaasDatabaseArchiveKeeperDown
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasDatabaseArchiveKeeperDown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.6:9110
+              node: db-2
+            exp_annotations:
+              summary: dbbackupd on database node db-2 is down
+              description: Databases on db-2 cannot archive WAL or take base backups; point-in-time restore stops advancing and WAL fills their volumes until dbbackupd returns.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: an unshipped archive warns after 15 minutes plus the hold
+    interval: 1m
+    input_series:
+      # Uploads stop at minute 0: the oldest pending file ages 60 s a minute.
+      - series: dbarchive_pending_oldest_seconds{job="dbbackupd",instance="10.42.0.5:9110",node="db-1"}
+        values: 600+60x30
+      - series: dbarchive_pending_oldest_seconds{job="dbbackupd",instance="10.42.0.6:9110",node="db-2"}
+        values: 5+0x30
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasDatabaseArchiveOffNodeStale
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: FaasDatabaseArchiveOffNodeStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.5:9110
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 has not shipped its archive for 27m 0s
+              description: The oldest archive file on db-1 that is not yet in the bucket is older than 15 minutes. Losing the node now would lose those commits; check dbbackupd's upload errors and the bucket's reachability.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: one failed prune is tolerated, two warn
+    interval: 30m
+    input_series:
+      - series: dbarchive_prune_errors_total{job="dbbackupd",instance="10.42.0.5:9110",node="db-1"}
+        values: 0 0 1 1 2 2 2
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: FaasDatabaseArchivePruneFailing
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: FaasDatabaseArchivePruneFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              job: dbbackupd
+              instance: 10.42.0.5:9110
+              node: db-1
+            exp_annotations:
+              summary: dbbackupd on db-1 keeps failing to prune its archive
+              description: At least two prune passes failed in the last 3 hours. The local archive and the bucket keep files past their retention, and the node's archive disk fills.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: wake refusals warn per node above a fifth of sessions
+    interval: 1m
+    input_series:
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",result="ok"}
+        values: 0+10x30
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",result="57P03"}
+        values: 0+5x30
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",result="28P01"}
+        values: 0+50x30
+      # A healthy node with the odd refusal.
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",result="ok"}
+        values: 0+100x30
+      - series: pgproxyd_sessions_total{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",result="57P03"}
+        values: 0+1x30
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasDatabaseWakeRefusals
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: FaasDatabaseWakeRefusals
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: Database node db-1 refuses 33.33% of authenticated sessions as unavailable
+              description: pgproxyd answered more than 20% of authenticated sessions on db-1 with 57P03 (the database is starting or unavailable) for 10 minutes. Check schedd's database scheduler and the node's vmmd for failed or queued wakes.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: slow wakes warn at a five second p95
+    interval: 1m
+    input_series:
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="1"}
+        values: 0+0x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="5"}
+        values: 0+1x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="10"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.5:9109",node="db-1",le="+Inf"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="1"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="5"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="10"}
+        values: 0+10x40
+      - series: pgproxyd_wake_seconds_bucket{job="pgproxyd",instance="10.42.0.6:9109",node="db-2",le="+Inf"}
+        values: 0+10x40
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: FaasDatabaseWakeSlow
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: FaasDatabaseWakeSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: Database wakes on db-1 take 9.722s at p95
+              description: The 95th percentile from an authenticated client to a running database on db-1 has exceeded 5 seconds for 15 minutes. Usual causes are boot slots or the RAM ceiling queueing wakes, no spare VMs, or a slow volume.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md

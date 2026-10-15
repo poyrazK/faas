@@ -1,0 +1,99 @@
+# Prometheus alert rules — native managed PostgreSQL database nodes
+# (ADR-1027).
+#
+# Companion to faas.rules.yml. Control-plane Prometheus scrapes every
+# database node from the manifest's list (jobs node-database,
+# vmmd-database, pgproxyd, dbbackupd; label `node` is the manifest host
+# name). Host disk, memory and clock alerts in faas.rules.yml cover
+# node-database too. No series carries a database or account id.
+#
+# Severity follows ADR-1236: only a database node unable to serve pages;
+# archive and wake trends are warn, reviewed daily.
+#
+# Runbook: docs/runbooks/FaasDatabaseNodes.md.
+
+groups:
+  - name: faas_database_nodes
+    interval: 30s
+    rules:
+      # pgproxyd is the only way into the node's databases; without vmmd
+      # nothing on the node wakes, boots or parks.
+      - alert: FaasDatabaseNodeDaemonDown
+        expr: up{job=~"pgproxyd|vmmd-database"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "{{ $labels.job }} on database node {{ $labels.node }} is down"
+          description: "Control-plane Prometheus cannot scrape {{ $labels.job }} on {{ $labels.node }}. Every database on the node is unreachable (pgproxyd) or cannot wake (vmmd) until it recovers; production-class databases fail over to their standbys once the node stops answering schedd."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      # vmmd's archive_command fails while dbbackupd is down, so WAL
+      # accumulates in each database's volume instead of leaving the node.
+      - alert: FaasDatabaseArchiveKeeperDown
+        expr: up{job="dbbackupd"} == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "dbbackupd on database node {{ $labels.node }} is down"
+          description: "Databases on {{ $labels.node }} cannot archive WAL or take base backups; point-in-time restore stops advancing and WAL fills their volumes until dbbackupd returns."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      # The off-node recovery point: a node lost now loses every commit
+      # still only on it.
+      - alert: FaasDatabaseArchiveOffNodeStale
+        expr: dbarchive_pending_oldest_seconds{job="dbbackupd"} > 900
+        for: 10m
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "Database node {{ $labels.node }} has not shipped its archive for {{ $value | humanizeDuration }}"
+          description: "The oldest archive file on {{ $labels.node }} that is not yet in the bucket is older than 15 minutes. Losing the node now would lose those commits; check dbbackupd's upload errors and the bucket's reachability."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      # Pruning runs hourly; two failed passes leave the archive growing.
+      - alert: FaasDatabaseArchivePruneFailing
+        expr: increase(dbarchive_prune_errors_total{job="dbbackupd"}[3h]) >= 2
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "dbbackupd on {{ $labels.node }} keeps failing to prune its archive"
+          description: "At least two prune passes failed in the last 3 hours. The local archive and the bucket keep files past their retention, and the node's archive disk fills."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      # 57P03 is what a client sees when its database could not be woken.
+      - alert: FaasDatabaseWakeRefusals
+        expr: |
+          sum by (node) (rate(pgproxyd_sessions_total{result="57P03"}[10m]))
+            / sum by (node) (rate(pgproxyd_sessions_total{result=~"ok|57P03"}[10m])) > 0.2
+          and sum by (node) (increase(pgproxyd_sessions_total{result="57P03"}[10m])) >= 5
+        for: 10m
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "Database node {{ $labels.node }} refuses {{ $value | humanizePercentage }} of authenticated sessions as unavailable"
+          description: "pgproxyd answered more than 20% of authenticated sessions on {{ $labels.node }} with 57P03 (the database is starting or unavailable) for 10 minutes. Check schedd's database scheduler and the node's vmmd for failed or queued wakes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseWakeSlow
+        expr: histogram_quantile(0.95, sum by (node, le) (rate(pgproxyd_wake_seconds_bucket[15m]))) > 5
+        for: 15m
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "Database wakes on {{ $labels.node }} take {{ $value | humanizeDuration }} at p95"
+          description: "The 95th percentile from an authenticated client to a running database on {{ $labels.node }} has exceeded 5 seconds for 15 minutes. Usual causes are boot slots or the RAM ceiling queueing wakes, no spare VMs, or a slow volume."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"

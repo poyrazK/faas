@@ -21,7 +21,8 @@ type Config struct {
 	SocketPath string `toml:"socket_path"`
 	// StoreDir holds WAL and base backups on the node's local disk.
 	StoreDir string `toml:"store_dir"`
-	// OpsAddr serves /healthz, /readyz and /metrics on loopback.
+	// OpsAddr serves /healthz, /readyz and /metrics: loopback by default,
+	// the overlay address where control-plane Prometheus scrapes it.
 	OpsAddr string `toml:"ops_addr"`
 	// MinRetention is how long every database's archive restores, whatever
 	// its restore window; a longer window keeps more (pkg/dbarchive).
