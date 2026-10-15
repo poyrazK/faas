@@ -39,7 +39,7 @@ func launchTestCampaignBatch(ctx context.Context, batch testCampaignCostBatch, m
 	// Let the native runner finish its cleanup after interruption. No forced
 	// kill deadline is added; active workers are always drained before return.
 	configureTestCampaignWorker(command)
-	return command.Run()
+	return runTestCampaignTrackedWorker(command, directory, batch.ID)
 }
 
 // Shared by campaign launch and process-boundary acceptance tests.
@@ -304,13 +304,11 @@ func cmdTestCampaignRun(args []string) int {
 	if err := registerTestCampaignContinuationOwner(plan, *directory, resolver); err != nil {
 		return printErr("Invalid continuation ownership", err)
 	}
-	lockPath := filepath.Join(*directory, "runner.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	releaseRunner, err := acquireTestCampaignRunnerLock(*directory, testCampaignJSONHash(plan))
 	if err != nil {
 		return printErr("Campaign directory is locked", err)
 	}
-	_ = lock.Close()
-	defer func() { _ = os.Remove(lockPath) }()
+	defer releaseRunner()
 	checkpointPath := filepath.Join(*directory, "checkpoint.json")
 	checkpoint := testCampaignCheckpoint{SchemaVersion: 1, LineageVersion: 1, Recovery: plan.Recovery, PlanSHA256: testCampaignJSONHash(plan), Side: *side, Revision: *revision, Batches: make(map[string]testCampaignCheckpointBatch)}
 	if _, err := os.Lstat(checkpointPath); err == nil {
