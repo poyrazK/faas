@@ -13944,6 +13944,256 @@ func (q *Queries) EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db
 	return serving_weights_match, err
 }
 
+const eventAckExpire = `-- name: EventAckExpire :exec
+UPDATE invocations SET state=CASE WHEN attempts>=$1::integer THEN 'dead_letter' ELSE 'pending' END,
+ outcome=CASE WHEN attempts>=$1::integer THEN 'dead_letter' ELSE NULL END,
+ completed_at=CASE WHEN attempts>=$1::integer THEN clock_timestamp() ELSE completed_at END,
+ due_at=clock_timestamp()+$2::bigint*interval '1 millisecond',
+ lease_expires_at=NULL,quota_reserved=false,instance_id=NULL,last_error='event acknowledgment lease expired'
+WHERE id=$3::uuid
+`
+
+type EventAckExpireParams struct {
+	MaxAttempts  int32
+	RetryDelayMs int64
+	InvocationID pgtype.UUID
+}
+
+func (q *Queries) EventAckExpire(ctx context.Context, db DBTX, arg EventAckExpireParams) error {
+	_, err := db.Exec(ctx, eventAckExpire, arg.MaxAttempts, arg.RetryDelayMs, arg.InvocationID)
+	return err
+}
+
+const eventAckExpired = `-- name: EventAckExpired :many
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
+ORDER BY i.lease_expires_at,i.id LIMIT $1::integer FOR UPDATE OF i SKIP LOCKED
+`
+
+type EventAckExpiredRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Attempts         int32
+	ReplayGeneration int64
+	QuotaReserved    bool
+	MaxAttempts      int32
+	RetryDelayMs     int64
+}
+
+func (q *Queries) EventAckExpired(ctx context.Context, db DBTX, batchLimit int32) ([]EventAckExpiredRow, error) {
+	rows, err := db.Query(ctx, eventAckExpired, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventAckExpiredRow{}
+	for rows.Next() {
+		var i EventAckExpiredRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Attempts,
+			&i.ReplayGeneration,
+			&i.QuotaReserved,
+			&i.MaxAttempts,
+			&i.RetryDelayMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventAckExtend = `-- name: EventAckExtend :one
+UPDATE invocations i SET lease_expires_at=least(clock_timestamp()+a.lease_seconds*interval '1 second',a.deadline_at)
+FROM event_delivery_acknowledgments a WHERE a.invocation_id=i.id AND i.id=$1::uuid
+RETURNING i.lease_expires_at
+`
+
+func (q *Queries) EventAckExtend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, eventAckExtend, invocationID)
+	var lease_expires_at pgtype.Timestamptz
+	err := row.Scan(&lease_expires_at)
+	return lease_expires_at, err
+}
+
+const eventAckGet = `-- name: EventAckGet :one
+SELECT invocation_id, attempt, replay_generation, token_digest, phase, completion_digest, lease_seconds, deadline_at, max_attempts, retry_delay_ms FROM event_delivery_acknowledgments WHERE invocation_id=$1
+`
+
+func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryAcknowledgment, error) {
+	row := db.QueryRow(ctx, eventAckGet, invocationID)
+	var i EventDeliveryAcknowledgment
+	err := row.Scan(
+		&i.InvocationID,
+		&i.Attempt,
+		&i.ReplayGeneration,
+		&i.TokenDigest,
+		&i.Phase,
+		&i.CompletionDigest,
+		&i.LeaseSeconds,
+		&i.DeadlineAt,
+		&i.MaxAttempts,
+		&i.RetryDelayMs,
+	)
+	return i, err
+}
+
+const eventAckInvocationLock = `-- name: EventAckInvocationLock :one
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.id=$1::uuid AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND a.status<>'deleted' FOR UPDATE OF i
+`
+
+type EventAckInvocationLockParams struct {
+	InvocationID pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+type EventAckInvocationLockRow struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	AppID                  pgtype.UUID
+	Source                 string
+	State                  string
+	Attempts               int32
+	ReplayGeneration       int64
+	Headers                []byte
+	OperationID            pgtype.UUID
+	OnSuccessDestinationID pgtype.UUID
+	OnFailureDestinationID pgtype.UUID
+	LeaseExpiresAt         pgtype.Timestamptz
+	Result                 []byte
+}
+
+func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg EventAckInvocationLockParams) (EventAckInvocationLockRow, error) {
+	row := db.QueryRow(ctx, eventAckInvocationLock, arg.InvocationID, arg.AccountID, arg.AppID)
+	var i EventAckInvocationLockRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Source,
+		&i.State,
+		&i.Attempts,
+		&i.ReplayGeneration,
+		&i.Headers,
+		&i.OperationID,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.LeaseExpiresAt,
+		&i.Result,
+	)
+	return i, err
+}
+
+const eventAckNow = `-- name: EventAckNow :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) EventAckNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, eventAckNow)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventAckOffer = `-- name: EventAckOffer :exec
+INSERT INTO event_delivery_acknowledgments (invocation_id,attempt,replay_generation,token_digest,phase,lease_seconds,deadline_at,max_attempts,retry_delay_ms)
+VALUES ($1,$2,$3,$4,'offered',$5,clock_timestamp()+$8::integer*interval '1 second',$6,$7)
+ON CONFLICT (invocation_id) DO UPDATE SET attempt=excluded.attempt,replay_generation=excluded.replay_generation,token_digest=excluded.token_digest,phase='offered',completion_digest=NULL,lease_seconds=excluded.lease_seconds,deadline_at=excluded.deadline_at,max_attempts=excluded.max_attempts,retry_delay_ms=excluded.retry_delay_ms
+`
+
+type EventAckOfferParams struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	TokenDigest      []byte
+	LeaseSeconds     int32
+	MaxAttempts      int32
+	RetryDelayMs     int64
+	LifetimeSeconds  int32
+}
+
+func (q *Queries) EventAckOffer(ctx context.Context, db DBTX, arg EventAckOfferParams) error {
+	_, err := db.Exec(ctx, eventAckOffer,
+		arg.InvocationID,
+		arg.Attempt,
+		arg.ReplayGeneration,
+		arg.TokenDigest,
+		arg.LeaseSeconds,
+		arg.MaxAttempts,
+		arg.RetryDelayMs,
+		arg.LifetimeSeconds,
+	)
+	return err
+}
+
+const eventAckPhase = `-- name: EventAckPhase :exec
+UPDATE event_delivery_acknowledgments SET phase=$1::text,completion_digest=$2::bytea WHERE invocation_id=$3::uuid
+`
+
+type EventAckPhaseParams struct {
+	Phase            string
+	CompletionDigest []byte
+	InvocationID     pgtype.UUID
+}
+
+func (q *Queries) EventAckPhase(ctx context.Context, db DBTX, arg EventAckPhaseParams) error {
+	_, err := db.Exec(ctx, eventAckPhase, arg.Phase, arg.CompletionDigest, arg.InvocationID)
+	return err
+}
+
+const eventAckPolicyGet = `-- name: EventAckPolicyGet :one
+SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+WHERE s.id=$1::uuid AND s.account_id=$2::uuid AND s.app_id=$3::uuid AND a.status<>'deleted'
+`
+
+type EventAckPolicyGetParams struct {
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) EventAckPolicyGet(ctx context.Context, db DBTX, arg EventAckPolicyGetParams) (int32, error) {
+	row := db.QueryRow(ctx, eventAckPolicyGet, arg.SubscriptionID, arg.AccountID, arg.AppID)
+	var acknowledgment_lease_seconds int32
+	err := row.Scan(&acknowledgment_lease_seconds)
+	return acknowledgment_lease_seconds, err
+}
+
+const eventAckPolicySet = `-- name: EventAckPolicySet :execrows
+UPDATE event_subscriptions s SET acknowledgment_lease_seconds=$1::integer,updated_at=clock_timestamp()
+FROM apps a WHERE a.id=s.app_id AND a.account_id=s.account_id AND a.status<>'deleted'
+AND s.id=$2::uuid AND s.account_id=$3::uuid AND s.app_id=$4::uuid
+`
+
+type EventAckPolicySetParams struct {
+	LeaseSeconds   int32
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPolicySetParams) (int64, error) {
+	result, err := db.Exec(ctx, eventAckPolicySet,
+		arg.LeaseSeconds,
+		arg.SubscriptionID,
+		arg.AccountID,
+		arg.AppID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
 SELECT id::text, coalesce(project_id::text,'')::text AS project_id
 FROM apps WHERE id=$1::text::uuid
@@ -35891,7 +36141,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.acknowledgment_lease_seconds, s.schema_versions
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -35918,6 +36168,7 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RoutingRetryPolicy,
+			&i.AcknowledgmentLeaseSeconds,
 			&i.SchemaVersions,
 		); err != nil {
 			return nil, err
@@ -36348,7 +36599,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions
+select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, acknowledgment_lease_seconds, schema_versions
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -36377,6 +36628,7 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RoutingRetryPolicy,
+			&i.AcknowledgmentLeaseSeconds,
 			&i.SchemaVersions,
 		); err != nil {
 			return nil, err
@@ -37725,7 +37977,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.acknowledgment_lease_seconds, s.schema_versions
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -37797,6 +38049,7 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RoutingRetryPolicy,
+			&i.AcknowledgmentLeaseSeconds,
 			&i.SchemaVersions,
 		); err != nil {
 			return nil, err
@@ -78532,7 +78785,7 @@ on conflict (app_id, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, (xmax = 0) as inserted
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted
 `
 
 type UpsertEventSubscriptionParams struct {
@@ -78544,18 +78797,19 @@ type UpsertEventSubscriptionParams struct {
 }
 
 type UpsertEventSubscriptionRow struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Source             string
-	Type               string
-	Filter             []byte
-	Enabled            bool
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	RoutingRetryPolicy []byte
-	SchemaVersions     []string
-	Inserted           bool
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	AppID                      pgtype.UUID
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	Enabled                    bool
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
+	Inserted                   bool
 }
 
 // (xmax = 0) distinguishes a declaration first installed by this deploy from
@@ -78581,6 +78835,7 @@ func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg Upse
 		&i.UpdatedAt,
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
+		&i.AcknowledgmentLeaseSeconds,
 		&i.Inserted,
 	)
 	return i, err

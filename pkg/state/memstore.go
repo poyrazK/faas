@@ -138,6 +138,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventAcknowledgments map[string]eventAcknowledgment
+
 	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
 	initialCompletionNext                map[string]time.Time
 	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
@@ -13421,6 +13423,9 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	defer m.mu.Unlock()
 	ids := make([]string, 0)
 	for id, inv := range m.invocations {
+		if ack, ok := m.eventAcknowledgments[id]; ok && ack.phase == "awaiting" && ack.claim.Attempt == inv.Attempts && ack.claim.ReplayGeneration == inv.ReplayGeneration {
+			continue
+		}
 		if inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(now) {
 			continue
 		}
@@ -13504,6 +13509,9 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.completeInvocationAndQueueServingAckLocked(id, attempt, claim, result, queueServingAck, classification...)
+}
+func (m *MemStore) completeInvocationAndQueueServingAckLocked(id string, attempt int, claim *InvocationClaim, result json.RawMessage, queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement, classification ...InvocationWorkClassification) error {
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound

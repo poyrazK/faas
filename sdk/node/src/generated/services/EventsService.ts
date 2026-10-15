@@ -11,6 +11,10 @@ import type { ControlEventExecutionLineageCaseBackfillRequest } from '../models/
 import type { ControlEventExecutionLineageRetryJobRequest } from '../models/ControlEventExecutionLineageRetryJobRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
+import type { EventAcknowledgmentPolicy } from '../models/EventAcknowledgmentPolicy.js';
+import type { EventAcknowledgmentPolicyRequest } from '../models/EventAcknowledgmentPolicyRequest.js';
+import type { EventAcknowledgmentRequest } from '../models/EventAcknowledgmentRequest.js';
+import type { EventAcknowledgmentStatus } from '../models/EventAcknowledgmentStatus.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -5223,6 +5227,198 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Inspect future delivery acknowledgment policy.
+   * Requires apps:read or admin. Tokens are never returned by inspection. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1–300 seconds enables a deferred lease after HTTP 202.
+   * @returns EventAcknowledgmentPolicy Inspect future delivery acknowledgment policy result.
+   * @throws ApiError
+   */
+  public static getEventAcknowledgmentPolicy({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * slug identifying the target for getEventAcknowledgmentPolicy.
+     */
+    slug: string,
+    /**
+     * subscriptionID identifying the target for getEventAcknowledgmentPolicy.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventAcknowledgmentPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid scope, token or policy for getEventAcknowledgmentPolicy.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for getEventAcknowledgmentPolicy.`,
+        504: `Acknowledgment request timed out for getEventAcknowledgmentPolicy.`,
+      },
+    });
+  }
+  /**
+   * Configure future delivery acknowledgment policy.
+   * Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1–300 seconds enables a deferred lease after HTTP 202.
+   * @returns EventAcknowledgmentPolicy Configure future delivery acknowledgment policy result.
+   * @throws ApiError
+   */
+  public static setEventAcknowledgmentPolicy({
+    slug,
+    subscriptionId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for setEventAcknowledgmentPolicy.
+     */
+    slug: string,
+    /**
+     * subscriptionID identifying the target for setEventAcknowledgmentPolicy.
+     */
+    subscriptionId: string,
+    requestBody: EventAcknowledgmentPolicyRequest,
+  }): CancelablePromise<EventAcknowledgmentPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for setEventAcknowledgmentPolicy.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for setEventAcknowledgmentPolicy.`,
+        504: `Acknowledgment request timed out for setEventAcknowledgmentPolicy.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained delivery processing state.
+   * Requires apps:read or admin. Tokens are never returned by inspection. Processing state distinguishes waiting, delivering, processing, expired and terminal invocation states. It does not prove business effects outside the consumer transaction.
+   * @returns EventAcknowledgmentStatus Inspect retained delivery processing state result.
+   * @throws ApiError
+   */
+  public static getEventAcknowledgment({
+    slug,
+    invocationId,
+  }: {
+    /**
+     * slug identifying the target for getEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for getEventAcknowledgment.
+     */
+    invocationId: string,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      errors: {
+        400: `Invalid scope, token or policy for getEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for getEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for getEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Renew a deferred delivery processing lease.
+   * Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Renewal requires an unexpired awaiting lease and cannot exceed the one-hour attempt deadline. A 409 during the 202 handoff may be retried with the same token.
+   * @returns EventAcknowledgmentStatus Renew a deferred delivery processing lease result.
+   * @throws ApiError
+   */
+  public static renewEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for renewEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for renewEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for renewEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for renewEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for renewEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Complete a deferred delivery attempt.
+   * Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Complete only after durable business processing. Matching successful repeats return the saved completion state. Replaced attempts and changed results return 409. Completion can precede the scheduler observing 202.
+   * @returns EventAcknowledgmentStatus Complete a deferred delivery attempt result.
+   * @throws ApiError
+   */
+  public static completeEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for completeEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for completeEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for completeEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for completeEventAcknowledgment.`,
       },
     });
   }

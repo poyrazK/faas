@@ -1240,3 +1240,11 @@ reject raw `Current()` acquisition. After stopping admission and the coordinator
 use `WaitForRetirement(ctx)` with a fresh shutdown budget. Without a retirement
 hook, `Current()` keeps caller-owned lifetime behavior. All registered consumers
 must succeed before a revision is ACKed.
+
+### Deferred delivery acknowledgments
+
+Configure future subscription acceptances with `SetEventAcknowledgmentPolicy`.
+An opted-in handler durably enqueues processing before returning HTTP 202; its
+worker uses `RenewEventAcknowledgment` and `CompleteEventAcknowledgment` with the
+secret delivery token and an appropriately scoped API credential. Inspect state
+with `GetEventAcknowledgment`. See [the protocol and rollout requirements](../../docs/event-deferred-acknowledgments.md).

@@ -11132,3 +11132,11 @@ const (
 	MCPConnectionHealthMaxOffset          = 10000
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
 )
+
+// Deferred event processing remains bounded independently of dispatch timeout.
+const (
+	EventAcknowledgmentLeaseMaxSeconds = 300
+	EventAcknowledgmentLifetime        = time.Hour
+	EventAcknowledgmentSweepBatch      = 100
+)
+const EventAcknowledgmentResultMaxBytes = 1 << 20

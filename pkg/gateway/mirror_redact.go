@@ -53,6 +53,7 @@ import (
 // uses CanonicalMIMEHeaderKey internally, so a plain Del(key)
 // after Set-ing the always-stripped names handles both shapes.
 var alwaysStrippedHeaders = []string{
+	"X-Gregale-Event-Acknowledgment-Token",
 	"Authorization",
 	"Cookie",
 	"Set-Cookie",

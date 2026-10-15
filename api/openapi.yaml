@@ -49718,6 +49718,233 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy:
+    get:
+      tags: [events]
+      operationId: getEventAcknowledgmentPolicy
+      summary: Inspect future delivery acknowledgment policy.
+      description: "Requires apps:read or admin. Tokens are never returned by inspection. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1\u2013300 seconds enables a deferred lease after HTTP 202."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for getEventAcknowledgmentPolicy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "subscriptionID identifying the target for getEventAcknowledgmentPolicy."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Inspect future delivery acknowledgment policy result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentPolicy' }
+        '400':
+          description: "Invalid scope, token or policy for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [events]
+      operationId: setEventAcknowledgmentPolicy
+      summary: Configure future delivery acknowledgment policy.
+      description: "Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1\u2013300 seconds enables a deferred lease after HTTP 202."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for setEventAcknowledgmentPolicy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "subscriptionID identifying the target for setEventAcknowledgmentPolicy."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentPolicyRequest' }
+      responses:
+        '200':
+          description: "Configure future delivery acknowledgment policy result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentPolicy' }
+        '400':
+          description: "Invalid scope, token or policy for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment:
+    get:
+      tags: [events]
+      operationId: getEventAcknowledgment
+      summary: Inspect retained delivery processing state.
+      description: "Requires apps:read or admin. Tokens are never returned by inspection. Processing state distinguishes waiting, delivering, processing, expired and terminal invocation states. It does not prove business effects outside the consumer transaction."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for getEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for getEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Inspect retained delivery processing state result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew:
+    post:
+      tags: [events]
+      operationId: renewEventAcknowledgment
+      summary: Renew a deferred delivery processing lease.
+      description: "Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Renewal requires an unexpired awaiting lease and cannot exceed the one-hour attempt deadline. A 409 during the 202 handoff may be retried with the same token."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for renewEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for renewEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentRequest' }
+      responses:
+        '200':
+          description: "Renew a deferred delivery processing lease result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete:
+    post:
+      tags: [events]
+      operationId: completeEventAcknowledgment
+      summary: Complete a deferred delivery attempt.
+      description: "Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Complete only after durable business processing. Matching successful repeats return the saved completion state. Replaced attempts and changed results return 409. Completion can precede the scheduler observing 202."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for completeEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for completeEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentRequest' }
+      responses:
+        '200':
+          description: "Complete a deferred delivery attempt result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
 
   securitySchemes:
@@ -50227,6 +50454,39 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    EventAcknowledgmentPolicy:
+      type: object
+      description: Acceptance-time deferred acknowledgment configuration for an application subscription.
+      required: [subscription_id, lease_seconds]
+      properties:
+        subscription_id: { type: string, format: uuid, description: Subscription whose future acceptance policy is configured. }
+        lease_seconds: { type: integer, minimum: 0, maximum: 300, description: Zero uses ordinary HTTP success; positive values enable deferred HTTP 202 processing. }
+    EventAcknowledgmentPolicyRequest:
+      type: object
+      description: Explicit replacement of a subscription policy for future acceptances.
+      required: [lease_seconds]
+      properties:
+        lease_seconds: { type: integer, minimum: 0, maximum: 300, description: Requested processing lease duration; zero disables deferred acknowledgment for future acceptances. }
+    EventAcknowledgmentRequest:
+      type: object
+      description: App-authorized callback fenced by the current opaque delivery token.
+      required: [token]
+      properties:
+        token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Secret attempt token from the authenticated internal delivery; never log or persist in diagnostic artifacts. }
+        result:
+          description: Optional JSON completion result up to one MiB; omitted means null and renewal forbids this field.
+    EventAcknowledgmentStatus:
+      type: object
+      description: Retained invocation and processing lease observation without secret token material.
+      required: [invocation_id, attempt, replay_generation, state, processing_state]
+      properties:
+        invocation_id: { type: string, format: uuid, description: Durable invocation receiving the deferred processing callback. }
+        attempt: { type: integer, minimum: 0, description: Current execution claim number for this processing observation; zero follows an in-place replay reset. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: Current in-place replay generation fencing old delivery attempts. }
+        state: { type: string, description: Underlying durable invocation lifecycle state. }
+        processing_state: { type: string, enum: [waiting, delivering, processing, expired, completed, failed, dead_letter, cancelled, superseded], description: Processing phase derived from the retained claim and current database clock. }
+        lease_expires_at: { type: string, format: date-time, description: Current invocation lease expiry; absent after expiry recovery. }
+        deadline_at: { type: string, format: date-time, description: Absolute one-hour processing deadline of the matching attempt. }
     MCPCatalogObserverOAuthConfig:
       description: Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
       type: object

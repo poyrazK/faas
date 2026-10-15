@@ -708,6 +708,16 @@ type Querier interface {
 	EnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (EnvironmentWorkloadServingReceiptRow, error)
 	EnvironmentWorkloadServingRoutes(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingRoutesRow, error)
 	EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error)
+	EventAckExpire(ctx context.Context, db DBTX, arg EventAckExpireParams) error
+	EventAckExpired(ctx context.Context, db DBTX, batchLimit int32) ([]EventAckExpiredRow, error)
+	EventAckExtend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (pgtype.Timestamptz, error)
+	EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryAcknowledgment, error)
+	EventAckInvocationLock(ctx context.Context, db DBTX, arg EventAckInvocationLockParams) (EventAckInvocationLockRow, error)
+	EventAckNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	EventAckOffer(ctx context.Context, db DBTX, arg EventAckOfferParams) error
+	EventAckPhase(ctx context.Context, db DBTX, arg EventAckPhaseParams) error
+	EventAckPolicyGet(ctx context.Context, db DBTX, arg EventAckPolicyGetParams) (int32, error)
+	EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPolicySetParams) (int64, error)
 	EventAgeOrderedBinding(ctx context.Context, db DBTX, subscriptionID pgtype.UUID) (bool, error)
 	EventAgeReplayTarget(ctx context.Context, db DBTX, arg EventAgeReplayTargetParams) (EventAgeReplayTargetRow, error)
 	EventAgeScopedReplayTarget(ctx context.Context, db DBTX, arg EventAgeScopedReplayTargetParams) (EventAgeScopedReplayTargetRow, error)

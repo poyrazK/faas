@@ -2560,6 +2560,7 @@ BEGIN
             'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
             'source', s.source, 'type', s.type, 'filter', s.filter,
             'routing_retry_policy', s.routing_retry_policy,
+            'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
@@ -21943,6 +21944,7 @@ CREATE TABLE public.event_subscriptions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     routing_retry_policy jsonb,
+    acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL CHECK (acknowledgment_lease_seconds BETWEEN 0 AND 300),
     schema_versions text[] DEFAULT '{}'::text[] NOT NULL,
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
@@ -61444,3 +61446,17 @@ CREATE TABLE public.event_subscription_capacity_commands (
  PRIMARY KEY(subscription_id,command_id)
 );
 CREATE INDEX event_subscription_capacity_commands_expiry ON public.event_subscription_capacity_commands(retain_until,subscription_id,command_id);
+
+CREATE TABLE public.event_delivery_acknowledgments (
+ invocation_id uuid PRIMARY KEY REFERENCES public.invocations(id) ON DELETE CASCADE,
+ attempt integer NOT NULL CHECK (attempt > 0),
+ replay_generation bigint NOT NULL CHECK (replay_generation >= 0),
+ token_digest bytea NOT NULL CHECK (octet_length(token_digest) = 32),
+ phase text NOT NULL CHECK (phase IN ('offered','awaiting','completed')),
+ completion_digest bytea CHECK (completion_digest IS NULL OR octet_length(completion_digest) = 32),
+ CHECK ((phase = 'completed') = (completion_digest IS NOT NULL)),
+ lease_seconds integer NOT NULL CHECK (lease_seconds BETWEEN 1 AND 300),
+ deadline_at timestamptz NOT NULL,
+ max_attempts integer NOT NULL CHECK (max_attempts > 0),
+ retry_delay_ms bigint NOT NULL CHECK (retry_delay_ms > 0)
+);

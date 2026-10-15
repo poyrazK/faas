@@ -2855,6 +2855,19 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
+type EventDeliveryAcknowledgment struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	TokenDigest      []byte
+	Phase            string
+	CompletionDigest []byte
+	LeaseSeconds     int32
+	DeadlineAt       pgtype.Timestamptz
+	MaxAttempts      int32
+	RetryDelayMs     int64
+}
+
 type EventDeliveryCapacity struct {
 	AccountID     pgtype.UUID
 	ConsumerLimit int32
@@ -3239,17 +3252,18 @@ type EventStorageAdmission struct {
 }
 
 type EventSubscription struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Source             string
-	Type               string
-	Filter             []byte
-	Enabled            bool
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	RoutingRetryPolicy []byte
-	SchemaVersions     []string
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	AppID                      pgtype.UUID
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	Enabled                    bool
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	RoutingRetryPolicy         []byte
+	AcknowledgmentLeaseSeconds int32
+	SchemaVersions             []string
 }
 
 type EventSubscriptionCapacityCommand struct {

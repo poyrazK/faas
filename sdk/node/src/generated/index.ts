@@ -569,6 +569,10 @@ export type { EnvironmentWorkloadActivationEvidence } from './models/Environment
 export type { EnvironmentWorkloadSource } from './models/EnvironmentWorkloadSource.js';
 export type { EnvScope } from './models/EnvScope.js';
 export type { ErrorNewWebhookPayload } from './models/ErrorNewWebhookPayload.js';
+export type { EventAcknowledgmentPolicy } from './models/EventAcknowledgmentPolicy.js';
+export type { EventAcknowledgmentPolicyRequest } from './models/EventAcknowledgmentPolicyRequest.js';
+export type { EventAcknowledgmentRequest } from './models/EventAcknowledgmentRequest.js';
+export type { EventAcknowledgmentStatus } from './models/EventAcknowledgmentStatus.js';
 export type { EventBacklogConsumer } from './models/EventBacklogConsumer.js';
 export type { EventBacklogRecipient } from './models/EventBacklogRecipient.js';
 export type { EventBacklogResponse } from './models/EventBacklogResponse.js';

@@ -1113,6 +1113,11 @@ from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_acknowledgment_policy import EventAcknowledgmentPolicy
+from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyRequest
+from .event_acknowledgment_request import EventAcknowledgmentRequest
+from .event_acknowledgment_status import EventAcknowledgmentStatus
+from .event_acknowledgment_status_processing_state import EventAcknowledgmentStatusProcessingState
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
 from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
@@ -5758,6 +5763,11 @@ __all__ = (
     "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventAcknowledgmentPolicy",
+    "EventAcknowledgmentPolicyRequest",
+    "EventAcknowledgmentRequest",
+    "EventAcknowledgmentStatus",
+    "EventAcknowledgmentStatusProcessingState",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
     "EventBacklogConsumerPendingWaitingReasons",

@@ -74,3 +74,8 @@ force; lease expiry alone does not schedule another invocation. If a handler
 crashes, its subsequent delivery can reclaim after expiry. There is no detached
 202 acknowledgment mode, platform processing-health view, Node helper or Python
 helper in this change.
+
+For workers that durably continue beyond the HTTP request, use the separate
+[platform deferred acknowledgment protocol](event-deferred-acknowledgments.md).
+The application database lease and platform delivery lease protect different
+boundaries; neither replaces the transactional business receipt.

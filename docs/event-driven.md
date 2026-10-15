@@ -3372,3 +3372,12 @@ Execution attempts differ from routing attempts before admission. An ordinary re
 The gateway overrides producer-supplied counter/lineage headers using private dispatch fields and forwards them only for scheduler-marked synthetic work. Public HTTP requests cannot forward these reserved headers to guests. Upgrade gateways before the scheduler for rollout; older components do not guarantee the new context. Headers are still not signatures: authenticate delivery and supply trusted owner scope before using any SDK helper.
 
 Continue deduplicating by the existing owned event acceptance and subscription consumer identity. Keep attempt, invocation ID, generation and lineage out of the business receipt key and input digest; the existing transactional helpers remain unchanged. The new metadata adds no ordering or exactly-once guarantee and does not change retry, replay, capacity or retention policies.
+
+### Deferred application processing
+
+Subscriptions can opt into [deferred acknowledgments](event-deferred-acknowledgments.md).
+HTTP 202 then transfers the delivery lease to a durable consumer worker, which
+renews and explicitly completes using an app-authorized, attempt-scoped token.
+Expiry retries only that consumer and respects a finite attempt budget. Ordinary
+subscriptions keep HTTP-success completion. This remains at least once; consumer
+receipts and external-effect idempotency remain necessary.

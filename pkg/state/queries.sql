@@ -1170,7 +1170,7 @@ on conflict (app_id, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -20126,3 +20126,48 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND j.status <> 'deleted'
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
+
+-- name: EventAckPolicyGet :one
+SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+WHERE s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';
+
+-- name: EventAckPolicySet :execrows
+UPDATE event_subscriptions s SET acknowledgment_lease_seconds=sqlc.arg(lease_seconds)::integer,updated_at=clock_timestamp()
+FROM apps a WHERE a.id=s.app_id AND a.account_id=s.account_id AND a.status<>'deleted'
+AND s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid;
+
+-- name: EventAckInvocationLock :one
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.id=sqlc.arg(invocation_id)::uuid AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' FOR UPDATE OF i;
+
+-- name: EventAckGet :one
+SELECT * FROM event_delivery_acknowledgments WHERE invocation_id=$1;
+
+-- name: EventAckOffer :exec
+INSERT INTO event_delivery_acknowledgments (invocation_id,attempt,replay_generation,token_digest,phase,lease_seconds,deadline_at,max_attempts,retry_delay_ms)
+VALUES ($1,$2,$3,$4,'offered',$5,clock_timestamp()+sqlc.arg(lifetime_seconds)::integer*interval '1 second',$6,$7)
+ON CONFLICT (invocation_id) DO UPDATE SET attempt=excluded.attempt,replay_generation=excluded.replay_generation,token_digest=excluded.token_digest,phase='offered',completion_digest=NULL,lease_seconds=excluded.lease_seconds,deadline_at=excluded.deadline_at,max_attempts=excluded.max_attempts,retry_delay_ms=excluded.retry_delay_ms;
+
+-- name: EventAckPhase :exec
+UPDATE event_delivery_acknowledgments SET phase=sqlc.arg(phase)::text,completion_digest=sqlc.narg(completion_digest)::bytea WHERE invocation_id=sqlc.arg(invocation_id)::uuid;
+
+-- name: EventAckExtend :one
+UPDATE invocations i SET lease_expires_at=least(clock_timestamp()+a.lease_seconds*interval '1 second',a.deadline_at)
+FROM event_delivery_acknowledgments a WHERE a.invocation_id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
+RETURNING i.lease_expires_at;
+
+-- name: EventAckNow :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: EventAckExpired :many
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
+ORDER BY i.lease_expires_at,i.id LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE OF i SKIP LOCKED;
+
+-- name: EventAckExpire :exec
+UPDATE invocations SET state=CASE WHEN attempts>=sqlc.arg(max_attempts)::integer THEN 'dead_letter' ELSE 'pending' END,
+ outcome=CASE WHEN attempts>=sqlc.arg(max_attempts)::integer THEN 'dead_letter' ELSE NULL END,
+ completed_at=CASE WHEN attempts>=sqlc.arg(max_attempts)::integer THEN clock_timestamp() ELSE completed_at END,
+ due_at=clock_timestamp()+sqlc.arg(retry_delay_ms)::bigint*interval '1 millisecond',
+ lease_expires_at=NULL,quota_reserved=false,instance_id=NULL,last_error='event acknowledgment lease expired'
+WHERE id=sqlc.arg(invocation_id)::uuid;
