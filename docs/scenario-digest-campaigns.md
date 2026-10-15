@@ -402,6 +402,59 @@ Combined inputs and output are each limited to 64 MiB; receipt depth, node
 count, and provenance history are also bounded.
 
 Keep baseline and current batches separate and preserve their source revision.
-Merge records input origins but cannot infer whether two reports belong to
-different application revisions or environments. Each successful merge is
+Merge records input origins and checks source identities as described below.
+Environment provenance is not inferred. Each successful merge is
 informational and returns 0 even when receipts record failures; errors return 1.
+
+## Source revisions and build provenance
+
+Native real-vm runs record versioned `source_revision` metadata for the primary
+app and every deployed service or fixture. Each workload records the uploaded
+source SHA-256, deployment ID, runtime, shape, and handler. Git commit and tracked
+working-tree changes are captured best-effort from that workload's actual source
+directory with a bounded local Git lookup. No CI checkout revision is assumed
+to be the tested application's revision. Unavailable Git metadata stays absent
+or null. The tracked-change flag excludes untracked files; uploaded source
+hashes identify the archived bytes, including included untracked changes.
+
+The expected workload set is recorded before deployment. Missing deployment
+metadata therefore cannot look like a complete multi-service identity.
+Metadata is observational: a failed deployment can retain a queued deployment
+ID and uploaded source hash, without claiming that deployment became ready.
+Git observations and upload creation are separate moments; archive hashes are
+the evidence for the uploaded bytes. Runtime build settings identify inputs,
+not a reproducible binary or container image digest.
+
+By default, report merging requires a complete source identity on every
+executed leaf and one matching identity per scenario/engine across all inputs,
+profiles, and matrix cases. Identity includes workload membership, source hashes,
+available Git metadata, and build settings. Deployment IDs are preserved as
+build-instance evidence but excluded from equality. Different scenarios may
+legitimately use different sources. Skipped receipts need no identity.
+
+Missing identities and mixed revisions/build inputs reject the merge before
+the destination is changed. For intentional forensic aggregation, use:
+
+```sh
+gregale test report merge --allow-mixed-revisions --output forensic.json batch-a.json batch-b.json
+```
+
+This explicit override marks output roots with
+`report_merge_revision_override: true`. It permits missing or inconsistent
+source metadata, but never bypasses duplicate IDs, source provenance overlaps,
+or input/output protection. Earlier override markers survive further merges.
+Older reports remain readable by other commands; strict merging cannot prove
+their source identity from the primary-only legacy source hash.
+
+Comparison JSON and policy preview contain separate `baseline_sources` and
+`current_sources` summaries, with source identities, representative workload
+metadata, executed-run counts, supporting top-level receipt indexes, unknown
+source counts, and an override marker. Each representative retains the first
+supporting run's deployment IDs; full receipt evidence retains all builds.
+JUnit failure details and accepted-policy system-out expose the same summaries.
+Comparisons intentionally allow different source revisions across baseline and
+current; provenance does not change configuration matching or policy verdicts.
+
+These fields do not authenticate edited reports or prove environment equivalence.
+Git metadata is available only when the source directory is a readable checkout;
+local and simulated executions currently have unknown source identity.

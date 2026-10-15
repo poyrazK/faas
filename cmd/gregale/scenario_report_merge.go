@@ -21,6 +21,8 @@ type testReportProvenance struct {
 }
 
 type testReportMergeState struct {
+	SourceIdentities map[testReportSourceContext]string
+	AllowMixedRevisions bool
 	RunIDs     map[string]string
 	Sources    map[string]bool
 	Origins    map[string]bool
@@ -33,6 +35,7 @@ func cmdTestReport(args []string) int {
 		return printErr("Invalid report command", errors.New("use test report merge --output merged.json batch-a.json batch-b.json"))
 	}
 	fs := newFlagSet("test report merge", flag.ContinueOnError)
+	allowMixed := fs.Bool("allow-mixed-revisions", false, "explicitly allow mixed or unavailable source metadata (recorded in output)")
 	output := fs.String("output", "", "write a merged raw JSON receipt array")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -43,14 +46,14 @@ func cmdTestReport(args []string) int {
 	if *output == "" || fs.NArg() < 2 || fs.NArg() > 100 {
 		return printErr("Invalid merge options", errors.New("--output and 2..100 input report paths are required; flags must precede input paths"))
 	}
-	if err := mergeTestReports(fs.Args(), *output); err != nil {
+	if err := mergeTestReports(fs.Args(), *output, *allowMixed); err != nil {
 		return printErr("Could not merge test reports", err)
 	}
 	return 0
 }
 
-func mergeTestReports(paths []string, output string) error {
-	state := testReportMergeState{RunIDs: make(map[string]string), Sources: make(map[string]bool), Origins: make(map[string]bool)}
+func mergeTestReports(paths []string, output string, allowMixed ...bool) error {
+	state := testReportMergeState{SourceIdentities: make(map[testReportSourceContext]string), AllowMixedRevisions: len(allowMixed) > 0 && allowMixed[0], RunIDs: make(map[string]string), Sources: make(map[string]bool), Origins: make(map[string]bool)}
 	merged := make([]json.RawMessage, 0)
 	for _, path := range paths {
 		body, err := readTestReportMergeInput(path, output, &state)
@@ -104,6 +107,9 @@ func mergeTestReports(paths []string, output string) error {
 				return err
 			}
 			fields["report_provenance"] = encoded
+			if state.AllowMixedRevisions {
+				fields["report_merge_revision_override"] = json.RawMessage("true")
+			}
 			encoded, err = json.Marshal(fields)
 			if err != nil {
 				return err
@@ -192,6 +198,17 @@ func (state *testReportMergeState) checkReceipt(r testRunReceipt, location strin
 	}
 	if r.Status != "skipped" && r.RunID == "" {
 		return fmt.Errorf("executed receipt %q has no stable run ID; cannot prove it is distinct from other batches", location)
+	}
+	if r.Status != "skipped" && !state.AllowMixedRevisions {
+		hash, err := testSourceRevisionIdentity(r.SourceRevision)
+		if err != nil {
+			return fmt.Errorf("receipt %q source identity unavailable: %w; --allow-mixed-revisions explicitly overrides source checks", location, err)
+		}
+		context := testReportSourceContext{Scenario: r.Scenario, Engine: r.Engine}
+		if previous, exists := state.SourceIdentities[context]; exists && previous != hash {
+			return fmt.Errorf("mixed source revisions or build inputs for scenario %q; keep revisions separate or explicitly use --allow-mixed-revisions", r.Scenario)
+		}
+		state.SourceIdentities[context] = hash
 	}
 	return nil
 }

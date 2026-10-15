@@ -43,6 +43,8 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 			return nil, err
 		}
 		detail, err := json.MarshalIndent(struct {
+			BaselineSources testReportSourceSummary `json:"baseline_sources"`
+			CurrentSources testReportSourceSummary `json:"current_sources"`
 			Rule                 string                       `json:"rule"`
 			Reason               string                       `json:"reason"`
 			FailNewFailures      bool                         `json:"fail_new_failures"`
@@ -54,6 +56,7 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 			CurrentURL           string                       `json:"current_evidence_url,omitempty"`
 			Violation            testCampaignPolicyViolation `json:"violation"`
 		}{
+			BaselineSources: result.Comparisons.BaselineSources, CurrentSources: result.Comparisons.CurrentSources,
 			Rule: violation.Rule, Reason: violation.Reason,
 			FailNewFailures: effective.FailNewFailures, MaxFrequencyIncrease: effective.MaxFrequencyIncrease,
 			MinExecutedRuns: effective.MinExecutedRuns, NotComparable: effective.NotComparable,
@@ -73,7 +76,9 @@ func marshalTestCampaignPolicyJUnit(policy testCampaignPolicy, result testCampai
 		decisions, err := json.Marshal(struct {
 			Decisions []testCampaignPolicyDecision `json:"decisions"`
 			RequiredCoverage []testCampaignRequiredCoverageResult `json:"required_coverage"`
-		}{result.Decisions, result.RequiredCoverage})
+			BaselineSources testReportSourceSummary `json:"baseline_sources"`
+			CurrentSources testReportSourceSummary `json:"current_sources"`
+		}{result.Decisions, result.RequiredCoverage, result.Comparisons.BaselineSources, result.Comparisons.CurrentSources})
 		if err != nil {
 			return nil, err
 		}

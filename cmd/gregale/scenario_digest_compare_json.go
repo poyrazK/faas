@@ -8,6 +8,8 @@ import (
 )
 
 type testDigestComparisonReport struct {
+	BaselineSources testReportSourceSummary `json:"baseline_sources"`
+	CurrentSources testReportSourceSummary `json:"current_sources"`
 	SchemaVersion int                         `json:"schema_version"`
 	Informational bool                        `json:"informational"`
 	Counts        map[string]int              `json:"counts"`
@@ -37,7 +39,7 @@ type testDigestComparisonObservation struct {
 
 func marshalTestDigestComparison(before, after []testRunReceipt, baselineURL, currentURL string) ([]byte, error) {
 	report := testDigestComparisonReport{
-		SchemaVersion: 1, Informational: true,
+		SchemaVersion: 1, Informational: true, BaselineSources: summarizeTestReportSources(before), CurrentSources: summarizeTestReportSources(after),
 		Counts: map[string]int{"newly_observed": 0, "persisting": 0, "no_longer_observed": 0, "not_comparable": 0},
 		Comparisons: make([]testDigestComparisonRecord, 0),
 	}

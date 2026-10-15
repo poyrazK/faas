@@ -193,6 +193,8 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
+	SourceRevision *testSourceRevision `json:"source_revision,omitempty"`
+	ReportMergeRevisionOverride bool `json:"report_merge_revision_override,omitempty"`
 	ReportProvenance []testReportProvenance `json:"report_provenance,omitempty"`
 	CampaignSeed           *testCampaignSeedSetting           `json:"campaign_seed,omitempty"`
 	Minimization           *testFaultMinimizationEvidence     `json:"minimization,omitempty"`
@@ -1371,12 +1373,21 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	if jsonOutput {
 		osStdout = osStderr
 	}
+	receipt.SourceRevision = &testSourceRevision{SchemaVersion: 1, ExpectedWorkloads: make([]string, 0, len(workloads)), Workloads: make(map[string]testWorkloadSourceRevision)}
+	for _, workload := range workloads {
+		receipt.SourceRevision.ExpectedWorkloads = append(receipt.SourceRevision.ExpectedWorkloads, workload.name)
+	}
 	for _, workload := range workloads {
 		var deploymentID string
 		var sourceSHA256 string
+		commit, trackedChanges := testWorkloadGitRevision(ctx, workload.sourceDir)
 		deployResult := cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
 			onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
 		})
+		receipt.SourceRevision.Workloads[workload.name] = testWorkloadSourceRevision{
+			GitCommit: commit, TrackedChanges: trackedChanges, SourceSHA256: sourceSHA256, DeploymentID: deploymentID,
+			Runtime: workload.config.runtime, Shape: fmt.Sprint(workload.config.shape), Handler: workload.config.handler,
+		}
 		if deployResult != 0 || deploymentID == "" {
 			osStdout = previousStdout
 			receipt.Error = fmt.Sprintf("source deployment for %s failed (exit %d)", workload.name, deployResult)

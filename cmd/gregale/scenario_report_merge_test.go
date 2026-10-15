@@ -26,7 +26,7 @@ func TestReportMergePreservesEvidenceAndRecordsProvenance(t *testing.T) {
 	// adr: 984 — batch aggregation preserves raw evidence and original receipt provenance.
 	dir := t.TempDir()
 	a, b, output := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json"), filepath.Join(dir, "merged.json")
-	first, second := digestComparisonReceipt("a", true, 50), digestComparisonReceipt("b", true, 50)
+	first, second := sourceRevisionTestReceipt("a", true, 50), sourceRevisionTestReceipt("b", true, 50)
 	encoded, err := json.Marshal(first)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestReportMergeRejectsNestedDuplicateIDsAndPreservesDestination(t *testing.
 	// adr: 984 — repeated leaves must never inflate campaign coverage.
 	dir := t.TempDir()
 	a, b, output := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json"), filepath.Join(dir, "merged.json")
-	leaf := digestComparisonReceipt("same-run", true, 50)
+	leaf := sourceRevisionTestReceipt("same-run", true, 50)
 	parent := testRunReceipt{Scenario: leaf.Scenario, Profile: leaf.Profile, Engine: leaf.Engine, Status: "passed",
 		Resilience: &testResilienceEvidence{History: []testRunReceipt{leaf}}}
 	writeMergeTestReport(t, a, []testRunReceipt{parent})
@@ -98,8 +98,8 @@ func TestReportMergeRejectsAliasesAndDuplicateInputs(t *testing.T) {
 	// adr: 984 — source reports survive output aliases and repeated batch selection.
 	dir := t.TempDir()
 	a, b, alias := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json"), filepath.Join(dir, "alias.json")
-	original := writeMergeTestReport(t, a, []testRunReceipt{digestComparisonReceipt("a", true, 50)})
-	writeMergeTestReport(t, b, []testRunReceipt{digestComparisonReceipt("b", true, 50)})
+	original := writeMergeTestReport(t, a, []testRunReceipt{sourceRevisionTestReceipt("a", true, 50)})
+	writeMergeTestReport(t, b, []testRunReceipt{sourceRevisionTestReceipt("b", true, 50)})
 	if err := os.Link(a, alias); err != nil {
 		t.Fatal(err)
 	}
@@ -121,10 +121,10 @@ func TestReportMergeRejectsUnidentifiedRunsAndOverlappingHistory(t *testing.T) {
 	// adr: 984 — identity and lineage checks prevent duplicate count inflation.
 	dir := t.TempDir()
 	a, b, c := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json"), filepath.Join(dir, "c.json")
-	first := digestComparisonReceipt("a", true, 50)
+	first := sourceRevisionTestReceipt("a", true, 50)
 	first.RunID = ""
 	writeMergeTestReport(t, a, []testRunReceipt{first})
-	writeMergeTestReport(t, b, []testRunReceipt{digestComparisonReceipt("b", true, 50)})
+	writeMergeTestReport(t, b, []testRunReceipt{sourceRevisionTestReceipt("b", true, 50)})
 	if err := mergeTestReports([]string{a, b}, c); err == nil {
 		t.Fatal("unidentified executed receipt accepted")
 	}
@@ -138,7 +138,7 @@ func TestReportMergeRejectsUnidentifiedRunsAndOverlappingHistory(t *testing.T) {
 		t.Fatal("overlapping skipped source receipt accepted")
 	}
 	d := filepath.Join(dir, "d.json")
-	writeMergeTestReport(t, d, []testRunReceipt{digestComparisonReceipt("d", true, 50)})
+	writeMergeTestReport(t, d, []testRunReceipt{sourceRevisionTestReceipt("d", true, 50)})
 	output := filepath.Join(dir, "again.json")
 	if err := mergeTestReports([]string{c, d}, output); err != nil {
 		t.Fatal(err)
