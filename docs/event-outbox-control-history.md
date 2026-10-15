@@ -11,7 +11,7 @@ installs tables or prunes receipts automatically.
 Generate and durably save a fresh nonzero UUID for each logical control before
 calling the helper. Keep it with the original parameters when retrying a lost
 response. IDs are case-normalized and scoped to account/application across both
-control actions and all producer keys.
+control actions and all producer keys, including saved-policy updates.
 
 ```go
 // Persist commandID and the original status guard before sending the control.
@@ -140,3 +140,12 @@ reuse and invalidates old pagination positions. Counter retention does not prese
 pruned command IDs or results. Applications own both tables' growth, permissions,
 retention, and backups. No change is made to producer-key acceptance retention,
 retry deadlines, ordering, consumer retries, or business deduplication guarantees.
+
+## Saved policy updates
+
+`SetEventOutboxRetryPolicy` always requires a command ID. It records
+`set_retry_policy` with outcome `policy_updated` or `rejected` in this same history.
+Its request identity includes the status guard, expected policy revision, and
+normalized v1 policy. Successful result metadata includes the resulting policy.
+See [saved policy setup and adoption](event-outbox-stored-retry-policy.md) for the
+additional schema upgrade. Other controls retain optional CommandID behavior.

@@ -287,3 +287,11 @@ including the explicit CHECK-constraint upgrade for existing installations.
 idle polling backoff, per-operation timeouts, local outcome callbacks and graceful
 drain. See [worker setup and shutdown semantics](event-outbox-worker.md). The
 single-iteration recovery helper remains available for custom supervisors.
+
+## Persisted retry settings
+
+`SaveEventOutboxWithRetryPolicy` binds retry settings atomically with the event.
+Recovery uses the saved policy over worker defaults. `SetEventOutboxRetryPolicy`
+provides guarded, audited adoption and revision for unresolved work without
+resetting attempts or deadlines. See [saved policies and required rollout](event-outbox-stored-retry-policy.md)
+before upgrading existing workers.

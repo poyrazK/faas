@@ -88,13 +88,15 @@ Use [read-only reconciliation](event-outbox.md#reconcile-retained-acceptance-wit
 to investigate exhausted work. Attempt exhaustion does not prove that Gregale
 rejected the event. Guarded resume preserves attempts, so the same exhausted
 limit will block it again without sending. An operator choosing more attempts
-must explicitly change worker policy and resume within the original deadline;
+must explicitly change the effective policy and resume within the original deadline;
 neither control resets counts or extends the window.
 
-Policies are worker configuration, not immutable per-row settings. All workers
-sharing an owner scope must use a consistent policy. Legacy workers or a higher
-configured limit can allow more claims; the durable counter survives either
-configuration. Existing health summaries report exhausted rows as blocked, and
+These recovery options are the fallback for publications without a saved policy.
+All workers handling unbound rows should use a consistent configuration. For a
+bound row, recovery uses its [persisted versioned policy](event-outbox-stored-retry-policy.md)
+instead of worker retry settings. Increasing a worker limit cannot override a
+saved limit; use the guarded policy command. The durable count survives both
+configuration paths. Existing health summaries report exhausted rows as blocked, and
 payload-free status exposes `attempts_exhausted` separately from deadline expiry.
 Recovery attempts are not control-command history entries.
 

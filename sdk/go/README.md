@@ -1279,3 +1279,8 @@ it on an existing application outbox.
 cooperative shutdown draining around the existing outbox helpers. See
 [worker lifecycle and callbacks](../../docs/event-outbox-worker.md) before wiring
 it into application supervision.
+
+Use `SaveEventOutboxWithRetryPolicy` for per-publication retry settings and
+`GetEventOutboxRetryPolicy` to read their current revision. Guarded
+`SetEventOutboxRetryPolicy` changes are always recorded in control history.
+See [saved policies and required migration](../../docs/event-outbox-stored-retry-policy.md).

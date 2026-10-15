@@ -60,6 +60,7 @@ type eventOutboxClaim struct {
 	token                   [32]byte
 	attempts                int64
 	request                 AppPublishEventRequest
+	policy                  *EventOutboxRetryPolicy
 }
 
 // RecoverNextEventOutbox claims and publishes at most one retained due intent.
@@ -110,6 +111,14 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 	if err != nil {
 		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 	}
+	stored, _, policyErr := eventOutboxStoredPolicy(tx.QueryRowContext(ctx, `SELECT `+eventOutboxStoredPolicyColumns+` FROM public.gregale_event_outbox_retry_policies WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3`, account, app, claim.key))
+	if policyErr == nil {
+		claim.policy = stored.recoveryPolicy()
+		options.RetryPolicy = claim.policy
+		options.Backoff = 0
+	} else if !errors.Is(policyErr, sql.ErrNoRows) {
+		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
+	}
 	var request AppPublishEventRequest
 	actual := sha256.Sum256([]byte(claim.body))
 	code := ""
@@ -142,6 +151,10 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 }
 
 func (c eventOutboxClaim) publish(ctx context.Context, db *sql.DB, client *Client, request AppPublishEventRequest, options EventOutboxRecoveryOptions) (EventOutboxStatus, error) {
+	if c.policy != nil {
+		options.RetryPolicy = c.policy
+		options.Backoff = 0
+	}
 	var zero EventOutboxStatus
 	started := time.Now()
 	var remaining float64

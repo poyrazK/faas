@@ -54,8 +54,9 @@ accordingly. Multiple processes can share the outbox under the existing leases.
 
 The nested Recovery options retain their existing lease, request-timeout,
 backoff/policy, and attempt-limit validation. Worker configuration and a copy of
-its retry policy are validated before goroutines start. All processes sharing a
-scope should use a consistent retry policy.
+its retry policy are validated before goroutines start. Workers recovering unbound publications should use consistent retry settings.
+Bound publications use their persisted policy; worker retry settings cannot
+override it.
 
 Empty polls wait IdleMin, then double the wait up to IdleMax. A nonempty result or
 error resets idle backoff. Published, blocked, and durably unconfirmed results

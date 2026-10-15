@@ -116,7 +116,7 @@ func runEventOutboxControl(ctx context.Context, db *sql.DB, accountID, appID, ke
 	}
 	if result.Outcome == "" {
 		result.Outcome = "unverified"
-		if action == "resume" {
+		if action == "resume" || action == "set_retry_policy" {
 			result.Outcome = "rejected"
 		}
 	}

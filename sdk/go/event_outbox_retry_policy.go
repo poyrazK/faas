@@ -22,7 +22,8 @@ type eventOutboxPolicyContextKey struct{}
 // EventOutboxRetryPolicy opts into capped exponential jitter and Retry-After on
 // HTTP 429/503. Durations are whole milliseconds (1 ms..1 hour). Initial defaults
 // to 5 seconds, cap to 5 minutes. MaxAttempts is a lifetime recovery-claim limit;
-// zero disables it. Workers sharing a scope must use the same policy.
+// zero disables it. Unbound rows use worker settings; bound rows use their
+// persisted policy instead.
 type EventOutboxRetryPolicy struct {
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration

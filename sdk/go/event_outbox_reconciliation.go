@@ -24,9 +24,10 @@ type EventOutboxReconciliationOptions struct {
 // EventOutboxReconciliationResult reports retained evidence separately from local
 // publication state. Unavailable evidence never confirms or resumes work.
 type EventOutboxReconciliationResult struct {
-	Outcome     string            `json:"outcome"`
-	Publication EventOutboxStatus `json:"publication"`
-	ObservedAt  *time.Time        `json:"observed_at,omitempty"`
+	RetryPolicy *EventOutboxStoredRetryPolicy `json:"retry_policy,omitempty"`
+	Outcome     string                        `json:"outcome"`
+	Publication EventOutboxStatus             `json:"publication"`
+	ObservedAt  *time.Time                    `json:"observed_at,omitempty"`
 }
 
 var ErrEventOutboxBusy = errors.New("event outbox publication has a live recovery claim")

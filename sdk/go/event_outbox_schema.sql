@@ -52,15 +52,31 @@ CREATE TABLE IF NOT EXISTS public.gregale_event_outbox_controls (
  app_id uuid NOT NULL,
  command_id uuid NOT NULL,
  producer_key text NOT NULL CHECK(octet_length(producer_key) BETWEEN 1 AND 256 AND producer_key ~ '^[!-~]+$'),
- action text NOT NULL CHECK(action IN ('reconcile','resume')),
+ action text NOT NULL CONSTRAINT gregale_event_outbox_controls_action_check CHECK(action IN ('reconcile','resume','set_retry_policy')),
  request_digest bytea NOT NULL CHECK(octet_length(request_digest)=32),
  sequence bigint NOT NULL CHECK(sequence>0),
- outcome text NOT NULL CHECK(outcome IN ('published','already_published','unavailable','conflict','unverified','resumed','rejected')),
+ outcome text NOT NULL CONSTRAINT gregale_event_outbox_controls_outcome_check CHECK(outcome IN ('published','already_published','unavailable','conflict','unverified','resumed','rejected','policy_updated')),
  error_code text NOT NULL CHECK(error_code IN ('','conflict','unconfirmed','busy','not_found')),
  result_body text NOT NULL CHECK(octet_length(result_body) BETWEEN 1 AND 8192 AND jsonb_typeof(result_body::jsonb)='object'),
  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK(isfinite(recorded_at)),
  PRIMARY KEY(account_id,app_id,command_id),
  UNIQUE(account_id,app_id,producer_key,sequence),
- CHECK((action='resume' AND outcome IN ('resumed','rejected')) OR (action='reconcile' AND outcome IN ('published','already_published','unavailable','conflict','unverified'))),
+ CONSTRAINT gregale_event_outbox_controls_check CHECK((action='resume' AND outcome IN ('resumed','rejected')) OR (action='reconcile' AND outcome IN ('published','already_published','unavailable','conflict','unverified')) OR (action='set_retry_policy' AND outcome IN ('policy_updated','rejected'))),
  CHECK(coalesce(result_body::jsonb->>'outcome'=outcome,false))
+);
+
+-- A binding belongs to the retained publication; audit receipts remain independent.
+CREATE TABLE IF NOT EXISTS public.gregale_event_outbox_retry_policies (
+ account_id uuid NOT NULL,
+ app_id uuid NOT NULL,
+ producer_key text NOT NULL,
+ version integer NOT NULL CHECK(version=1),
+ revision bigint NOT NULL CHECK(revision>0),
+ initial_backoff_ms bigint NOT NULL CHECK(initial_backoff_ms BETWEEN 1 AND 3600000),
+ max_backoff_ms bigint NOT NULL CHECK(max_backoff_ms BETWEEN initial_backoff_ms AND 3600000),
+ max_attempts bigint NOT NULL CHECK(max_attempts BETWEEN 0 AND 2147483647),
+ initial_digest bytea NOT NULL CHECK(octet_length(initial_digest)=32),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK(isfinite(updated_at)),
+ PRIMARY KEY(account_id,app_id,producer_key),
+ FOREIGN KEY(account_id,app_id,producer_key) REFERENCES public.gregale_event_outbox(account_id,app_id,producer_key) ON DELETE CASCADE
 );
