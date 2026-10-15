@@ -33,11 +33,14 @@ type testCampaignPolicyInspection struct {
 }
 
 func cmdTestPolicy(args []string) int {
+	if len(args) > 0 && args[0] == "preflight" {
+		return cmdTestPolicyEnvironmentPreflight(args[1:])
+	}
 	if len(args) > 0 && args[0] == "plan" {
 		return cmdTestPolicyPlan(args[1:])
 	}
 	if len(args) == 0 || (args[0] != "lint" && args[0] != "preview") {
-		return printErr("Invalid policy command", errors.New("use test policy lint, preview or plan"))
+		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan or preflight"))
 	}
 	mode := args[0]
 	fs := newFlagSet("test policy "+mode, flag.ContinueOnError)

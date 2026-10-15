@@ -656,3 +656,68 @@ explicit requirements and available observations; it does not establish general
 environment equivalence. Planning remains informational and returns 0 for
 blocked entries. Existing plans without environment requirements retain their
 run suggestions.
+
+## Read-only environment preflight
+
+```sh
+gregale test policy preflight --policy regression-policy.yaml --manifest gregale-test.yaml --targets existing-workloads.yaml > environment-preflight.json
+```
+
+An explicit target mapping identifies existing apps to inspect:
+
+```yaml
+schema_version: 1
+scenarios:
+  checkout:
+    checkout: existing-checkout-app
+    database: existing-database-app
+```
+
+Keys are manifest scenario and logical project/service names; values are existing
+platform app slugs. Unknown scenarios/workloads, invalid slugs, duplicate mappings
+to the same app within a scenario, multiple YAML documents, and unknown fields
+are rejected. Missing mappings are reported as unavailable rather than guessed.
+Map the primary workload and any workloads referenced by environment requirements.
+No app is selected from a hostname, execution report, or project-name guess.
+
+The command requires a policy with required_environments and existing CLI
+authentication. It reads app metadata through GetApp only, caches repeated
+target reads for this invocation, and bounds the read phase to 30 seconds.
+It does not create sessions, deploy, wake apps, run application commands,
+change resources, or inspect secrets. Read failures retain generic diagnostics;
+raw API errors, endpoint URLs, app IDs, and credential-bearing strings are not
+copied into the report.
+
+Checks show their source. Manifest declarations cover workload/dependency
+configuration; live platform observations cover app type, runtime label, RAM,
+CPU, concurrency limits, timeouts, and minimum instances. Runtime labels are not
+precise runtime binary versions. Platform/runtime binary versions remain
+unavailable. Existing app resource reads do not verify Postgres attachment,
+fixture identity/failure behavior, or declared inbound TCP ports; requested
+fields remain unavailable with declaration checks shown separately.
+
+The output is a distinct versioned platform_preflight document with
+execution_evidence false, observation timestamps, target-file SHA-256, logical
+workload observations, and per-requirement readiness/checks. It contains no run
+IDs, attempts, execution counts, or coverage credits. It cannot be used as a
+merged test report. Selector context is intended scope only:
+execution_context_verified stays false because reading settings cannot prove
+a lifecycle profile, matrix case, configuration execution, or application
+behavior. Manifest selectors that cannot be generated are flagged separately.
+
+Ready means the requested observable fields matched, required app metadata was
+readable, and no requested field was unavailable or contradicted. Declared-only
+dependency settings cannot become live proof. A readable undeployed app can
+have valid resource settings without a live deployment; app readiness and
+campaign execution remain separate. Observations are taken at read time and do
+not guarantee settings on future expiring test environments.
+
+Output is informational: mismatches and unavailable metadata return 0 with
+ready false. Invalid options/policies/manifests/mappings, authentication errors,
+failed app reads, or stdout failures return 1. Partial read failures still emit
+the collected report. No preflight result changes policy execution requirements
+or replaces required test evidence. Planner ingestion is not automatic; review
+preflight findings before resolving the planner's prerequisites.
+
+Shell redirection must target a separate file so it does not truncate a policy,
+manifest, target map, or test report before the command starts.

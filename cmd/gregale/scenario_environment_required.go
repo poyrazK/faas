@@ -169,11 +169,21 @@ func testRequiredEnvironmentRun(r testRunReceipt, root int, expected testEnviron
 	if testDigestScopeFingerprint([]testRunReceipt{r}) == "" {
 		check("configuration_sha256", "known", nil, false)
 	}
-	if _, _, present := testEnvironmentFields(r.Environment); !present {
+	checkTestEnvironmentExpectation(r.Environment, expected, check)
+	if valid {
+		side.SatisfiedRuns++
+		if len(side.SupportingReceipts) == 0 || side.SupportingReceipts[len(side.SupportingReceipts)-1] != root {
+			side.SupportingReceipts = append(side.SupportingReceipts, root)
+		}
+	}
+}
+
+// Shared field checks do not create receipts or execution counts.
+func checkTestEnvironmentExpectation(snapshot *testEnvironmentSnapshot, expected testEnvironmentExpectation, check func(string, any, any, bool)) {
+	if _, _, present := testEnvironmentFields(snapshot); !present {
 		check("environment", "complete version 1 snapshot", nil, false)
 		return
 	}
-	snapshot := r.Environment
 	if expected.PlatformVersion != nil {
 		check("platform_version", expected.PlatformVersion, snapshot.PlatformVersion, snapshot.PlatformVersion != nil && *snapshot.PlatformVersion != "")
 	} else if expected.RequirePlatformVersion {
@@ -215,12 +225,6 @@ func testRequiredEnvironmentRun(r testRunReceipt, root int, expected testEnviron
 			sort.Ints(ports)
 			sort.Ints(observed)
 			check(prefix+"tcp_ports", ports, observed, true)
-		}
-	}
-	if valid {
-		side.SatisfiedRuns++
-		if len(side.SupportingReceipts) == 0 || side.SupportingReceipts[len(side.SupportingReceipts)-1] != root {
-			side.SupportingReceipts = append(side.SupportingReceipts, root)
 		}
 	}
 }
