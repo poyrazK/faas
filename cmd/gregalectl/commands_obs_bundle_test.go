@@ -39,7 +39,8 @@ func obsBundleTestSnapshot(ref string, limit, historyLimit int) obsIncidentBundl
 		}},
 		Health: obsBundleSection[api.ObsHealthResponse]{Data: api.ObsHealthResponse{
 			GeneratedAt: now.Add(2 * time.Second), PrometheusAvailable: true,
-			Signals: map[string]api.ObsHealthSignal{}, AlertHistory: &api.ObsAlertCollectionHealth{State: "current", LastSuccessAt: &now},
+			Signals: map[string]api.ObsHealthSignal{}, AlertHistory: &api.ObsAlertCollectionHealth{State: "current", CollectionState: "current", LastSuccessAt: &now},
+			AlertRetention: &api.ObsAlertRetentionHealth{State: "current", AsOf: now, Cutoff: now.Add(-api.ObsAlertHistoryRetention), LastSuccessAt: &now},
 		}},
 	}
 	for _, name := range []string{"audit_log_write_total_5m", "audit_log_write_failures_5m", "alerts_firing"} {
@@ -152,9 +153,9 @@ func TestCmdObsBundleStdoutPreservesUnknownScopeAndHealthGaps(t *testing.T) {
 			b.Context.Data.UnavailableSources = []string{"incident_scope"}
 			b.Health.Data.PrometheusAvailable = false
 			b.Health.Data.Signals["alerts_firing"] = api.ObsHealthSignal{State: api.ObsHealthSignalStale, Reason: "observation_stale"}
-			b.Health.Data.AlertHistory = &api.ObsAlertCollectionHealth{State: "unknown", Reason: "collection_failed"}
+			b.Health.Data.AlertHistory = &api.ObsAlertCollectionHealth{State: "unknown", CollectionState: "failed", Reason: "collection_failed"}
 			if legacy {
-				b.Health.Data.Signals, b.Health.Data.AlertHistory = nil, nil
+				b.Health.Data.Signals, b.Health.Data.AlertHistory, b.Health.Data.AlertRetention = nil, nil, nil
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { obsBundleTestSection(w, r, b) }))
 			defer srv.Close()
@@ -164,10 +165,14 @@ func TestCmdObsBundleStdoutPreservesUnknownScopeAndHealthGaps(t *testing.T) {
 				t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 			}
 			var got obsIncidentBundle
-			if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Context.Data.Counts != nil || got.Coverage.RelationshipScope != "unknown" || !slices.Contains(got.Coverage.UnavailableSources, "context.incident_scope") || !slices.Contains(got.Coverage.UnhealthySignals, "alerts_firing") || got.Coverage.AlertCollectionState != "unknown" {
+			wantCollection := "failed"
+			if legacy {
+				wantCollection = "unknown"
+			}
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Context.Data.Counts != nil || got.Coverage.RelationshipScope != "unknown" || !slices.Contains(got.Coverage.UnavailableSources, "context.incident_scope") || !slices.Contains(got.Coverage.UnhealthySignals, "alerts_firing") || got.Coverage.AlertCollectionState != wantCollection {
 				t.Fatalf("unknown evidence became healthy/zero: %s err=%v", out.String(), err)
 			}
-			if legacy && len(got.Coverage.MissingHealthMetadata) != 4 {
+			if legacy && len(got.Coverage.MissingHealthMetadata) != 5 {
 				t.Fatalf("legacy gaps hidden: %+v", got.Coverage)
 			}
 		})

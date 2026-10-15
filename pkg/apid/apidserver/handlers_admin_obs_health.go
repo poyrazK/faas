@@ -66,11 +66,11 @@ func (s *server) obsHealthSnapshot(ctx context.Context) (api.ObsHealthResponse, 
 	if err != nil {
 		return api.ObsHealthResponse{}, api.ErrCapacity("could not compute audit trace coverage")
 	}
-	collection, err := s.store.OperatorAlertCollectionStatus(ctx)
+	enabled := s.promqlClient != nil && s.promqlClient.BaseURL() != ""
+	history, retention, err := operatorobs.MaintenanceHealth(ctx, s.store, enabled, time.Now().UTC())
 	if err != nil {
-		return api.ObsHealthResponse{}, api.ErrCapacity("could not load alert history health")
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not load alert maintenance health")
 	}
-	history := collection.Health(time.Now().UTC())
 	telemetry := operatorobs.PrometheusHealth(ctx, s.promqlClient, time.Now().UTC())
 	return api.ObsHealthResponse{
 		GeneratedAt:                        time.Now().UTC(),
@@ -83,5 +83,6 @@ func (s *server) obsHealthSnapshot(ctx context.Context) (api.ObsHealthResponse, 
 		AlertsFiring:                       telemetry.AlertsFiring,
 		Signals:                            telemetry.Signals,
 		AlertHistory:                       &history,
+		AlertRetention:                     &retention,
 	}, nil
 }

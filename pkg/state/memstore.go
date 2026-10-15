@@ -141,6 +141,7 @@ type MemStore struct {
 	operatorAlertEpisodes   map[string]OperatorAlertEpisode
 	operatorAlertRules      map[string]OperatorAlertRuleObservation
 	operatorAlertCollection OperatorAlertCollection
+	operatorAlertRetention  OperatorAlertRetention
 
 	initialRecoveryReviews               map[string]api.WorkflowInitialRecoveryReview
 	initialCompletionNext                map[string]time.Time

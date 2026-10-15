@@ -320,6 +320,31 @@ are healthy. Legacy responses without `signals` use that overall flag.
 SQL coverage remains readable during a Prometheus failure; a database failure
 returns 503.
 
+`alert_history.collection_state` distinguishes `disabled`, `never_collected`,
+`current`, `failed`, `stale` and `unknown`. Its existing `state` and `reason`
+continue to describe evidence availability. A first failed poll can have no
+successful history; disabled collection does not imply historical evidence is
+empty.
+
+`alert_retention` reports independent cleanup, even when Prometheus is disabled:
+attempt/success timestamps, nullable `last_pruned_episodes`, exact
+`expired_episodes`, oldest eligible timestamp, and the observation's `as_of` and
+`cutoff`. States are `never_run`, `current`, `failed`, `stale`, or `unknown`.
+`current` means a successful batch within two minutes; inspect the backlog
+separately. A backlog larger than the 500-episode batch takes multiple passes.
+Each pass runs every 30 seconds with a ten-second budget. Failed health reads
+return 503 instead of zero. Bundles retain this metadata and mark missing
+legacy fields unknown.
+
+The existing apid metrics registry now exposes
+`apid_operator_alert_maintenance_attempts_total` and
+`apid_operator_alert_maintenance_duration_seconds`, labelled by
+`operation=collection|retention` (attempt counts also use
+`outcome=success|failure`), plus producer-written last-attempt/last-success
+timestamp gauges and `apid_operator_alert_collection_enabled`. Metrics reset on
+process restart; the health API retains durable cleanup receipts. Use timestamp
+freshness alongside scrape health. These metrics contain no resource IDs.
+
 ### Incident inbox
 
 Start triage from one bounded, read-only view that correlates deployment,

@@ -1762,7 +1762,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
 	}
 	go srv.runStatusEvaluator(ctx)
-	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log)
+	alertMetrics := operatorobs.NewMaintenanceMetrics(srv.ops.Registry())
+	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log, alertMetrics)
+	go operatorobs.RunAlertRetention(ctx, srv.store, log, alertMetrics)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.

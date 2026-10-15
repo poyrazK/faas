@@ -560,6 +560,7 @@ func writeObsHealthHuman(w io.Writer, snap map[string]any) {
 	_, _ = fmt.Fprintln(w, "trace_id_completeness_ratio:")
 	writeObsHealthKindBlock(w, snap["trace_id_completeness_ratio"], true)
 	writeObsHealthSignal(w, snap, "alerts_firing")
+	writeObsMaintenanceHuman(w, snap)
 }
 
 // Legacy servers have no signals map. New responses render each field's state

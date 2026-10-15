@@ -152,9 +152,11 @@ func (s *PgStore) OperatorAlertEpisode(ctx context.Context, id string) (Operator
 }
 
 func (s *PgStore) PruneOperatorAlertHistory(ctx context.Context, before time.Time, limit int) (int, error) {
-	if limit < 1 || limit > api.ObsAlertHistoryPruneBatch {
+	if before.IsZero() || limit < 1 || limit > api.ObsAlertHistoryPruneBatch {
 		return 0, ErrInvalidArgument
 	}
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	before = before.UTC().Truncate(time.Microsecond)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -165,12 +167,18 @@ func (s *PgStore) PruneOperatorAlertHistory(ctx context.Context, before time.Tim
 	if _, err := q.OperatorAlertCollectionLock(ctx, tx); err != nil {
 		return 0, err
 	}
+	if _, err := q.OperatorAlertRetentionLock(ctx, tx); err != nil {
+		return 0, fmt.Errorf("lock alert retention receipt: %w", err)
+	}
 	count, err := q.OperatorAlertPruneEpisodes(ctx, tx, sqlc.OperatorAlertPruneEpisodesParams{Before: pgtype.Timestamptz{Time: before, Valid: true}, BatchSize: int32(limit)})
 	if err != nil {
 		return 0, fmt.Errorf("prune alert episodes: %w", err)
 	}
 	if err := q.OperatorAlertPruneRules(ctx, tx, sqlc.OperatorAlertPruneRulesParams{Before: pgtype.Timestamptz{Time: before, Valid: true}, BatchSize: int32(limit)}); err != nil {
 		return 0, fmt.Errorf("prune alert rules: %w", err)
+	}
+	if err := q.OperatorAlertRetentionSucceeded(ctx, tx, sqlc.OperatorAlertRetentionSucceededParams{At: pgtype.Timestamptz{Time: started, Valid: true}, Pruned: count}); err != nil {
+		return 0, fmt.Errorf("record alert retention success: %w", err)
 	}
 	return int(count), tx.Commit(ctx)
 }

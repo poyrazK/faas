@@ -44,6 +44,8 @@ type obsBundleCoverage struct {
 	UnhealthySignals          []string `json:"unhealthy_signals"`
 	MissingHealthMetadata     []string `json:"missing_health_metadata"`
 	AlertCollectionState      string   `json:"alert_collection_state"`
+	RetentionState            string   `json:"retention_state"`
+	ExpiredEpisodes           *int64   `json:"expired_episodes"`
 	RelationshipScope         string   `json:"relationship_scope"`
 	TimelineScope             string   `json:"timeline_scope"`
 }
@@ -132,7 +134,7 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 	evidence, related, health := bundle.Evidence.Data, bundle.Context.Data, bundle.Health.Data
 	coverage := obsBundleCoverage{
 		EvidenceHistoryTruncated: evidence.Truncated, RelatedResourcesTruncated: related.NextCursor != "", RelatedTimelineTruncated: related.TimelineTruncated,
-		UnavailableSources: []string{}, UnhealthySignals: []string{}, MissingHealthMetadata: []string{}, AlertCollectionState: "unknown",
+		UnavailableSources: []string{}, UnhealthySignals: []string{}, MissingHealthMetadata: []string{}, AlertCollectionState: "unknown", RetentionState: "unknown",
 		RelationshipScope: related.Scope.State, TimelineScope: related.TimelineScope,
 	}
 	for _, source := range evidence.UnavailableSources {
@@ -153,7 +155,18 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 	if health.AlertHistory == nil {
 		coverage.MissingHealthMetadata = append(coverage.MissingHealthMetadata, "alert_history")
 	} else {
-		coverage.AlertCollectionState = health.AlertHistory.State
+		if health.AlertHistory.CollectionState != "" {
+			coverage.AlertCollectionState = health.AlertHistory.CollectionState
+		} else {
+			coverage.MissingHealthMetadata = append(coverage.MissingHealthMetadata, "alert_history.collection_state")
+		}
+	}
+	if health.AlertRetention == nil {
+		coverage.MissingHealthMetadata = append(coverage.MissingHealthMetadata, "alert_retention")
+	} else {
+		coverage.RetentionState = health.AlertRetention.State
+		n := health.AlertRetention.ExpiredEpisodes
+		coverage.ExpiredEpisodes = &n
 	}
 	bundle.Coverage = coverage
 	bundle.Redaction = obsBundleRedaction{Profile: "operator-metadata-only", Excluded: []string{

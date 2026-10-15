@@ -308,3 +308,21 @@ DELETE FROM operator_alert_rule_observations WHERE rule_key IN (
     AND NOT EXISTS (SELECT 1 FROM operator_alert_episodes e WHERE e.rule_key = r.rule_key)
     ORDER BY r.evaluated_at, r.rule_key LIMIT sqlc.arg(batch_size)::integer
 );
+
+-- name: OperatorAlertRetentionSucceeded :exec
+UPDATE operator_alert_retention_health SET last_attempt_at = sqlc.arg(at), last_success_at = sqlc.arg(at),
+last_pruned_episodes = sqlc.arg(pruned)::bigint
+WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < sqlc.arg(at));
+
+-- name: OperatorAlertRetentionLock :one
+SELECT singleton FROM operator_alert_retention_health WHERE singleton FOR UPDATE;
+
+-- name: OperatorAlertRetentionFailed :exec
+UPDATE operator_alert_retention_health SET last_attempt_at = sqlc.arg(at)
+WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < sqlc.arg(at));
+
+-- name: OperatorAlertRetentionStatus :one
+SELECT h.last_attempt_at, h.last_success_at, h.last_pruned_episodes,
+  (SELECT count(*) FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < sqlc.arg(cutoff)::timestamptz)::bigint AS expired_episodes,
+  (SELECT min(coalesce(resolved_at,last_seen_at)) FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < sqlc.arg(cutoff)::timestamptz)::timestamptz AS oldest_expired_at
+FROM operator_alert_retention_health h WHERE singleton;

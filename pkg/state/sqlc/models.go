@@ -6115,6 +6115,13 @@ type OperatorAlertEpisode struct {
 	ResolvedAt      pgtype.Timestamptz
 }
 
+type OperatorAlertRetentionHealth struct {
+	Singleton          bool
+	LastAttemptAt      pgtype.Timestamptz
+	LastSuccessAt      pgtype.Timestamptz
+	LastPrunedEpisodes int64
+}
+
 type OperatorAlertRuleObservation struct {
 	RuleKey     string
 	EvaluatedAt pgtype.Timestamptz

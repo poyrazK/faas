@@ -294,6 +294,71 @@ func (q *Queries) OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg 
 	return err
 }
 
+const operatorAlertRetentionFailed = `-- name: OperatorAlertRetentionFailed :exec
+UPDATE operator_alert_retention_health SET last_attempt_at = $1
+WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < $1)
+`
+
+func (q *Queries) OperatorAlertRetentionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, operatorAlertRetentionFailed, at)
+	return err
+}
+
+const operatorAlertRetentionLock = `-- name: OperatorAlertRetentionLock :one
+SELECT singleton FROM operator_alert_retention_health WHERE singleton FOR UPDATE
+`
+
+func (q *Queries) OperatorAlertRetentionLock(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, operatorAlertRetentionLock)
+	var singleton bool
+	err := row.Scan(&singleton)
+	return singleton, err
+}
+
+const operatorAlertRetentionStatus = `-- name: OperatorAlertRetentionStatus :one
+SELECT h.last_attempt_at, h.last_success_at, h.last_pruned_episodes,
+  (SELECT count(*) FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < $1::timestamptz)::bigint AS expired_episodes,
+  (SELECT min(coalesce(resolved_at,last_seen_at)) FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < $1::timestamptz)::timestamptz AS oldest_expired_at
+FROM operator_alert_retention_health h WHERE singleton
+`
+
+type OperatorAlertRetentionStatusRow struct {
+	LastAttemptAt      pgtype.Timestamptz
+	LastSuccessAt      pgtype.Timestamptz
+	LastPrunedEpisodes int64
+	ExpiredEpisodes    int64
+	OldestExpiredAt    pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertRetentionStatus(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (OperatorAlertRetentionStatusRow, error) {
+	row := db.QueryRow(ctx, operatorAlertRetentionStatus, cutoff)
+	var i OperatorAlertRetentionStatusRow
+	err := row.Scan(
+		&i.LastAttemptAt,
+		&i.LastSuccessAt,
+		&i.LastPrunedEpisodes,
+		&i.ExpiredEpisodes,
+		&i.OldestExpiredAt,
+	)
+	return i, err
+}
+
+const operatorAlertRetentionSucceeded = `-- name: OperatorAlertRetentionSucceeded :exec
+UPDATE operator_alert_retention_health SET last_attempt_at = $1, last_success_at = $1,
+last_pruned_episodes = $2::bigint
+WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < $1)
+`
+
+type OperatorAlertRetentionSucceededParams struct {
+	At     pgtype.Timestamptz
+	Pruned int64
+}
+
+func (q *Queries) OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, arg OperatorAlertRetentionSucceededParams) error {
+	_, err := db.Exec(ctx, operatorAlertRetentionSucceeded, arg.At, arg.Pruned)
+	return err
+}
+
 const operatorAlertUpsertEpisodes = `-- name: OperatorAlertUpsertEpisodes :exec
 INSERT INTO operator_alert_episodes (id, series_id, rule_key, name, component, severity, account_id, app_id, node_id,
     runbook_url, started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at)

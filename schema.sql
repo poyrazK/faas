@@ -26962,6 +26962,23 @@ CREATE TABLE public.operator_alert_episodes (
 
 
 --
+-- Name: operator_alert_retention_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_retention_health (
+    singleton boolean DEFAULT true NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_pruned_episodes bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT operator_alert_retention_health_check CHECK (((last_success_at IS NULL) OR ((last_attempt_at IS NOT NULL) AND (last_success_at <= last_attempt_at)))),
+    CONSTRAINT operator_alert_retention_health_last_attempt_at_check CHECK (isfinite(last_attempt_at)),
+    CONSTRAINT operator_alert_retention_health_last_pruned_episodes_check CHECK ((last_pruned_episodes >= 0)),
+    CONSTRAINT operator_alert_retention_health_last_success_at_check CHECK (isfinite(last_success_at)),
+    CONSTRAINT operator_alert_retention_health_singleton_check CHECK (singleton)
+);
+
+
+--
 -- Name: operator_alert_rule_observations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37791,6 +37808,14 @@ ALTER TABLE ONLY public.operator_alert_collection
 
 ALTER TABLE ONLY public.operator_alert_episodes
     ADD CONSTRAINT operator_alert_episodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: operator_alert_retention_health operator_alert_retention_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_retention_health
+    ADD CONSTRAINT operator_alert_retention_health_pkey PRIMARY KEY (singleton);
 
 
 --

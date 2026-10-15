@@ -44,8 +44,10 @@ func CollectAlertsOnce(ctx context.Context, store state.OperatorAlertHistoryStor
 	return nil
 }
 
-func RunAlertCollector(ctx context.Context, store state.OperatorAlertHistoryStore, client *promql.Client, log *slog.Logger) {
-	if client == nil || client.BaseURL() == "" {
+func RunAlertCollector(ctx context.Context, store state.OperatorAlertHistoryStore, client *promql.Client, log *slog.Logger, metrics *MaintenanceMetrics) {
+	enabled := client != nil && client.BaseURL() != ""
+	metrics.setCollectionEnabled(enabled)
+	if !enabled {
 		return
 	}
 	ticker := time.NewTicker(api.ObsAlertCollectionInterval)
@@ -54,15 +56,11 @@ func RunAlertCollector(ctx context.Context, store state.OperatorAlertHistoryStor
 		if ctx.Err() != nil {
 			return
 		}
-		now := time.Now().UTC()
-		if err := CollectAlertsOnce(ctx, store, client, now); err != nil && ctx.Err() == nil {
-			log.Warn("operator alert history collection failed", "err", err)
-		}
-		pruneCtx, cancel := context.WithTimeout(ctx, api.ObsAlertCollectionBudget)
-		_, err := store.PruneOperatorAlertHistory(pruneCtx, now.Add(-api.ObsAlertHistoryRetention), api.ObsAlertHistoryPruneBatch)
-		cancel()
+		now := time.Now()
+		err := CollectAlertsOnce(ctx, store, client, now)
+		metrics.record("collection", now, err)
 		if err != nil && ctx.Err() == nil {
-			log.Warn("operator alert history retention failed", "err", err)
+			log.Warn("operator alert history collection failed", "reason", "collection_failed")
 		}
 		select {
 		case <-ctx.Done():

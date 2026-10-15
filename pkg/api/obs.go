@@ -894,6 +894,7 @@ type ObsHealthResponse struct {
 	AlertsFiring                       int64                      `json:"alerts_firing"`
 	Signals                            map[string]ObsHealthSignal `json:"signals,omitempty"`
 	AlertHistory                       *ObsAlertCollectionHealth  `json:"alert_history,omitempty"`
+	AlertRetention                     *ObsAlertRetentionHealth   `json:"alert_retention,omitempty"`
 }
 
 // ObsHealthSignal describes the evidence behind one Prometheus-derived field.
@@ -971,10 +972,27 @@ type ObsAlertEpisode struct {
 }
 
 type ObsAlertCollectionHealth struct {
-	State         string     `json:"state"`
-	Reason        string     `json:"reason,omitempty"`
-	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
-	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	State string `json:"state"`
+	// CollectionState distinguishes configuration and producer failure while
+	// State preserves the original current/unknown evidence contract.
+	CollectionState string     `json:"collection_state,omitempty"`
+	Reason          string     `json:"reason,omitempty"`
+	LastAttemptAt   *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt   *time.Time `json:"last_success_at,omitempty"`
+}
+
+// ObsAlertRetentionHealth observes cleanup independently of Prometheus.
+// ExpiredEpisodes is an exact current snapshot count, not a deletion promise.
+type ObsAlertRetentionHealth struct {
+	State              string     `json:"state"`
+	Reason             string     `json:"reason,omitempty"`
+	AsOf               time.Time  `json:"as_of"`
+	Cutoff             time.Time  `json:"cutoff"`
+	LastAttemptAt      *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt      *time.Time `json:"last_success_at,omitempty"`
+	LastPrunedEpisodes *int64     `json:"last_pruned_episodes"`
+	ExpiredEpisodes    int64      `json:"expired_episodes"`
+	OldestExpiredAt    *time.Time `json:"oldest_expired_at,omitempty"`
 }
 
 // ObsIncidentEvidenceResponse is a read-only snapshot, not a persisted incident

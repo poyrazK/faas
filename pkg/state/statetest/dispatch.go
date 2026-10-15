@@ -2326,6 +2326,7 @@ var storeDispatched = map[string]bool{
 	"OperatorAlertEpisode":                          true,
 	"OperatorIncidentContext":                       true,
 	"OperatorAlertCollectionStatus":                 true,
+	"OperatorAlertRetentionStatus":                  true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
 	"OperatorOverview":                              true,
@@ -2976,4 +2977,13 @@ func (s *Store) OperatorAlertCollectionStatus(ctx context.Context) (state.Operat
 		return o.OperatorAlertCollectionStatus(ctx)
 	}
 	return s.Store.OperatorAlertCollectionStatus(ctx)
+}
+
+func (s *Store) OperatorAlertRetentionStatus(ctx context.Context, now time.Time) (state.OperatorAlertRetention, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertRetentionStatus(context.Context, time.Time) (state.OperatorAlertRetention, error)
+	}); ok {
+		return o.OperatorAlertRetentionStatus(ctx, now)
+	}
+	return s.Store.OperatorAlertRetentionStatus(ctx, now)
 }

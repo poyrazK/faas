@@ -157,9 +157,11 @@ func (m *MemStore) PruneOperatorAlertHistory(ctx context.Context, before time.Ti
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if limit < 1 || limit > api.ObsAlertHistoryPruneBatch {
+	if before.IsZero() || limit < 1 || limit > api.ObsAlertHistoryPruneBatch {
 		return 0, ErrInvalidArgument
 	}
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	before = before.UTC().Truncate(time.Microsecond)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	type candidate struct {
@@ -210,6 +212,11 @@ func (m *MemStore) PruneOperatorAlertHistory(ctx context.Context, before time.Ti
 	}
 	for _, key := range keys {
 		delete(m.operatorAlertRules, key)
+	}
+	if started.After(m.operatorAlertRetention.LastAttemptAt) {
+		m.operatorAlertRetention.LastAttemptAt = started
+		m.operatorAlertRetention.LastSuccessAt = started
+		m.operatorAlertRetention.LastPrunedEpisodes = int64(len(rows))
 	}
 	return len(rows), nil
 }

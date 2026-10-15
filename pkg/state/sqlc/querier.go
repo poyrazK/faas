@@ -2823,6 +2823,10 @@ type Querier interface {
 	OperatorAlertPruneEpisodes(ctx context.Context, db DBTX, arg OperatorAlertPruneEpisodesParams) (int64, error)
 	OperatorAlertPruneRules(ctx context.Context, db DBTX, arg OperatorAlertPruneRulesParams) error
 	OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg OperatorAlertResolveMissingParams) error
+	OperatorAlertRetentionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
+	OperatorAlertRetentionLock(ctx context.Context, db DBTX) (bool, error)
+	OperatorAlertRetentionStatus(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (OperatorAlertRetentionStatusRow, error)
+	OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, arg OperatorAlertRetentionSucceededParams) error
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
 	// The API catalog is the single source of named shapes. Unmatched shapes
