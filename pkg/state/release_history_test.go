@@ -165,7 +165,7 @@ func TestReleaseMigrationDatabasesPG(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: account.ID, AppID: app.ID, Scope: scope, Key: key,
-			ManagedPostgresBindingID: id, ManagedCredentialRef: "private-ref", ManagedCredentialGeneration: 1,
+			ManagedPostgresBindingID: id, ManagedCredentialRef: "private-ref-" + id, ManagedCredentialGeneration: 1,
 			Kid: "kid", Ciphertext: []byte("private-ciphertext"), ValueHash: "0123456789abcdef"}); err != nil {
 			t.Fatal(err)
 		}
