@@ -60,6 +60,7 @@ func (m *MemStore) RecordOperatorAlertSnapshot(ctx context.Context, input Operat
 			old.RunbookURL = e.RunbookURL
 			m.operatorAlertEpisodes[e.ID] = old
 		} else {
+			e.Triage = OperatorAlertTriage{}
 			e.FirstSeenAt = s.ObservedAt
 			e.LastSeenAt = s.ObservedAt
 			e.LastCheckedAt = s.ObservedAt
@@ -108,6 +109,9 @@ func (m *MemStore) OperatorAlertEpisodes(ctx context.Context, f OperatorAlertFil
 	out := OperatorAlertPage{Episodes: []OperatorAlertEpisode{}, Collection: m.operatorAlertCollection}
 	for _, e := range m.operatorAlertEpisodes {
 		at := e.ObservedAt()
+		if !matchOperatorAlertTriage(e.Triage, f) {
+			continue
+		}
 		if e.ResolvedAt != nil && at.Before(f.Since) || f.Severity != "" && e.Severity != f.Severity || f.Status != "" && e.Status(out.Collection, f.Now) != f.Status {
 			continue
 		}
@@ -222,6 +226,7 @@ func (m *MemStore) PruneOperatorAlertHistory(ctx context.Context, before time.Ti
 }
 
 func copyOperatorAlertEpisode(e OperatorAlertEpisode) OperatorAlertEpisode {
+	e.Triage = copyOperatorAlertTriage(e.Triage)
 	if e.ResolvedAt != nil {
 		at := *e.ResolvedAt
 		e.ResolvedAt = &at

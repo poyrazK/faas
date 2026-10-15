@@ -281,18 +281,25 @@ WITH projected AS (
     FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
     WHERE (e.resolved_at IS NULL OR e.resolved_at >= sqlc.arg(since)::timestamptz)
       AND (sqlc.arg(severity)::text = '' OR e.severity = sqlc.arg(severity)::text)
+      AND (sqlc.arg(acknowledgment)::text = '' OR triage_acknowledged = (sqlc.arg(acknowledgment)::text = 'acknowledged'))
+      AND (sqlc.arg(ownership)::text = '' OR sqlc.arg(ownership)::text = 'owned' AND triage_owner_id IS NOT NULL
+        OR sqlc.arg(ownership)::text = 'unowned' AND triage_owner_id IS NULL
+        OR sqlc.arg(ownership)::text = 'mine' AND triage_owner_id::text = sqlc.arg(owner_id)::text)
+      AND (sqlc.arg(snooze)::text = '' OR coalesce(triage_snoozed_until > sqlc.arg(now_at)::timestamptz,false) = (sqlc.arg(snooze)::text = 'active'))
       AND (sqlc.arg(before_id)::text = '' OR (coalesce(e.resolved_at,e.started_at), 'platform_alert/' || e.id) < (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
 )
 SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
        coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
-       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at, triage_revision, triage_acknowledged,
+ coalesce(triage_owner_id::text,'')::text AS triage_owner_id, triage_snoozed_until, triage_updated_at
 FROM projected WHERE sqlc.arg(status)::text = '' OR current_status = sqlc.arg(status)::text
 ORDER BY coalesce(resolved_at,started_at) DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: OperatorAlertEpisode :one
 SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
        coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
-       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at, triage_revision, triage_acknowledged,
+ coalesce(triage_owner_id::text,'')::text AS triage_owner_id, triage_snoozed_until, triage_updated_at
 FROM operator_alert_episodes WHERE id = sqlc.arg(id)::text OR series_id = sqlc.arg(id)::text
 ORDER BY (id = sqlc.arg(id)::text) DESC, started_at DESC, first_seen_at DESC, id DESC LIMIT 1;
 
@@ -326,3 +333,14 @@ SELECT h.last_attempt_at, h.last_success_at, h.last_pruned_episodes,
   (SELECT count(*) FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < sqlc.arg(cutoff)::timestamptz)::bigint AS expired_episodes,
   (SELECT min(coalesce(resolved_at,last_seen_at)) FROM operator_alert_episodes WHERE coalesce(resolved_at,last_seen_at) < sqlc.arg(cutoff)::timestamptz)::timestamptz AS oldest_expired_at
 FROM operator_alert_retention_health h WHERE singleton;
+
+-- name: OperatorAlertTriageLock :one
+SELECT triage_revision, triage_acknowledged, coalesce(triage_owner_id::text,'')::text AS triage_owner_id,
+ triage_snoozed_until, triage_updated_at
+FROM operator_alert_episodes WHERE id = sqlc.arg(id)::text FOR UPDATE;
+
+-- name: OperatorAlertTriageUpdate :execrows
+UPDATE operator_alert_episodes SET triage_revision = sqlc.arg(revision)::bigint,
+ triage_acknowledged = sqlc.arg(acknowledged)::boolean, triage_owner_id = sqlc.narg(owner_id)::uuid,
+ triage_snoozed_until = sqlc.narg(snoozed_until)::timestamptz, triage_updated_at = sqlc.arg(updated_at)::timestamptz
+WHERE id = sqlc.arg(id)::text AND triage_revision = sqlc.arg(expected_revision)::bigint;

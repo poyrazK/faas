@@ -49,6 +49,8 @@ func Run(t *testing.T, open Open) {
 		name string
 		fn   func(*testing.T, *Fixture)
 	}{
+		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
+		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},

@@ -44995,6 +44995,51 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/incidents/platform_alert/{id}/triage:
+    post:
+      tags: [admin]
+      operationId: mutateObsAlertTriage
+      security:
+        - cookieAuth: []
+      summary: Update human triage on one immutable retained alert episode.
+      description: |
+        Requires an allowlisted operator session, MFA with recent step-up,
+        trusted browser origin and Idempotency-Key. Bearer keys cannot mutate.
+        Series aliases cannot be mutated. Every accepted action increments the
+        episode revision and commits with its audit entry. Claims cannot take
+        over another operator's ownership. Snooze affects inbox triage only;
+        observed firing/resolved/unknown status and notification delivery remain
+        independent. Obtain the current revision from incident evidence.
+      parameters:
+        - in: path
+          name: id
+          description: Immutable retained episode ID; a series alias cannot be mutated.
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+        - in: header
+          name: Idempotency-Key
+          description: Unique request key used to replay an identical mutation receipt.
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObsAlertTriageRequest' }
+      responses:
+        '200':
+          description: Updated workflow state, independent of observed alert status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertTriageResponse' }
+        '400': { description: 'Invalid action, revision, body or snooze deadline.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'Operator session, MFA step-up, allowlist or origin rejected.' }
+        '404': { description: Immutable episode ID is not retained. }
+        '409': { description: Revision changed or another operator owns the episode. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Required storage or audit write failed; no triage mutation committed. }
+
   /v1/admin/obs/health:
     get:
       tags: [admin]
@@ -64085,6 +64130,76 @@ components:
     # Closed-set fields: every response carries the same key names.
     # Prometheus-derived numeric fallbacks remain stable for compatibility,
     # while signals describes the evidence for each metric independently.
+    ObsAlertTriage:
+      type: object
+      description: Human workflow on one retained alert episode, independent of observed alert status.
+      required: [revision, acknowledged, owned, snoozed, as_of]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        acknowledged: { type: boolean }
+        owned: { type: boolean }
+        owner_account_id: { type: string, format: uuid }
+        snoozed_until: { type: string, format: date-time }
+        snoozed: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+    ObsAlertTriageRequest:
+      type: object
+      description: One revision-checked triage action on an exact retained episode ID.
+      additionalProperties: false
+      required: [action, expected_revision]
+      properties:
+        action:
+          type: string
+          enum: [acknowledge, unacknowledge, claim, release, snooze, unsnooze]
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        snoozed_until:
+          type: string
+          format: date-time
+          description: Required only for snooze; strictly future and at most 24 hours ahead.
+    ObsAlertTriageResponse:
+      type: object
+      description: Committed triage revision and workflow snapshot returned to an operator.
+      required: [incident_id, triage]
+      properties:
+        incident_id: { type: string }
+        triage: { $ref: '#/components/schemas/ObsAlertTriage' }
+    ObsAlertEpisode:
+      type: object
+      description: Immutable recurrence identity and retained observation clocks on a private operator incident.
+      required: [series_id, started_at, first_seen_at, last_seen_at, last_evaluated_at, observation_state]
+      properties:
+        series_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        started_at: { type: string, format: date-time }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        last_evaluated_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        observation_state: { type: string, enum: [current, unknown, historical] }
+    ObsAlertCollectionHealth:
+      type: object
+      description: Durable collection receipt and explicit producer configuration or health state.
+      required: [state]
+      properties:
+        state: { type: string, enum: [current, unknown] }
+        collection_state: { type: string, enum: [disabled, never_collected, current, failed, stale, unknown] }
+        reason: { type: string }
+        last_attempt_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+    ObsAlertRetentionHealth:
+      type: object
+      description: Independent retention receipt and exact expired-episode backlog at the snapshot cutoff.
+      required: [state, as_of, cutoff, last_pruned_episodes, expired_episodes]
+      properties:
+        state: { type: string, enum: [never_run, current, failed, stale, unknown] }
+        reason: { type: string }
+        as_of: { type: string, format: date-time }
+        cutoff: { type: string, format: date-time }
+        last_attempt_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        last_pruned_episodes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        expired_episodes: { type: integer, format: int64, minimum: 0 }
+        oldest_expired_at: { type: string, format: date-time }
     ObsHealthResponse:
       description: |
         Wire shape for GET /v1/admin/obs/health (admin scope +
@@ -64192,6 +64307,10 @@ components:
             info-only rules. A fresh faas.rules.yml evaluation heartbeat is
             required for the matching signal to be healthy, including when
             no alerts fire. This describes source freshness, not alert severity.
+        alert_history:
+          $ref: '#/components/schemas/ObsAlertCollectionHealth'
+        alert_retention:
+          $ref: '#/components/schemas/ObsAlertRetentionHealth'
         signals:
           type: object
           description: |

@@ -95,28 +95,34 @@ func (q *Queries) OperatorAlertCollectionSucceeded(ctx context.Context, db DBTX,
 const operatorAlertEpisode = `-- name: OperatorAlertEpisode :one
 SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
        coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
-       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at, triage_revision, triage_acknowledged,
+ coalesce(triage_owner_id::text,'')::text AS triage_owner_id, triage_snoozed_until, triage_updated_at
 FROM operator_alert_episodes WHERE id = $1::text OR series_id = $1::text
 ORDER BY (id = $1::text) DESC, started_at DESC, first_seen_at DESC, id DESC LIMIT 1
 `
 
 type OperatorAlertEpisodeRow struct {
-	ID              string
-	SeriesID        string
-	RuleKey         string
-	Name            string
-	Component       string
-	Severity        string
-	AccountID       string
-	AppID           string
-	NodeID          string
-	RunbookUrl      string
-	StartedAt       pgtype.Timestamptz
-	FirstSeenAt     pgtype.Timestamptz
-	LastSeenAt      pgtype.Timestamptz
-	LastEvaluatedAt pgtype.Timestamptz
-	LastCheckedAt   pgtype.Timestamptz
-	ResolvedAt      pgtype.Timestamptz
+	ID                 string
+	SeriesID           string
+	RuleKey            string
+	Name               string
+	Component          string
+	Severity           string
+	AccountID          string
+	AppID              string
+	NodeID             string
+	RunbookUrl         string
+	StartedAt          pgtype.Timestamptz
+	FirstSeenAt        pgtype.Timestamptz
+	LastSeenAt         pgtype.Timestamptz
+	LastEvaluatedAt    pgtype.Timestamptz
+	LastCheckedAt      pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	TriageRevision     int64
+	TriageAcknowledged bool
+	TriageOwnerID      string
+	TriageSnoozedUntil pgtype.Timestamptz
+	TriageUpdatedAt    pgtype.Timestamptz
 }
 
 func (q *Queries) OperatorAlertEpisode(ctx context.Context, db DBTX, id string) (OperatorAlertEpisodeRow, error) {
@@ -139,13 +145,18 @@ func (q *Queries) OperatorAlertEpisode(ctx context.Context, db DBTX, id string) 
 		&i.LastEvaluatedAt,
 		&i.LastCheckedAt,
 		&i.ResolvedAt,
+		&i.TriageRevision,
+		&i.TriageAcknowledged,
+		&i.TriageOwnerID,
+		&i.TriageSnoozedUntil,
+		&i.TriageUpdatedAt,
 	)
 	return i, err
 }
 
 const operatorAlertEpisodes = `-- name: OperatorAlertEpisodes :many
 WITH projected AS (
-    SELECT e.id, e.series_id, e.rule_key, e.name, e.component, e.severity, e.account_id, e.app_id, e.node_id, e.runbook_url, e.started_at, e.first_seen_at, e.last_seen_at, e.last_evaluated_at, e.last_checked_at, e.resolved_at, CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+    SELECT e.id, e.series_id, e.rule_key, e.name, e.component, e.severity, e.account_id, e.app_id, e.node_id, e.runbook_url, e.started_at, e.first_seen_at, e.last_seen_at, e.last_evaluated_at, e.last_checked_at, e.resolved_at, e.triage_revision, e.triage_acknowledged, e.triage_owner_id, e.triage_snoozed_until, e.triage_updated_at, CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
       WHEN c.last_success_at IS NOT NULL AND c.last_attempt_at = c.last_success_at
        AND c.last_success_at >= $3::timestamptz AND c.last_success_at <= $4::timestamptz
        AND e.last_checked_at = c.last_success_at AND e.last_evaluated_at >= $3::timestamptz
@@ -153,43 +164,59 @@ WITH projected AS (
     FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
     WHERE (e.resolved_at IS NULL OR e.resolved_at >= $5::timestamptz)
       AND ($6::text = '' OR e.severity = $6::text)
-      AND ($7::text = '' OR (coalesce(e.resolved_at,e.started_at), 'platform_alert/' || e.id) < ($8::timestamptz, $7::text))
+      AND ($7::text = '' OR triage_acknowledged = ($7::text = 'acknowledged'))
+      AND ($8::text = '' OR $8::text = 'owned' AND triage_owner_id IS NOT NULL
+        OR $8::text = 'unowned' AND triage_owner_id IS NULL
+        OR $8::text = 'mine' AND triage_owner_id::text = $9::text)
+      AND ($10::text = '' OR coalesce(triage_snoozed_until > $11::timestamptz,false) = ($10::text = 'active'))
+      AND ($12::text = '' OR (coalesce(e.resolved_at,e.started_at), 'platform_alert/' || e.id) < ($13::timestamptz, $12::text))
 )
 SELECT id, series_id, rule_key, name, component, severity, coalesce(account_id::text,'')::text AS account_id,
        coalesce(app_id::text,'')::text AS app_id, coalesce(node_id::text,'')::text AS node_id, runbook_url,
-       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at
+       started_at, first_seen_at, last_seen_at, last_evaluated_at, last_checked_at, resolved_at, triage_revision, triage_acknowledged,
+ coalesce(triage_owner_id::text,'')::text AS triage_owner_id, triage_snoozed_until, triage_updated_at
 FROM projected WHERE $1::text = '' OR current_status = $1::text
 ORDER BY coalesce(resolved_at,started_at) DESC, id DESC LIMIT $2::integer
 `
 
 type OperatorAlertEpisodesParams struct {
-	Status       string
-	PageLimit    int32
-	FreshSince   pgtype.Timestamptz
-	FutureBefore pgtype.Timestamptz
-	Since        pgtype.Timestamptz
-	Severity     string
-	BeforeID     string
-	BeforeAt     pgtype.Timestamptz
+	Status         string
+	PageLimit      int32
+	FreshSince     pgtype.Timestamptz
+	FutureBefore   pgtype.Timestamptz
+	Since          pgtype.Timestamptz
+	Severity       string
+	Acknowledgment string
+	Ownership      string
+	OwnerID        string
+	Snooze         string
+	NowAt          pgtype.Timestamptz
+	BeforeID       string
+	BeforeAt       pgtype.Timestamptz
 }
 
 type OperatorAlertEpisodesRow struct {
-	ID              string
-	SeriesID        string
-	RuleKey         string
-	Name            string
-	Component       string
-	Severity        string
-	AccountID       string
-	AppID           string
-	NodeID          string
-	RunbookUrl      string
-	StartedAt       pgtype.Timestamptz
-	FirstSeenAt     pgtype.Timestamptz
-	LastSeenAt      pgtype.Timestamptz
-	LastEvaluatedAt pgtype.Timestamptz
-	LastCheckedAt   pgtype.Timestamptz
-	ResolvedAt      pgtype.Timestamptz
+	ID                 string
+	SeriesID           string
+	RuleKey            string
+	Name               string
+	Component          string
+	Severity           string
+	AccountID          string
+	AppID              string
+	NodeID             string
+	RunbookUrl         string
+	StartedAt          pgtype.Timestamptz
+	FirstSeenAt        pgtype.Timestamptz
+	LastSeenAt         pgtype.Timestamptz
+	LastEvaluatedAt    pgtype.Timestamptz
+	LastCheckedAt      pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	TriageRevision     int64
+	TriageAcknowledged bool
+	TriageOwnerID      string
+	TriageSnoozedUntil pgtype.Timestamptz
+	TriageUpdatedAt    pgtype.Timestamptz
 }
 
 func (q *Queries) OperatorAlertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertEpisodesParams) ([]OperatorAlertEpisodesRow, error) {
@@ -200,6 +227,11 @@ func (q *Queries) OperatorAlertEpisodes(ctx context.Context, db DBTX, arg Operat
 		arg.FutureBefore,
 		arg.Since,
 		arg.Severity,
+		arg.Acknowledgment,
+		arg.Ownership,
+		arg.OwnerID,
+		arg.Snooze,
+		arg.NowAt,
 		arg.BeforeID,
 		arg.BeforeAt,
 	)
@@ -227,6 +259,11 @@ func (q *Queries) OperatorAlertEpisodes(ctx context.Context, db DBTX, arg Operat
 			&i.LastEvaluatedAt,
 			&i.LastCheckedAt,
 			&i.ResolvedAt,
+			&i.TriageRevision,
+			&i.TriageAcknowledged,
+			&i.TriageOwnerID,
+			&i.TriageSnoozedUntil,
+			&i.TriageUpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -357,6 +394,66 @@ type OperatorAlertRetentionSucceededParams struct {
 func (q *Queries) OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, arg OperatorAlertRetentionSucceededParams) error {
 	_, err := db.Exec(ctx, operatorAlertRetentionSucceeded, arg.At, arg.Pruned)
 	return err
+}
+
+const operatorAlertTriageLock = `-- name: OperatorAlertTriageLock :one
+SELECT triage_revision, triage_acknowledged, coalesce(triage_owner_id::text,'')::text AS triage_owner_id,
+ triage_snoozed_until, triage_updated_at
+FROM operator_alert_episodes WHERE id = $1::text FOR UPDATE
+`
+
+type OperatorAlertTriageLockRow struct {
+	TriageRevision     int64
+	TriageAcknowledged bool
+	TriageOwnerID      string
+	TriageSnoozedUntil pgtype.Timestamptz
+	TriageUpdatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertTriageLock(ctx context.Context, db DBTX, id string) (OperatorAlertTriageLockRow, error) {
+	row := db.QueryRow(ctx, operatorAlertTriageLock, id)
+	var i OperatorAlertTriageLockRow
+	err := row.Scan(
+		&i.TriageRevision,
+		&i.TriageAcknowledged,
+		&i.TriageOwnerID,
+		&i.TriageSnoozedUntil,
+		&i.TriageUpdatedAt,
+	)
+	return i, err
+}
+
+const operatorAlertTriageUpdate = `-- name: OperatorAlertTriageUpdate :execrows
+UPDATE operator_alert_episodes SET triage_revision = $1::bigint,
+ triage_acknowledged = $2::boolean, triage_owner_id = $3::uuid,
+ triage_snoozed_until = $4::timestamptz, triage_updated_at = $5::timestamptz
+WHERE id = $6::text AND triage_revision = $7::bigint
+`
+
+type OperatorAlertTriageUpdateParams struct {
+	Revision         int64
+	Acknowledged     bool
+	OwnerID          pgtype.UUID
+	SnoozedUntil     pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ID               string
+	ExpectedRevision int64
+}
+
+func (q *Queries) OperatorAlertTriageUpdate(ctx context.Context, db DBTX, arg OperatorAlertTriageUpdateParams) (int64, error) {
+	result, err := db.Exec(ctx, operatorAlertTriageUpdate,
+		arg.Revision,
+		arg.Acknowledged,
+		arg.OwnerID,
+		arg.SnoozedUntil,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.ExpectedRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const operatorAlertUpsertEpisodes = `-- name: OperatorAlertUpsertEpisodes :exec

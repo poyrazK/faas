@@ -120,6 +120,11 @@ func cmdObsBundle(args []string) int {
 }
 
 func marshalObsBundle(bundle obsIncidentBundle) ([]byte, error) {
+	if t := bundle.Evidence.Data.Incident.Triage; t != nil {
+		safe := *t
+		safe.OwnerAccountID = ""
+		bundle.Evidence.Data.Incident.Triage = &safe
+	}
 	body, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode bundle: %w", err)

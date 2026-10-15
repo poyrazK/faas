@@ -101,7 +101,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
 	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
-	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence": true, // operator-only bounded incident evidence
+	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":        true,
+	"GET /v1/admin/obs/incidents/{kind}/{id}/context":         true, // private operator incident context
+	"POST /v1/admin/obs/incidents/platform_alert/{id}/triage": true, // operator cookie session + recent MFA; outside tenant SDK // operator-only bounded incident evidence
 
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Same operator-only posture as the ADR-091

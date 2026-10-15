@@ -2827,6 +2827,8 @@ type Querier interface {
 	OperatorAlertRetentionLock(ctx context.Context, db DBTX) (bool, error)
 	OperatorAlertRetentionStatus(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (OperatorAlertRetentionStatusRow, error)
 	OperatorAlertRetentionSucceeded(ctx context.Context, db DBTX, arg OperatorAlertRetentionSucceededParams) error
+	OperatorAlertTriageLock(ctx context.Context, db DBTX, id string) (OperatorAlertTriageLockRow, error)
+	OperatorAlertTriageUpdate(ctx context.Context, db DBTX, arg OperatorAlertTriageUpdateParams) (int64, error)
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
 	// The API catalog is the single source of named shapes. Unmatched shapes

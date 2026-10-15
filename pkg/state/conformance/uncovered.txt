@@ -293,7 +293,6 @@ ListAppWebhooksForApp
 ListApps
 ListAppsByNodeID
 ListAppsWithRecentTelemetry
-ListAuditLog
 ListBuildsAwaitingImage
 ListBuildsForAccount
 ListBuildsForAccountPaged

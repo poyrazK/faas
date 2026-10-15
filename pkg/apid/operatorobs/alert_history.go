@@ -20,6 +20,9 @@ func AlertIncidents(ctx context.Context, store state.OperatorAlertHistoryReader,
 	}
 	missing := []string{}
 	if page.Collection.LastSuccessAt.IsZero() {
+		if f.Acknowledgment != "" || f.Ownership != "" || f.Snooze != "" {
+			return []api.ObsIncident{}, []string{"platform_alert_history"}, nil
+		}
 		live, unavailable := FiringAlerts(ctx, client)
 		unavailable = append(unavailable, "platform_alert_history")
 		out := []api.ObsIncident{}
@@ -48,6 +51,8 @@ func retainedIncident(e state.OperatorAlertEpisode, c state.OperatorAlertCollect
 	labels := map[string]string{"alertname": e.Name, "component": e.Component, "severity": e.Severity, "account_id": e.AccountID, "app_id": e.AppID, "node_id": e.NodeID}
 	item := projectAlert(promql.VectorSample{Labels: labels, Value: float64(e.StartedAt.UnixMilli()) / 1000})
 	item.ID = "platform_alert/" + e.ID
+	triage := e.Triage.Projection(now)
+	item.Triage = &triage
 	item.DedupeKey = "platform_alert/" + e.SeriesID
 	item.Status = e.Status(c, now)
 	item.ObservedAt = e.ObservedAt()

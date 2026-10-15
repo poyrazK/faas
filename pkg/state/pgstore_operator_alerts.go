@@ -114,6 +114,7 @@ func (s *PgStore) OperatorAlertEpisodes(ctx context.Context, f OperatorAlertFilt
 	}
 	out.Collection = pgAlertCollection(collection)
 	rows, err := q.OperatorAlertEpisodes(ctx, tx, sqlc.OperatorAlertEpisodesParams{
+		Acknowledgment: f.Acknowledgment, Ownership: f.Ownership, OwnerID: f.OwnerID, Snooze: f.Snooze, NowAt: pgtype.Timestamptz{Time: f.Now, Valid: true},
 		Status: f.Status, Severity: f.Severity, PageLimit: int32(f.Limit), BeforeID: f.BeforeID,
 		BeforeAt: pgtype.Timestamptz{Time: f.BeforeAt, Valid: !f.BeforeAt.IsZero()}, Since: pgtype.Timestamptz{Time: f.Since, Valid: true},
 		FreshSince: pgtype.Timestamptz{Time: f.Now.Add(-api.ObsHealthFreshnessMaxAge), Valid: true}, FutureBefore: pgtype.Timestamptz{Time: f.Now.Add(api.ObsHealthClockSkewTolerance), Valid: true},
@@ -195,7 +196,7 @@ func pgAlertCollection(row sqlc.OperatorAlertCollectionRow) OperatorAlertCollect
 }
 
 func pgAlertEpisode(r sqlc.OperatorAlertEpisodeRow) OperatorAlertEpisode {
-	out := OperatorAlertEpisode{ID: r.ID, SeriesID: r.SeriesID, RuleKey: r.RuleKey, Name: r.Name, Component: r.Component, Severity: r.Severity,
+	out := OperatorAlertEpisode{Triage: pgAlertTriage(r.TriageRevision, r.TriageAcknowledged, r.TriageOwnerID, r.TriageSnoozedUntil, r.TriageUpdatedAt), ID: r.ID, SeriesID: r.SeriesID, RuleKey: r.RuleKey, Name: r.Name, Component: r.Component, Severity: r.Severity,
 		AccountID: r.AccountID, AppID: r.AppID, NodeID: r.NodeID, RunbookURL: r.RunbookUrl,
 		StartedAt: r.StartedAt.Time.UTC(), FirstSeenAt: r.FirstSeenAt.Time.UTC(), LastSeenAt: r.LastSeenAt.Time.UTC(), LastEvaluatedAt: r.LastEvaluatedAt.Time.UTC(), LastCheckedAt: r.LastCheckedAt.Time.UTC()}
 	if r.ResolvedAt.Valid {

@@ -59,6 +59,7 @@ const dispatchObs = "obs"
 const subObsHealth = "health"
 
 const subObsIncidents = "incidents"
+const subObsTriage = "triage"
 
 const subObsEvidence = "evidence"
 
@@ -91,6 +92,8 @@ func cmdObsDispatch(args []string) int {
 	switch args[0] {
 	case subObsHealth:
 		return cmdObsHealth(args[1:])
+	case subObsTriage:
+		return cmdObsTriage(args[1:])
 	case subObsIncidents:
 		return cmdObsIncidents(args[1:])
 	case subObsEvidence:
@@ -243,6 +246,10 @@ func cmdObsIncidents(args []string) int {
 	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
 	typeFilter := fs.String("type", "", "incident type: deployment|job_run|compute_node|platform_alert")
 	severity := fs.String("severity", "", "severity: warning|error|critical")
+	alertStatus := fs.String("alert-status", "", "platform alert status: firing|resolved|unknown")
+	acknowledgment := fs.String("acknowledgment", "", "platform alert workflow: acknowledged|unacknowledged")
+	ownership := fs.String("ownership", "", "platform alert ownership: owned|unowned|mine")
+	snooze := fs.String("snooze", "", "platform alert snooze: active|inactive")
 	since := fs.String("since", "", "RFC 3339 lower bound (default: last 24h; capped at 7d)")
 	cursorValue := fs.String("cursor", "", "opaque cursor returned as next_cursor")
 	limit := fs.Int("limit", api.ObsIncidentLimitDefault, "maximum incidents to return (1..200)")
@@ -268,11 +275,16 @@ func cmdObsIncidents(args []string) int {
 	if token == "" {
 		token = os.Getenv("FAAS_ADMIN_TOKEN")
 	}
-	if token == "" {
+	if token == "" && *ownership != "mine" {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: --admin-token (or $FAAS_ADMIN_TOKEN) required")
 		return 2
 	}
 	query := url.Values{"limit": {strconv.Itoa(*limit)}}
+	for key, value := range map[string]string{"alert_status": *alertStatus, "acknowledgment": *acknowledgment, "ownership": *ownership, "snooze": *snooze} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
 	if strings.TrimSpace(*typeFilter) != "" {
 		query.Set("type", strings.TrimSpace(*typeFilter))
 	}
@@ -290,9 +302,18 @@ func cmdObsIncidents(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if *ownership == "mine" {
+		session, err := loadOperatorSession()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
+			return 1
+		}
+		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: session.Cookie})
+	} else {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := (&http.Client{Timeout: *timeout}).Do(req)
+	resp, err := (&http.Client{Timeout: *timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: dial apid:", err)
 		return 1
@@ -445,6 +466,13 @@ func writeObsIncidentsHuman(w io.Writer, response api.ObsIncidentListResponse) {
 		_, _ = fmt.Fprintf(w, "incident_id=%s type=%s severity=%s status=%s observed_at=%s resource_id=%s resource_name=%s summary=%q",
 			item.ID, item.Type, item.Severity, item.Status, item.ObservedAt.UTC().Format(time.RFC3339),
 			item.ResourceID, item.ResourceName, item.Summary)
+		if item.Triage != nil {
+			t := item.Triage
+			_, _ = fmt.Fprintf(w, " revision=%d acknowledged=%t owned=%t owner_account_id=%s snoozed=%t", t.Revision, t.Acknowledged, t.Owned, t.OwnerAccountID, t.Snoozed)
+			if t.SnoozedUntil != nil {
+				_, _ = fmt.Fprintf(w, " snoozed_until=%s", t.SnoozedUntil.UTC().Format(time.RFC3339))
+			}
+		}
 		if item.ActionPath != "" {
 			_, _ = fmt.Fprintf(w, " action_path=%s", item.ActionPath)
 		}

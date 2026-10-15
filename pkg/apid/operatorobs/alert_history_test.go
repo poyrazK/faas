@@ -208,3 +208,11 @@ func TestAlertHistorySafeProjectionAndExclusions(t *testing.T) {
 		t.Fatalf("missing retained evidence: %v", err)
 	}
 }
+
+func TestAlertTriageFilteredFallbackRequiresRetainedHistory(t *testing.T) {
+	store := state.NewMemStore()
+	items, missing, err := AlertIncidents(context.Background(), store, nil, state.OperatorAlertFilter{Now: time.Now().UTC(), Limit: 10, Acknowledgment: "unacknowledged"})
+	if err != nil || len(items) != 0 || len(missing) != 1 || missing[0] != "platform_alert_history" {
+		t.Fatalf("unretained triage: items=%+v missing=%v err=%v", items, missing, err)
+	}
+}

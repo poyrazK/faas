@@ -19,6 +19,8 @@ import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
+import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
@@ -1054,6 +1056,60 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Update human triage on one immutable retained alert episode.
+   * Requires an allowlisted operator session, MFA with recent step-up,
+   * trusted browser origin and Idempotency-Key. Bearer keys cannot mutate.
+   * Series aliases cannot be mutated. Every accepted action increments the
+   * episode revision and commits with its audit entry. Claims cannot take
+   * over another operator's ownership. Snooze affects inbox triage only;
+   * observed firing/resolved/unknown status and notification delivery remain
+   * independent. Obtain the current revision from incident evidence.
+   *
+   * @returns ObsAlertTriageResponse Updated workflow state, independent of observed alert status.
+   * @throws ApiError
+   */
+  public static mutateObsAlertTriage({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Immutable retained episode ID; a series alias cannot be mutated.
+     */
+    id: string,
+    /**
+     * Unique request key used to replay an identical mutation receipt.
+     */
+    idempotencyKey: string,
+    requestBody: ObsAlertTriageRequest,
+  }): CancelablePromise<ObsAlertTriageResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/obs/incidents/platform_alert/{id}/triage',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid action, revision, body or snooze deadline.`,
+        401: `code: unauthorized`,
+        403: `Operator session, MFA step-up, allowlist or origin rejected.`,
+        404: `Immutable episode ID is not retained.`,
+        409: `Revision changed or another operator owns the episode.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Required storage or audit write failed; no triage mutation committed.`,
       },
     });
   }

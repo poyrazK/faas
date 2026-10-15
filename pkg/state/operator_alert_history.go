@@ -13,22 +13,23 @@ import (
 )
 
 type OperatorAlertEpisode struct {
-	ID              string     `json:"id"`
-	SeriesID        string     `json:"series_id"`
-	RuleKey         string     `json:"rule_key"`
-	Name            string     `json:"name"`
-	Component       string     `json:"component"`
-	Severity        string     `json:"severity"`
-	AccountID       string     `json:"account_id"`
-	AppID           string     `json:"app_id"`
-	NodeID          string     `json:"node_id"`
-	RunbookURL      string     `json:"runbook_url"`
-	StartedAt       time.Time  `json:"started_at"`
-	FirstSeenAt     time.Time  `json:"first_seen_at"`
-	LastSeenAt      time.Time  `json:"last_seen_at"`
-	LastEvaluatedAt time.Time  `json:"last_evaluated_at"`
-	LastCheckedAt   time.Time  `json:"last_checked_at"`
-	ResolvedAt      *time.Time `json:"resolved_at"`
+	Triage          OperatorAlertTriage `json:"-"`
+	ID              string              `json:"id"`
+	SeriesID        string              `json:"series_id"`
+	RuleKey         string              `json:"rule_key"`
+	Name            string              `json:"name"`
+	Component       string              `json:"component"`
+	Severity        string              `json:"severity"`
+	AccountID       string              `json:"account_id"`
+	AppID           string              `json:"app_id"`
+	NodeID          string              `json:"node_id"`
+	RunbookURL      string              `json:"runbook_url"`
+	StartedAt       time.Time           `json:"started_at"`
+	FirstSeenAt     time.Time           `json:"first_seen_at"`
+	LastSeenAt      time.Time           `json:"last_seen_at"`
+	LastEvaluatedAt time.Time           `json:"last_evaluated_at"`
+	LastCheckedAt   time.Time           `json:"last_checked_at"`
+	ResolvedAt      *time.Time          `json:"resolved_at"`
 }
 
 type OperatorAlertRuleObservation struct {
@@ -45,9 +46,10 @@ type OperatorAlertSnapshot struct {
 
 type OperatorAlertCollection struct{ LastAttemptAt, LastSuccessAt time.Time }
 type OperatorAlertFilter struct {
-	Since, BeforeAt, Now       time.Time
-	BeforeID, Severity, Status string
-	Limit                      int
+	Acknowledgment, Ownership, OwnerID, Snooze string
+	Since, BeforeAt, Now                       time.Time
+	BeforeID, Severity, Status                 string
+	Limit                                      int
 }
 type OperatorAlertPage struct {
 	Episodes   []OperatorAlertEpisode
@@ -176,6 +178,11 @@ func validateOperatorAlertSnapshot(s OperatorAlertSnapshot) error {
 }
 
 func validateOperatorAlertFilter(f OperatorAlertFilter) error {
+	if f.Acknowledgment != "" && f.Acknowledgment != "acknowledged" && f.Acknowledgment != "unacknowledged" ||
+		f.Ownership != "" && f.Ownership != "owned" && f.Ownership != "unowned" && f.Ownership != "mine" ||
+		f.Ownership == "mine" && f.OwnerID == "" || f.Snooze != "" && f.Snooze != "active" && f.Snooze != "inactive" {
+		return ErrInvalidArgument
+	}
 	if f.Now.IsZero() || f.Limit < 1 || f.Limit > api.ObsIncidentLimitMax+1 {
 		return ErrInvalidArgument
 	}

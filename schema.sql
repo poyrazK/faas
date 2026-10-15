@@ -26945,6 +26945,11 @@ CREATE TABLE public.operator_alert_episodes (
     last_evaluated_at timestamp with time zone NOT NULL,
     last_checked_at timestamp with time zone NOT NULL,
     resolved_at timestamp with time zone,
+    triage_revision bigint DEFAULT 0 NOT NULL,
+    triage_acknowledged boolean DEFAULT false NOT NULL,
+    triage_owner_id uuid,
+    triage_snoozed_until timestamp with time zone,
+    triage_updated_at timestamp with time zone,
     CONSTRAINT operator_alert_episodes_check CHECK ((last_seen_at >= first_seen_at)),
     CONSTRAINT operator_alert_episodes_check1 CHECK ((last_evaluated_at >= started_at)),
     CONSTRAINT operator_alert_episodes_check2 CHECK ((last_checked_at >= last_seen_at)),
@@ -26957,7 +26962,8 @@ CREATE TABLE public.operator_alert_episodes (
     CONSTRAINT operator_alert_episodes_runbook_url_check CHECK ((octet_length(runbook_url) <= 2048)),
     CONSTRAINT operator_alert_episodes_series_id_check CHECK ((series_id ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT operator_alert_episodes_severity_check CHECK ((severity = ANY (ARRAY['warning'::text, 'error'::text, 'critical'::text]))),
-    CONSTRAINT operator_alert_episodes_started_at_check CHECK (isfinite(started_at))
+    CONSTRAINT operator_alert_episodes_started_at_check CHECK (isfinite(started_at)),
+    CONSTRAINT operator_alert_episodes_triage_revision_check CHECK ((triage_revision >= 0))
 );
 
 

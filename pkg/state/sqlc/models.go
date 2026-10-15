@@ -6097,22 +6097,27 @@ type OperatorAlertCollection struct {
 }
 
 type OperatorAlertEpisode struct {
-	ID              string
-	SeriesID        string
-	RuleKey         string
-	Name            string
-	Component       string
-	Severity        string
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	NodeID          pgtype.UUID
-	RunbookUrl      string
-	StartedAt       pgtype.Timestamptz
-	FirstSeenAt     pgtype.Timestamptz
-	LastSeenAt      pgtype.Timestamptz
-	LastEvaluatedAt pgtype.Timestamptz
-	LastCheckedAt   pgtype.Timestamptz
-	ResolvedAt      pgtype.Timestamptz
+	ID                 string
+	SeriesID           string
+	RuleKey            string
+	Name               string
+	Component          string
+	Severity           string
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	NodeID             pgtype.UUID
+	RunbookUrl         string
+	StartedAt          pgtype.Timestamptz
+	FirstSeenAt        pgtype.Timestamptz
+	LastSeenAt         pgtype.Timestamptz
+	LastEvaluatedAt    pgtype.Timestamptz
+	LastCheckedAt      pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	TriageRevision     int64
+	TriageAcknowledged bool
+	TriageOwnerID      pgtype.UUID
+	TriageSnoozedUntil pgtype.Timestamptz
+	TriageUpdatedAt    pgtype.Timestamptz
 }
 
 type OperatorAlertRetentionHealth struct {

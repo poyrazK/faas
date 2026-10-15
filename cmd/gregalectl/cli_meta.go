@@ -954,12 +954,8 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		// Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side
-		// operator observability surfaces. `obs health` reads the
-		// meta-health snapshot, `obs incidents` reads the bounded
-		// cross-resource triage projection, and `obs overview` /
-		// `obs capacity` expose the existing fleet snapshots; all
-		// are read-only and admin/MFA gated by apid.
+		// Operator reads and episode-scoped triage. Mutations use the strict
+		// operator session policy; other reads retain admin bearer support.
 		Name:    dispatchObs,
 		DocSlug: "obs",
 		Short:   "Operator incident inbox, health, fleet overview, and capacity",
@@ -979,12 +975,29 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "type", Short: "filter by deployment|job_run|compute_node|platform_alert"},
 					{Name: "severity", Short: "filter by warning|error|critical"},
+					{Name: "alert-status", Short: "platform alerts: firing|resolved|unknown"},
+					{Name: "acknowledgment", Short: "platform alerts: acknowledged|unacknowledged"},
+					{Name: "ownership", Short: "platform alerts: owned|unowned|mine (mine uses operator session)"},
+					{Name: "snooze", Short: "platform alerts: active|inactive"},
 					{Name: "since", Short: "RFC 3339 lower bound (default last 24h; capped at 7d)"},
 					{Name: "cursor", Short: "opaque next_cursor from a prior page"},
 					{Name: "limit", Short: "maximum incidents (1..200; default 50)"},
 					{Name: "json", Short: "emit structured JSON"},
 					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
 					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+				},
+			},
+
+			{
+				Name:  subObsTriage,
+				Short: "Acknowledge, claim, or snooze a retained alert episode (operator session + fresh MFA)",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "immutable platform_alert/episode-id"},
+					{Name: "action", Short: "acknowledge|unacknowledge|claim|release|snooze|unsnooze"},
+					{Name: "expected-revision", Short: "revision from evidence (required; 0 for untouched episodes)"},
+					{Name: "until", Short: "RFC 3339 snooze deadline within 24 hours"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "timeout", Short: "total request timeout (default 10s)"},
 				},
 			},
 			{

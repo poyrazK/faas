@@ -957,6 +957,7 @@ type ObsIncident struct {
 	RunbookURL   string           `json:"runbook_url,omitempty"`
 	EvidencePath string           `json:"evidence_path,omitempty"`
 	AlertEpisode *ObsAlertEpisode `json:"alert_episode,omitempty"`
+	Triage       *ObsAlertTriage  `json:"triage,omitempty"`
 }
 
 // ObsAlertEpisode distinguishes recurrences and last-known state from current

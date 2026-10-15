@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObsAlertCollectionHealth } from './ObsAlertCollectionHealth.js';
+import type { ObsAlertRetentionHealth } from './ObsAlertRetentionHealth.js';
 import type { ObsHealthSignal } from './ObsHealthSignal.js';
 /**
  * Wire shape for GET /v1/admin/obs/health (admin scope +
@@ -80,6 +82,8 @@ export type ObsHealthResponse = {
    *
    */
   alerts_firing: number;
+  alert_history?: ObsAlertCollectionHealth;
+  alert_retention?: ObsAlertRetentionHealth;
   /**
    * Independent evidence for audit_log_write_total_5m,
    * audit_log_write_failures_5m, and alerts_firing. Present on new

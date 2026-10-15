@@ -1005,6 +1005,7 @@ type DeploymentActivationLocker interface {
 type Store interface {
 	OperatorObservabilityReader
 	OperatorAlertHistoryStore
+	OperatorAlertTriageWriter
 	OperatorAlertRetentionStore
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
