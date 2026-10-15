@@ -1130,6 +1130,8 @@ from .environment_definition import EnvironmentDefinition
 from .environment_definition_api_version import EnvironmentDefinitionApiVersion
 from .environment_definition_configuration import EnvironmentDefinitionConfiguration
 from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
+from .environment_definition_workload_pruning_policy import EnvironmentDefinitionWorkloadPruningPolicy
+from .environment_definition_workload_recoveries import EnvironmentDefinitionWorkloadRecoveries
 from .environment_definition_workloads import EnvironmentDefinitionWorkloads
 from .environment_desired_revision import EnvironmentDesiredRevision
 from .environment_field_ownership_request import EnvironmentFieldOwnershipRequest
@@ -1179,6 +1181,9 @@ from .environment_workload_activation_evidence import EnvironmentWorkloadActivat
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
+from .environment_workload_retirement import EnvironmentWorkloadRetirement
+from .environment_workload_retirement_impact import EnvironmentWorkloadRetirementImpact
+from .environment_workload_retirement_phase import EnvironmentWorkloadRetirementPhase
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
@@ -5848,6 +5853,8 @@ __all__ = (
     "EnvironmentDefinitionApiVersion",
     "EnvironmentDefinitionConfiguration",
     "EnvironmentDefinitionQueuePruningPolicy",
+    "EnvironmentDefinitionWorkloadPruningPolicy",
+    "EnvironmentDefinitionWorkloadRecoveries",
     "EnvironmentDefinitionWorkloads",
     "EnvironmentDesiredRevision",
     "EnvironmentFieldOwnershipRequest",
@@ -5895,6 +5902,9 @@ __all__ = (
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",
+    "EnvironmentWorkloadRetirement",
+    "EnvironmentWorkloadRetirementImpact",
+    "EnvironmentWorkloadRetirementPhase",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",

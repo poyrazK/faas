@@ -57672,6 +57672,10 @@ components:
       properties:
         approval:
           $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
+        workload_retirements:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentWorkloadRetirement'
         workload_evidence:
           $ref: '#/components/schemas/EnvironmentWorkloadActivationEvidence'
         source:
@@ -57683,6 +57687,116 @@ components:
       required:
       - source
       - runs
+    EnvironmentWorkloadRetirementImpact:
+      type: object
+      properties:
+        resource:
+          type: string
+        app_id:
+          type: string
+          format: uuid
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
+        job_id:
+          type: string
+        queue_binding_ids:
+          type: array
+          items:
+            type: string
+        consumer_ids:
+          type: array
+          items:
+            type: string
+        pending_invocations:
+          type: integer
+          format: int64
+        in_flight_invocations:
+          type: integer
+          format: int64
+        queued_tasks:
+          type: integer
+          format: int64
+        in_flight_tasks:
+          type: integer
+          format: int64
+      required: [resource, app_id, pending_invocations, in_flight_invocations, queued_tasks, in_flight_tasks]
+    EnvironmentWorkloadRetirement:
+      type: object
+      description: Retained workload identity and durable route withdrawal and scheduler drain progress. Historical evidence does not grant execution authority.
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        resource:
+          type: string
+        plan_hash:
+          type: string
+        job_id:
+          type: string
+        route_deployment_id:
+          type: string
+        recovery_revision_id:
+          type: string
+        phase:
+          type: string
+          enum: [planned, retiring, retired, recovering, recovered, cancelled]
+        generation:
+          type: integer
+          format: int64
+        route_generation:
+          type: integer
+          format: int64
+        recovery_generation:
+          type: integer
+          format: int64
+        deployment_ids:
+          type: array
+          items:
+            type: string
+        queue_binding_ids:
+          type: array
+          items:
+            type: string
+        expected_gateways:
+          type: array
+          items:
+            type: string
+        acknowledged_gateways:
+          type: array
+          items:
+            type: string
+        requested_at:
+          type: string
+          format: date-time
+        retired_at:
+          type: string
+          format: date-time
+          nullable: true
+        recovered_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, source_id, resource, app_id, environment_id, revision_id, generation, phase, requested_at]
     EnvironmentWorkloadActivationEvidence:
       type: object
       description: Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
@@ -58163,6 +58277,11 @@ components:
       type: object
       description: Observation-bound plan; blocking reasons prevent mutation and overrides prevent convergence.
       properties:
+        retirement_impacts:
+          type: array
+          description: Informational review-time work counts; counts do not authorize deletion or prevent busy workloads from retiring. Original identities and configuration remain protected by the plan hash.
+          items:
+            $ref: '#/components/schemas/EnvironmentWorkloadRetirementImpact'
         manager:
           type: string
         revision:
@@ -58213,6 +58332,16 @@ components:
           type: string
         environment:
           type: string
+        workload_pruning_policy:
+          type: string
+          enum: [retain]
+          description: Reviewed whole-workload retirement when source pruning is enabled. Withdraws this environment after replacement qualification, retains configuration and accepted work, and requires original app identity and fresh qualification for recovery.
+        workload_recoveries:
+          type: object
+          description: Reviewed recovery keyed by declared logical workload name, with its original retained app UUID. Queue recovery continues to require original binding UUIDs separately.
+          additionalProperties:
+            type: string
+            format: uuid
         queue_pruning_policy:
           type: string
           enum: [retain]

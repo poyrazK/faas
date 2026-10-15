@@ -268,10 +268,11 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	router  Router
-	sched   Scheduler
-	log     *slog.Logger
-	metrics *Metrics
+	workloadAdmissions workloadAdmissionCache
+	router             Router
+	sched              Scheduler
+	log                *slog.Logger
+	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
@@ -2477,6 +2478,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 // an app_changed / domain_changed notification so a renamed slug, plan change,
 // or deleted app is re-resolved (or 404'd) on the next request.
 func (b *PGBackend) FlushRoutes() {
+	b.workloadAdmissions.reset()
 	b.routes.Reset()
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
@@ -2490,6 +2492,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b == nil || appID == "" {
 		return
 	}
+	b.InvalidateWorkloadAdmission(appID)
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
 	}

@@ -1741,6 +1741,9 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// e2e) keep byte-identical behaviour.
 	ctx = WithScope(ctx, scope)
 	scope = ScopeFrom(ctx)
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, scope); trigger != TriggerDeploymentSmoke && err != nil {
+		return WakeResult{}, err
+	}
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
 	if err := e.checkApplicationStandardAdmissionByID(ctx, appID); err != nil {
@@ -2457,6 +2460,9 @@ func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 
 func (e *Engine) admitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	ctx = WithScope(ctx, scope)
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, ScopeFrom(ctx)); trigger != TriggerDeploymentSmoke && err != nil {
+		return WakeResult{}, err
+	}
 	if trigger == TriggerDeploymentSmoke && deploymentID == "" {
 		return WakeResult{}, errors.New("sched: deployment smoke requires deployment_id")
 	}

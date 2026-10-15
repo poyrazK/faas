@@ -789,6 +789,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.retirementJobBlockedLocked(jobID) {
+		return JobRun{}, nil, ErrEnvironmentWorkloadRetired
+	}
 	job, ok := m.jobs[jobID]
 	if !ok || job.AccountID != accountID || job.Status == "deleted" {
 		return JobRun{}, nil, ErrNotFound
@@ -1048,6 +1051,9 @@ func (m *MemStore) JobRunCreateScheduledOccurrence(_ context.Context, jobID, sch
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, managed := m.exclusiveTriggerBindings["job_schedule\x00"+jobID]; managed && options.Disposition == "" {
+		return JobRun{}, false, nil
+	}
+	if m.retirementJobBlockedLocked(jobID) {
 		return JobRun{}, false, nil
 	}
 	job, ok := m.jobs[jobID]
@@ -1507,7 +1513,7 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 			run, runOK := m.jobRuns[t.RunID]
 			job, jobOK := m.jobs[run.JobID]
 			_, operationOwned := m.operationForJobLocked(run.ID)
-			if !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
+			if m.retirementJobBlockedLocked(run.JobID) || !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
 				continue
 			}
 			if runHasPermanentFailure(run, tasks, job) {
@@ -1615,6 +1621,9 @@ func firstJobTaskStartedAt(tasks map[int]JobTask) *time.Time {
 func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.retirementJobBlockedLocked(m.jobRuns[runID].JobID) {
+		return ErrEnvironmentWorkloadRetired
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return ErrNotFound
