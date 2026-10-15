@@ -74,3 +74,9 @@ variable "worker_enabled" {
   description = "Independent edge feature switch; the API flag remains separately controlled."
   default     = false
 }
+
+variable "durable_routing_enabled" {
+  type        = bool
+  description = "Allow durable R2 routing heads; apid separately opts new sites into this routing mode."
+  default     = false
+}

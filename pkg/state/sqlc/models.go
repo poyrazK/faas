@@ -4064,12 +4064,22 @@ type GooseDbVersion struct {
 }
 
 type HostingRelease struct {
-	ID        pgtype.UUID
-	SiteID    pgtype.UUID
-	State     string
-	Manifest  []byte
-	CreatedAt pgtype.Timestamptz
-	RetiredAt pgtype.Timestamptz
+	ID                    pgtype.UUID
+	SiteID                pgtype.UUID
+	State                 string
+	Manifest              []byte
+	CreatedAt             pgtype.Timestamptz
+	RetiredAt             pgtype.Timestamptz
+	RetirementGeneration  int64
+	RetirementPublishedAt pgtype.Timestamptz
+}
+
+type HostingRoutePublication struct {
+	SiteID              pgtype.UUID
+	Generation          int64
+	PublishedGeneration int64
+	PublishedAt         pgtype.Timestamptz
+	NextAttemptAt       pgtype.Timestamptz
 }
 
 type HostingSite struct {
@@ -4084,6 +4094,8 @@ type HostingSite struct {
 	ActiveReleaseID pgtype.UUID
 	Revision        int64
 	CreatedAt       pgtype.Timestamptz
+	DurableRouting  bool
+	Suspended       bool
 }
 
 type IdempotencyKey struct {

@@ -8,6 +8,12 @@ import (
 
 const hostingAPIPath = "/v1/internal/hosting/sites"
 
+func (c *Client) SetHostingSiteSuspended(ctx context.Context, site string, req SetHostingSuspendedRequest) (HostingSite, error) {
+	var out HostingSite
+	err := c.do(ctx, http.MethodPut, hostingSitePath(site)+"/suspension", req, &out)
+	return out, err
+}
+
 func (c *Client) DeleteHostingSite(ctx context.Context, site string) (HostingSite, error) {
 	var out HostingSite
 	err := c.do(ctx, http.MethodDelete, hostingSitePath(site), nil, &out)

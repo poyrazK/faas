@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -18,12 +19,13 @@ import (
 )
 
 type testHost struct {
-	enabled, allowed bool
-	store            *state.MemStore
-	artifacts        *testArtifacts
+	enabled, allowed, durable bool
+	store                     *state.MemStore
+	artifacts                 *testArtifacts
 }
 
-func (h *testHost) HostingEnabled() bool { return h.enabled }
+func (h *testHost) HostingEnabled() bool               { return h.enabled }
+func (h *testHost) HostingDurableRoutingEnabled() bool { return h.durable }
 func (h *testHost) AdminAllows(state.Account) (bool, *api.Problem) {
 	return h.allowed, api.NewProblem(403, "admin_required", "Internal access required", "")
 }
@@ -62,7 +64,7 @@ func (a *testArtifacts) Publish(context.Context, string, string, api.HostingMani
 func TestEveryHostingHandlerRequiresFlagAndOperator(t *testing.T) {
 	h := &testHost{store: state.NewMemStore(), artifacts: &testArtifacts{}}
 	s := Service{Host: h}
-	handlers := []httpkit.AccountHandler{s.CreateSite, s.ListSites, s.GetSite, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite}
+	handlers := []httpkit.AccountHandler{s.CreateSite, s.ListSites, s.GetSite, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
 	for index, handler := range handlers {
 		for _, check := range []struct {
 			enabled, allowed bool
@@ -78,6 +80,60 @@ func TestEveryHostingHandlerRequiresFlagAndOperator(t *testing.T) {
 	}
 	if h.artifacts.calls != 0 {
 		t.Fatal("disabled or external requests reached storage")
+	}
+}
+
+func TestDurableCreationFlagAndExplicitSuspension(t *testing.T) {
+	for _, durable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default_leased", true: "durable"}[durable], func(t *testing.T) {
+			h := &testHost{enabled: true, allowed: true, durable: durable, store: state.NewMemStore(), artifacts: &testArtifacts{}}
+			account, err := h.store.CreateAccount(t.Context(), uuid.NewString()+"@example.com", api.PlanHobby)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = h.store.CreateProject(t.Context(), state.Project{AccountID: account.ID, Slug: "web"}); err != nil {
+				t.Fatal(err)
+			}
+			s := Service{Host: h}
+			w := httptest.NewRecorder()
+			s.CreateSite(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"project":"web","environment":"production","name":"web"}`)), account)
+			if w.Code != 201 {
+				t.Fatalf("create: %d %s", w.Code, w.Body)
+			}
+			var site api.HostingSite
+			if err = json.Unmarshal(w.Body.Bytes(), &site); err != nil {
+				t.Fatal(err)
+			}
+			if site.DurableRouting != durable {
+				t.Fatal("new durable sites bypassed the additional flag")
+			}
+			h.durable = false
+			request := func(body string) *http.Request {
+				r := httptest.NewRequest("PUT", "/", strings.NewReader(body))
+				r.SetPathValue("site", site.ID)
+				return r
+			}
+			w = httptest.NewRecorder()
+			s.SetSuspended(w, request(`{"expected_revision":1}`), account)
+			if w.Code != 400 {
+				t.Fatalf("missing suspension value: %d", w.Code)
+			}
+			w = httptest.NewRecorder()
+			s.SetSuspended(w, request(`{"suspended":true,"expected_revision":1}`), account)
+			want := 202
+			if !durable {
+				want = 409
+			}
+			if w.Code != want {
+				t.Fatalf("suspend: %d %s", w.Code, w.Body)
+			}
+			if durable {
+				loaded, _ := h.store.GetHostingSite(t.Context(), account.ID, site.ID)
+				if !loaded.Suspended || loaded.Revision != 2 {
+					t.Fatal("suspension intent did not commit")
+				}
+			}
+		})
 	}
 }
 

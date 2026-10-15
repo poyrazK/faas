@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,5 +62,43 @@ func TestSitesCommandDefaultOff(t *testing.T) {
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "")
 	if status := cmdSites([]string{"list"}); status == 0 {
 		t.Fatal("internal CLI enabled by default")
+	}
+}
+
+func TestSitesSuspensionUsesCurrentRevision(t *testing.T) {
+	for _, verb := range []string{"suspend", "resume"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
+			t.Setenv("FAAS_TOKEN", "test-token")
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Header.Get("Authorization") != "Bearer test-token" {
+					t.Error("missing operator authentication")
+				}
+				if r.Method == http.MethodGet {
+					_ = json.NewEncoder(w).Encode(api.HostingSite{ID: "11111111-1111-4111-8111-111111111111", Revision: 9, DurableRouting: true})
+					return
+				}
+				if r.Method != http.MethodPut || !strings.HasSuffix(r.URL.Path, "/suspension") {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				var req api.SetHostingSuspendedRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+				}
+				if req.ExpectedRevision != 9 || req.Suspended != (verb == "suspend") {
+					t.Errorf("incorrect suspension request: %+v", req)
+				}
+				w.WriteHeader(202)
+				_ = json.NewEncoder(w).Encode(api.HostingSite{Revision: 10, Suspended: req.Suspended})
+			}))
+			defer server.Close()
+			t.Setenv("FAAS_API", server.URL)
+			if code := cmdSites([]string{verb, "--site", "11111111-1111-4111-8111-111111111111"}); code != 0 || calls != 2 {
+				t.Fatalf("command=%d calls=%d", code, calls)
+			}
+		})
 	}
 }

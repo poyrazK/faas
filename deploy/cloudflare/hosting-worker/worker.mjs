@@ -1,9 +1,11 @@
 // Internal static hosting. Every request, including a cache hit, must pass
-// the deployment switch, verified Access identity, and a finite route lease.
+// the deployment switch, verified Access identity, and an enabled route.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const MAX_FILES = 1000; // api.HostingFilesMax
 const MAX_MANIFEST_BYTES = 512 * 1024;
+const MAX_ROUTE_BYTES = 8 * 1024; // api.HostingDurableRouteMaxBytes
+const ROUTE_CACHE_TTL_MS = 60_000; // api.HostingRouteCacheTTL
 let accessKeys;
 
 function problem(status, code) {
@@ -70,6 +72,37 @@ function validRoute(route, hostname, now, originID) {
     route.expires_at <= now / 1000 + 150 && // finite API lease, with limited clock skew
     Array.isArray(route.ready_releases) && route.ready_releases.length <= 10 &&
     route.ready_releases.every(id => UUID.test(id)) && route.ready_releases.includes(route.active_release_id);
+}
+
+function validDurableRoute(route, hostname, originID) {
+  return route?.version === 2 && route.enabled === true && route.deleted === false &&
+    route.expires_at === 0 && Number.isSafeInteger(route.generation) && route.generation > 0 &&
+    route.hostname === hostname && hostname.startsWith(`${route.site_id}.`) &&
+    UUID.test(route.site_id) && UUID.test(route.active_release_id) &&
+    DIGEST.test(originID || "") && route.origin_id === originID &&
+    Number.isSafeInteger(route.revision) && route.revision > 0 &&
+    Array.isArray(route.ready_releases) && route.ready_releases.length <= 10 &&
+    new Set(route.ready_releases).size === route.ready_releases.length &&
+    route.ready_releases.every(id => UUID.test(id)) && route.ready_releases.includes(route.active_release_id);
+}
+
+async function durableRouteFor(url, env, ctx, deps) {
+  if (!UUID.test(url.hostname.split(".")[0]) || !DIGEST.test(env.ORIGIN_ID || "")) return undefined;
+  const key = new Request(`https://${url.hostname}/_gregale/cache/routes/v2/${env.ORIGIN_ID}`);
+  let response = await deps.cache?.match(key);
+  const until = Number(response?.headers.get("X-Gregale-Route-Until"));
+  if (!(until > deps.now() && until <= deps.now() + ROUTE_CACHE_TTL_MS)) response = null;
+  if (!response) {
+    const object = await env.ARTIFACTS.get(`hosting/routes/${url.hostname}.json`);
+    if (object && object.size > MAX_ROUTE_BYTES) throw new Error("invalid route head");
+    const body = object ? await new Response(object.body).text() : null;
+    if (body && body.length > MAX_ROUTE_BYTES) throw new Error("invalid route head");
+    response = new Response(body, { status: body === null ? 204 : 200, headers: {
+      "Cache-Control": "public, max-age=60", "X-Gregale-Route-Until": String(deps.now() + ROUTE_CACHE_TTL_MS),
+    } });
+    if (deps.cache) ctx.waitUntil(deps.cache.put(key, response.clone()));
+  }
+  return response.status === 204 ? undefined : JSON.parse(await response.text());
 }
 
 async function manifestFor(requestURL, env, ctx, deps, site, release) {
@@ -161,8 +194,16 @@ export async function serve(request, env, ctx, deps = { fetch, now: Date.now, ca
   if (!new Set(["GET", "HEAD"]).has(request.method)) return problem(405, "method_not_allowed");
   try {
     const url = new URL(request.url);
-    const route = await env.ROUTES.get(`site:${url.hostname}`, { type: "json", cacheTtl: 60 });
-    if (!validRoute(route, url.hostname, deps.now(), env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
+    let route;
+    if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED === "true") {
+      route = await durableRouteFor(url, env, ctx, deps);
+      // An existing disabled/deleted/invalid head never falls back to a stale KV lease.
+      if (route !== undefined && !validDurableRoute(route, url.hostname, env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
+    }
+    if (route === undefined) {
+      route = await env.ROUTES.get(`site:${url.hostname}`, { type: "json", cacheTtl: 60 });
+      if (!validRoute(route, url.hostname, deps.now(), env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
+    }
     const selected = await resolveFile(request, url, env, ctx, deps, route);
     if (!selected) return problem(404, "hosting_file_not_found");
     return await serveFile(request, url, env, ctx, deps, route, selected);

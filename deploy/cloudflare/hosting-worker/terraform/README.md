@@ -3,7 +3,7 @@
 This root configuration provisions one dedicated internal pilot: private R2
 storage, staging expiration, a routing KV namespace, an email-restricted
 Cloudflare Access application, and the versioned hosting Worker. Both the
-Worker switch and wildcard DNS/routing default to **off**. It does not change
+Worker switch, durable-routing switch, and wildcard DNS/routing default to **off**. It does not change
 Gregale's API flag, provision R2 credentials, create an identity provider, or
 deploy Gregale daemons/migrations.
 
@@ -72,11 +72,23 @@ bindings, deployment, and route.
 Disabling `worker_enabled` and applying leaves the protected route attached and
 returns `frontend_hosting_disabled`, including for previously cached files.
 Disabling Gregale's API flag separately rejects new operations and lets existing
-edge leases expire. Detaching the route alone is not a feature-switch test.
+edge leases expire; durable sites retain their last published state. Detaching
+the route alone is not a feature-switch test.
+
+To qualify durable routing, upgrade every apid writer/controller, then explicitly
+set `durable_routing_enabled = true` and review/apply the Worker change. Enable
+the separate API creation flag and create a fresh site as described in the
+[durable-routing rollout](../../../../docs/internal-frontend-hosting.md#durable-routing-separate-internal-opt-in).
+Existing sites keep their mode. Disabling the API creation flag affects future
+sites; it does not stop traffic to existing durable sites. Do not revert to an
+older apid binary while durable sites exist.
 
 Retire/delete all sites and verify storage cleanup before tearing down a pilot.
 There is no automatic destroy command. Removing bucket protection requires an
 explicit infrastructure edit after the cleanup catalog and artifacts are empty.
+Durable routing leaves small terminal heads in `hosting/routes/` after site
+cleanup. Preserve them while the pilot can receive traffic or delayed writes;
+do not add a lifecycle expiration for this prefix.
 
 ## Portable validation
 

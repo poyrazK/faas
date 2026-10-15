@@ -10,9 +10,9 @@ SELECT EXISTS(SELECT 1 FROM project_environments
 SELECT count(*)::bigint FROM hosting_sites WHERE account_id = sqlc.arg(account_id)::uuid;
 
 -- name: HostingSiteCreate :one
-INSERT INTO hosting_sites(id, account_id, project_id, environment, name, hostname, origin_id)
+INSERT INTO hosting_sites(id, account_id, project_id, environment, name, hostname, origin_id, durable_routing)
 VALUES(sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid,
- sqlc.arg(environment)::text, sqlc.arg(name)::text, sqlc.arg(hostname)::text, sqlc.arg(origin_id)::text)
+ sqlc.arg(environment)::text, sqlc.arg(name)::text, sqlc.arg(hostname)::text, sqlc.arg(origin_id)::text, sqlc.arg(durable_routing)::boolean)
 RETURNING *;
 
 -- name: HostingSiteGet :one
@@ -57,24 +57,73 @@ AND EXISTS(SELECT 1 FROM hosting_releases r WHERE r.site_id = hosting_sites.id A
 RETURNING *;
 
 -- name: HostingReleaseRetire :one
-UPDATE hosting_releases r SET state = 'retiring', retired_at = clock_timestamp()
+UPDATE hosting_releases r SET state = 'retiring', retired_at = clock_timestamp(), retirement_generation = sqlc.arg(generation)::bigint
 FROM hosting_sites s WHERE s.id = r.site_id AND s.account_id = sqlc.arg(account_id)::uuid
 AND r.site_id = sqlc.arg(site_id)::uuid AND r.id = sqlc.arg(id)::uuid AND r.state IN ('pending', 'ready')
 AND s.active_release_id IS DISTINCT FROM r.id RETURNING r.*;
 
--- name: HostingReleaseDeleted :exec
+-- name: HostingReleaseDeleted :execrows
 DELETE FROM hosting_releases r USING hosting_sites s
 WHERE s.id = r.site_id AND s.account_id = sqlc.arg(account_id)::uuid
-AND r.site_id = sqlc.arg(site_id)::uuid AND r.id = sqlc.arg(id)::uuid AND r.state = 'retiring';
+AND r.site_id = sqlc.arg(site_id)::uuid AND r.id = sqlc.arg(id)::uuid AND r.state = 'retiring'
+AND (NOT s.durable_routing OR r.retirement_published_at <= sqlc.arg(safe_before)::timestamptz);
 
 -- name: HostingSiteDelete :one
 UPDATE hosting_sites SET status = 'deleting', active_release_id = NULL, revision = revision + 1
 WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid AND status = 'active' RETURNING *;
 
 -- name: HostingSiteRetireReleases :exec
-UPDATE hosting_releases SET state = 'retiring', retired_at = clock_timestamp()
+UPDATE hosting_releases SET state = 'retiring', retired_at = clock_timestamp(), retirement_generation = sqlc.arg(generation)::bigint
 WHERE site_id = sqlc.arg(site_id)::uuid AND state IN ('pending', 'ready');
 
--- name: HostingSitePurge :exec
+-- name: HostingSitePurge :execrows
 DELETE FROM hosting_sites s WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(id)::uuid AND s.status = 'deleting'
-AND NOT EXISTS(SELECT 1 FROM hosting_releases r WHERE r.site_id = s.id AND r.state <> 'deleted');
+AND NOT EXISTS(SELECT 1 FROM hosting_releases r WHERE r.site_id = s.id AND r.state <> 'deleted')
+AND (NOT s.durable_routing OR EXISTS(SELECT 1 FROM hosting_route_publications p WHERE p.site_id = s.id
+ AND p.published_generation = p.generation AND p.published_at <= sqlc.arg(safe_before)::timestamptz));
+
+-- name: HostingSiteSuspend :one
+UPDATE hosting_sites SET suspended = sqlc.arg(suspended)::boolean, revision = revision + 1
+WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(site_id)::uuid
+AND status = 'active' AND durable_routing AND revision = sqlc.arg(expected_revision)::bigint RETURNING *;
+
+-- name: HostingRouteChanged :one
+INSERT INTO hosting_route_publications(site_id)
+SELECT id FROM hosting_sites WHERE id = sqlc.arg(site_id)::uuid AND durable_routing
+ON CONFLICT (site_id) DO UPDATE SET generation = hosting_route_publications.generation + 1,
+ next_attempt_at = clock_timestamp() RETURNING generation;
+
+-- name: HostingRouteDue :many
+SELECT site_id FROM hosting_route_publications
+WHERE next_attempt_at <= sqlc.arg(now_at)::timestamptz ORDER BY next_attempt_at, site_id LIMIT sqlc.arg(page_size)::integer;
+
+-- name: HostingRoutePublicationGet :one
+SELECT * FROM hosting_route_publications WHERE site_id = sqlc.arg(site_id)::uuid;
+
+-- name: HostingRouteSiteGet :one
+SELECT * FROM hosting_sites WHERE id = sqlc.arg(site_id)::uuid AND durable_routing;
+
+-- name: HostingRoutingReleaseList :many
+SELECT id, site_id, state FROM hosting_releases WHERE site_id = sqlc.arg(site_id)::uuid AND state <> 'deleted' ORDER BY id;
+
+-- name: HostingRouteSiteLock :one
+SELECT * FROM hosting_sites WHERE id = sqlc.arg(site_id)::uuid AND durable_routing FOR UPDATE;
+
+-- name: HostingRoutePublicationLock :one
+SELECT * FROM hosting_route_publications WHERE site_id = sqlc.arg(site_id)::uuid FOR UPDATE;
+
+-- name: HostingRouteAcknowledged :exec
+UPDATE hosting_route_publications SET
+ published_at = CASE WHEN published_generation < sqlc.arg(generation)::bigint THEN sqlc.arg(published_at)::timestamptz ELSE published_at END,
+ published_generation = GREATEST(published_generation, sqlc.arg(generation)::bigint),
+ next_attempt_at = CASE WHEN generation = sqlc.arg(generation)::bigint THEN sqlc.arg(next_attempt_at)::timestamptz ELSE next_attempt_at END
+WHERE site_id = sqlc.arg(site_id)::uuid AND published_generation <= sqlc.arg(generation)::bigint;
+
+-- name: HostingRetirementAcknowledged :exec
+UPDATE hosting_releases SET retirement_published_at = sqlc.arg(published_at)::timestamptz
+WHERE site_id = sqlc.arg(site_id)::uuid AND state = 'retiring' AND retirement_generation > 0
+AND retirement_generation <= sqlc.arg(generation)::bigint AND retirement_published_at IS NULL;
+
+-- name: HostingRouteRetry :exec
+UPDATE hosting_route_publications SET next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+WHERE site_id = sqlc.arg(site_id)::uuid AND generation = sqlc.arg(generation)::bigint;

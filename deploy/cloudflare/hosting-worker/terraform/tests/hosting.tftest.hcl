@@ -37,13 +37,18 @@ run "disabled_defaults" {
     condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_ENABLED == "0"
     error_message = "Bootstrap output must leave API admission disabled."
   }
+  assert {
+    condition     = !output.hosting.durable_routing_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"]) == "false"
+    error_message = "Durable routing must require an independent explicit opt-in."
+  }
 }
 
 run "explicit_enable" {
   command = plan
   variables {
-    attach_route   = true
-    worker_enabled = true
+    attach_route            = true
+    worker_enabled          = true
+    durable_routing_enabled = true
   }
   assert {
     condition     = cloudflare_workers_route.hosting[0].pattern == "*.gregale-hosting.example/*"
@@ -52,6 +57,10 @@ run "explicit_enable" {
   assert {
     condition     = one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_ENABLED"]) == "true"
     error_message = "Only an explicit opt-in enables the edge flag."
+  }
+  assert {
+    condition     = output.hosting.durable_routing_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"]) == "true"
+    error_message = "The independent durable-routing opt-in must reach the Worker."
   }
   assert {
     condition     = one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "ORIGIN_ID"]) == sha256("https://11111111111111111111111111111111.r2.cloudflarestorage.com\ngregale-internal-hosting-artifacts")

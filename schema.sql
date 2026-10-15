@@ -67995,3 +67995,19 @@ CREATE TABLE hosting_releases (
 ALTER TABLE hosting_sites ADD CONSTRAINT hosting_sites_active_release_fk
     FOREIGN KEY (id, active_release_id) REFERENCES hosting_releases(site_id, id) DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX hosting_releases_site ON hosting_releases(site_id, created_at DESC);
+
+ALTER TABLE hosting_sites
+    ADD COLUMN durable_routing boolean NOT NULL DEFAULT false CHECK (durable_routing IN (true, false)),
+    ADD COLUMN suspended boolean NOT NULL DEFAULT false CHECK (NOT suspended OR durable_routing);
+ALTER TABLE hosting_releases
+    ADD COLUMN retirement_generation bigint NOT NULL DEFAULT 0 CHECK (retirement_generation >= 0),
+    ADD COLUMN retirement_published_at timestamptz CHECK (retirement_published_at IS NULL OR (state IN ('retiring', 'deleted') AND retirement_generation > 0));
+CREATE TABLE hosting_route_publications (
+    site_id uuid PRIMARY KEY REFERENCES hosting_sites(id) ON DELETE CASCADE,
+    generation bigint NOT NULL DEFAULT 1 CHECK (generation > 0),
+    published_generation bigint NOT NULL DEFAULT 0 CHECK (published_generation >= 0 AND published_generation <= generation),
+    published_at timestamptz,
+    next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK ((published_generation > 0) = (published_at IS NOT NULL))
+);
+CREATE INDEX hosting_route_publications_due ON hosting_route_publications(next_attempt_at, site_id);

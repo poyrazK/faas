@@ -35,6 +35,10 @@ func TestHostingStores(t *testing.T) {
 			t.Run("ownership_and_promotion", func(t *testing.T) { lifecycle(t, store) })
 			t.Run("concurrent_quota", func(t *testing.T) { quota(t, store) })
 			t.Run("parent_cleanup", func(t *testing.T) { parentCleanup(t, store) })
+			t.Run("durable_routes", func(t *testing.T) { durableLifecycle(t, store) })
+			t.Run("durable_cleanup", func(t *testing.T) { durableEmptySiteCleanup(t, store) })
+			t.Run("durable_release_cleanup", func(t *testing.T) { durableReleaseCleanup(t, store) })
+			t.Run("durable_snapshot_concurrency", func(t *testing.T) { durableSnapshotConcurrency(t, store) })
 		})
 	}
 }

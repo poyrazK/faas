@@ -26,16 +26,20 @@ type HostingSite struct {
 	Status          string    `json:"status"`
 	ActiveReleaseID string    `json:"active_release_id"`
 	Revision        int64     `json:"revision"`
+	DurableRouting  bool      `json:"durable_routing"`
+	Suspended       bool      `json:"suspended"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
 type HostingRelease struct {
-	ID        string          `json:"id"`
-	SiteID    string          `json:"site_id"`
-	State     string          `json:"state"`
-	Manifest  HostingManifest `json:"manifest"`
-	CreatedAt time.Time       `json:"created_at"`
-	RetiredAt *time.Time      `json:"retired_at,omitempty"`
+	ID                    string          `json:"id"`
+	SiteID                string          `json:"site_id"`
+	State                 string          `json:"state"`
+	Manifest              HostingManifest `json:"manifest"`
+	CreatedAt             time.Time       `json:"created_at"`
+	RetiredAt             *time.Time      `json:"retired_at,omitempty"`
+	RetirementGeneration  int64           `json:"retirement_generation,omitempty"`
+	RetirementPublishedAt *time.Time      `json:"retirement_published_at,omitempty"`
 }
 
 type CreateHostingSiteRequest struct {
@@ -58,4 +62,9 @@ type HostingUploadResponse struct {
 type PromoteHostingReleaseRequest struct {
 	ReleaseID        string `json:"release_id"`
 	ExpectedRevision int64  `json:"expected_revision"`
+}
+
+type SetHostingSuspendedRequest struct {
+	Suspended        bool  `json:"suspended"`
+	ExpectedRevision int64 `json:"expected_revision"`
 }

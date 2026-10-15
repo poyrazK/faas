@@ -4,6 +4,10 @@
 - **Date:** 2026-10-15
 - **Amends:** implementation spec §4.1 and §4.2 for a separate static-site lifecycle; customer apps retain their existing VM invariants.
 
+The separately gated durable mode in
+[ADR-202610151515](202610151515-durable-static-hosting.md) amends routing and
+cleanup for newly opted-in sites. The leased mode below remains the default.
+
 ## Decision
 
 Add static sites under existing projects and registered environments. `apid`

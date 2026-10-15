@@ -62,7 +62,7 @@ class FakeHTTP:
 
 class LiveFixture(MODULE.Qualification):
     """Stateful provider boundary: staged bytes, immutable objects, routing and GC."""
-    def __init__(self, args, *, corrupt_rollback=False, orphan=False):
+    def __init__(self, args, *, corrupt_rollback=False, orphan=False, durable=False):
         super().__init__(args, env={'FAAS_TOKEN': 'SECRET-API', 'HOSTING_QUAL_ACCESS_TOKEN': 'SECRET-ACCESS'}, http=FakeHTTP())
         self.live_site = None
         self.releases = {}
@@ -74,9 +74,11 @@ class LiveFixture(MODULE.Qualification):
         self.corrupt = False
         self.orphan = orphan
         self.scanned = []
+        self.durable = durable
 
     def preflight(self):
         self.deployment = deployment()
+        self.deployment['durable_routing_enabled'] = self.durable
         self.api_url = 'https://api.platform.example'
         self.checked('preflight')
 
@@ -85,7 +87,8 @@ class LiveFixture(MODULE.Qualification):
         if verb == 'create':
             self.live_site = {'id': SITE, 'account_id': ACCOUNT, 'hostname': SITE + '.hosting.example',
                               'origin_id': self.deployment['origin_id'], 'revision': 1, 'active_release_id': '',
-                              'name': args[args.index('--name') + 1], 'environment': args[args.index('--environment') + 1]}
+                              'name': args[args.index('--name') + 1], 'environment': args[args.index('--environment') + 1],
+                              'durable_routing': self.durable, 'suspended': False}
         elif verb == 'deploy':
             directory = Path(args[args.index('--path') + 1])
             files = {path.relative_to(directory).as_posix(): path.read_bytes() for path in directory.rglob('*') if path.is_file()}
@@ -101,6 +104,8 @@ class LiveFixture(MODULE.Qualification):
         elif verb == 'retire':
             release = args[args.index('--release') + 1]
             self.releases[release]['state'] = 'retiring'
+        elif verb in ('suspend', 'resume'):
+            self.live_site.update(suspended=verb == 'suspend', revision=self.live_site['revision'] + 1)
         elif verb == 'delete':
             self.deleted = True
             self.staged.clear()
@@ -166,7 +171,7 @@ class LiveFixture(MODULE.Qualification):
             return status, {}, json.dumps({'code': code}).encode()
         if not authenticated:
             return problem(302, 'login')
-        if self.deleted:
+        if self.deleted or self.live_site.get('suspended'):
             return problem(503, 'hosting_route_unavailable')
         rid = self.live_site['active_release_id']
         name = path.lstrip('/')
@@ -203,8 +208,32 @@ class LiveFixture(MODULE.Qualification):
             return 1 if self.orphan else 0
         return len(self.published)
 
+    def storage_route_head(self):
+        return {'version': 2, 'deleted': self.deleted, 'enabled': False, 'expires_at': 0,
+                'site_id': SITE, 'hostname': self.live_site['hostname'], 'origin_id': self.live_site['origin_id'],
+                'generation': self.live_site['revision'] + 1, 'active_release_id': '', 'ready_releases': []}
+
 
 class HostingQualificationTests(unittest.TestCase):
+    def test_durable_lifecycle_checks_suspension_and_resume(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            self.assertTrue(fixture.run())
+            self.assertEqual(fixture.report['routing_mode'], 'durable')
+            self.assertIn('durable_site_suspended', fixture.report['checks'])
+            self.assertIn('durable_site_resumed', fixture.report['checks'])
+            self.assertIn('durable_deletion_head_retained', fixture.report['checks'])
+
+    def test_durable_cleanup_requires_retained_terminal_head(self):
+        with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
+            fixture = LiveFixture(options(Path(directory)), durable=True)
+            fixture.http.request = lambda *args, **kwargs: (403, {}, b'private')
+            with patch.object(fixture, 'storage_route_head', return_value={}):
+                self.assertFalse(fixture.run())
+            self.assertEqual(fixture.report['cleanup']['status'], 'failed')
+            self.assertNotIn('durable_deletion_head_retained', fixture.report['checks'])
+
     def test_lifecycle_requires_bytes_cache_rollback_retirement_and_cleanup(self):
         with tempfile.TemporaryDirectory() as directory, patch('builtins.print'):
             fixture = LiveFixture(options(Path(directory)))

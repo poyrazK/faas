@@ -10,6 +10,9 @@ The default-off internal static-hosting lifecycle, quotas, and Cloudflare/R2
 delivery boundary are recorded in
 [ADR-20261015](20261015-internal-static-hosting.md).
 
+Durable internal static routing, conditional publication, and acknowledgement-based
+retirement are specified by [ADR-202610151515](202610151515-durable-static-hosting.md).
+
 ## Picking a number
 
 ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one

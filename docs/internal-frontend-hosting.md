@@ -25,6 +25,7 @@ Configure these through apid's existing secret environment mechanism:
 | Variable | Purpose |
 |---|---|
 | `FAAS_FRONTEND_HOSTING_ENABLED` | `1` to bootstrap the default-off runtime switch |
+| `FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED` | Separate default-off opt-in: create new sites with durable routing |
 | `FAAS_FRONTEND_HOSTING_DOMAIN` | Isolated hosting domain, without a scheme or wildcard |
 | `FAAS_FRONTEND_HOSTING_R2_ENDPOINT` | HTTPS S3 endpoint for the private R2 bucket |
 | `FAAS_FRONTEND_HOSTING_R2_BUCKET` | Dedicated bucket name |
@@ -60,7 +61,9 @@ performing the same isolation and Access checks.
 Apply migrations through Gregale's normal deployment process. Add a storage
 lifecycle rule expiring `hosting/staging/` after one day. Published objects
 must remain until Gregale retires them. Changing the endpoint/bucket fingerprint
-disables old sites; migrate explicitly rather than repurposing their backend.
+blocks management and reconciliation for old sites; their last accepted durable
+heads can still serve from the old Worker/bucket. Stop that Worker before moving
+backends, and migrate explicitly rather than repurposing their storage.
 
 ## Deploy and roll back
 
@@ -105,30 +108,87 @@ range responses, and custom domains are not included in this pilot.
 ## Disable and recover
 
 Disable `frontend_hosting_enabled` to reject new API operations immediately.
-Enabled edge routes expire within 120 seconds of their last refresh. Also set
-the Worker's switch to `false` when stopping the pilot. Cache entries cannot
-bypass either gate. Previously issued staging grants expire within five minutes
-and cannot modify published files. Cleanup of already-retired releases continues.
+Leased edge routes expire within 120 seconds of their last refresh. Durable
+sites keep serving. Set the Worker's original switch to `false` when stopping
+all traffic; cached files cannot bypass it. Previously issued staging grants
+expire within five minutes and cannot modify published files. Reconciliation
+and cleanup of already-retired releases continue.
 
-An API, KV publication, or database outage lasting past the lease stops serving
-the pilot. Restore configuration/connectivity and allow reconciliation to renew
-routes. Active release intent survives restarts. Check API audit records and
+An API, KV publication, or database outage lasting past the lease stops leased
+sites. Durable sites retain their last published routing state during API or
+database outages, including for cold requests. Restore configuration/connectivity
+to publish pending changes. Active release intent survives restarts. Check API audit records and
 the structured hosting reconciliation log, Cloudflare Worker/Access analytics,
 KV write usage, and bucket usage. Do not expose signed URLs or provider tokens
 in diagnostic output.
 
-Deleting a site stops its route and retires all releases. Cleanup waits at
-least nine minutes thirty seconds, then removes catalogued staging/published
-objects and metadata. Failed operations retry. Retire/delete sites before
+Deleting a site commits route revocation and retires all releases; a 202 response
+does not prove edge propagation. Cleanup waits at least nine minutes thirty
+seconds, measured from revocation acknowledgement for durable sites, then removes
+catalogued staging/published objects and metadata. Failed operations retry. Retire/delete sites before
 deleting their project/account; foreign keys protect the cleanup catalog.
 Published data has no automatic age-based expiration, and CDN bytes are not
 yet part of customer billing. Keep this feature internal.
+
+## Durable routing: separate internal opt-in
+
+[ADR-202610151515](adr/202610151515-durable-static-hosting.md) adds durable R2
+routing heads. Keep both new switches off until every apid writer/controller
+has this implementation and the new migration. Older binaries do not maintain
+the publication outbox or cleanup guards and cannot safely manage durable sites.
+
+1. Set Terraform `durable_routing_enabled = true` and review/apply the Worker
+   change, or set the equivalent Worker variable
+   `FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = "true"` with manual provisioning.
+2. Enable the independent API runtime setting
+   `frontend_hosting_durable_routing_enabled` (bootstrap environment value `1`).
+3. Create a fresh site and verify `durable_routing: true` in its response. The
+   flag selects the mode only at creation. Existing sites stay leased; turning
+   the creation flag off does not change existing durable sites.
+
+The Worker reads `hosting/routes/HOSTNAME.json` before KV when its new switch is
+on. Only an absent head permits KV fallback. Disabled, deleted, malformed, or
+foreign-origin heads deny requests even when files are already cached. Durable
+heads have no expiry; route metadata is cached for at most 60 seconds. R2, Access,
+and the edge runtime remain serving dependencies. The original Worker switch
+still stops every site independently of the API/database.
+
+Use account-owned, revision-checked suspension to stop one durable site without
+changing its active release:
+
+```bash
+gregale sites suspend --site SITE_UUID
+gregale sites resume --site SITE_UUID
+```
+
+Management admission must be enabled for these commands. They return 202 after
+committing intent. A provider outage delays publication and the last accepted
+head continues serving; use the Worker emergency switch for an immediate global
+stop. Once publication succeeds, allow the metadata-cache interval to propagate.
+
+Durable sites use no KV heartbeat writes. Each route change persists an outbox
+generation and publishes using conditional R2 writes; retries survive restarts
+and stale writes cannot replace newer heads. Unchanged heads receive six-hour
+repair reads, about 120 per idle site per 30-day month, without rewriting them.
+Edge metadata-cache misses also incur R2 reads. No per-site VM is introduced.
+
+Retirement cannot remove artifacts until the excluding route generation has
+been acknowledged and aged through the cleanup grace. Deletion also waits for
+an acknowledged terminal head before removing SQL metadata, including for empty
+sites. Keep `hosting/routes/` outside all expiration rules: one small terminal
+head per deleted site remains after cleanup to fence delayed publishers. Only
+the staging and published-release prefixes should become empty.
+
+Before reverting to an older binary, retire/delete every durable site, verify
+artifact cleanup and edge denial, and turn off the new Worker switch. The down
+migration rejects live durable rows. Restoring provider/database snapshots
+independently or deleting terminal heads needs a separate recovery procedure.
 
 ## Portable checks
 
 ```bash
 go test -race ./pkg/hosting ./pkg/apid/hosting ./pkg/state/hostingtest
-go test ./cmd/gregale -run 'Test(StaticHosting|HostingUpload|SitesCommand)'
+go test ./cmd/gregale -run 'Test(StaticHosting|HostingUpload|Sites)'
 node --test --test-isolation=none deploy/cloudflare/hosting-worker/worker.test.mjs
 python3 scripts/ci/test_internal_frontend_hosting_qualification.py
 ```
@@ -159,7 +219,7 @@ them into reports or tfvars:
 | `FAAS_FRONTEND_HOSTING_ENABLED` | `1` to opt into the internal CLI on this workstation |
 | `CLOUDFLARE_API_TOKEN` | Read access to the pilot's R2 domains and Worker subdomain settings; also deployment permissions if checking the Worker switch |
 | `HOSTING_QUAL_ACCESS_TOKEN` | Unexpired user Access JWT for the wildcard application and an allowed internal email |
-| `HOSTING_QUAL_R2_ACCESS_KEY` | Bucket-scoped R2 identity that can list objects for cleanup evidence |
+| `HOSTING_QUAL_R2_ACCESS_KEY` | Bucket-scoped R2 identity that can list objects and read routing heads for cleanup evidence |
 | `HOSTING_QUAL_R2_SECRET_KEY` | Its S3 secret, passed only through the AWS CLI environment |
 
 Obtain the user JWT with the existing Cloudflare Access login flow, for example
@@ -186,7 +246,9 @@ wrong-digest uploads, recovery with renewed grants, finalization retries,
 immutable publication despite an old staging grant, two CLI deployments,
 observed file-cache hits, unauthenticated denial after warming that cache,
 SPA/asset/directory/HEAD/ETag behavior, old asset retention, stale-revision
-promotion refusal, rollback, and retirement.
+promotion refusal, rollback, and retirement. It records the persisted routing
+mode and exercises suspension/resumption for durable sites; enable both new
+switches before qualifying that mode.
 
 To also test the independent Worker switch, add `--check-worker-switch` **only
 on a dedicated pilot**: this temporarily stops every site on that Worker. The
@@ -199,7 +261,9 @@ true` in the reviewed local tfvars; do not modify infrastructure concurrently.
 After the scenario, including failures and handled interrupts, the runner
 requests site deletion, waits for routing denial and metadata removal, and
 independently verifies that both the staging and published site prefixes are
-empty using authenticated R2 listings. Cleanup has a 15-minute default timeout.
+empty using authenticated R2 listings. For durable sites it also reads and
+validates the retained terminal head outside those prefixes. Cleanup has a
+15-minute default timeout.
 A successful deletion response alone does not qualify cleanup. The private
 0600 report records site/release IDs, completed checks, observed propagation
 times, cache results, and Cloudflare location codes; no token, signed URL, or
@@ -212,5 +276,5 @@ Repeat from a real European runner with a new evidence path to compare actual
 edge locations and cold/warm observations. These are individual observations,
 not a global latency percentile or origin-residency guarantee. Reports explicitly
 list untested API/control-plane outages, regional load, and an omitted Worker
-switch. They never qualify public launch. The existing short routing leases
-and lack of customer billing/domain onboarding remain pilot boundaries.
+switch. They never qualify public launch. Leased sites retain short routing
+leases; customer billing and domain onboarding remain pilot boundaries in both modes.

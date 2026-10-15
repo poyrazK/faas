@@ -2,8 +2,9 @@
 
 This Worker reads only published static releases from a private R2 bucket.
 It is default-off, requires verified Cloudflare Access identities and an
-explicit internal email allowlist, and checks finite routing leases before
-looking up cached content.
+explicit internal email allowlist, and checks routing before looking up cached
+content. Finite KV leases remain the default; a separate default-off switch
+allows durable R2 routing heads for newly opted-in sites.
 
 Configuration, rollout, disable, recovery, and qualification instructions are
 in [the internal hosting runbook](../../../docs/internal-frontend-hosting.md).

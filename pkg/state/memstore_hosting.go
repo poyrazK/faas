@@ -44,7 +44,9 @@ func (m *MemStore) CreateHostingSite(_ context.Context, site api.HostingSite) (a
 	}
 	site.Revision, site.CreatedAt, site.ActiveReleaseID = 1, time.Now().UTC(), ""
 	site.Status = "active"
+	site.Suspended = false
 	m.hostingSites[site.ID] = site
+	m.hostingRouteChanged(site.ID)
 	return site, nil
 }
 
@@ -159,6 +161,9 @@ func (m *MemStore) ReadyHostingRelease(_ context.Context, account, site, id stri
 	if s.Status != "active" || r.State != "pending" && r.State != "ready" {
 		return api.HostingRelease{}, ErrConflict
 	}
+	if r.State != "ready" {
+		m.hostingRouteChanged(site)
+	}
 	r.State = "ready"
 	m.hostingReleases[id] = r
 	return cloneHostingRelease(r), nil
@@ -178,6 +183,7 @@ func (m *MemStore) PromoteHostingRelease(_ context.Context, account, site, id st
 	s.Revision++
 	s.ActiveReleaseID = id
 	m.hostingSites[site] = s
+	m.hostingRouteChanged(site)
 	return s, nil
 }
 
@@ -194,6 +200,7 @@ func (m *MemStore) RetireHostingRelease(_ context.Context, account, site, id str
 	}
 	now := time.Now().UTC()
 	r.State, r.RetiredAt = "retiring", &now
+	r.RetirementGeneration = m.hostingRouteChanged(site)
 	m.hostingReleases[id] = r
 	return cloneHostingRelease(r), nil
 }
@@ -204,6 +211,9 @@ func (m *MemStore) DeleteHostingReleaseRecord(_ context.Context, account, site, 
 	s := m.hostingSites[site]
 	r := m.hostingReleases[id]
 	if s.AccountID != account || r.SiteID != site || r.State != "retiring" {
+		return ErrConflict
+	}
+	if s.DurableRouting && (r.RetirementPublishedAt == nil || time.Since(*r.RetirementPublishedAt) < api.HostingRetirementGrace) {
 		return ErrConflict
 	}
 	delete(m.hostingReleases, id)
@@ -223,10 +233,12 @@ func (m *MemStore) DeleteHostingSite(_ context.Context, account, site string) (a
 	s.Status, s.ActiveReleaseID = "deleting", ""
 	s.Revision++
 	m.hostingSites[site] = s
+	generation := m.hostingRouteChanged(site)
 	now := time.Now().UTC()
 	for id, r := range m.hostingReleases {
 		if r.SiteID == site && (r.State == "pending" || r.State == "ready") {
 			r.State, r.RetiredAt = "retiring", &now
+			r.RetirementGeneration = generation
 			m.hostingReleases[id] = r
 		}
 	}
@@ -240,6 +252,10 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 	if s.AccountID != account || s.Status != "deleting" {
 		return ErrConflict
 	}
+	publication := m.hostingPublications[site]
+	if s.DurableRouting && (publication.PublishedGeneration != publication.Generation || publication.PublishedAt.IsZero() || time.Since(publication.PublishedAt) < api.HostingRetirementGrace) {
+		return ErrConflict
+	}
 	for _, r := range m.hostingReleases {
 		if r.SiteID == site && r.State != "deleted" {
 			return ErrConflict
@@ -251,5 +267,121 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 		}
 	}
 	delete(m.hostingSites, site)
+	delete(m.hostingPublications, site)
+	return nil
+}
+
+// Caller holds m.mu. Even failed delivery leaves the latest generation dirty.
+func (m *MemStore) hostingRouteChanged(site string) int64 {
+	if !m.hostingSites[site].DurableRouting {
+		return 0
+	}
+	if m.hostingPublications == nil {
+		m.hostingPublications = make(map[string]hostingPublication)
+	}
+	p := m.hostingPublications[site]
+	p.Generation++
+	p.NextAttemptAt = time.Now().UTC()
+	m.hostingPublications[site] = p
+	return p.Generation
+}
+
+func (m *MemStore) SetHostingSiteSuspended(_ context.Context, account, site string, expected int64, suspended bool) (api.HostingSite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.hostingSites[site]
+	if !ok || s.AccountID != account {
+		return api.HostingSite{}, ErrNotFound
+	}
+	if !s.DurableRouting || s.Status != "active" || s.Revision != expected || expected < 1 {
+		return api.HostingSite{}, ErrConflict
+	}
+	s.Suspended = suspended
+	s.Revision++
+	m.hostingSites[site] = s
+	m.hostingRouteChanged(site)
+	return s, nil
+}
+
+func (m *MemStore) ListDueHostingRoutePublications(_ context.Context, now time.Time, limit int) ([]string, error) {
+	if limit < 1 || limit > api.HostingRoutePageSize {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := []string{}
+	for id, p := range m.hostingPublications {
+		if !p.NextAttemptAt.After(now) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := m.hostingPublications[ids[i]], m.hostingPublications[ids[j]]
+		if a.NextAttemptAt.Equal(b.NextAttemptAt) {
+			return ids[i] < ids[j]
+		}
+		return a.NextAttemptAt.Before(b.NextAttemptAt)
+	})
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	return ids, nil
+}
+
+func (m *MemStore) HostingRouteSnapshot(_ context.Context, site string) (HostingRouteSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.hostingSites[site]
+	p, exists := m.hostingPublications[site]
+	if !ok || !exists || !s.DurableRouting {
+		return HostingRouteSnapshot{}, ErrNotFound
+	}
+	out := HostingRouteSnapshot{Site: s, Generation: p.Generation, PublishedGeneration: p.PublishedGeneration, PublishedAt: p.PublishedAt, Releases: []api.HostingRelease{}}
+	for _, r := range m.hostingReleases {
+		if r.SiteID == site && r.State != "deleted" {
+			out.Releases = append(out.Releases, api.HostingRelease{ID: r.ID, SiteID: r.SiteID, State: r.State})
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) AcknowledgeHostingRoute(_ context.Context, site string, generation int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.hostingPublications[site]
+	if !ok {
+		return ErrNotFound
+	}
+	if generation < 1 || generation > p.Generation || at.IsZero() {
+		return ErrConflict
+	}
+	if generation > p.PublishedGeneration {
+		p.PublishedGeneration, p.PublishedAt = generation, at.UTC()
+	}
+	if generation == p.Generation {
+		p.NextAttemptAt = at.Add(api.HostingRouteRepairInterval)
+	}
+	m.hostingPublications[site] = p
+	for id, r := range m.hostingReleases {
+		if r.SiteID == site && r.State == "retiring" && r.RetirementGeneration > 0 && r.RetirementGeneration <= generation && r.RetirementPublishedAt == nil {
+			t := at.UTC()
+			r.RetirementPublishedAt = &t
+			m.hostingReleases[id] = r
+		}
+	}
+	return nil
+}
+
+func (m *MemStore) RetryHostingRoute(_ context.Context, site string, generation int64, next time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.hostingPublications[site]
+	if !ok {
+		return ErrNotFound
+	}
+	if generation == p.Generation {
+		p.NextAttemptAt = next
+		m.hostingPublications[site] = p
+	}
 	return nil
 }

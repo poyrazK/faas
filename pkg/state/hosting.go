@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -38,6 +39,26 @@ type HostingStore interface {
 	DeleteHostingReleaseRecord(context.Context, string, string, string) error
 	DeleteHostingSite(context.Context, string, string) (api.HostingSite, error)
 	PurgeHostingSite(context.Context, string, string) error
+	SetHostingSiteSuspended(context.Context, string, string, int64, bool) (api.HostingSite, error)
+	ListDueHostingRoutePublications(context.Context, time.Time, int) ([]string, error)
+	HostingRouteSnapshot(context.Context, string) (HostingRouteSnapshot, error)
+	AcknowledgeHostingRoute(context.Context, string, int64, time.Time) error
+	RetryHostingRoute(context.Context, string, int64, time.Time) error
+}
+
+// A site and its ready-release set must be read from the same transaction as
+// their generation. The per-site row is a coalescing transactional outbox.
+type HostingRouteSnapshot struct {
+	Site                api.HostingSite
+	Releases            []api.HostingRelease
+	Generation          int64
+	PublishedGeneration int64
+	PublishedAt         time.Time
+}
+
+type hostingPublication struct {
+	Generation, PublishedGeneration int64
+	PublishedAt, NextAttemptAt      time.Time
 }
 
 func validHostingSite(s api.HostingSite) bool {
@@ -50,6 +71,10 @@ func cloneHostingRelease(r api.HostingRelease) api.HostingRelease {
 	if r.RetiredAt != nil {
 		t := *r.RetiredAt
 		r.RetiredAt = &t
+	}
+	if r.RetirementPublishedAt != nil {
+		t := *r.RetirementPublishedAt
+		r.RetirementPublishedAt = &t
 	}
 	return r
 }

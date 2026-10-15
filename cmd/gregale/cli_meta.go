@@ -511,6 +511,8 @@ var cliCommands = []cliCommand{
 			{Name: "deploy", Short: "Publish a prebuilt static directory", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}}},
 			{Name: "releases", Short: "List releases", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 			{Name: "rollback", Short: "Promote a retained ready release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
+			{Name: "suspend", Short: "Suspend traffic for a durable site", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+			{Name: "resume", Short: "Resume traffic for a durable site", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 			{Name: "retire", Short: "Retire an inactive release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
 			{Name: "delete", Short: "Disable a site and retire its artifacts", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 		},

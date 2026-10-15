@@ -25,6 +25,7 @@ async function token(overrides = {}) {
 }
 
 function fixture() {
+  let clock = now;
   const objects = new Map();
   const cached = new Map();
   const pending = [];
@@ -42,7 +43,7 @@ function fixture() {
     } },
   };
   const deps = {
-    now: () => now,
+    now: () => clock,
     fetch: async url => { assert.equal(url, "https://internal.cloudflareaccess.com/cdn-cgi/access/certs"); return Response.json({ keys: [jwk] }); },
     cache: {
       async match(key) { calls.cache++; return cached.get(key.url)?.clone(); },
@@ -64,8 +65,78 @@ function fixture() {
     await Promise.all(pending.splice(0));
     return response;
   }
-  return { env, route, calls, release, request, cached, objects };
+  function durable(overrides = {}) {
+    env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = "true";
+    const head = { ...route, version: 2, expires_at: 0, generation: 1, deleted: false, ...overrides };
+    objects.set(`hosting/routes/${hostname}.json`, JSON.stringify(head));
+    return head;
+  }
+  return { env, route, calls, release, request, cached, objects, durable, advance(ms) { clock += ms; } };
 }
+
+test("durable heads are default-off and do not extend legacy leases", async () => {
+  const f = fixture();
+  f.release(first, { "index.html": "durable HTML" });
+  f.durable();
+  delete f.env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED;
+  f.route.expires_at = now / 1000 - 1;
+  assert.equal((await f.request()).status, 503);
+  f.env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = "true";
+  assert.equal(await (await f.request()).text(), "durable HTML");
+  assert.equal(f.calls.routes, 1);
+});
+
+test("warm and cold durable requests survive twenty minutes without API renewal", async () => {
+  const f = fixture();
+  f.release(first, { "index.html": "durable HTML", "cold.js": "cold asset" });
+  f.durable();
+  const jwt = await token({ exp: now / 1000 + 3600 });
+  const headers = { "Cf-Access-Jwt-Assertion": jwt };
+  await f.request("/", { headers });
+  f.advance(20 * 60 * 1000);
+  const warm = await f.request("/", { headers });
+  assert.equal(await warm.text(), "durable HTML");
+  assert.equal(warm.headers.get("X-Gregale-Cache"), "HIT");
+  f.cached.clear();
+  const cold = await f.request("/cold.js", { headers });
+  assert.equal(await cold.text(), "cold asset");
+  assert.equal(cold.headers.get("X-Gregale-Cache"), "MISS");
+  assert.equal(f.calls.routes, 0);
+  f.env.FAAS_FRONTEND_HOSTING_ENABLED = "false";
+  assert.equal((await f.request("/", { headers })).status, 404);
+});
+
+test("durable suspension and deletion override a warm cache and stale enabled KV", async () => {
+  const f = fixture();
+  f.release(first, { "index.html": "HTML" });
+  f.durable();
+  await f.request();
+  await f.request();
+  f.durable({ generation: 2, enabled: false });
+  f.advance(60_001);
+  assert.equal((await f.request()).status, 503);
+  f.durable({ generation: 3, enabled: true });
+  f.advance(60_001);
+  assert.equal(await (await f.request()).text(), "HTML");
+  f.durable({ generation: 4, enabled: false, deleted: true, active_release_id: "", ready_releases: [] });
+  f.advance(60_001);
+  assert.equal((await f.request()).status, 503);
+  assert.equal(f.calls.routes, 0);
+});
+
+test("invalid durable heads never fall back to enabled KV or cached files", async () => {
+  for (const override of [null, { origin_id: "b".repeat(64) }, { generation: 0 }, { deleted: true }, { hostname: "another.example" }, { expires_at: now / 1000 + 120 }]) {
+    const f = fixture();
+    f.release(first, { "index.html": "HTML" });
+    f.durable();
+    await f.request();
+    if (override === null) f.objects.set(`hosting/routes/${hostname}.json`, "null");
+    else f.durable(override);
+    f.advance(60_001);
+    assert.equal((await f.request()).status, 503);
+    assert.equal(f.calls.routes, 0);
+  }
+});
 
 test("default-off and missing Access identity never consult routing or caches", async () => {
   const f = fixture();

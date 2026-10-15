@@ -9,3 +9,4 @@ internal_emails    = ["operator@example.com"]
 # Keep these false for the initial infrastructure apply.
 attach_route   = false
 worker_enabled = false
+durable_routing_enabled = false

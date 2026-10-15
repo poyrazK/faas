@@ -229,8 +229,10 @@ class Qualification:
         require(isinstance(value, dict) and value.get('id') == expected_id and
                 value.get('hostname') == expected_id + '.' + self.deployment['hosting_domain'] and
                 value.get('account_id') == self.args.account and value.get('origin_id') == self.deployment['origin_id'] and
-                type(value.get('revision')) is int and value['revision'] >= 1,
-                'Site response changed account, hostname, identity, revision, or storage placement')
+                type(value.get('revision')) is int and value['revision'] >= 1 and
+                type(value.get('durable_routing')) is bool and type(value.get('suspended')) is bool and
+                (self.site is None or value['durable_routing'] == self.site['durable_routing']),
+                'Site response changed account, hostname, identity, revision, routing mode, or storage placement')
         return value
 
     def api_response(self, method, suffix='', value=None):
@@ -324,18 +326,30 @@ class Qualification:
         status, _, _ = self.http.request('PUT', grant['url'], headers, body)
         require(200 <= status < 300, 'Private staging upload failed')
 
-    def storage_count(self, prefix):
+    def storage(self, *args):
         env = dict(self.env, AWS_ACCESS_KEY_ID=self.env['HOSTING_QUAL_R2_ACCESS_KEY'],
                    AWS_SECRET_ACCESS_KEY=self.env['HOSTING_QUAL_R2_SECRET_KEY'], AWS_DEFAULT_REGION='auto',
                    AWS_EC2_METADATA_DISABLED='true', AWS_CONFIG_FILE=os.devnull, AWS_SHARED_CREDENTIALS_FILE=os.devnull,
                    AWS_PAGER='')
         env.pop('AWS_SESSION_TOKEN', None)
-        value = decode_json(execute([self.args.aws, '--endpoint-url', self.deployment['r2_endpoint'], '--no-cli-pager',
-                                     '--no-paginate', 's3api', 'list-objects-v2', '--bucket', self.deployment['bucket'],
-                                     '--prefix', prefix, '--output', 'json'], env, timeout=45).stdout)
+        return decode_json(execute([self.args.aws, '--endpoint-url', self.deployment['r2_endpoint'], '--no-cli-pager',
+                                    '--no-paginate', 's3api', *args, '--output', 'json'], env, timeout=45).stdout)
+
+    def storage_count(self, prefix):
+        value = self.storage('list-objects-v2', '--bucket', self.deployment['bucket'], '--prefix', prefix)
         require(type(value.get('KeyCount')) is int and value['KeyCount'] >= 0 and value.get('IsTruncated') is False,
                 'Storage listing did not return a complete bounded prefix')
         return value['KeyCount']
+
+    def storage_route_head(self):
+        with tempfile.TemporaryDirectory(prefix='gregale-hosting-route-') as directory:
+            path = Path(directory) / 'head.json'
+            self.storage('get-object', '--bucket', self.deployment['bucket'],
+                         '--key', 'hosting/routes/' + self.site['hostname'] + '.json',
+                         '--range', 'bytes=0-8192', str(path))
+            body = path.read_bytes()
+            require(len(body) <= 8192, 'Retained routing head exceeded its size bound')
+            return decode_json(body)
 
     def preflight(self):
         require(self.env.get('FAAS_FRONTEND_HOSTING_ENABLED', '').lower() in ('1', 'true'), 'Enable the internal CLI flag explicitly for qualification')
@@ -455,6 +469,11 @@ class Qualification:
         require(created.get('name') == self.report['site_name'] and created.get('environment') == self.args.environment,
                 'Created site did not match the disposable qualification name and environment')
         self.site = self.accept_site(created, sid)
+        self.report['routing_mode'] = 'durable' if created.get('durable_routing') is True else 'leased'
+        require(not created.get('durable_routing') or self.deployment.get('durable_routing_enabled') is True,
+                'The API created a durable site but the Worker durable-routing switch is disabled')
+        if not created.get('durable_routing'):
+            self.report['not_run'].append('durable_site_suspension')
         self.checked('access_denied_before_publication', http_status=self.denied())
         self.interrupted_release(fixtures(run_id, 'recovered'))
         with tempfile.TemporaryDirectory(prefix='gregale-hosting-qualification-') as temp:
@@ -496,6 +515,8 @@ class Qualification:
                     'CLI rollback did not advance this site to the retained release')
             self.site = rolled_back
             self.checked('rollback', **self.expect_file('/', first, old['index.html']))
+            if self.site.get('durable_routing'):
+                self.check_suspension(first, old['index.html'])
             if self.args.check_worker_switch:
                 self.check_switch(first, old['index.html'])
             self.cli('sites', 'retire', '--site', sid, '--release', second)
@@ -504,6 +525,22 @@ class Qualification:
                 return status == 404 and decode_json(body).get('code') == 'hosting_file_not_found'
             _, elapsed = self.wait('retired release to leave routing', retired)
             self.checked('retired_release_denied', observed_after_seconds=elapsed)
+
+    def check_suspension(self, release, body):
+        previous = self.site
+        self.site = self.accept_site(self.cli('sites', 'suspend', '--site', previous['id']), previous['id'])
+        require(self.site.get('suspended') is True and self.site['revision'] > previous['revision'],
+                'CLI suspension did not commit a new site revision')
+        def denied():
+            status, headers, payload = self.edge()
+            return status == 503 and 'x-gregale-release' not in headers and decode_json(payload).get('code') == 'hosting_route_unavailable'
+        _, elapsed = self.wait('suspended site to stop serving', denied)
+        self.checked('durable_site_suspended', observed_after_seconds=elapsed)
+        previous = self.site
+        self.site = self.accept_site(self.cli('sites', 'resume', '--site', previous['id']), previous['id'])
+        require(self.site.get('suspended') is False and self.site['revision'] > previous['revision'],
+                'CLI resume did not commit a new site revision')
+        self.checked('durable_site_resumed', **self.expect_file('/', release, body))
 
     def cleanup(self):
         if not self.site or not isinstance(self.site.get('id'), str) or not UUID.fullmatch(self.site['id']):
@@ -527,6 +564,16 @@ class Qualification:
         _, elapsed = self.wait('artifact retirement and site removal', gone, self.args.cleanup_timeout)
         for prefix in ('staging', 'published'):
             require(self.storage_count(f'hosting/{prefix}/{sid}/') == 0, 'Retired fixture objects remain in private storage')
+        if self.site['durable_routing']:
+            head = self.storage_route_head()
+            require(isinstance(head, dict) and head.get('version') == 2 and head.get('deleted') is True and
+                    head.get('enabled') is False and head.get('expires_at') == 0 and
+                    head.get('site_id') == sid and head.get('hostname') == self.site['hostname'] and
+                    head.get('origin_id') == self.site['origin_id'] and
+                    type(head.get('generation')) is int and 0 < head['generation'] < 2 ** 53 and
+                    head.get('active_release_id') == '' and head.get('ready_releases') == [],
+                    'Durable deletion did not retain a valid terminal routing head')
+            self.checked('durable_deletion_head_retained', generation=head['generation'])
         self.report['cleanup']['status'] = 'passed'
         self.checked('artifact_and_metadata_cleanup', observed_after_seconds=elapsed)
 

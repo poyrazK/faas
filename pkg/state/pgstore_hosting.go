@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -27,14 +28,18 @@ func hostingStoreError(err error) error {
 }
 
 func hostingSiteRow(r sqlc.HostingSite) api.HostingSite {
-	return api.HostingSite{ID: uuidString(r.ID), AccountID: uuidString(r.AccountID), ProjectID: uuidString(r.ProjectID), Environment: r.Environment, Name: r.Name, Hostname: r.Hostname, OriginID: r.OriginID, Status: r.Status, ActiveReleaseID: uuidString(r.ActiveReleaseID), Revision: r.Revision, CreatedAt: r.CreatedAt.Time}
+	return api.HostingSite{ID: uuidString(r.ID), AccountID: uuidString(r.AccountID), ProjectID: uuidString(r.ProjectID), Environment: r.Environment, Name: r.Name, Hostname: r.Hostname, OriginID: r.OriginID, Status: r.Status, ActiveReleaseID: uuidString(r.ActiveReleaseID), Revision: r.Revision, CreatedAt: r.CreatedAt.Time, DurableRouting: r.DurableRouting, Suspended: r.Suspended}
 }
 
 func hostingReleaseRow(r sqlc.HostingRelease) (api.HostingRelease, error) {
-	out := api.HostingRelease{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time}
+	out := api.HostingRelease{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time, RetirementGeneration: r.RetirementGeneration}
 	if r.RetiredAt.Valid {
 		t := r.RetiredAt.Time
 		out.RetiredAt = &t
+	}
+	if r.RetirementPublishedAt.Valid {
+		t := r.RetirementPublishedAt.Time
+		out.RetirementPublishedAt = &t
 	}
 	err := json.Unmarshal(r.Manifest, &out.Manifest)
 	return out, err
@@ -75,9 +80,12 @@ func (s *PgStore) CreateHostingSite(ctx context.Context, site api.HostingSite) (
 	if count >= api.HostingSitesPerAccount {
 		return api.HostingSite{}, hostingQuota(api.HostingSitesPerAccount)
 	}
-	r, err := q.HostingSiteCreate(ctx, tx, sqlc.HostingSiteCreateParams{ID: id, AccountID: a, ProjectID: p, Environment: site.Environment, Name: site.Name, Hostname: site.Hostname, OriginID: site.OriginID})
+	r, err := q.HostingSiteCreate(ctx, tx, sqlc.HostingSiteCreateParams{ID: id, AccountID: a, ProjectID: p, Environment: site.Environment, Name: site.Name, Hostname: site.Hostname, OriginID: site.OriginID, DurableRouting: site.DurableRouting})
 	if err != nil {
 		return api.HostingSite{}, hostingStoreError(err)
+	}
+	if _, err = bumpHostingRoute(ctx, tx, id); err != nil {
+		return api.HostingSite{}, err
 	}
 	return hostingSiteRow(r), tx.Commit(ctx)
 }
@@ -192,17 +200,39 @@ func (s *PgStore) ListHostingReleases(ctx context.Context, account, site string)
 }
 
 func (s *PgStore) ReadyHostingRelease(ctx context.Context, account, site, id string) (api.HostingRelease, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return api.HostingRelease{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	a, _ := parsePgUUID(account)
 	i, _ := parsePgUUID(site)
 	rid, _ := parsePgUUID(id)
-	r, err := sqlc.New().HostingReleaseReady(ctx, s.pool, sqlc.HostingReleaseReadyParams{AccountID: a, SiteID: i, ID: rid})
+	q := sqlc.New()
+	if _, err = q.HostingSiteLock(ctx, tx, sqlc.HostingSiteLockParams{AccountID: a, ID: i}); err != nil {
+		return api.HostingRelease{}, hostingStoreError(err)
+	}
+	previous, err := q.HostingReleaseGet(ctx, tx, sqlc.HostingReleaseGetParams{AccountID: a, SiteID: i, ID: rid})
+	if err != nil {
+		return api.HostingRelease{}, hostingStoreError(err)
+	}
+	r, err := q.HostingReleaseReady(ctx, tx, sqlc.HostingReleaseReadyParams{AccountID: a, SiteID: i, ID: rid})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.HostingRelease{}, ErrConflict
 	}
 	if err != nil {
 		return api.HostingRelease{}, err
 	}
-	return hostingReleaseRow(r)
+	if previous.State != "ready" {
+		if _, err = bumpHostingRoute(ctx, tx, i); err != nil {
+			return api.HostingRelease{}, err
+		}
+	}
+	out, err := hostingReleaseRow(r)
+	if err != nil {
+		return api.HostingRelease{}, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *PgStore) PromoteHostingRelease(ctx context.Context, account, site, release string, expected int64) (api.HostingSite, error) {
@@ -225,6 +255,9 @@ func (s *PgStore) PromoteHostingRelease(ctx context.Context, account, site, rele
 	if err != nil {
 		return api.HostingSite{}, err
 	}
+	if _, err = bumpHostingRoute(ctx, tx, i); err != nil {
+		return api.HostingSite{}, err
+	}
 	return hostingSiteRow(r), tx.Commit(ctx)
 }
 
@@ -241,7 +274,11 @@ func (s *PgStore) RetireHostingRelease(ctx context.Context, account, site, id st
 	if _, err = q.HostingSiteLock(ctx, tx, sqlc.HostingSiteLockParams{AccountID: a, ID: i}); err != nil {
 		return api.HostingRelease{}, hostingStoreError(err)
 	}
-	r, err := q.HostingReleaseRetire(ctx, tx, sqlc.HostingReleaseRetireParams{AccountID: a, SiteID: i, ID: rid})
+	generation, err := bumpHostingRoute(ctx, tx, i)
+	if err != nil {
+		return api.HostingRelease{}, err
+	}
+	r, err := q.HostingReleaseRetire(ctx, tx, sqlc.HostingReleaseRetireParams{AccountID: a, SiteID: i, ID: rid, Generation: generation})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.HostingRelease{}, ErrConflict
 	}
@@ -259,7 +296,11 @@ func (s *PgStore) DeleteHostingReleaseRecord(ctx context.Context, account, site,
 	a, _ := parsePgUUID(account)
 	i, _ := parsePgUUID(site)
 	rid, _ := parsePgUUID(id)
-	return sqlc.New().HostingReleaseDeleted(ctx, s.pool, sqlc.HostingReleaseDeletedParams{AccountID: a, SiteID: i, ID: rid})
+	count, err := sqlc.New().HostingReleaseDeleted(ctx, s.pool, sqlc.HostingReleaseDeletedParams{AccountID: a, SiteID: i, ID: rid, SafeBefore: hostingTimestamp(time.Now().Add(-api.HostingRetirementGrace))})
+	if err == nil && count == 0 {
+		return ErrConflict
+	}
+	return err
 }
 
 func (s *PgStore) DeleteHostingSite(ctx context.Context, account, site string) (api.HostingSite, error) {
@@ -282,7 +323,11 @@ func (s *PgStore) DeleteHostingSite(ctx context.Context, account, site string) (
 	if err != nil {
 		return api.HostingSite{}, hostingStoreError(err)
 	}
-	if err = q.HostingSiteRetireReleases(ctx, tx, i); err != nil {
+	generation, err := bumpHostingRoute(ctx, tx, i)
+	if err != nil {
+		return api.HostingSite{}, err
+	}
+	if err = q.HostingSiteRetireReleases(ctx, tx, sqlc.HostingSiteRetireReleasesParams{SiteID: i, Generation: generation}); err != nil {
 		return api.HostingSite{}, err
 	}
 	return hostingSiteRow(r), tx.Commit(ctx)
@@ -291,5 +336,9 @@ func (s *PgStore) DeleteHostingSite(ctx context.Context, account, site string) (
 func (s *PgStore) PurgeHostingSite(ctx context.Context, account, site string) error {
 	a, _ := parsePgUUID(account)
 	i, _ := parsePgUUID(site)
-	return sqlc.New().HostingSitePurge(ctx, s.pool, sqlc.HostingSitePurgeParams{AccountID: a, ID: i})
+	count, err := sqlc.New().HostingSitePurge(ctx, s.pool, sqlc.HostingSitePurgeParams{AccountID: a, ID: i, SafeBefore: hostingTimestamp(time.Now().Add(-api.HostingRetirementGrace))})
+	if err == nil && count == 0 {
+		return ErrConflict
+	}
+	return err
 }

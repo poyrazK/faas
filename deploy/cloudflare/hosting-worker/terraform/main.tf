@@ -120,11 +120,12 @@ resource "cloudflare_worker_version" "hosting" {
     { name = "ARTIFACTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.artifacts.name },
     { name = "ROUTES", type = "kv_namespace", namespace_id = cloudflare_workers_kv_namespace.routes.id },
     ], [for name, text in {
-      FAAS_FRONTEND_HOSTING_ENABLED = tostring(var.worker_enabled)
-      ACCESS_TEAM_DOMAIN            = var.access_team_domain
-      ACCESS_AUD                    = cloudflare_zero_trust_access_application.hosting.aud
-      INTERNAL_EMAILS               = join(",", sort(tolist(var.internal_emails)))
-      ORIGIN_ID                     = local.origin_id
+      FAAS_FRONTEND_HOSTING_ENABLED                 = tostring(var.worker_enabled)
+      FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = tostring(var.durable_routing_enabled)
+      ACCESS_TEAM_DOMAIN                            = var.access_team_domain
+      ACCESS_AUD                                    = cloudflare_zero_trust_access_application.hosting.aud
+      INTERNAL_EMAILS                               = join(",", sort(tolist(var.internal_emails)))
+      ORIGIN_ID                                     = local.origin_id
   } : { name = name, type = "plain_text", text = text }])
   depends_on = [cloudflare_r2_managed_domain.private, cloudflare_r2_bucket_lifecycle.staging]
 }

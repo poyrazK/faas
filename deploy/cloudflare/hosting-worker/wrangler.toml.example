@@ -7,6 +7,7 @@ preview_urls = false
 [vars]
 # Opt in only after configuring a wildcard Cloudflare Access application.
 FAAS_FRONTEND_HOSTING_ENABLED = "false"
+FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = "false"
 ACCESS_TEAM_DOMAIN = "your-team.cloudflareaccess.com"
 ACCESS_AUD = "replace-with-access-application-audience"
 INTERNAL_EMAILS = ""

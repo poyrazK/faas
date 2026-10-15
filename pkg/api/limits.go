@@ -11250,21 +11250,28 @@ const (
 // Internal static hosting (ADR-20261015). These caps bound control-plane memory,
 // publication work, retained artifacts, and the edge kill-switch convergence.
 const (
-	HostingFilesMax                  = 1000
-	HostingFileMaxBytes        int64 = 32 << 20
-	HostingReleaseMaxBytes     int64 = 100 << 20
-	HostingManifestMaxBytes    int64 = 512 << 10
-	HostingPathMaxBytes              = 512
-	HostingContentTypeMaxBytes       = 128
-	HostingNameMaxBytes              = 48
-	HostingSitesPerAccount           = 25
-	HostingReleasesPerSite           = 10
-	HostingPublishConcurrency        = 1
-	HostingRoutePageSize             = 100
-	HostingUploadTTL                 = 5 * time.Minute
-	HostingStorageTimeout            = 30 * time.Second
-	HostingFinalizeTimeout           = 2 * time.Minute
-	HostingRouteLease                = 120 * time.Second
-	HostingReconcileInterval         = 30 * time.Second
-	HostingRetirementGrace           = HostingUploadTTL + 2*HostingRouteLease + HostingStorageTimeout
+	HostingFilesMax                      = 1000
+	HostingFileMaxBytes            int64 = 32 << 20
+	HostingReleaseMaxBytes         int64 = 100 << 20
+	HostingManifestMaxBytes        int64 = 512 << 10
+	HostingPathMaxBytes                  = 512
+	HostingContentTypeMaxBytes           = 128
+	HostingNameMaxBytes                  = 48
+	HostingSitesPerAccount               = 25
+	HostingReleasesPerSite               = 10
+	HostingPublishConcurrency            = 1
+	HostingRoutePageSize                 = 100
+	HostingUploadTTL                     = 5 * time.Minute
+	HostingStorageTimeout                = 30 * time.Second
+	HostingFinalizeTimeout               = 2 * time.Minute
+	HostingRouteLease                    = 120 * time.Second
+	HostingReconcileInterval             = 30 * time.Second
+	HostingRetirementGrace               = HostingUploadTTL + 2*HostingRouteLease + HostingStorageTimeout
+	HostingDurableRouteMaxBytes          = 8 << 10
+	HostingRouteCacheTTL                 = time.Minute
+	HostingRouteRepairInterval           = 6 * time.Hour
+	HostingRouteRetryInterval            = 30 * time.Second
+	HostingRouteCASAttempts              = 3
+	HostingRoutePublishConcurrency       = 4
+	HostingRouteDispatchTimeout          = 30 * time.Second
 )

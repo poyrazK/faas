@@ -25,7 +25,7 @@ func cmdSites(args []string) int {
 		return printErr("Internal frontend hosting is disabled", errors.New("set FAAS_FRONTEND_HOSTING_ENABLED=1 on an operator workstation; the server must also enable the feature"))
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale sites <create|list|deploy|releases|rollback|retire|delete> [flags]", "sites")
+		PrintUsage(os.Stderr, "usage: gregale sites <create|list|deploy|releases|rollback|suspend|resume|retire|delete> [flags]", "sites")
 		return 1
 	}
 	if args[0] == "deploy" {
@@ -66,6 +66,12 @@ func cmdSitesManage(verb string, args []string) int {
 		current, err = client.GetHostingSite(ctx, *site)
 		if err == nil {
 			result, err = client.PromoteHostingRelease(ctx, *site, api.PromoteHostingReleaseRequest{ReleaseID: *release, ExpectedRevision: current.Revision})
+		}
+	case "suspend", "resume":
+		var current api.HostingSite
+		current, err = client.GetHostingSite(ctx, *site)
+		if err == nil {
+			result, err = client.SetHostingSiteSuspended(ctx, *site, api.SetHostingSuspendedRequest{Suspended: verb == "suspend", ExpectedRevision: current.Revision})
 		}
 	default:
 		return printErr("Unknown sites command", errors.New(verb))

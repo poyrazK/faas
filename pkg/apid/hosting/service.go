@@ -15,6 +15,7 @@ import (
 
 type Host interface {
 	HostingEnabled() bool
+	HostingDurableRoutingEnabled() bool
 	AdminAllows(state.Account) (bool, *api.Problem)
 	HostingStore() state.HostingStore
 	HostingArtifacts() artifacts.ArtifactStore
@@ -126,7 +127,7 @@ func (s Service) CreateSite(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	id := uuid.NewString()
-	site, err := s.Host.HostingStore().CreateHostingSite(r.Context(), api.HostingSite{ID: id, AccountID: acct.ID, ProjectID: project.ID, Environment: req.Environment, Name: req.Name, Hostname: id + "." + s.Host.HostingDomain(), OriginID: s.Host.HostingOriginID()})
+	site, err := s.Host.HostingStore().CreateHostingSite(r.Context(), api.HostingSite{ID: id, AccountID: acct.ID, ProjectID: project.ID, Environment: req.Environment, Name: req.Name, Hostname: id + "." + s.Host.HostingDomain(), OriginID: s.Host.HostingOriginID(), DurableRouting: s.Host.HostingDurableRoutingEnabled()})
 	if err != nil {
 		failure(w, err)
 		return
@@ -284,5 +285,27 @@ func (s Service) DeleteSite(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	s.Host.HostingAudit(r.Context(), acct.ID, "hosting_site_deletion_requested", map[string]any{"site_id": site.ID})
+	httpkit.WriteJSON(w, http.StatusAccepted, site)
+}
+
+func (s Service) SetSuspended(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	site, ok := s.site(w, r, acct)
+	if !ok {
+		return
+	}
+	var req struct {
+		Suspended        *bool `json:"suspended"`
+		ExpectedRevision int64 `json:"expected_revision"`
+	}
+	if err := httpkit.DecodeJSON(r, &req); err != nil || req.ExpectedRevision < 1 || req.Suspended == nil {
+		api.WriteProblem(w, api.ErrValidation("suspended and expected_revision are required"))
+		return
+	}
+	site, err := s.Host.HostingStore().SetHostingSiteSuspended(r.Context(), acct.ID, site.ID, req.ExpectedRevision, *req.Suspended)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	s.Host.HostingAudit(r.Context(), acct.ID, "hosting_site_suspension_changed", map[string]any{"site_id": site.ID, "suspended": site.Suspended, "revision": site.Revision})
 	httpkit.WriteJSON(w, http.StatusAccepted, site)
 }

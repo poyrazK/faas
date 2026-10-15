@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,6 +24,8 @@ type Route struct {
 	ReadyReleases   []string `json:"ready_releases"`
 	Revision        int64    `json:"revision"`
 	ExpiresAt       int64    `json:"expires_at"`
+	Generation      int64    `json:"generation,omitempty"`
+	Deleted         bool     `json:"deleted"`
 }
 
 type RoutePublisher interface {
@@ -86,11 +89,20 @@ func (p *KV) Put(ctx context.Context, route Route) error {
 }
 
 func NewRoute(site api.HostingSite, releases []api.HostingRelease, enabled bool, now time.Time) Route {
-	r := Route{Version: 1, Enabled: enabled && site.Status == "active", Hostname: site.Hostname, SiteID: site.ID, OriginID: site.OriginID, ActiveReleaseID: site.ActiveReleaseID, Revision: site.Revision, ExpiresAt: now.Add(api.HostingRouteLease).Unix(), ReadyReleases: []string{}}
+	r := Route{Version: 1, Enabled: enabled && site.Status == "active" && !site.Suspended, Hostname: site.Hostname, SiteID: site.ID, OriginID: site.OriginID, ActiveReleaseID: site.ActiveReleaseID, Revision: site.Revision, ExpiresAt: now.Add(api.HostingRouteLease).Unix(), ReadyReleases: []string{}}
 	for _, release := range releases {
 		if release.SiteID == site.ID && release.State == "ready" {
 			r.ReadyReleases = append(r.ReadyReleases, release.ID)
 		}
 	}
+	sort.Strings(r.ReadyReleases)
+	return r
+}
+
+func NewDurableRoute(site api.HostingSite, releases []api.HostingRelease, generation int64) Route {
+	r := NewRoute(site, releases, true, time.Time{})
+	r.Version, r.Generation, r.ExpiresAt = 2, generation, 0
+	r.Deleted = site.Status == "deleting"
+	r.Enabled = r.Enabled && r.ActiveReleaseID != "" && !r.Deleted
 	return r
 }
