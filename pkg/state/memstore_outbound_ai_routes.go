@@ -92,6 +92,7 @@ func (m *MemStore) SetOutboundAIRouteTargets(_ context.Context, accountID, route
 		return ErrInvalidArgument
 	}
 	route.Targets = append([]OutboundAIRouteTarget(nil), targets...)
+	route.Canary = nil
 	route.UpdatedAt = time.Now().UTC()
 	m.outboundAIRoutes[routeID] = route
 	return nil

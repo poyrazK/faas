@@ -26,6 +26,10 @@ func routeResponse(route state.OutboundAIRoute) api.OutboundAIRoute {
 	for _, target := range route.Targets {
 		out.Targets = append(out.Targets, api.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model})
 	}
+	if route.Canary != nil {
+		canary := canaryResponse(*route.Canary)
+		out.Canary = &canary
+	}
 	return out
 }
 

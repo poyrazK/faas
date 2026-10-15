@@ -115,12 +115,14 @@ const (
 // provider, or blocks the request. A request that contains a blocked term,
 // compared without case, is blocked. The gateway checks the string values
 // of buffered JSON bodies and the text fields of multipart forms.
+// Moderation adds a model-based check (ADR-1340).
 type OutboundAIContentPolicy struct {
-	Email        string   `json:"email"`
-	PaymentCard  string   `json:"payment_card"`
-	IBAN         string   `json:"iban"`
-	Secret       string   `json:"secret"`
-	BlockedTerms []string `json:"blocked_terms"`
+	Email        string               `json:"email"`
+	PaymentCard  string               `json:"payment_card"`
+	IBAN         string               `json:"iban"`
+	Secret       string               `json:"secret"`
+	BlockedTerms []string             `json:"blocked_terms"`
+	Moderation   OutboundAIModeration `json:"moderation"`
 }
 
 // Normalized replaces empty actions with off and a nil term list with an
@@ -134,10 +136,12 @@ func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
 	if p.BlockedTerms == nil {
 		p.BlockedTerms = []string{}
 	}
+	p.Moderation = p.Moderation.Normalized()
 	return p
 }
 
-// Active reports whether any detector or term is on.
+// Active reports whether any detector or term is on. Moderation is
+// separate: it runs after admission (ADR-1340).
 func (p OutboundAIContentPolicy) Active() bool {
 	p = p.Normalized()
 	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
@@ -158,7 +162,7 @@ func (p OutboundAIContentPolicy) Valid() bool {
 			return false
 		}
 	}
-	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax {
+	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax || !p.Moderation.Valid() {
 		return false
 	}
 	seen := make(map[string]struct{}, len(p.BlockedTerms))
@@ -214,6 +218,8 @@ type OutboundAIRoute struct {
 	Targets   []OutboundAIRouteTarget `json:"targets"`
 	CreatedAt time.Time               `json:"created_at"`
 	UpdatedAt time.Time               `json:"updated_at"`
+	// Canary is the route's model canary, if it has one (ADR-1340).
+	Canary *OutboundAIRouteCanary `json:"canary"`
 }
 
 type OutboundAIRouteList struct {

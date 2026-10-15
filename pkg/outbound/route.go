@@ -36,6 +36,8 @@ type AIRoute struct {
 	AccountID string
 	Format    string
 	Targets   []AIRouteTarget
+	// Canary is the route's active model canary, if any (ADR-1340).
+	Canary *AIRouteCanary
 }
 
 // RouteResolver loads AI routes; apid owns their lifecycle.
@@ -43,16 +45,10 @@ type RouteResolver interface {
 	Route(ctx context.Context, routeID string) (AIRoute, error)
 }
 
-type routeIDContextKey struct{}
-
-// withRouteID marks a route attempt so its settlement can log the route.
-func withRouteID(ctx context.Context, routeID string) context.Context {
-	return context.WithValue(ctx, routeIDContextKey{}, routeID)
-}
-
+// routeIDFromContext names the route of a route attempt so its settlement
+// can log the route.
 func routeIDFromContext(ctx context.Context) string {
-	routeID, _ := ctx.Value(routeIDContextKey{}).(string)
-	return routeID
+	return routeAttemptFromContext(ctx).routeID
 }
 
 // routeAttemptWriter holds a target's response back while it is retryable
@@ -172,12 +168,21 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 			"OpenAI-format routes accept buffered chat completions, Responses and embeddings requests only", "")
 		return
 	}
-	targets := route.Targets
-	if !replayable {
-		targets = targets[:1]
+	canaryFirst := chooseRouteCanary(route, r)
+	if route.Canary != nil {
+		h.Metrics.ObserveAIRouteCanaryCall(canaryFirst)
 	}
-	ctx := withRouteID(r.Context(), route.ID)
-	for index, target := range targets {
+	if canaryFirst {
+		w.Header().Set(RouteCanaryHeader, "1")
+	}
+	steps := routeSteps(route, canaryFirst)
+	if !replayable {
+		steps = steps[:1]
+	}
+	for index, step := range steps {
+		target := step.target
+		ctx := withRouteAttempt(r.Context(), routeAttempt{routeID: route.ID, position: step.position, tracked: route.Canary != nil,
+			canary: route.Canary != nil && step.position == route.Canary.Position})
 		attemptBody, attemptPath, attemptQuery := body, providerPath, r.URL.RawQuery
 		var translator aiResponseTranslator
 		if translated {
@@ -197,7 +202,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		attempt := routeAttemptRequest(r.WithContext(ctx), target.IntegrationID, attemptPath, attemptQuery, attemptBody, replayable)
-		writer := newRouteAttemptWriter(w, target.IntegrationID, index < len(targets)-1)
+		writer := newRouteAttemptWriter(w, target.IntegrationID, index < len(steps)-1)
 		if translator != nil {
 			translating := newTranslatingWriter(writer, translator)
 			h.ServeHTTP(translating, attempt)

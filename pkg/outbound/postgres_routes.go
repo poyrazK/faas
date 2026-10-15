@@ -9,7 +9,7 @@ import (
 )
 
 // PostgresRouteResolver reads AI fallback routes that apid writes. Targets
-// come back in position order.
+// come back in position order, with the route's active canary (ADR-1340).
 type PostgresRouteResolver struct{ pool *pgxpool.Pool }
 
 func NewPostgresRouteResolver(pool *pgxpool.Pool) (*PostgresRouteResolver, error) {
@@ -25,9 +25,11 @@ func (r *PostgresRouteResolver) Route(ctx context.Context, routeID string) (AIRo
 		return AIRoute{}, ErrRouteNotFound
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT route.account_id::text, route.format, target.integration_id::text, COALESCE(target.model, '')
+		SELECT route.account_id::text, route.format, target.integration_id::text, COALESCE(target.model, ''),
+		       canary.position, canary.percent
 		  FROM outbound_ai_routes route
 		  JOIN outbound_ai_route_targets target ON target.route_id = route.id
+		  LEFT JOIN outbound_ai_route_canaries canary ON canary.route_id = route.id AND canary.state = 'active'
 		 WHERE route.id = $1
 		 ORDER BY target.position`, id)
 	if err != nil {
@@ -37,10 +39,14 @@ func (r *PostgresRouteResolver) Route(ctx context.Context, routeID string) (AIRo
 	route := AIRoute{ID: routeID}
 	for rows.Next() {
 		var target AIRouteTarget
-		if err := rows.Scan(&route.AccountID, &route.Format, &target.IntegrationID, &target.Model); err != nil {
+		var canaryPosition, canaryPercent *int
+		if err := rows.Scan(&route.AccountID, &route.Format, &target.IntegrationID, &target.Model, &canaryPosition, &canaryPercent); err != nil {
 			return AIRoute{}, err
 		}
 		route.Targets = append(route.Targets, target)
+		if canaryPosition != nil && canaryPercent != nil {
+			route.Canary = &AIRouteCanary{Position: *canaryPosition, Percent: *canaryPercent}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return AIRoute{}, err
@@ -62,5 +68,9 @@ func (s StaticRouteResolver) Route(_ context.Context, routeID string) (AIRoute, 
 		return AIRoute{}, ErrRouteNotFound
 	}
 	route.Targets = append([]AIRouteTarget(nil), route.Targets...)
+	if route.Canary != nil {
+		canary := *route.Canary
+		route.Canary = &canary
+	}
 	return route, nil
 }

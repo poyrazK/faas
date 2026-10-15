@@ -216,6 +216,32 @@ func (c *Client) DeleteOutboundAIRoute(ctx context.Context, routeID string) erro
 	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID), nil, nil)
 }
 
+// SetOutboundAIRouteCanary starts or replaces a route's model canary
+// (ADR-1340).
+func (c *Client) SetOutboundAIRouteCanary(ctx context.Context, routeID string, req PutOutboundAIRouteCanaryRequest) (OutboundAIRouteCanary, error) {
+	var out OutboundAIRouteCanary
+	return out, c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", req, &out)
+}
+
+// GetOutboundAIRouteCanary returns a route's canary with both targets'
+// counts over its window.
+func (c *Client) GetOutboundAIRouteCanary(ctx context.Context, routeID string) (OutboundAIRouteCanaryStatus, error) {
+	var out OutboundAIRouteCanaryStatus
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", nil, &out)
+}
+
+// PromoteOutboundAIRouteCanary makes the canary target the route's first
+// target and ends the canary.
+func (c *Client) PromoteOutboundAIRouteCanary(ctx context.Context, routeID string) (OutboundAIRoute, error) {
+	var out OutboundAIRoute
+	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary/promote", nil, &out)
+}
+
+// DeleteOutboundAIRouteCanary ends a route's canary.
+func (c *Client) DeleteOutboundAIRouteCanary(ctx context.Context, routeID string) error {
+	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", nil, nil)
+}
+
 // GetOutboundIntegrationAIUsage reads one UTC day (YYYY-MM-DD, empty for
 // today) of AI usage by caller and model.
 func (c *Client) GetOutboundIntegrationAIUsage(ctx context.Context, integrationID, usageDate string) (OutboundAIUsageResponse, error) {

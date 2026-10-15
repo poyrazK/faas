@@ -44,8 +44,12 @@ type OutboundIntegrationOffer struct {
 	AIUserDailyCostLimit  *int64
 	// AIRequestLogContent also captures logged calls' bodies (ADR-996).
 	AIRequestLogContent bool
-	// AIContentPolicy is the integration's content guardrails (ADR-997).
+	// AIContentPolicy is the integration's content guardrails (ADR-997)
+	// and moderation check (ADR-1340).
 	AIContentPolicy api.OutboundAIContentPolicy
+	// AILogExport sends settled app calls to the app's log drains
+	// (ADR-1340).
+	AILogExport bool
 }
 
 // OutboundAIContentPolicyStore owns an integration's content guardrails
@@ -107,13 +111,17 @@ type OutboundAIPolicy struct {
 	// RequestLogContent also captures logged calls' bodies; it requires
 	// the request log (ADR-996).
 	RequestLogContent bool
+	// LogExport sends settled app calls to the app's log drains; it
+	// requires a provider (ADR-1340).
+	LogExport bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
-		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled)
+		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
+		(!p.LogExport || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

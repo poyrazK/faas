@@ -854,6 +854,34 @@ const (
 	OutboundAISettlementAttempts              = 3
 	OutboundAISettlementAttemptTimeoutSeconds = 5
 	OutboundAISettlementKeyRetentionMinutes   = 60
+	// Model canaries (ADR-1340): the largest share of a route's calls a
+	// canary may take; the bounds and defaults of its error-rate margin in
+	// percentage points, latency margin in percent, minimum calls and
+	// window; how often outboundd judges canaries; and how long per-minute
+	// target rows stay.
+	OutboundAIRouteCanaryPercentMax              = 50
+	OutboundAIRouteCanaryErrorIncreaseDefault    = 5
+	OutboundAIRouteCanaryErrorIncreaseMax        = 100
+	OutboundAIRouteCanaryLatencyIncreaseMax      = 1_000
+	OutboundAIRouteCanaryMinCallsMin             = 10
+	OutboundAIRouteCanaryMinCallsDefault         = 50
+	OutboundAIRouteCanaryMinCallsMax             = 100_000
+	OutboundAIRouteCanaryWindowMinutesMin        = 5
+	OutboundAIRouteCanaryWindowMinutesDefault    = 30
+	OutboundAIRouteCanaryWindowMinutesMax        = 1_440
+	OutboundAIRouteCanaryEvaluateIntervalSeconds = 30
+	OutboundAIRouteStatsRetentionHours           = 48
+	// Log export (ADR-1340): how long an export line waits before the
+	// gateways read it, how long it stays, how many lines one read returns,
+	// and the longest line.
+	OutboundAILogExportVisibilitySeconds = 15
+	OutboundAILogExportRetentionHours    = 24
+	OutboundAILogExportBatchMax          = 500
+	OutboundAILogExportLineMaxBytes      = 4 << 10
+	// Moderation (ADR-1340): the request text one check reads, latest text
+	// first, and the deadline of the check's call.
+	OutboundAIModerationTextMaxBytes       = 32 << 10
+	OutboundAIModerationCallTimeoutSeconds = 10
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

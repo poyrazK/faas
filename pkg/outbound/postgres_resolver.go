@@ -59,7 +59,10 @@ const integrationPolicySQL = `
 	       integration.ai_request_log_enabled,
 	       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
 	       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
-	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
+	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms,
+	       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
+	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
+	       integration.ai_moderation_categories, integration.ai_moderation_on_error
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -117,7 +120,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var policyUpdatedAt time.Time
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
-	var aiRequestLogEnabled, aiRequestLogContent bool
+	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport bool
 	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	err := results.QueryRow().
@@ -126,7 +129,9 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
 			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
 			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent, &contentPolicy.Email,
-			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms)
+			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms,
+			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
+			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -253,6 +258,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
 		AccountPlan:       api.Plan(plan),
 		AIContentPolicy:   contentPolicy,
+		AILogExport:       aiLogExport,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}

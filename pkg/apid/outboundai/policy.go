@@ -11,7 +11,7 @@ import (
 
 // PolicyInvalidDetail explains a rejected AI policy; integration creation
 // in apidserver shares it.
-const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log"
+const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log; log_export requires a provider"
 
 func (s *Service) aiStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIStore)
@@ -57,6 +57,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
 		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
+		LogExport: req.LogExport,
 	})
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }
@@ -176,7 +177,10 @@ func (s *Service) PutPrices(w http.ResponseWriter, r *http.Request, acct state.A
 
 // contentPolicyInvalidDetail explains a rejected content policy (ADR-997).
 const contentPolicyInvalidDetail = "email, payment_card, iban and secret must be off, redact or block; blocked_terms at most 32 " +
-	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider"
+	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider; moderation.action must be off, flag or block, " +
+	"and an active check needs kind openai_moderation (an OpenAI integration, without prompt_injection) or classifier (with a model), " +
+	"integration_id naming one of this account's enabled AI integrations, distinct categories from prompt_injection, harassment, hate, " +
+	"self_harm, sexual, violence and illicit, and on_error allow or block"
 
 // PutContentPolicy replaces a customer AI integration's content guardrails
 // (ADR-997).

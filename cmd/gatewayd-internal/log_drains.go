@@ -387,6 +387,10 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 	m.setActiveLocked(spec, 1)
 	go sender.Run(workerCtx)
 	go m.streamWorker(workerCtx, spec, sender)
+	// ADR-1340: the app's AI gateway lines share the drain's sender.
+	if exports, ok := m.store.(aiLogExportStore); ok {
+		go m.aiLogExportWorker(workerCtx, spec, sender, exports)
+	}
 	return worker, nil
 }
 

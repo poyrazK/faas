@@ -224,10 +224,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_replay_not_authorized", "The replay cannot use this outbound integration", "")
 		return
 	}
+	// ADR-1340: a moderation check calls in process for the account's own
+	// customer AI integrations, like a replay.
+	moderator, isModeration := moderationPrincipalFromContext(r.Context())
+	if isModeration && !moderationAllowed(integration, moderator) {
+		writeProblem(w, http.StatusForbidden, "outbound_moderation_not_authorized", "The moderation check cannot use this outbound integration", "")
+		return
+	}
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
 	var isExecution bool
-	if !isReplay {
+	if !isReplay && !isModeration {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return
 		}
@@ -239,6 +246,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	principalID := ""
 	if isReplay {
 		principalID = "replay:" + replay.replayID
+	} else if isModeration {
+		principalID = "moderation:" + moderator.accountID
 	} else if isExecution {
 		if h.ExecutionAuthorizer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
@@ -269,7 +278,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = appID
 	}
 	var allowedRoute bool
-	if isExecution || isReplay {
+	if isExecution || isReplay || isModeration {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
@@ -395,6 +404,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	// ADR-1340: the moderation check runs after admission, so a call its
+	// caps refuse never pays for one. Replays and checks are not checked.
+	var moderation aiModerationOutcome
+	if aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isModeration && integration.AIContentPolicy.Moderation.Active() {
+		var proceed bool
+		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
+			return
+		}
+	}
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
 		if h.CredentialResolver == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
@@ -614,7 +632,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, leaseID: decision.LeaseID,
+			endUser: aiEndUser, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()

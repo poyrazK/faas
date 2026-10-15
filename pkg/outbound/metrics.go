@@ -34,6 +34,10 @@ type Metrics struct {
 	aiContentFindings      *prometheus.CounterVec
 	aiMedia                *prometheus.CounterVec
 	aiReplays              *prometheus.CounterVec
+	aiCanaryCalls          *prometheus.CounterVec
+	aiCanaryRollbacks      *prometheus.CounterVec
+	aiModeration           *prometheus.CounterVec
+	aiLogExports           *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -134,6 +138,22 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_replays_total",
 			Help: "AI replays the worker finished, by state (done or failed) (ADR-997).",
 		}, []string{"state"}),
+		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_canary_calls_total",
+			Help: "Calls of routes with an active canary, by the target tried first (canary or baseline) (ADR-1340).",
+		}, []string{"target"}),
+		aiCanaryRollbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_canary_rollbacks_total",
+			Help: "Model canaries outboundd rolled back, by reason (error_rate or latency) (ADR-1340).",
+		}, []string{"reason"}),
+		aiModeration: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_moderation_total",
+			Help: "AI moderation checks by integration and result (passed, flagged, blocked, or error) (ADR-1340).",
+		}, []string{"integration_id", "result"}),
+		aiLogExports: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_log_exports_total",
+			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
+		}, []string{"integration_id"}),
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -158,6 +178,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiContentFindings,
 		m.aiMedia,
 		m.aiReplays,
+		m.aiCanaryCalls,
+		m.aiCanaryRollbacks,
+		m.aiModeration,
+		m.aiLogExports,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -298,6 +322,40 @@ func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {
 		return
 	}
 	m.aiCost.WithLabelValues(integrationID).Add(float64(millicents))
+}
+
+// ObserveAIRouteCanaryCall counts a call of a route with an active canary
+// by the target it tried first.
+func (m *Metrics) ObserveAIRouteCanaryCall(canary bool) {
+	if m == nil || m.aiCanaryCalls == nil {
+		return
+	}
+	target := "baseline"
+	if canary {
+		target = "canary"
+	}
+	m.aiCanaryCalls.WithLabelValues(target).Inc()
+}
+
+func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {
+	if m == nil || m.aiCanaryRollbacks == nil {
+		return
+	}
+	m.aiCanaryRollbacks.WithLabelValues(reason).Inc()
+}
+
+func (m *Metrics) ObserveAIModeration(integrationID, result string) {
+	if m == nil || m.aiModeration == nil {
+		return
+	}
+	m.aiModeration.WithLabelValues(integrationID, result).Inc()
+}
+
+func (m *Metrics) ObserveAILogExport(integrationID string) {
+	if m == nil || m.aiLogExports == nil {
+		return
+	}
+	m.aiLogExports.WithLabelValues(integrationID).Inc()
 }
 
 func (m *Metrics) ObserveAIRouteFallback(reason string) {

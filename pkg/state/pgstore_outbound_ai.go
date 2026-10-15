@@ -29,8 +29,14 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		   SET ai_provider = NULLIF($3, ''), ai_daily_token_limit = $4,
 		       ai_daily_cost_limit_millicents = $5, ai_monthly_cost_limit_millicents = $6,
 		       ai_request_log_enabled = $7, ai_user_daily_token_limit = $8,
-		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10,
-		       -- ADR-997: turning AI handling off also clears the content policy.
+		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, ai_log_export = $11,
+		       -- ADR-997: turning AI handling off also clears the content policy,
+		       -- and its moderation check (ADR-1340).
+		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
+		       ai_moderation_kind = CASE WHEN $3 = '' THEN NULL ELSE ai_moderation_kind END,
+		       ai_moderation_integration_id = CASE WHEN $3 = '' THEN NULL ELSE ai_moderation_integration_id END,
+		       ai_moderation_model = CASE WHEN $3 = '' THEN NULL ELSE ai_moderation_model END,
+		       ai_moderation_categories = CASE WHEN $3 = '' THEN '{}'::text[] ELSE ai_moderation_categories END,
 		       ai_content_email = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_email END,
 		       ai_content_payment_card = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_payment_card END,
 		       ai_content_iban = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_iban END,
@@ -41,7 +47,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		   AND provider_auth_mode = 'managed' AND enabled`,
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Provider, policy.DailyTokenLimit,
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
-		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent)
+		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -242,8 +248,11 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 var _ OutboundAIContentPolicyStore = (*PgStore)(nil)
 
 // SetOutboundAIContentPolicy replaces a customer AI integration's content
-// guardrails (ADR-997). An active policy needs an AI provider. Bumping
-// updated_at gives outboundd a new policy revision.
+// guardrails (ADR-997) and moderation check (ADR-1340). An active policy
+// needs an AI provider, and a moderation check names one of the account's
+// own enabled customer AI integrations: an OpenAI one for
+// openai_moderation. Bumping updated_at gives outboundd a new policy
+// revision.
 func (s *PgStore) SetOutboundAIContentPolicy(ctx context.Context, accountID, integrationID string, policy api.OutboundAIContentPolicy) error {
 	if !policy.Valid() {
 		return ErrInvalidArgument
@@ -253,12 +262,21 @@ func (s *PgStore) SetOutboundAIContentPolicy(ctx context.Context, accountID, int
 	err := s.pool.QueryRow(ctx, `
 		UPDATE outbound_integrations
 		   SET ai_content_email = $3, ai_content_payment_card = $4, ai_content_iban = $5, ai_content_secret = $6,
-		       ai_content_blocked_terms = $7, updated_at = now()
+		       ai_content_blocked_terms = $7, ai_moderation_action = $9, ai_moderation_kind = NULLIF($10, ''),
+		       ai_moderation_integration_id = $11, ai_moderation_model = NULLIF($12, ''),
+		       ai_moderation_categories = $13, ai_moderation_on_error = $14, updated_at = now()
 		 WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer' AND provider_auth_mode = 'managed' AND enabled
 		   AND (ai_provider IS NOT NULL OR NOT $8)
+		   AND ($9 = 'off' OR EXISTS (
+		        SELECT 1 FROM outbound_integrations moderator
+		         WHERE moderator.id = $11 AND moderator.account_id = $1 AND moderator.owner_kind = 'customer'
+		           AND moderator.provider_auth_mode = 'managed' AND moderator.enabled AND moderator.ai_provider IS NOT NULL
+		           AND ($10 <> 'openai_moderation' OR moderator.ai_provider = 'openai')))
 		RETURNING ai_provider IS NOT NULL`,
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Email, policy.PaymentCard, policy.IBAN, policy.Secret,
-		policy.BlockedTerms, policy.Active()).Scan(&hasProvider)
+		policy.BlockedTerms, policy.Active() || policy.Moderation.Active(), policy.Moderation.Action, policy.Moderation.Kind,
+		mustPgUUID(policy.Moderation.IntegrationID), policy.Moderation.Model, policy.Moderation.Categories,
+		policy.Moderation.OnError).Scan(&hasProvider)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var exists bool
 		if err := s.pool.QueryRow(ctx, `

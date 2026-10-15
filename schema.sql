@@ -57863,14 +57863,6 @@ ALTER TABLE ONLY public.outbound_ai_route_canaries
 
 
 --
--- Name: outbound_ai_route_target_minutes outbound_ai_route_target_minutes_route_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.outbound_ai_route_target_minutes
-    ADD CONSTRAINT outbound_ai_route_target_minutes_route_id_fkey FOREIGN KEY (route_id) REFERENCES public.outbound_ai_routes(id) ON DELETE CASCADE;
-
-
---
 -- Name: outbound_ai_route_targets outbound_ai_route_targets_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 

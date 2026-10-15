@@ -74,8 +74,11 @@ CREATE TABLE IF NOT EXISTS outbound_ai_route_canaries (
 );
 
 -- Settled route attempts per target and UTC minute while a canary runs.
+-- No foreign key: settlement writes these rows, and a route deleted under a
+-- settlement must not fail it. apid deletes a route's rows with the route
+-- and the hourly prune removes old ones.
 CREATE TABLE IF NOT EXISTS outbound_ai_route_target_minutes (
-    route_id uuid NOT NULL REFERENCES outbound_ai_routes(id) ON DELETE CASCADE,
+    route_id uuid NOT NULL,
     position smallint NOT NULL,
     minute timestamptz NOT NULL,
     calls bigint NOT NULL DEFAULT 0,

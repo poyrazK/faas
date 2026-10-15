@@ -92,7 +92,8 @@ type openedAISettlement struct {
 }
 
 // openAISettlement claims the call's settlement key, reads the integration's
-// limits, and inserts the request-log row, in one round trip.
+// limits, and inserts the request-log row and the export line (ADR-1340),
+// in one round trip.
 func openAISettlement(ctx context.Context, tx pgx.Tx, integrationID, leaseID uuid.UUID, record AIUsageRecord) (openedAISettlement, error) {
 	batch := &pgx.Batch{}
 	if leaseID != uuid.Nil {
@@ -108,6 +109,9 @@ func openAISettlement(ctx context.Context, tx pgx.Tx, integrationID, leaseID uui
 		  FROM outbound_integrations WHERE id = $1`, integrationID)
 	if record.Log != nil {
 		queueAIRequestLog(batch, integrationID, record)
+	}
+	if record.Export != nil {
+		queueAILogExport(batch, record.Export)
 	}
 	results := tx.SendBatch(ctx, batch)
 	opened, err := scanOpenedAISettlement(results, leaseID, record)
@@ -140,13 +144,31 @@ func scanOpenedAISettlement(results pgx.BatchResults, leaseID uuid.UUID, record 
 			return opened, err
 		}
 	}
+	if record.Export != nil {
+		if _, err := results.Exec(); err != nil {
+			return opened, err
+		}
+	}
 	return opened, nil
+}
+
+// queueAILogExport adds the call's line to the export outbox the gateways
+// read for the app's log drains (ADR-1340).
+func queueAILogExport(batch *pgx.Batch, export *AILogExport) {
+	attributes, err := json.Marshal(export.Attributes)
+	if err != nil || export.Attributes == nil {
+		attributes = []byte("{}")
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_log_exports (app_id, account_id, line, attributes)
+		VALUES ($1, $2, $3, $4::jsonb)`, uuid.MustParse(export.AppID), uuid.MustParse(export.AccountID), export.Line, string(attributes))
 }
 
 // settleAIUsageRows adds the call to the caller/model and end-user rollups
 // and to the admission and binding counters, deletes its lease, and stores
-// its captured content, in one round trip. It returns each limited budget's
-// before and after values. The rollup is written before the admission
+// its captured content, in one round trip. A canary-tracked route attempt
+// adds to its target's per-minute row last (ADR-1340). It returns each
+// limited budget's before and after values. The rollup is written before the admission
 // counter so the transaction takes locks in the same order as admission and
 // integration deletion: integration, then state.
 func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uuid.UUID, record AIUsageRecord,
@@ -157,6 +179,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 		binding:  record.Usage.BudgetTokens() > 0 && appCaller(record.Caller),
 		lease:    leaseID != uuid.Nil,
 		content:  record.Log != nil && record.Log.Content != nil,
+		route:    record.Route != nil,
 	}
 	batch := &pgx.Batch{}
 	queueAIUsageRollup(batch, integrationID, record)
@@ -170,6 +193,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	if plan.content {
 		queueAIRequestContent(batch, integrationID, opened.logID, record.Log.Content)
 	}
+	if plan.route {
+		queueAIRouteAttempt(batch, record)
+	}
 	results := tx.SendBatch(ctx, batch)
 	crossings, err := scanAIUsageRows(results, record, opened, plan)
 	if closeErr := results.Close(); err == nil {
@@ -180,7 +206,34 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, counters, binding, lease, content bool
+	endUser, counters, binding, lease, content, route bool
+}
+
+// queueAIRouteAttempt adds a route attempt to its target's row for the
+// current UTC minute while the route's canary is active. Without one, or
+// for a route deleted meanwhile, it writes nothing: the table has no
+// foreign key, so a settlement never fails on it.
+func queueAIRouteAttempt(batch *pgx.Batch, record AIUsageRecord) {
+	attempt := record.Route
+	var errorCount, ttfbCalls, ttfbMS int64
+	if attempt.Error {
+		errorCount = 1
+	}
+	if attempt.TTFBMS != nil {
+		ttfbCalls, ttfbMS = 1, *attempt.TTFBMS
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_route_target_minutes AS stats
+		    (route_id, position, minute, calls, errors, ttfb_calls, ttfb_ms_total, cost_millicents)
+		SELECT $1, $2, date_trunc('minute', now()), 1, $3, $4, $5, $6
+		 WHERE EXISTS (SELECT 1 FROM outbound_ai_route_canaries canary WHERE canary.route_id = $1 AND canary.state = 'active')
+		ON CONFLICT (route_id, position, minute) DO UPDATE SET
+		    calls = stats.calls + 1,
+		    errors = stats.errors + EXCLUDED.errors,
+		    ttfb_calls = stats.ttfb_calls + EXCLUDED.ttfb_calls,
+		    ttfb_ms_total = stats.ttfb_ms_total + EXCLUDED.ttfb_ms_total,
+		    cost_millicents = stats.cost_millicents + EXCLUDED.cost_millicents`,
+		uuid.MustParse(attempt.RouteID), attempt.Position, errorCount, ttfbCalls, ttfbMS, record.CostMillicents)
 }
 
 // queueAIUsageCounters adds the call to the admission and binding counters.
@@ -289,6 +342,11 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			if _, err := results.Exec(); err != nil {
 				return nil, err
 			}
+		}
+	}
+	if plan.route {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
 		}
 	}
 	crossings = append(crossings, userBudgetCrossings(user.endUser, day, positiveLimit(limits.userTokens),
@@ -503,6 +561,9 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-1120: a settled call's key only has to outlive its retries.
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
+		// ADR-1340: canary rows and export lines.
+		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
+		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
 	} {
 		command, err := b.pool.Exec(ctx, statement.sql, statement.age)
 		if err != nil {

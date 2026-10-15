@@ -97,7 +97,9 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
 	observer.applyHeaders(resp.Header)
-	if _, replaying := replayPrincipalFromContext(r.Context()); integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying {
+	_, replaying := replayPrincipalFromContext(r.Context())
+	_, moderating := moderationPrincipalFromContext(r.Context())
+	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !moderating {
 		observer.capture = newAIContentCapture(ai, resp.Header.Get("Content-Type"))
 		if plan != nil {
 			observer.capture.content.RequestPath = plan.path
@@ -131,6 +133,10 @@ type aiSettlement struct {
 	characters int64
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
+	// route places a route attempt in its route, and moderation is the
+	// call's moderation result (ADR-1340).
+	route      routeAttempt
+	moderation aiModerationOutcome
 }
 
 // speechUsage settles a successful speech call at its input characters when
@@ -192,7 +198,10 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	caller := appID
 	replay, replaying := replayPrincipalFromContext(ctx)
+	_, moderating := moderationPrincipalFromContext(ctx)
 	switch {
+	case moderating:
+		caller = AIUsageCallerModeration
 	case replaying:
 		caller = AIUsageCallerReplay
 		if replay.outcome != nil {
@@ -211,6 +220,10 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 			record.Log.Content = observer.capture.finish()
 		}
 	}
+	if settlement.route.tracked {
+		record.Route = aiRouteAttemptFor(settlement.route, outcome, timeToFirstByte)
+	}
+	record.Export = aiLogExportFor(integration, record, settlement, timeToFirstByte, time.Now())
 	write := func(ctx context.Context) ([]AIBudgetAlert, error) {
 		if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
 			return alerter.RecordAIUsageAlerts(ctx, record)
@@ -225,7 +238,27 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	for _, alert := range alerts {
 		h.Metrics.ObserveAIBudgetAlert(alert.Budget, alert.ThresholdPercent)
 	}
+	if record.Export != nil {
+		h.Metrics.ObserveAILogExport(metricIntegrationID)
+	}
 	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// aiRouteAttemptFor is a canary-tracked attempt's contribution to its
+// target's per-minute row: an error for any provider status of 400 or
+// above, and the time to first byte of a successful attempt (ADR-1340). A
+// route without a UUID (a static test route) has no row, so the attempt
+// never makes its settlement invalid.
+func aiRouteAttemptFor(attempt routeAttempt, outcome AIUsageOutcome, timeToFirstByte time.Duration) *AIRouteAttemptRecord {
+	if !validUUID(attempt.routeID) {
+		return nil
+	}
+	record := &AIRouteAttemptRecord{RouteID: attempt.routeID, Position: attempt.position, Error: outcome == AIUsageOutcomeError}
+	if !record.Error && timeToFirstByte > 0 {
+		ttfb := timeToFirstByte.Milliseconds()
+		record.TTFBMS = &ttfb
+	}
+	return record
 }
 
 // recordAIUsage writes one settlement, retrying a failed attempt when the

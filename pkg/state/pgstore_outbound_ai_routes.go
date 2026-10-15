@@ -15,9 +15,10 @@ var _ OutboundAIRouteStore = (*PgStore)(nil)
 func (s *PgStore) ListOutboundAIRoutes(ctx context.Context, accountID string) ([]OutboundAIRoute, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT route.id, route.name, route.format, route.created_at, route.updated_at,
-		       target.integration_id, COALESCE(target.model, '')
+		       target.integration_id, COALESCE(target.model, ''), `+outboundAIRouteCanaryColumns+`
 		  FROM outbound_ai_routes route
 		  LEFT JOIN outbound_ai_route_targets target ON target.route_id = route.id
+		  LEFT JOIN outbound_ai_route_canaries canary ON canary.route_id = route.id
 		 WHERE route.account_id = $1
 		 ORDER BY route.name, route.id, target.position`, mustPgUUID(accountID))
 	if err != nil {
@@ -30,13 +31,15 @@ func (s *PgStore) ListOutboundAIRoutes(ctx context.Context, accountID string) ([
 		var routeID, integrationID pgtype.UUID
 		var route OutboundAIRoute
 		var model string
-		if err := rows.Scan(&routeID, &route.Name, &route.Format, &route.CreatedAt, &route.UpdatedAt, &integrationID, &model); err != nil {
+		var canary outboundAIRouteCanaryScan
+		if err := rows.Scan(append([]any{&routeID, &route.Name, &route.Format, &route.CreatedAt, &route.UpdatedAt, &integrationID, &model},
+			canary.dest()...)...); err != nil {
 			return nil, mapErr(err)
 		}
 		id := pgUUIDString(routeID)
 		position, seen := index[id]
 		if !seen {
-			route.ID, route.AccountID = id, accountID
+			route.ID, route.AccountID, route.Canary = id, accountID, canary.canary()
 			out = append(out, route)
 			position = len(out) - 1
 			index[id] = position
@@ -180,15 +183,25 @@ func (s *PgStore) SetOutboundAIRouteTargets(ctx context.Context, accountID, rout
 	if err := insertOutboundAIRouteTargets(ctx, tx, routeID, targets); err != nil {
 		return err
 	}
+	// ADR-1340: new targets end the canary; its positions named the old ones.
+	if _, err := endOutboundAIRouteCanary(ctx, tx, routeID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE outbound_ai_routes SET updated_at = now() WHERE id = $1`, mustPgUUID(routeID)); err != nil {
 		return mapErr(err)
 	}
 	return mapErr(tx.Commit(ctx))
 }
 
-// DeleteOutboundAIRoute removes a route and its targets.
+// DeleteOutboundAIRoute removes a route, its targets and canary, and the
+// canary's per-minute rows, which have no foreign key (ADR-1340).
 func (s *PgStore) DeleteOutboundAIRoute(ctx context.Context, accountID, routeID string) error {
-	command, err := s.pool.Exec(ctx, `DELETE FROM outbound_ai_routes WHERE account_id = $1 AND id = $2`,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	command, err := tx.Exec(ctx, `DELETE FROM outbound_ai_routes WHERE account_id = $1 AND id = $2`,
 		mustPgUUID(accountID), mustPgUUID(routeID))
 	if err != nil {
 		return mapErr(err)
@@ -196,5 +209,8 @@ func (s *PgStore) DeleteOutboundAIRoute(ctx context.Context, accountID, routeID 
 	if command.RowsAffected() != 1 {
 		return ErrNotFound
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `DELETE FROM outbound_ai_route_target_minutes WHERE route_id = $1`, mustPgUUID(routeID)); err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
 }

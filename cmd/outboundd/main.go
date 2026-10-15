@@ -215,6 +215,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-997: replays recorded by apid run through this daemon's handler.
 	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
 	go replayWorker.Run(ctx)
+	// ADR-1340: model canaries are judged here and rolled back when they do
+	// worse than their route's first target.
+	canaryEvaluator := &outbound.AIRouteCanaryEvaluator{Store: backend, Metrics: outboundMetrics, Log: log}
+	go canaryEvaluator.Run(ctx)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err

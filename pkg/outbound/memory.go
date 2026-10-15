@@ -92,6 +92,10 @@ type MemoryBackend struct {
 	mu     sync.Mutex
 	states map[string]*memoryState
 	now    func() time.Time
+	// routeAttempts and logExports keep what settlements wrote for canaries
+	// and log drains (ADR-1340), bounded like the request log.
+	routeAttempts []AIRouteAttemptRecord
+	logExports    []AILogExport
 }
 
 func NewMemoryBackend() *MemoryBackend {
@@ -641,7 +645,28 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 			state.aiRequestLog = state.aiRequestLog[len(state.aiRequestLog)-memoryAIRequestLogMax:]
 		}
 	}
+	if record.Route != nil && len(b.routeAttempts) < memoryAIRequestLogMax {
+		b.routeAttempts = append(b.routeAttempts, *record.Route)
+	}
+	if record.Export != nil && len(b.logExports) < memoryAIRequestLogMax {
+		b.logExports = append(b.logExports, *record.Export)
+	}
 	return recorded, nil
+}
+
+// AIRouteAttempts reports the canary-tracked route attempts settled so far,
+// for tests.
+func (b *MemoryBackend) AIRouteAttempts() []AIRouteAttemptRecord {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]AIRouteAttemptRecord(nil), b.routeAttempts...)
+}
+
+// AILogExports reports the export lines settled so far, for tests.
+func (b *MemoryBackend) AILogExports() []AILogExport {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]AILogExport(nil), b.logExports...)
 }
 
 // recordUserUsage adds a call to its end user's rollup. Beyond the per-day

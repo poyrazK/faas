@@ -29,15 +29,84 @@ type OutboundAIRoute struct {
 	Targets   []OutboundAIRouteTarget
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Canary is the route's model canary, if any (ADR-1340).
+	Canary *OutboundAIRouteCanary
 }
 
-// OutboundAIRouteStore owns customer AI fallback routes.
+// OutboundAIRouteCanary sends a share of a route's calls to the target at
+// Position first. outboundd rolls it back; apid starts, promotes and stops
+// it (ADR-1340).
+type OutboundAIRouteCanary struct {
+	Position                  int
+	Percent                   int
+	MaxErrorRateIncrease      int
+	MaxLatencyIncreasePercent *int
+	MinCalls                  int
+	WindowMinutes             int
+	State                     string
+	Reason                    string
+	StartedAt                 time.Time
+	DecidedAt                 *time.Time
+}
+
+// OutboundAIRouteTargetStats sums one target's settled attempts.
+type OutboundAIRouteTargetStats struct {
+	Position       int
+	Calls          int64
+	Errors         int64
+	TTFBCalls      int64
+	TTFBMSTotal    int64
+	CostMillicents int64
+}
+
+// OutboundAIRouteCanaryStatus is a canary with its first target's and its
+// own counts since WindowStart.
+type OutboundAIRouteCanaryStatus struct {
+	Canary      OutboundAIRouteCanary
+	WindowStart time.Time
+	Baseline    OutboundAIRouteTargetStats
+	CanaryStats OutboundAIRouteTargetStats
+}
+
+// OutboundAIRouteStore owns customer AI fallback routes and their canaries.
 type OutboundAIRouteStore interface {
 	ListOutboundAIRoutes(ctx context.Context, accountID string) ([]OutboundAIRoute, error)
 	GetOutboundAIRoute(ctx context.Context, accountID, routeID string) (OutboundAIRoute, error)
 	CreateOutboundAIRoute(ctx context.Context, route OutboundAIRoute) (OutboundAIRoute, error)
+	// SetOutboundAIRouteTargets replaces the targets and ends any canary.
 	SetOutboundAIRouteTargets(ctx context.Context, accountID, routeID string, targets []OutboundAIRouteTarget) error
 	DeleteOutboundAIRoute(ctx context.Context, accountID, routeID string) error
+	// SetOutboundAIRouteCanary starts or replaces the canary and clears its
+	// counts. The position must name a target after the first.
+	SetOutboundAIRouteCanary(ctx context.Context, accountID, routeID string, canary OutboundAIRouteCanary) (OutboundAIRouteCanary, error)
+	DeleteOutboundAIRouteCanary(ctx context.Context, accountID, routeID string) error
+	// PromoteOutboundAIRouteCanary moves the canary target to the front and
+	// ends the canary.
+	PromoteOutboundAIRouteCanary(ctx context.Context, accountID, routeID string) (OutboundAIRoute, error)
+	OutboundAIRouteCanaryStatus(ctx context.Context, accountID, routeID string) (OutboundAIRouteCanaryStatus, error)
+}
+
+// validOutboundAIRouteCanary checks a canary's settings against the route's
+// target count. The database enforces the same ranges.
+func validOutboundAIRouteCanary(canary OutboundAIRouteCanary, targets int) bool {
+	request := api.PutOutboundAIRouteCanaryRequest{
+		Target: canary.Position, Percent: canary.Percent, MaxErrorRateIncrease: &canary.MaxErrorRateIncrease,
+		MaxLatencyIncreasePercent: canary.MaxLatencyIncreasePercent, MinCalls: &canary.MinCalls, WindowMinutes: &canary.WindowMinutes,
+	}
+	return request.Valid() && canary.Position <= targets
+}
+
+// promotedOutboundAIRouteTargets moves the target at position (1-based) to
+// the front and keeps the others in order.
+func promotedOutboundAIRouteTargets(targets []OutboundAIRouteTarget, position int) []OutboundAIRouteTarget {
+	out := make([]OutboundAIRouteTarget, 0, len(targets))
+	out = append(out, targets[position-1])
+	for index, target := range targets {
+		if index != position-1 {
+			out = append(out, target)
+		}
+	}
+	return out
 }
 
 func validOutboundAIRouteShape(targets []OutboundAIRouteTarget) bool {
@@ -101,5 +170,17 @@ func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarge
 
 func copyOutboundAIRoute(in OutboundAIRoute) OutboundAIRoute {
 	in.Targets = append([]OutboundAIRouteTarget(nil), in.Targets...)
+	if in.Canary != nil {
+		canary := *in.Canary
+		if canary.MaxLatencyIncreasePercent != nil {
+			latency := *canary.MaxLatencyIncreasePercent
+			canary.MaxLatencyIncreasePercent = &latency
+		}
+		if canary.DecidedAt != nil {
+			decided := *canary.DecidedAt
+			canary.DecidedAt = &decided
+		}
+		in.Canary = &canary
+	}
 	return in
 }

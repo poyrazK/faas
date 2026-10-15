@@ -65,6 +65,30 @@ type AIUsageRecord struct {
 	// retried settlement counts the call once, and the settlement deletes
 	// the lease (ADR-1120). Empty settles without a key.
 	LeaseID string
+	// Route is a route attempt while the route runs a canary; it adds to
+	// the target's per-minute row (ADR-1340).
+	Route *AIRouteAttemptRecord
+	// Export is the call's line for the calling app's log drains
+	// (ADR-1340).
+	Export *AILogExport
+}
+
+// AIRouteAttemptRecord is one settled attempt of a route with a canary.
+// Error marks a provider status of 400 or above; TTFBMS is set for a
+// successful attempt that received a first byte.
+type AIRouteAttemptRecord struct {
+	RouteID  string
+	Position int
+	Error    bool
+	TTFBMS   *int64
+}
+
+// AILogExport is one export line and its OTLP attributes (ADR-1340).
+type AILogExport struct {
+	AppID      string
+	AccountID  string
+	Line       string
+	Attributes map[string]string
 }
 
 // AIRequestLog is the non-usage metadata of one logged AI call. It holds
@@ -168,10 +192,13 @@ const AIUsageCallerRuns = "runs"
 // no app ID either.
 const AIUsageCallerReplay = "replay"
 
+// AIUsageCallerModeration aggregates moderation checks (ADR-1340).
+const AIUsageCallerModeration = "moderation"
+
 // appCaller reports whether a settled caller is an app ID, which has app
 // budgets, minute counters and alert webhooks.
 func appCaller(caller string) bool {
-	return caller != AIUsageCallerRuns && caller != AIUsageCallerReplay
+	return caller != AIUsageCallerRuns && caller != AIUsageCallerReplay && caller != AIUsageCallerModeration
 }
 
 // aiUsageOverflowModel collects models beyond the per-day distinct cap.
@@ -207,7 +234,35 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if record.LeaseID != "" && !validUUID(record.LeaseID) {
 		return fmt.Errorf("%w: AI usage lease id must be a UUID", ErrInvalidIntegration)
 	}
+	if err := validateAIRouteAttempt(record.Route); err != nil {
+		return err
+	}
+	if err := validateAILogExport(record.Export); err != nil {
+		return err
+	}
 	return validateAIRequestLog(record.Log)
+}
+
+func validateAIRouteAttempt(attempt *AIRouteAttemptRecord) error {
+	if attempt == nil {
+		return nil
+	}
+	if !validUUID(attempt.RouteID) || attempt.Position < 1 || attempt.Position > api.OutboundAIRouteTargetsMax ||
+		(attempt.TTFBMS != nil && (*attempt.TTFBMS < 0 || *attempt.TTFBMS > 1<<31-1)) {
+		return fmt.Errorf("%w: AI route attempt is out of range", ErrInvalidIntegration)
+	}
+	return nil
+}
+
+func validateAILogExport(export *AILogExport) error {
+	if export == nil {
+		return nil
+	}
+	if !validUUID(export.AppID) || !validUUID(export.AccountID) || len(export.Line) < 2 ||
+		len(export.Line) > api.OutboundAILogExportLineMaxBytes || len(export.Attributes) > aiLogExportAttributesMax {
+		return fmt.Errorf("%w: AI log export line is out of range", ErrInvalidIntegration)
+	}
+	return nil
 }
 
 // aiUsageFields covers the OpenAI chat completions, OpenAI Responses,

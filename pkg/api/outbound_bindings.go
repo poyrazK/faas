@@ -69,6 +69,9 @@ type OutboundIntegrationOffer struct {
 	AIRequestLogContent bool `json:"ai_request_log_content"`
 	// AIContentPolicy is the integration's content guardrails (ADR-997).
 	AIContentPolicy OutboundAIContentPolicy `json:"ai_content_policy"`
+	// AILogExport sends each settled app call to the app's log drains
+	// (ADR-1340).
+	AILogExport bool `json:"ai_log_export"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -122,6 +125,9 @@ type PutOutboundAIPolicyRequest struct {
 	// user named by X-Gregale-AI-User per UTC day (ADR-994).
 	UserDailyTokenLimit          *int64 `json:"user_daily_token_limit,omitempty"`
 	UserDailyCostLimitMillicents *int64 `json:"user_daily_cost_limit_millicents,omitempty"`
+	// LogExport sends each settled call of an app to that app's log drains
+	// as one JSON line, without prompts or completions (ADR-1340).
+	LogExport bool `json:"log_export,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
@@ -129,7 +135,8 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
 		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
-		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled)
+		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
+		(!r.LogExport || r.AIProvider != "")
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
