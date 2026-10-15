@@ -273,3 +273,10 @@ atomically with any local state change and replay it after a lost response.
 See [durable control receipts](event-outbox-control-history.md) for schema setup,
 parameter binding, lookup, pagination, and retention. Calls without an ID preserve
 the earlier behavior and do not write history.
+
+## Deadline-aware retry policies
+
+Set `RetryPolicy` on recovery options for capped exponential jitter, 429/503
+Retry-After guidance, and optional lifetime attempt limits. Fixed `Backoff`
+remains the default. See [the retry policy guide](event-outbox-retry-policy.md),
+including the explicit CHECK-constraint upgrade for existing installations.

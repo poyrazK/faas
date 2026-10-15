@@ -1269,3 +1269,8 @@ Set `CommandID` on outbox reconciliation/resume options for atomic retained
 control results. `GetEventOutboxControlReceipt` recovers a command result and
 `ListEventOutboxControlHistory` paginates one publication's retained controls.
 See [command replay and retention](../../docs/event-outbox-control-history.md).
+
+Outbox recovery can opt into `EventOutboxRetryPolicy` for capped exponential
+jitter, Retry-After guidance, and lifetime claim limits. See
+[policy and schema upgrade](../../docs/event-outbox-retry-policy.md) before enabling
+it on an existing application outbox.

@@ -19,7 +19,9 @@ import (
 type EventOutboxRecoveryOptions struct {
 	ClaimDuration  time.Duration
 	RequestTimeout time.Duration
-	Backoff        time.Duration
+	// Backoff is the legacy fixed delay; cannot be combined with RetryPolicy.
+	Backoff     time.Duration
+	RetryPolicy *EventOutboxRetryPolicy
 }
 
 func eventOutboxRecoveryOptions(o EventOutboxRecoveryOptions) (EventOutboxRecoveryOptions, error) {
@@ -29,11 +31,25 @@ func eventOutboxRecoveryOptions(o EventOutboxRecoveryOptions) (EventOutboxRecove
 	if o.RequestTimeout == 0 {
 		o.RequestTimeout = 10 * time.Second
 	}
-	if o.Backoff == 0 {
-		o.Backoff = 5 * time.Second
-	}
-	if o.ClaimDuration < time.Second || o.ClaimDuration > 5*time.Minute || o.ClaimDuration%time.Millisecond != 0 || o.RequestTimeout < time.Millisecond || o.RequestTimeout >= o.ClaimDuration || o.Backoff < time.Millisecond || o.Backoff > time.Hour || o.Backoff%time.Millisecond != 0 {
+	if o.ClaimDuration < time.Second || o.ClaimDuration > 5*time.Minute || o.ClaimDuration%time.Millisecond != 0 || o.RequestTimeout < time.Millisecond || o.RequestTimeout >= o.ClaimDuration {
 		return o, ErrInvalidEventConsumerRequest
+	}
+	if o.RetryPolicy == nil {
+		if o.Backoff == 0 {
+			o.Backoff = 5 * time.Second
+		}
+		if o.Backoff < time.Millisecond || o.Backoff > time.Hour || o.Backoff%time.Millisecond != 0 {
+			return o, ErrInvalidEventConsumerRequest
+		}
+	} else {
+		if o.Backoff != 0 {
+			return o, ErrInvalidEventConsumerRequest
+		}
+		policy, err := eventOutboxRetryPolicy(*o.RetryPolicy)
+		if err != nil {
+			return o, err
+		}
+		o.RetryPolicy = &policy
 	}
 	return o, nil
 }
@@ -42,6 +58,7 @@ type eventOutboxClaim struct {
 	account, app, key, slug string
 	body                    string
 	token                   [32]byte
+	attempts                int64
 }
 
 // RecoverNextEventOutbox claims and publishes at most one retained due intent.
@@ -73,7 +90,7 @@ func RecoverNextEventOutbox(ctx context.Context, db *sql.DB, client *Client, acc
 	defer func() { _ = tx.Rollback() }()
 	var digest []byte
 	var expired bool
-	err = tx.QueryRowContext(ctx, `SELECT producer_key,app_slug,request_body,request_digest,retry_until<=clock_timestamp() FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed') AND next_attempt_at<=clock_timestamp() AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) ORDER BY next_attempt_at,producer_key LIMIT 1 FOR UPDATE SKIP LOCKED`, account, app).Scan(&claim.key, &claim.slug, &claim.body, &digest, &expired)
+	err = tx.QueryRowContext(ctx, `SELECT producer_key,app_slug,request_body,request_digest,retry_until<=clock_timestamp(),attempts FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND state IN ('pending','unconfirmed') AND next_attempt_at<=clock_timestamp() AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) ORDER BY next_attempt_at,producer_key LIMIT 1 FOR UPDATE SKIP LOCKED`, account, app).Scan(&claim.key, &claim.slug, &claim.body, &digest, &expired, &claim.attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return zero, ErrEventOutboxEmpty
 	}
@@ -85,6 +102,8 @@ func RecoverNextEventOutbox(ctx context.Context, db *sql.DB, client *Client, acc
 	code := ""
 	if expired {
 		code = "retry_window_expired"
+	} else if options.RetryPolicy != nil && options.RetryPolicy.MaxAttempts > 0 && claim.attempts >= options.RetryPolicy.MaxAttempts {
+		code = "attempts_exhausted"
 	} else if !bytes.Equal(actual[:], digest) || json.Unmarshal([]byte(claim.body), &request) != nil || request.Validate() != nil || request.ExpectedAppID != app || request.Key != claim.key {
 		code = "publication_rejected"
 	}
@@ -98,7 +117,7 @@ func RecoverNextEventOutbox(ctx context.Context, db *sql.DB, client *Client, acc
 		}
 		return status, ErrEventOutboxBlocked
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE public.gregale_event_outbox SET claim_token=$4,claim_expires_at=least(retry_until,clock_timestamp()+$5::bigint*interval '1 millisecond'),attempts=least(attempts+1,2147483647),updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3`, account, app, claim.key, claim.token[:], options.ClaimDuration.Milliseconds())
+	err = tx.QueryRowContext(ctx, `UPDATE public.gregale_event_outbox SET claim_token=$4,claim_expires_at=least(retry_until,clock_timestamp()+$5::bigint*interval '1 millisecond'),attempts=least(attempts+1,2147483647),updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3 RETURNING attempts`, account, app, claim.key, claim.token[:], options.ClaimDuration.Milliseconds()).Scan(&claim.attempts)
 	if err != nil {
 		return zero, eventOutboxStoreError(ctx)
 	}
@@ -127,6 +146,9 @@ func (c eventOutboxClaim) publish(ctx context.Context, db *sql.DB, client *Clien
 		return zero, ErrEventOutboxClaimLost
 	}
 	callCtx, cancel := context.WithTimeout(ctx, budget)
+	if options.RetryPolicy != nil {
+		callCtx = context.WithValue(callCtx, eventOutboxPolicyContextKey{}, true)
+	}
 	response, publishErr := client.PublishAppEvent(callCtx, c.slug, request)
 	cancel()
 	state, code := "unconfirmed", "unconfirmed"
@@ -141,8 +163,19 @@ func (c eventOutboxClaim) publish(ctx context.Context, db *sql.DB, client *Clien
 		state, code = "blocked", "publication_rejected"
 		resultErr = ErrEventOutboxBlocked
 	}
+	var retryAfter time.Duration
+	var retryAt *time.Time
+	if options.RetryPolicy != nil && state == "unconfirmed" {
+		if options.RetryPolicy.MaxAttempts > 0 && c.attempts >= options.RetryPolicy.MaxAttempts {
+			state, code = "blocked", "attempts_exhausted"
+			resultErr = ErrEventOutboxBlocked
+		} else {
+			retryAfter, retryAt = eventOutboxRetryAfter(publishErr)
+		}
+	}
+	delay := c.retryDelay(options)
 	// Returning status and sanitizing errors avoids exposing server/driver payloads.
-	status, err := eventOutboxStatus(db.QueryRowContext(ctx, `UPDATE public.gregale_event_outbox SET state=$5,last_code=$6,accepted_at=$7::timestamptz,request_body=CASE WHEN $5='published' THEN NULL ELSE request_body END,claim_token=NULL,claim_expires_at=NULL,next_attempt_at=least(retry_until,clock_timestamp()+$8::bigint*interval '1 millisecond'),updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3 AND state IN ('pending','unconfirmed') AND claim_token=$4 AND claim_expires_at>clock_timestamp() RETURNING `+eventOutboxStatusColumns, c.account, c.app, c.key, c.token[:], state, code, accepted, options.Backoff.Milliseconds()))
+	status, err := eventOutboxStatus(db.QueryRowContext(ctx, `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS t) UPDATE public.gregale_event_outbox SET state=$5,last_code=$6,accepted_at=$7::timestamptz,request_body=CASE WHEN $5='published' THEN NULL ELSE request_body END,claim_token=NULL,claim_expires_at=NULL,next_attempt_at=least(retry_until,greatest(stamp.t+$9::bigint*interval '1 millisecond',$10::timestamptz)+$8::bigint*interval '1 millisecond'),updated_at=stamp.t FROM stamp WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3 AND state IN ('pending','unconfirmed') AND claim_token=$4 AND claim_expires_at>stamp.t RETURNING `+eventOutboxStatusColumns, c.account, c.app, c.key, c.token[:], state, code, accepted, delay.Milliseconds(), retryAfter.Milliseconds(), retryAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return zero, ErrEventOutboxClaimLost
 	}

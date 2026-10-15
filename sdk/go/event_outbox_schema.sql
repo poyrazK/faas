@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS public.gregale_event_outbox (
  claim_token bytea CHECK(octet_length(claim_token)=32),
  claim_expires_at timestamptz,
  accepted_at timestamptz,
- last_code text NOT NULL DEFAULT '' CHECK(last_code IN ('','unconfirmed','publication_confirmed','publication_rejected','retry_window_expired')),
+ last_code text NOT NULL DEFAULT '' CONSTRAINT gregale_event_outbox_last_code_check CHECK(last_code IN ('','unconfirmed','publication_confirmed','publication_rejected','retry_window_expired','attempts_exhausted')),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(account_id,app_id,producer_key),
