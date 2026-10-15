@@ -80,9 +80,53 @@ for cleanup diagnostics when reports are missing or invalid, and
 assertion receipts, coverage credit, budget refunds or proof that a batch ended.
 A missing execution report therefore remains blocking after resource cleanup.
 
-This first journal format is local-only. Bundle export refuses unresolved
-journal-bearing batches rather than discarding recovery identities. Finish
-local recovery before handoff. Completed batches retain their finalized receipt
-evidence for existing portable export. Existing campaigns without journals still
-use receipt recovery. Standalone test invocations outside campaign workers do
-not create journals.
+Run journals can travel in portable campaign bundles as described below.
+Existing campaigns without journals still use receipt recovery. Standalone
+test invocations outside campaign workers do not create journals.
+
+
+## Portable journal recovery
+
+The normal `bundle export` command now includes journals for checkpointed
+attempts in the root campaign and its recorded ancestry. No additional export
+flag is needed. Each journal contains its exact binding and run snapshot bytes,
+plus a portable inventory listing the expected snapshot names and checksums.
+The bundle ID covers this inventory. Existing bundles without journals remain
+supported; recipients of journal-bearing bundles need this updated Gregale.
+
+Use `bundle inspect --from handoff.json` to see journal/run counts and the
+number of uncertain provisioning intents. Import defaults to inspection-only.
+For cleanup, activate the import using the existing shared claim directory:
+
+```sh
+gregale test policy bundle import --from handoff.json --directory recipient \
+  --activate --claim-directory /shared/gregale-claims
+gregale test policy cleanup --plan recipient/artifacts/plan.json \
+  --policy recipient/artifacts/policy.yaml --manifest gregale-test.yaml \
+  --directory recipient/work --batch batch-id --journal \
+  --handoff recipient/bundle-index.json
+```
+
+Add `--execute` only to retry verified session deletion. Supply the original
+bound manifest and platform authentication outside the bundle. The original
+source machine is not consulted. The immutable journal bytes and inventories
+stay under `artifacts/nodes/`; root snapshots are copied separately into
+`work/`, where cleanup progress can advance. Re-exporting the work directory
+captures the updated snapshots and transfers ownership again. Original
+artifacts remain unchanged.
+
+Import validates safe paths, exact inventory membership, all snapshot hashes,
+run IDs, lifecycle states, binding equality, and checkpoint ancestry before
+materializing anything or claiming authority. Root journals must match a saved
+batch. Cleanup additionally checks workload membership against the supplied
+manifest and checks returned app IDs against live sessions. Ancestor journals
+remain immutable history rather than a second mutable cleanup owner.
+
+Uncertain `creating` states remain uncertain after transport and cannot
+authorize deletion. Missing execution reports remain blocking even after all
+known resources are absent; journals grant no coverage, completion or budget
+refunds. Uncheckpointed journals require local inspection before export.
+Malformed/truncated snapshots or reports are rejected rather than silently
+dropped. The existing 64 MiB decoded bundle, 4096-file, 33-node and 1024-run-per-
+journal bounds apply. Shared claim directories must actually be shared by all
+recipients; checksums protect integrity, not sender authenticity.

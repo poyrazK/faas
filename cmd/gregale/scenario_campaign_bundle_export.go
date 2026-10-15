@@ -14,15 +14,6 @@ import (
 
 func collectTestCampaignBundle(plan testCampaignPolicyPlan,checkpoint testCampaignCheckpoint,policy testCampaignPolicy,
 	scenarios map[string]testScenario,directory,from,baseline,recovery string,resolver *testCampaignBundleResolver) (testCampaignBundle,error) {
-	for _,batch:=range plan.Batches{
-        if batch.Side!=checkpoint.Side{continue}
-        if _,err:=os.Lstat(testCampaignJournalDirectory(directory,batch.ID));err==nil{
-            saved:=checkpoint.Batches[batch.ID]
-            if saved.Status!="done"||saved.ReportSHA256==""{
-                return testCampaignBundle{},errors.New("unresolved local run journals cannot be handed off; inspect and recover locally")
-            }
-        }else if !os.IsNotExist(err){return testCampaignBundle{},err}
-    }
     bundle := testCampaignBundle{SchemaVersion:1,SourceFrozen:true,PlanSHA256:testCampaignJSONHash(plan),Side:checkpoint.Side,
 		Revision:checkpoint.Revision,HistoryComplete:true,Nodes:[]testCampaignBundleNode{},Files:[]testCampaignBundleFile{}}
 	known := []string{}
@@ -80,8 +71,15 @@ func collectTestCampaignBundle(plan testCampaignPolicyPlan,checkpoint testCampai
 		for id := range ids { sorted = append(sorted,id) }
 		sort.Strings(sorted)
 		for _,id := range sorted {
-			name := "batch-"+id+".json"
-			if !testCampaignBundleBatchName.MatchString(name) { return bundle,errors.New("batch identity is not portable") }
+            name := "batch-"+id+".json"
+            if !testCampaignBundleBatchName.MatchString(name) { return bundle,errors.New("batch identity is not portable") }
+            if _,exists:=current.Batches[id];!exists{
+                if _,err:=os.Lstat(testCampaignJournalDirectory(physical,id));!os.IsNotExist(err){
+                    return bundle,errors.New("uncheckpointed journal requires local inspection before handoff")
+                }
+            }else{
+                if err:=collectTestCampaignPortableJournal(nodePath,physical,id,add);err!=nil{return bundle,err}
+            }
 			path := filepath.Join(physical,name)
 			body,err := readTestCampaignBundleBytes(path,testCampaignBundleRawLimit)
 			if os.IsNotExist(err) {
@@ -251,13 +249,27 @@ func cmdTestCampaignBundleExport(args []string) int {
 	return writeTestCampaignBundleSummary(bundle)
 }
 func writeTestCampaignBundleSummary(bundle testCampaignBundle) int {
-	summary := struct{
+ journals,runs,uncertain:=0,0,0
+ for _,file:=range bundle.Files{
+  _,name,ok:=testCampaignPortableJournalPath(file.Path)
+  if !ok{continue}
+  if name=="binding.json"{journals++;continue}
+  if name=="inventory.json"{continue}
+  var journal testCampaignRunJournal
+  if json.Unmarshal(file.Data,&journal)!=nil{continue}
+  runs++
+  for _,workload:=range journal.Workloads{if workload.State=="creating"{uncertain++}}
+ }
+ summary := struct{
 		SchemaVersion int `json:"schema_version"`
 		BundleID string `json:"bundle_id"`
 		Files int `json:"files"`
 		Nodes int `json:"history_nodes"`
 		HistoryComplete bool `json:"history_complete"`
-	}{1,bundle.ID,len(bundle.Files),len(bundle.Nodes),bundle.HistoryComplete}
+        JournalDirectories int `json:"journal_directories"`
+        JournalRuns int `json:"journal_runs"`
+        UncertainProvisioning int `json:"uncertain_provisioning"`
+    }{1,bundle.ID,len(bundle.Files),len(bundle.Nodes),bundle.HistoryComplete,journals,runs,uncertain}
 	if err := json.NewEncoder(os.Stdout).Encode(summary); err != nil { return printErr("Could not write bundle summary",err) }
 	return 0
 }

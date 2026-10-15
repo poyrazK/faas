@@ -69,8 +69,16 @@ func importTestCampaignBundle(bundle testCampaignBundle,directory string,active 
 	if _,err:=readTestCampaignPolicy(filepath.Join(stage,"artifacts","policy.yaml"));err!=nil{return index,err}
 	if err:=os.Mkdir(filepath.Join(stage,"work"),0o700);err!=nil{return index,err}
 	for _,file:=range bundle.Files {
-		if path.Dir(file.Path)!="nodes/0"{continue}
-		if err:=os.WriteFile(filepath.Join(stage,"work",filepath.Base(file.Path)),file.Data,0o600);err!=nil{return index,err}
+		relative:=""
+        if path.Dir(file.Path)=="nodes/0"{relative=path.Base(file.Path)}else if directory,name,ok:=testCampaignPortableJournalPath(file.Path);ok&&path.Dir(directory)=="nodes/0"{
+            // The immutable source inventory stays in artifacts. Work snapshots
+            // may advance independently as verified cleanup proceeds.
+            if name=="inventory.json"{continue}
+            relative=path.Join(path.Base(directory),name)
+        }else{continue}
+        destination:=filepath.Join(stage,"work",filepath.FromSlash(relative))
+        if err:=os.MkdirAll(filepath.Dir(destination),0o700);err!=nil{return index,err}
+        if err:=os.WriteFile(destination,file.Data,0o600);err!=nil{return index,err}
 	}
 	for _,orphan:=range bundle.Orphans{
 		if err:=os.WriteFile(filepath.Join(stage,"work","batch-"+orphan.Batch+".log"),[]byte("Original log content excluded from campaign handoff.\n"),0o600);err!=nil{return index,err}

@@ -132,6 +132,7 @@ func testCampaignBundlePathAllowed(name string) bool {
 	if len(parts) == 2 && parts[0] == "recovery" {
 		return regexp.MustCompile(`^recovered-batch-[1-9][0-9]*\.json$`).MatchString(parts[1])
 	}
+	if _,_,ok:=testCampaignPortableJournalPath(name);ok{return true}
 	if len(parts) != 3 || parts[0] != "nodes" || !regexp.MustCompile(`^(0|[1-9][0-9]*)$`).MatchString(parts[1]) { return false }
 	return parts[2] == "checkpoint.json" || parts[2] == testCampaignRecoverySealName || testCampaignBundleBatchName.MatchString(parts[2])
 }
@@ -205,7 +206,10 @@ func validateTestCampaignBundle(bundle testCampaignBundle) error {
 	if !seen["plan.json"] || !seen["policy.yaml"] || bundle.ID == "" || bundle.ID != testCampaignBundleID(bundle) {
 		return errors.New("bundle inventory identity does not match")
 	}
-	return validateTestCampaignBundleGraph(bundle)
+	if err:=validateTestCampaignBundleGraph(bundle);err!=nil{return err}
+ files:=make(map[string][]byte)
+ for _,file:=range bundle.Files{files[file.Path]=file.Data}
+ return validateTestCampaignPortableJournals(bundle,files)
 }
 func readTestCampaignBundle(name string) (testCampaignBundle,error) {
 	var bundle testCampaignBundle

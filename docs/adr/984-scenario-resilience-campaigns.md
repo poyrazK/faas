@@ -154,5 +154,24 @@ existing inactive-owner locks and live app-ID checks, never the default
 workspace. Reconciliation may expose journal cleanup diagnostics, but journals
 cannot substitute for terminal assertion evidence, waive cleanup failures,
 establish completion, refund attempted cost or grant coverage. Missing reports
-remain blocking. Unresolved local journals cannot be silently discarded by
-portable bundle export; journal transport is outside this initial format.
+remain blocking. Unresolved journals must never be silently discarded by portable bundle
+export. The following extension defines their transport.
+
+
+## Portable journal recovery (2026-10-15)
+
+Campaign bundles may carry exact journal bindings and run snapshots for attempted
+checkpoint batches at each declared ancestry node. A per-journal inventory pins
+the exact snapshot set and checksums; the existing bundle identity and immutable
+import inventory pin those bytes. Import validates paths, bounds, checkpoint and
+run bindings, workload lifecycle states, and complete inventory membership before
+claiming authority. Earlier bundles without journals remain valid.
+
+Root snapshots are copied into the owned recipient work directory, separately
+from immutable artifact snapshots. Cleanup uses existing active shared claims,
+runner locks, manifest bindings and live app-ID checks. Re-export captures current
+work snapshots and revokes the old recipient through the existing handoff flow.
+Ancestor journals stay immutable history. Unconfirmed provisioning remains
+uncertain across transport. Journal evidence cannot grant coverage, establish
+test completion, waive recorded failures or refund attempted execution budget.
+Malformed or uncheckpointed journals are rejected rather than lost in transit.
