@@ -15,7 +15,7 @@ import (
 // ReconcileWorkerPools reads demand separately for each captured environment.
 // An app-wide target cannot authorize changing a neighboring worker pool.
 func (e *Engine) ReconcileWorkerPools(ctx context.Context, appID, trigger string) error {
-	return e.reconcileWorkerScopes(ctx, appID, "", nil, trigger)
+	return e.reconcileWorkerScopesWithBusyRetry(ctx, appID, "", nil, trigger)
 }
 
 // ReconcileWorkerPoolForScope changes only this environment. Scope is required;
@@ -24,7 +24,36 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 	if scope == "" || api.ValidateScope(scope) != nil || desired < 0 {
 		return state.ErrInvalidArgument
 	}
-	return e.reconcileWorkerScopes(ctx, appID, scope, &desired, trigger)
+	return e.reconcileWorkerScopesWithBusyRetry(ctx, appID, scope, &desired, trigger)
+}
+
+// Application-standard guards use NOWAIT row locks so a worker cannot enter
+// while its runtime inputs are being changed. A worker-pool pass may already
+// have completed earlier scopes or replicas when that guard reports a
+// transient busy error. Re-read and reconcile the full plan after a short
+// backoff; the failed insert was rolled back, and each pass derives its plan
+// from current durable state.
+func (e *Engine) reconcileWorkerScopesWithBusyRetry(ctx context.Context, appID, onlyScope string, override *int, trigger string) error {
+	const maxAttempts = 4
+	for attempt := 0; ; attempt++ {
+		err := e.reconcileWorkerScopes(ctx, appID, onlyScope, override, trigger)
+		if !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) || attempt+1 == maxAttempts {
+			return err
+		}
+		delay := time.Duration(10<<attempt) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // WakeWorkerApp handles an explicit wake (`gregale wake`) of a worker app.

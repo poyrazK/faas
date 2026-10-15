@@ -83,6 +83,26 @@ var roleMatrixCells = []struct {
 	role        state.OrgRole
 	wantAllowed bool
 }{
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleOwner, true},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleAdmin, true},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleDeveloper, true},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleViewer, false},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleBilling, false},
+	{OrgActionViewApplicationStandards, state.OrgRoleOwner, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleAdmin, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleDeveloper, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleViewer, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleBilling, true},
+	{OrgActionManageApplicationStandards, state.OrgRoleOwner, true},
+	{OrgActionManageApplicationStandards, state.OrgRoleAdmin, true},
+	{OrgActionManageApplicationStandards, state.OrgRoleDeveloper, false},
+	{OrgActionManageApplicationStandards, state.OrgRoleViewer, false},
+	{OrgActionManageApplicationStandards, state.OrgRoleBilling, false},
+	{OrgActionApproveApplicationStandards, state.OrgRoleOwner, true},
+	{OrgActionApproveApplicationStandards, state.OrgRoleAdmin, true},
+	{OrgActionApproveApplicationStandards, state.OrgRoleDeveloper, false},
+	{OrgActionApproveApplicationStandards, state.OrgRoleViewer, false},
+	{OrgActionApproveApplicationStandards, state.OrgRoleBilling, false},
 	// View — every role can read.
 	{OrgActionView, state.OrgRoleOwner, true},
 	{OrgActionView, state.OrgRoleAdmin, true},
@@ -412,18 +432,22 @@ func TestOrgActionString(t *testing.T) {
 // matching slice (or this test fails).
 func TestAllOrgActions_Complete(t *testing.T) {
 	want := map[OrgAction]bool{
-		OrgActionView:              true,
-		OrgActionManageMembers:     true,
-		OrgActionInviteMembers:     true,
-		OrgActionRemoveMembers:     true,
-		OrgActionChangeRole:        true,
-		OrgActionTransferOwnership: true,
-		OrgActionManageBilling:     true,
-		OrgActionChangePlan:        true,
-		OrgActionDelete:            true,
-		OrgActionCreateApiKey:      true,
-		OrgActionRevokeApiKey:      true,
-		OrgActionCreateApp:         true,
+		OrgActionView:                              true,
+		OrgActionManageMembers:                     true,
+		OrgActionInviteMembers:                     true,
+		OrgActionRemoveMembers:                     true,
+		OrgActionChangeRole:                        true,
+		OrgActionTransferOwnership:                 true,
+		OrgActionManageBilling:                     true,
+		OrgActionChangePlan:                        true,
+		OrgActionDelete:                            true,
+		OrgActionCreateApiKey:                      true,
+		OrgActionRevokeApiKey:                      true,
+		OrgActionCreateApp:                         true,
+		OrgActionViewApplicationStandards:          true,
+		OrgActionManageApplicationStandards:        true,
+		OrgActionApproveApplicationStandards:       true,
+		OrgActionSetApplicationStandardLocalIntent: true,
 	}
 	got := map[OrgAction]bool{}
 	for _, a := range AllOrgActions {

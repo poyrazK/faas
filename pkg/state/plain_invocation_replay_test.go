@@ -202,9 +202,7 @@ func TestPgPlainReplayRollbackAndOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "update apps set account_id=$1 where id=$2", foreign.ID, appID); err != nil {
-		t.Fatal(err)
-	}
+	seedLegacyForeignCreatingAccount(t, ctx, pool, appID, foreign.ID)
 	if _, err := store.ExistingPlainInvocationReplay(ctx, accountID, root.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("old owner read durable child: %v", err)
 	}

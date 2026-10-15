@@ -284,11 +284,14 @@ func (p *ServiceTCPProxy) releaseDeployment(ctx context.Context, callerAppID, ca
 
 // forward picks a replica, waking the target when none is routable, and
 // tries one alternate replica only when the first could not be dialed before
-// any client byte was read.
+// any client byte was read. A replica vmmd refused as frozen (ADR-1151) is
+// withdrawn rather than quarantined, and the retry skips it, so the target
+// is woken and the frozen replica thaws.
 func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target ServiceTCPTarget, deploymentID string, port int) (string, string, error) {
 	services := p.cfg.Services
+	frozenID := ""
 	for attempt := 0; attempt < 2; attempt++ {
-		endpoints, reason, err := p.routable(ctx, target.AppID, deploymentID)
+		endpoints, reason, err := p.routable(ctx, target.AppID, deploymentID, frozenID)
 		if reason != "" {
 			return "", reason, err
 		}
@@ -300,7 +303,11 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target Ser
 		hop.Port = port
 		err = p.cfg.Forward(ctx, conn, hop, target.IdleTimeout)
 		if errors.Is(err, ErrTCPGuestUnreachable) {
-			services.quarantine(target.AppID, endpoint.InstanceID)
+			frozen := instanceFrozenRefusal(err)
+			if frozen {
+				frozenID = endpoint.InstanceID
+			}
+			services.retireEndpoint(target.AppID, endpoint.InstanceID, frozen)
 			services.invalidateEndpoints(target.AppID)
 			continue
 		}
@@ -314,13 +321,19 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target Ser
 }
 
 // routable mirrors ServiceProxy.routableEndpoints without an HTTP writer.
-func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, string, error) {
+// frozenID, when set, is a replica vmmd just refused as frozen: it is left
+// out until the wake has thawed it.
+func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID, frozenID string) ([]ServiceEndpoint, string, error) {
 	services := p.cfg.Services
 	endpoints, err := services.endpoints(ctx, appID)
 	if err != nil {
 		return nil, "registry_unavailable", err
 	}
-	if endpoints = serviceEndpointsForDeployment(endpoints, deploymentID); len(endpoints) > 0 {
+	endpoints = serviceEndpointsForDeployment(endpoints, deploymentID)
+	if frozenID != "" {
+		endpoints = withoutServiceEndpoint(endpoints, frozenID)
+	}
+	if len(endpoints) > 0 {
 		return endpoints, "", nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)

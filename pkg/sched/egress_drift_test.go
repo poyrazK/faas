@@ -44,6 +44,7 @@ type recordingRouterVMM struct {
 type recordedAllowlistCall struct {
 	NodeID      string
 	AppID       string
+	Revision    int64 // zero identifies the legacy compatibility path
 	Allowlist   []netip.Prefix
 	EgressPorts []int
 }
@@ -219,6 +220,14 @@ func (s *durableEgressTestStore) ListServingAppEgressPolicyNodeStates(context.Co
 }
 
 func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, appID string, allowlist []netip.Prefix, egressPorts []int) error {
+	return r.recordEgressPolicy(nodeID, appID, 0, allowlist, egressPorts)
+}
+
+func (r *recordingRouterVMM) UpdateAppEgressPolicy(_ context.Context, nodeID, appID string, revision int64, allowlist []netip.Prefix, egressPorts []int) error {
+	return r.recordEgressPolicy(nodeID, appID, revision, allowlist, egressPorts)
+}
+
+func (r *recordingRouterVMM) recordEgressPolicy(nodeID, appID string, revision int64, allowlist []netip.Prefix, egressPorts []int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Copy the slice so a later mutation (or the caller's
@@ -229,6 +238,7 @@ func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, ap
 	r.calls = append(r.calls, recordedAllowlistCall{
 		NodeID:      nodeID,
 		AppID:       appID,
+		Revision:    revision,
 		Allowlist:   cp,
 		EgressPorts: append([]int(nil), egressPorts...),
 	})
@@ -703,6 +713,11 @@ func TestEgressDrift_ReplaysMissedNotificationAndRetriesFailure(t *testing.T) {
 	sub.reconcilePending(ctx)
 	if got := router.snapshotLen(); got != 2 {
 		t.Fatalf("VMM attempts = %d, want failed attempt plus retry", got)
+	}
+	for _, call := range router.snapshot() {
+		if call.Revision != 3 {
+			t.Fatalf("durable update used unrevisioned or wrong RPC: %+v", call)
+		}
 	}
 	durable.mu.Lock()
 	defer durable.mu.Unlock()

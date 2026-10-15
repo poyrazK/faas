@@ -124,6 +124,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.pendingCleanup, lease.Instance)
 	delete(m.pendingProcessExits, lease.Instance)
 	delete(m.processGenerations, lease.Instance)
+	delete(m.processStartedAt, lease.Instance)
 	delete(m.waking, lease.Instance)
 	delete(m.live, lease.Instance)
 	delete(m.qualificationInstances, lease.Instance)
@@ -216,6 +217,9 @@ func (m *Manager) joinForTeardown(ctx context.Context, instance string) error {
 	m.mu.Unlock()
 	if held {
 		return fmt.Errorf("stop %s: %w", instance, ErrRestartQuarantine)
+	}
+	if err := m.cancelRuntimeAdmissionFlight(ctx, instance); err != nil {
+		return err
 	}
 	if err := m.cancelInFlightInstance(ctx, instance); err != nil {
 		return err

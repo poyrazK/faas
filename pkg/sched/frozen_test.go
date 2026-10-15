@@ -20,6 +20,9 @@ type frozenFakeVMM struct {
 	freezes, thaws int
 	freezeErr      error
 	thawErr        error
+	thawReqs       []ThawRequest
+	// skipAfterRestore answers like a vmmd that predates run_after_restore.
+	skipAfterRestore bool
 }
 
 func (f *frozenFakeVMM) FreezeInstance(context.Context, string, string, bool) (FreezeReport, error) {
@@ -27,9 +30,13 @@ func (f *frozenFakeVMM) FreezeInstance(context.Context, string, string, bool) (F
 	return FreezeReport{}, f.freezeErr
 }
 
-func (f *frozenFakeVMM) ThawInstance(context.Context, string, string, bool) (bool, error) {
+func (f *frozenFakeVMM) ThawInstance(_ context.Context, _, _ string, req ThawRequest) (ThawResult, error) {
 	f.thaws++
-	return false, f.thawErr
+	f.thawReqs = append(f.thawReqs, req)
+	if f.thawErr != nil {
+		return ThawResult{}, f.thawErr
+	}
+	return ThawResult{HealthcheckVerified: req.ImageHealthcheckRequired, AfterRestoreRan: req.RunAfterRestore && !f.skipAfterRestore}, nil
 }
 
 type frozenFixture struct {
@@ -46,18 +53,27 @@ type frozenFixture struct {
 // init snapshot for its deployment.
 func newFrozenFixture(t *testing.T, withSnapshot bool, appType ...state.AppType) *frozenFixture {
 	t.Helper()
+	return newFrozenFixtureWith(t, withSnapshot, func(app *state.App) {
+		if len(appType) > 0 {
+			app.Type = appType[0]
+		}
+	})
+}
+
+// newFrozenFixtureWith is newFrozenFixture with the app shaped by shape
+// before it is created.
+func newFrozenFixtureWith(t *testing.T, withSnapshot bool, shape func(*state.App)) *frozenFixture {
+	t.Helper()
 	ctx := t.Context()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "frozen@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	typ := state.AppTypeFunction
-	if len(appType) > 0 {
-		typ = appType[0]
-	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "frozen", Type: typ,
-		RAMMB: 512, MaxConcurrency: 4, IdleTimeoutS: 30})
+	shaped := state.App{AccountID: acct.ID, Slug: "frozen", Type: state.AppTypeFunction,
+		RAMMB: 512, MaxConcurrency: 4, IdleTimeoutS: 30}
+	shape(&shaped)
+	app, err := store.CreateApp(ctx, shaped)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +268,48 @@ func TestFailedThawParksAndWakesFromSnapshot(t *testing.T) {
 	}
 	if f.e.Ledger().ResidentFor(f.ins.ID) {
 		t.Fatal("parked frozen instance kept a reservation")
+	}
+}
+
+// A thaw runs the app's after_restore callback when the app declares one,
+// and a vmmd that does not confirm it ran is treated as a failed thaw: the
+// VM parks and the request wakes from the snapshot, whose restore runs it.
+func TestThawRunsAfterRestoreWhenDeclared(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		declared         bool
+		skipAfterRestore bool
+		wantThawed       bool
+	}{
+		{name: "no hook", wantThawed: true},
+		{name: "hook declared", declared: true, wantThawed: true},
+		{name: "vmmd predates run_after_restore", declared: true, skipAfterRestore: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFrozenFixtureWith(t, true, func(app *state.App) {
+				if tc.declared {
+					app.Manifest.AfterRestore = &api.AfterRestoreHook{Path: "/after-restore"}
+				}
+			})
+			f.e.EnableFrozenTier()
+			f.vmm.skipAfterRestore = tc.skipAfterRestore
+			if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); err != nil || !handled {
+				t.Fatalf("FreezeIdle: %v, %v", handled, err)
+			}
+			result, err := f.e.Wake(t.Context(), f.app.ID, "", "", "")
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			if len(f.vmm.thawReqs) != 1 || f.vmm.thawReqs[0].RunAfterRestore != tc.declared {
+				t.Fatalf("thaw requests %+v, want one with RunAfterRestore=%v", f.vmm.thawReqs, tc.declared)
+			}
+			if thawed := result.InstanceID == f.ins.ID; thawed != tc.wantThawed {
+				t.Fatalf("woke %s (frozen %s, now %s); want thawed=%v", result.InstanceID, f.ins.ID, f.state(t), tc.wantThawed)
+			}
+			if !tc.wantThawed && f.state(t) != state.StateParked {
+				t.Fatalf("unconfirmed after_restore left the frozen row %s, want parked", f.state(t))
+			}
+		})
 	}
 }
 

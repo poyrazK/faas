@@ -416,7 +416,7 @@ func (v *JailerVMM) checkNativeSnapshotMemoryRestorationOwner(ctx context.Contex
 		return errors.Join(err, errors.New("native snapshot memory: original incoming changed"))
 	}
 	capture, err := q.readCapture(incoming)
-	if err != nil || capture != permit.Capture {
+	if err != nil || !capture.Equal(permit.Capture) {
 		return errors.Join(err, errors.New("native snapshot memory: original capture changed"))
 	}
 	publication, ok := original.Value(nativeSnapshotPublicationContextKey{}).(nativeSnapshotPublicationPermit)
