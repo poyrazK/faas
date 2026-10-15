@@ -502,6 +502,19 @@ var templateNames13 = []string{
 // catches the omission; the manifest-drift guard is the load-bearing
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
+	{
+		Name: "sites", DocSlug: "sites", Audience: cliAudienceOperator,
+		Short: "Internal static hosting (requires the frontend hosting flag)",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Create an internal site", Flags: []cliFlag{{Name: "name", Value: "NAME"}, {Name: "project", Value: "PROJECT"}, {Name: "environment", Value: "ENV"}}},
+			{Name: "list", Short: "List owned internal sites"},
+			{Name: "deploy", Short: "Publish a prebuilt static directory", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}}},
+			{Name: "releases", Short: "List releases", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+			{Name: "rollback", Short: "Promote a retained ready release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
+			{Name: "retire", Short: "Retire an inactive release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
+			{Name: "delete", Short: "Disable a site and retire its artifacts", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+		},
+	},
 	mcpCLICommand(),
 	{
 		Name: "menu", DocSlug: "cli", Short: "Choose a common task and open its guided command",

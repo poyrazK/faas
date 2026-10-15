@@ -27,6 +27,7 @@ const (
 	runtimeConfigRekey           = "rekey_enabled"
 	runtimeConfigHSTS            = "hsts_enabled"
 	runtimeConfigS3              = "s3_enabled"
+	runtimeConfigFrontendHosting = "frontend_hosting_enabled"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -52,6 +53,7 @@ type runtimeConfigDefinition struct {
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
+	{Key: runtimeConfigFrontendHosting, Label: "Internal frontend hosting", Description: "Enable operator-only static hosting. Edge routes expire within 120 seconds after disabling; the Worker also requires its own switch and Cloudflare Access.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -98,6 +100,8 @@ func newRuntimeConfigManager(getenv func(string) string) *runtimeConfigManager {
 func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) string) json.RawMessage {
 	var envName string
 	switch def.Key {
+	case runtimeConfigFrontendHosting:
+		envName = "FAAS_FRONTEND_HOSTING_ENABLED"
 	case runtimeConfigTenantSurfaces:
 		envName = "FAAS_TENANT_SURFACES_ENABLED"
 	case runtimeConfigDomainDoctor:

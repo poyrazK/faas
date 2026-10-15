@@ -6,6 +6,10 @@ separate files here. This directory holds ADRs made *after* the spec.
 
 Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
+The default-off internal static-hosting lifecycle, quotas, and Cloudflare/R2
+delivery boundary are recorded in
+[ADR-20261015](20261015-internal-static-hosting.md).
+
 ## Picking a number
 
 ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one

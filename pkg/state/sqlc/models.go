@@ -4063,6 +4063,29 @@ type GooseDbVersion struct {
 	Tstamp    pgtype.Timestamp
 }
 
+type HostingRelease struct {
+	ID        pgtype.UUID
+	SiteID    pgtype.UUID
+	State     string
+	Manifest  []byte
+	CreatedAt pgtype.Timestamptz
+	RetiredAt pgtype.Timestamptz
+}
+
+type HostingSite struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	Environment     string
+	Name            string
+	Hostname        string
+	OriginID        string
+	Status          string
+	ActiveReleaseID pgtype.UUID
+	Revision        int64
+	CreatedAt       pgtype.Timestamptz
+}
+
 type IdempotencyKey struct {
 	Key            string
 	AccountID      pgtype.UUID

@@ -431,6 +431,8 @@ func run(args []string) (status int) {
 		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
+	case "sites":
+		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
 	case "flags":

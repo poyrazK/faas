@@ -1,0 +1,38 @@
+package hosting
+
+import "testing"
+
+func TestHostingConfigurationIsExplicitAndIsolated(t *testing.T) {
+	if config, err := Load(func(string) string { return "" }, "gregale.dev"); err != nil || config != nil {
+		t.Fatalf("default config %+v %v", config, err)
+	}
+	if _, err := Load(func(key string) string {
+		if key == "FAAS_FRONTEND_HOSTING_ENABLED" {
+			return "1"
+		}
+		return ""
+	}, "gregale.dev"); err == nil {
+		t.Fatal("enabled unconfigured deployment accepted")
+	}
+	values := map[string]string{
+		"FAAS_FRONTEND_HOSTING_DOMAIN":          "hosting.example",
+		"FAAS_FRONTEND_HOSTING_R2_ENDPOINT":     "https://example.r2.cloudflarestorage.com",
+		"FAAS_FRONTEND_HOSTING_R2_BUCKET":       "hosting",
+		"FAAS_FRONTEND_HOSTING_R2_ACCESS_KEY":   "test-key",
+		"FAAS_FRONTEND_HOSTING_R2_SECRET_KEY":   "test-secret",
+		"FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID":   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"FAAS_FRONTEND_HOSTING_KV_NAMESPACE_ID": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"FAAS_FRONTEND_HOSTING_CF_TOKEN":        "test-token",
+	}
+	getenv := func(key string) string { return values[key] }
+	if config, err := Load(getenv, "apps.gregale.dev"); err != nil || config == nil {
+		t.Fatalf("valid configuration: %+v %v", config, err)
+	}
+	for _, domain := range []string{"sites.gregale.dev", "https://other.example", "other.example/path", "user@other.example", "other.example:443"} {
+		values["FAAS_FRONTEND_HOSTING_DOMAIN"] = domain
+		_, err := Load(getenv, "apps.gregale.dev")
+		if err == nil {
+			t.Fatalf("accepted unsafe hosting domain %q", domain)
+		}
+	}
+}

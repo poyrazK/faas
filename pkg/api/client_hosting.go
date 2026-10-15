@@ -1,0 +1,76 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+)
+
+const hostingAPIPath = "/v1/internal/hosting/sites"
+
+func (c *Client) DeleteHostingSite(ctx context.Context, site string) (HostingSite, error) {
+	var out HostingSite
+	err := c.do(ctx, http.MethodDelete, hostingSitePath(site), nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateHostingSite(ctx context.Context, req CreateHostingSiteRequest) (HostingSite, error) {
+	var out HostingSite
+	err := c.do(ctx, http.MethodPost, hostingAPIPath, req, &out)
+	return out, err
+}
+
+func (c *Client) ListHostingSites(ctx context.Context) ([]HostingSite, error) {
+	var out []HostingSite
+	err := c.do(ctx, http.MethodGet, hostingAPIPath, nil, &out)
+	return out, err
+}
+
+func hostingSitePath(site string) string { return hostingAPIPath + "/" + url.PathEscape(site) }
+func hostingReleasePath(site, release string) string {
+	return hostingSitePath(site) + "/releases/" + url.PathEscape(release)
+}
+
+func (c *Client) GetHostingSite(ctx context.Context, site string) (HostingSite, error) {
+	var out HostingSite
+	err := c.do(ctx, http.MethodGet, hostingSitePath(site), nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateHostingRelease(ctx context.Context, site string, manifest HostingManifest) (HostingRelease, error) {
+	var out HostingRelease
+	err := c.do(ctx, http.MethodPost, hostingSitePath(site)+"/releases", manifest, &out)
+	return out, err
+}
+
+func (c *Client) ListHostingReleases(ctx context.Context, site string) ([]HostingRelease, error) {
+	var out []HostingRelease
+	err := c.do(ctx, http.MethodGet, hostingSitePath(site)+"/releases", nil, &out)
+	return out, err
+}
+
+func (c *Client) HostingReleaseUploads(ctx context.Context, site, release string) (HostingUploadResponse, error) {
+	var out HostingUploadResponse
+	err := c.do(ctx, http.MethodPost, hostingReleasePath(site, release)+"/uploads", nil, &out)
+	return out, err
+}
+
+func (c *Client) FinalizeHostingRelease(ctx context.Context, site, release string) (HostingRelease, error) {
+	var out HostingRelease
+	cli := *c.http
+	cli.Timeout = HostingFinalizeTimeout + HostingStorageTimeout
+	err := c.doWithClientAndIdempotencyKey(ctx, &cli, http.MethodPost, hostingReleasePath(site, release)+"/finalize", nil, &out, "")
+	return out, err
+}
+
+func (c *Client) PromoteHostingRelease(ctx context.Context, site string, req PromoteHostingReleaseRequest) (HostingSite, error) {
+	var out HostingSite
+	err := c.do(ctx, http.MethodPost, hostingSitePath(site)+"/promotions", req, &out)
+	return out, err
+}
+
+func (c *Client) RetireHostingRelease(ctx context.Context, site, release string) (HostingRelease, error) {
+	var out HostingRelease
+	err := c.do(ctx, http.MethodDelete, hostingReleasePath(site, release), nil, &out)
+	return out, err
+}

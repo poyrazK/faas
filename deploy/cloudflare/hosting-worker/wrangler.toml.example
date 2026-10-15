@@ -1,0 +1,24 @@
+name = "gregale-internal-hosting"
+main = "worker.mjs"
+compatibility_date = "2026-10-15"
+workers_dev = false
+preview_urls = false
+
+[vars]
+# Opt in only after configuring a wildcard Cloudflare Access application.
+FAAS_FRONTEND_HOSTING_ENABLED = "false"
+ACCESS_TEAM_DOMAIN = "your-team.cloudflareaccess.com"
+ACCESS_AUD = "replace-with-access-application-audience"
+INTERNAL_EMAILS = ""
+ORIGIN_ID = "replace-with-endpoint-and-bucket-fingerprint"
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "gregale-internal-hosting"
+
+[[kv_namespaces]]
+binding = "ROUTES"
+id = "replace-with-the-routing-namespace-id"
+
+# Add only the isolated hosting zone's wildcard route after Access is ready.
+# Never attach this Worker to the Gregale dashboard/API zone or R2 API endpoint.

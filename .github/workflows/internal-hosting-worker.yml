@@ -1,0 +1,23 @@
+name: internal-hosting-worker
+on:
+  pull_request:
+    paths:
+      - deploy/cloudflare/hosting-worker/**
+      - pkg/api/limits.go
+      - .github/workflows/internal-hosting-worker.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/cloudflare/hosting-worker/**
+      - .github/workflows/internal-hosting-worker.yml
+permissions:
+  contents: read
+jobs:
+  worker-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test --test-isolation=none deploy/cloudflare/hosting-worker/worker.test.mjs

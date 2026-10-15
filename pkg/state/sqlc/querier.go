@@ -1376,6 +1376,25 @@ type Querier interface {
 	HasSourceBuildRootfs(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error)
 	HeartbeatRuntimeUpgradeGateway(ctx context.Context, db DBTX, arg HeartbeatRuntimeUpgradeGatewayParams) (int64, error)
 	HoldProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg HoldProjectEnvironmentCloneConfigurationParams) (ProjectEnvironmentCloneConfigurationGuard, error)
+	HostingAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
+	HostingProjectEnvironmentOwned(ctx context.Context, db DBTX, arg HostingProjectEnvironmentOwnedParams) (bool, error)
+	HostingReleaseCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingReleaseCreate(ctx context.Context, db DBTX, arg HostingReleaseCreateParams) (HostingRelease, error)
+	HostingReleaseDeleted(ctx context.Context, db DBTX, arg HostingReleaseDeletedParams) error
+	HostingReleaseGet(ctx context.Context, db DBTX, arg HostingReleaseGetParams) (HostingRelease, error)
+	HostingReleaseList(ctx context.Context, db DBTX, arg HostingReleaseListParams) ([]HostingRelease, error)
+	HostingReleasePromote(ctx context.Context, db DBTX, arg HostingReleasePromoteParams) (HostingSite, error)
+	HostingReleaseReady(ctx context.Context, db DBTX, arg HostingReleaseReadyParams) (HostingRelease, error)
+	HostingReleaseRetire(ctx context.Context, db DBTX, arg HostingReleaseRetireParams) (HostingRelease, error)
+	HostingRoutePage(ctx context.Context, db DBTX, arg HostingRoutePageParams) ([]HostingSite, error)
+	HostingSiteCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	HostingSiteCreate(ctx context.Context, db DBTX, arg HostingSiteCreateParams) (HostingSite, error)
+	HostingSiteDelete(ctx context.Context, db DBTX, arg HostingSiteDeleteParams) (HostingSite, error)
+	HostingSiteGet(ctx context.Context, db DBTX, arg HostingSiteGetParams) (HostingSite, error)
+	HostingSiteList(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]HostingSite, error)
+	HostingSiteLock(ctx context.Context, db DBTX, arg HostingSiteLockParams) (HostingSite, error)
+	HostingSitePurge(ctx context.Context, db DBTX, arg HostingSitePurgeParams) error
+	HostingSiteRetireReleases(ctx context.Context, db DBTX, siteID pgtype.UUID) error
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
