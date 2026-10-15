@@ -75,6 +75,16 @@ const (
 	// start_jailer_ms, bind_tun_ms, cgroup_ms, write_config_ms,
 	// wait_ready_ms, quota_restore_ms, total_ms}.
 	WakeColdBootBreakdown = "wake.cold_boot_breakdown"
+	// WakeThawBreakdown — schedd's timing of one frozen-VM thaw (ADR-1151).
+	// Payload: {wake_id, app_id, instance_id, node_id, wake_reads_ms,
+	// thaw_reads_ms, vmmd_thaw_ms, publish_ms, after_publish_ms, total_ms}.
+	// wake_reads_ms covers the shared wake path before the thaw is tried;
+	// thaw_reads_ms the thaw's own reads and re-admission; vmmd_thaw_ms the
+	// ThawInstance RPC; publish_ms the frozen→RUNNING commit; after_publish_ms
+	// the bookkeeping before schedd answers the gateway. A thawed VM keeps its
+	// incarnation's wake_id, so successive thaws share it; their rows differ
+	// by time. Emitted after a successful thaw.
+	WakeThawBreakdown = "wake.thaw_breakdown"
 	// WakeColdBootCPU — vmmd temporarily raised the host-side CPU allowance
 	// for an app cold boot and observed readiness. Payload: {wake_id, app_id,
 	// instance_id, startup_cpu_millicores, configured_cpu_millicores,
@@ -507,6 +517,41 @@ func (e ColdBootBreakdown) Payload() map[string]any {
 		"wait_ready_ms":     e.WaitReadyMs,
 		"quota_restore_ms":  e.QuotaRestoreMs,
 		"total_ms":          e.TotalMs,
+	}
+}
+
+// ThawBreakdown attributes schedd's share of one frozen-VM thaw. Each field
+// is a disjoint, consecutive span; TotalMs runs from the start of the wake
+// path to the answer schedd returns, so it is their sum plus scheduling gaps.
+type ThawBreakdown struct {
+	EmitAt         time.Time
+	WakeID         string
+	AppID          string
+	InstanceID     string
+	NodeID         string
+	WakeReadsMs    int64
+	ThawReadsMs    int64
+	VmmdThawMs     int64
+	PublishMs      int64
+	AfterPublishMs int64
+	TotalMs        int64
+}
+
+func (e ThawBreakdown) Kind() string     { return WakeThawBreakdown }
+func (e ThawBreakdown) At() time.Time    { return e.EmitAt }
+func (e ThawBreakdown) Subject() *string { return nil }
+func (e ThawBreakdown) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":          e.WakeID,
+		"app_id":           e.AppID,
+		"instance_id":      e.InstanceID,
+		"node_id":          e.NodeID,
+		"wake_reads_ms":    e.WakeReadsMs,
+		"thaw_reads_ms":    e.ThawReadsMs,
+		"vmmd_thaw_ms":     e.VmmdThawMs,
+		"publish_ms":       e.PublishMs,
+		"after_publish_ms": e.AfterPublishMs,
+		"total_ms":         e.TotalMs,
 	}
 }
 

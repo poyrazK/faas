@@ -9,6 +9,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,7 +20,11 @@ import (
 // config is parked and the request takes the ordinary wake path. It runs
 // whether or not the frozen tier is enabled, so turning it off drains the
 // tier through requests as well as the TTL.
-func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, mode string) (WakeResult, bool, error) {
+//
+// wakeStarted is when the shared wake path began; the thaw's
+// wake.thaw_breakdown event reports the time spent before and inside it.
+func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, mode string, wakeStarted time.Time) (WakeResult, bool, error) {
+	timing := thawTiming{wakeStarted: wakeStarted, thawTried: time.Now()}
 	// The ledger knows which apps have frozen VMs, so an app without one
 	// costs no instance listing on the wake path.
 	if app.Status != state.AppActive || !instanceModeUsesSnapshots(mode) || e.ledger.FrozenCountForApp(app.ID) == 0 {
@@ -47,7 +52,7 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 		return WakeResult{}, false, nil
 	}
 	for _, frozen := range candidates {
-		result, thawed, err := e.thawFrozenLocked(ctx, thawer, app, acct, limits, dep, values, frozen)
+		result, thawed, err := e.thawFrozenLocked(ctx, thawer, app, acct, limits, dep, values, frozen, timing)
 		if err != nil {
 			return WakeResult{}, false, err
 		}
@@ -104,7 +109,7 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 
 // thawFrozenLocked thaws one candidate. thawed=false means the candidate was
 // parked and the caller may try the next one.
-func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, values runtimeDeploymentValues, frozen state.Instance) (WakeResult, bool, error) {
+func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, values runtimeDeploymentValues, frozen state.Instance, timing thawTiming) (WakeResult, bool, error) {
 	captured, proofErr := e.store.InstanceRuntimeConfigFence(ctx, acct.ID, app.ID, frozen.ID)
 	if proofErr != nil && !errors.Is(proofErr, state.ErrNotFound) {
 		return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: captured config: %w", proofErr)
@@ -132,13 +137,14 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		e.observeThaw("no_capacity")
 		return WakeResult{}, false, nil //nolint:nilerr // a refused re-admission parks the VM; the ordinary wake path owns the capacity answer
 	}
-	started := time.Now()
+	timing.rpcStarted = time.Now()
 	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)
 	// An app that declared after_restore reconnects its clients after the
 	// time it spent frozen, as it does after a restore.
 	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep), RunAfterRestore: app.Manifest.AfterRestore != nil}
 	result, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, req)
 	cancel()
+	timing.rpcEnded = time.Now()
 	if thawErr == nil {
 		thawErr = unconfirmedThawWork(req, result)
 	}
@@ -153,6 +159,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured,
 		Netns: frozen.Netns, HostIP: frozen.HostIP, GuestUID: frozen.GuestUID,
 	})
+	timing.published = time.Now()
 	if publishErr != nil {
 		e.log.Warn("sched: frozen thaw: publish RUNNING", "instance", frozen.ID, "err", publishErr)
 		if current, loadErr := e.store.InstanceByID(ctx, frozen.ID); loadErr == nil && state.State(current.State) == state.StateFrozen {
@@ -166,15 +173,46 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	e.recordCommittedInstanceTransition(ctx, fresh, state.StateFrozen, state.StateRunning, app.ID, "frozen_thaw", "")
 	e.clearSnapshotBackoffAfterWake(ctx, dep.ID)
 	e.observeThaw("success")
-	e.log.Debug("sched: thawed frozen instance", "instance", fresh.ID, "duration", time.Since(started))
 	region := ""
 	if node, nodeErr := e.store.ComputeNodeByID(ctx, fresh.NodeID); nodeErr == nil {
 		region = stringValue(node.Region)
 	}
+	e.emitThawBreakdown(ctx, app.ID, fresh, timing, time.Now())
 	// A thaw answers the gateway as a restore, as a warm-pool resume does.
 	return WakeResult{
 		InstanceID: fresh.ID, NodeID: fresh.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE,
 		WakeID: fresh.WakeID, Port: deploymentRuntimePort(dep), DeploymentID: dep.ID,
 		RequestCount: fresh.RequestCount, Identity: platformIdentity(app, dep, acct, fresh.NodeID, fresh.ID, region),
 	}, true, nil
+}
+
+// thawTiming holds one thaw's phase boundaries for wake.thaw_breakdown.
+type thawTiming struct {
+	wakeStarted, thawTried, rpcStarted, rpcEnded, published time.Time
+}
+
+// emitThawBreakdown records where one successful thaw spent its time. A
+// thaw keeps the instance's wake_id (the incarnation the exclusive-work
+// and config-proof checks match), so this event and the gateway's
+// wake.proxy_first_byte for the same thaw join on wake_id and time.
+func (e *Engine) emitThawBreakdown(ctx context.Context, appID string, ins state.Instance, timing thawTiming, answered time.Time) {
+	e.log.Debug("sched: thawed frozen instance", "instance", ins.ID, "duration", answered.Sub(timing.rpcStarted))
+	if e.events == nil {
+		return
+	}
+	ms := func(from, to time.Time) int64 {
+		if from.IsZero() || to.Before(from) {
+			return 0
+		}
+		return to.Sub(from).Milliseconds()
+	}
+	e.events.EmitAsync(ctx, events.ThawBreakdown{
+		EmitAt: answered.UTC(), WakeID: ins.WakeID, AppID: appID, InstanceID: ins.ID, NodeID: ins.NodeID,
+		WakeReadsMs:    ms(timing.wakeStarted, timing.thawTried),
+		ThawReadsMs:    ms(timing.thawTried, timing.rpcStarted),
+		VmmdThawMs:     ms(timing.rpcStarted, timing.rpcEnded),
+		PublishMs:      ms(timing.rpcEnded, timing.published),
+		AfterPublishMs: ms(timing.published, answered),
+		TotalMs:        ms(timing.wakeStarted, answered),
+	})
 }

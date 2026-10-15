@@ -25,6 +25,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = BootObserved{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", ObservedAt: now}
 	var _ WakeEvent = RestoreBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 596}
 	var _ WakeEvent = ColdBootBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 23474}
+	var _ WakeEvent = ThawBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", TotalMs: 61}
 	var _ WakeEvent = ColdBootCPU{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250}
 	var _ WakeEvent = BootCompleted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3}
 	var _ WakeEvent = BootFailed{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Reason: "stub"}
@@ -197,6 +198,34 @@ func TestColdBootBreakdown_Shape(t *testing.T) {
 	artifacts, ok := p["resolve_artifacts"].([]ColdBootArtifactResolution)
 	if !ok || len(artifacts) != 1 || artifacts[0].Bytes != 1048576 {
 		t.Errorf("payload.resolve_artifacts = %#v", p["resolve_artifacts"])
+	}
+}
+
+// adr: 1151 — a thaw's breakdown names every schedd span, so a slow thaw can
+// be attributed to the wake path, the thaw's reads, vmmd, or the publish.
+func TestThawBreakdown_Shape(t *testing.T) {
+	ev := ThawBreakdown{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-thaw", AppID: "a-thaw", InstanceID: "i-thaw", NodeID: "n-thaw",
+		WakeReadsMs: 80, ThawReadsMs: 31, VmmdThawMs: 4, PublishMs: 12, AfterPublishMs: 9, TotalMs: 138,
+	}
+	if got := ev.Kind(); got != WakeThawBreakdown {
+		t.Errorf("Kind = %q, want %q", got, WakeThawBreakdown)
+	}
+	if ev.Subject() != nil {
+		t.Errorf("Subject = %v, want nil", ev.Subject())
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id": "w-thaw", "app_id": "a-thaw", "instance_id": "i-thaw", "node_id": "n-thaw",
+		"wake_reads_ms": int64(80), "thaw_reads_ms": int64(31), "vmmd_thaw_ms": int64(4),
+		"publish_ms": int64(12), "after_publish_ms": int64(9), "total_ms": int64(138),
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
+	}
+	if len(p) != 10 {
+		t.Errorf("payload has %d keys, want 10: %v", len(p), p)
 	}
 }
 

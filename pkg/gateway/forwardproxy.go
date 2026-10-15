@@ -641,7 +641,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
 					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
 				}
-				evs.EmitAsyncOnce(r.Context(), t.WakeID, evts.ProxyFirstByte{
+				evs.EmitAsyncOnceCovering(r.Context(), firstByteOnceKey(r, t.WakeID), t.WakeID, evts.ProxyFirstByte{
 					EmitAt:          emitAt,
 					WakeID:          t.WakeID,
 					AppID:           t.AppID,
@@ -983,7 +983,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
 					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
 				}
-				evs.EmitAsyncOnce(r.Context(), t.WakeID, evts.ProxyFirstByte{
+				evs.EmitAsyncOnceCovering(r.Context(), firstByteOnceKey(r, t.WakeID), t.WakeID, evts.ProxyFirstByte{
 					EmitAt:          emitAt,
 					WakeID:          t.WakeID,
 					AppID:           t.AppID,

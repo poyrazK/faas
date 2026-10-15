@@ -2781,6 +2781,8 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
+	// A thaw reports how long the shared wake path ran before it was tried.
+	wakeStarted := time.Now()
 	// Explicit deployment, worker/job and config-restart paths may bypass
 	// ordinary request gates; none may bypass a database cutover barrier.
 	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
@@ -2888,7 +2890,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// the safe fallback.
 	// ADR-1151: a frozen VM of this deployment thaws in place before a warm
 	// VM or a new instance is used; frozen VMs are otherwise only parked.
-	if thawed, handled, thawErr := e.promoteFrozenInstanceLocked(ctx, app, acct, limits, dep, mode); handled || thawErr != nil {
+	if thawed, handled, thawErr := e.promoteFrozenInstanceLocked(ctx, app, acct, limits, dep, mode, wakeStarted); handled || thawErr != nil {
 		release()
 		return thawed, thawErr
 	}
