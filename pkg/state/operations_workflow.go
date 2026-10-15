@@ -152,6 +152,8 @@ func operationWorkflowProjection(op *Operation, def OperationDefinition, run Wor
 	case WorkflowRunStatusFailed, WorkflowRunStatusDead:
 		if unknown {
 			op.State, op.FailureCode, kind = api.OperationRequiresReconciliation, "execution_outcome_unknown", "reconciliation_required"
+		} else if run.CancelledAt != nil && op.LimitExceeded != "" {
+			op.State, op.FailureCode, kind = api.OperationFailed, op.LimitExceeded, "failed"
 		} else if run.CancelledAt != nil {
 			op.State, kind = api.OperationCancelled, "cancelled"
 		} else if failureCode != "" {

@@ -42,6 +42,8 @@ func WriteOperationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_state_conflict", "Operation state changed", "refresh the operation before submitting this change"))
 	case errors.Is(err, state.ErrOperationQuota):
 		api.WriteProblem(w, api.OperationLimitProblem(err))
+	case errors.Is(err, state.ErrOperationLimitExceeded):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_limit_exceeded", "Operation limit exceeded", "the operation's deadline has passed or its execution budget is spent; record an outcome instead of retrying"))
 	case errors.Is(err, state.ErrPlatformTenantSuspended):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Customer suspended", "resume this customer before accepting new execution"))
 	case errors.Is(err, state.ErrInvalidArgument):

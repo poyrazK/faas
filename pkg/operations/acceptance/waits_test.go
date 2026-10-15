@@ -22,7 +22,7 @@ type waitOperationFixture struct {
 }
 
 // waitOperationSetup deploys validate -> review (approval) -> cool (timer) -> finish.
-func waitOperationSetup(t *testing.T, store state.Store, approver string, approvalTimeout time.Duration) waitOperationFixture {
+func waitOperationSetup(t *testing.T, store state.Store, approver string, approvalTimeout time.Duration, limits ...api.OperationLimits) waitOperationFixture {
 	t.Helper()
 	ctx := context.Background()
 	base := workflowOperationSetup(t, store)
@@ -50,6 +50,7 @@ func waitOperationSetup(t *testing.T, store state.Store, approver string, approv
 			OutputSchema:   []byte(`{"type":"object","required":["file"],"properties":{"file":{"type":"string"}},"additionalProperties":false}`),
 			ProgressStages: []string{"validate", "review", "cool", "finish"},
 			Approvals:      []api.OperationApprovalSpec{{Step: "review", Approver: approver}},
+			Limits:         operationLimitsArg(limits),
 		},
 	}})
 	if err != nil {
@@ -67,6 +68,13 @@ func waitOperationSetup(t *testing.T, store state.Store, approver string, approv
 	}}
 	f.orchestrator = sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 	return f
+}
+
+func operationLimitsArg(limits []api.OperationLimits) *api.OperationLimits {
+	if len(limits) == 0 {
+		return nil
+	}
+	return &limits[0]
 }
 
 // drive advances due work until the operation satisfies ready.

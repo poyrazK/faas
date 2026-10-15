@@ -2694,12 +2694,17 @@ func (q *Queries) CancelCustomerOperationJobTask(ctx context.Context, db DBTX, r
 
 const cancelCustomerOperationWorkflow = `-- name: CancelCustomerOperationWorkflow :exec
 UPDATE workflow_runs SET status='failed',cancelled_at=clock_timestamp(),finished_at=clock_timestamp(),
- last_error='cancelled by operation owner',updated_at=clock_timestamp(),lease_until=NULL
-WHERE id=$1::uuid AND status IN ('pending','running','awaiting_event')
+ last_error=$1::text,updated_at=clock_timestamp(),lease_until=NULL
+WHERE id=$2::uuid AND status IN ('pending','running','awaiting_event')
 `
 
-func (q *Queries) CancelCustomerOperationWorkflow(ctx context.Context, db DBTX, runID pgtype.UUID) error {
-	_, err := db.Exec(ctx, cancelCustomerOperationWorkflow, runID)
+type CancelCustomerOperationWorkflowParams struct {
+	Reason string
+	RunID  pgtype.UUID
+}
+
+func (q *Queries) CancelCustomerOperationWorkflow(ctx context.Context, db DBTX, arg CancelCustomerOperationWorkflowParams) error {
+	_, err := db.Exec(ctx, cancelCustomerOperationWorkflow, arg.Reason, arg.RunID)
 	return err
 }
 
@@ -23519,10 +23524,10 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 }
 
 const insertCustomerOperation = `-- name: InsertCustomerOperation :exec
-INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,workflow_run_id,job_run_id,state,record,expires_at,created_at)
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,workflow_run_id,job_run_id,state,record,expires_at,created_at,deadline_at)
 VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
        $5::uuid,$6::uuid,$7::uuid,$8::uuid,$9::text,
-       $10::jsonb,$11::timestamptz,$12::timestamptz)
+       $10::jsonb,$11::timestamptz,$12::timestamptz,$13::timestamptz)
 `
 
 type InsertCustomerOperationParams struct {
@@ -23538,6 +23543,7 @@ type InsertCustomerOperationParams struct {
 	Record        []byte
 	ExpiresAt     pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+	DeadlineAt    pgtype.Timestamptz
 }
 
 func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg InsertCustomerOperationParams) error {
@@ -23554,6 +23560,7 @@ func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg Inse
 		arg.Record,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.DeadlineAt,
 	)
 	return err
 }
@@ -35111,6 +35118,40 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueCustomerOperationDeadlines = `-- name: ListDueCustomerOperationDeadlines :many
+SELECT workflow_run_id::text AS run_id FROM customer_operations
+WHERE deadline_at IS NOT NULL AND deadline_at<=$1::timestamptz
+  AND state IN ('accepted','running','waiting') AND workflow_run_id IS NOT NULL
+ORDER BY deadline_at,id LIMIT $2::integer
+`
+
+type ListDueCustomerOperationDeadlinesParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+// ADR-1196: HTTP executions carry the deadline themselves; workflow runs
+// have none, so the sweeper stops them.
+func (q *Queries) ListDueCustomerOperationDeadlines(ctx context.Context, db DBTX, arg ListDueCustomerOperationDeadlinesParams) ([]string, error) {
+	rows, err := db.Query(ctx, listDueCustomerOperationDeadlines, arg.Now, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var run_id string
+		if err := rows.Scan(&run_id); err != nil {
+			return nil, err
+		}
+		items = append(items, run_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

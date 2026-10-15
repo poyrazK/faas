@@ -8575,10 +8575,10 @@ SELECT count(*)::bigint FROM customer_operations WHERE account_id=sqlc.arg(accou
 AND state IN ('accepted','running','waiting','requires_reconciliation');
 
 -- name: InsertCustomerOperation :exec
-INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,workflow_run_id,job_run_id,state,record,expires_at,created_at)
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,workflow_run_id,job_run_id,state,record,expires_at,created_at,deadline_at)
 VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,
        sqlc.arg(definition_id)::uuid,sqlc.narg(invocation_id)::uuid,sqlc.narg(workflow_run_id)::uuid,sqlc.narg(job_run_id)::uuid,sqlc.arg(state)::text,
-       sqlc.arg(record)::jsonb,sqlc.arg(expires_at)::timestamptz,sqlc.arg(created_at)::timestamptz);
+       sqlc.arg(record)::jsonb,sqlc.arg(expires_at)::timestamptz,sqlc.arg(created_at)::timestamptz,sqlc.narg(deadline_at)::timestamptz);
 
 -- name: InsertCustomerOperationExecution :exec
 INSERT INTO customer_operation_executions(operation_id,generation,invocation_id)
@@ -14952,8 +14952,16 @@ WHERE run_id=sqlc.arg(run_id)::uuid AND status='running';
 
 -- name: CancelCustomerOperationWorkflow :exec
 UPDATE workflow_runs SET status='failed',cancelled_at=clock_timestamp(),finished_at=clock_timestamp(),
- last_error='cancelled by operation owner',updated_at=clock_timestamp(),lease_until=NULL
+ last_error=sqlc.arg(reason)::text,updated_at=clock_timestamp(),lease_until=NULL
 WHERE id=sqlc.arg(run_id)::uuid AND status IN ('pending','running','awaiting_event');
+
+-- name: ListDueCustomerOperationDeadlines :many
+-- ADR-1196: HTTP executions carry the deadline themselves; workflow runs
+-- have none, so the sweeper stops them.
+SELECT workflow_run_id::text AS run_id FROM customer_operations
+WHERE deadline_at IS NOT NULL AND deadline_at<=sqlc.arg(now)::timestamptz
+  AND state IN ('accepted','running','waiting') AND workflow_run_id IS NOT NULL
+ORDER BY deadline_at,id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: SkipCancelledCustomerOperationWorkflowSteps :exec
 UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp()

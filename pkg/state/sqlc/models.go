@@ -1614,6 +1614,7 @@ type CustomerOperation struct {
 	ExecutionGeneration int32
 	WorkflowRunID       pgtype.UUID
 	JobRunID            pgtype.UUID
+	DeadlineAt          pgtype.Timestamptz
 }
 
 type CustomerOperationCodePin struct {
