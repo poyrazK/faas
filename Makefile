@@ -502,6 +502,16 @@ e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Po
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
 	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
 
+.PHONY: e2e-start
+e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
+	@test "$$(uname -s)" = Linux || (echo "e2e-start requires Linux terminal support" >&2; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-start refuses a skipped run" >&2; exit 1)
+	@test -z "$$FAAS_E2E_BIN_DIR" || (echo "Unset FAAS_E2E_BIN_DIR; e2e-start builds current daemon binaries" >&2; exit 1)
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-start needs reachable PostgreSQL" >&2; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required for e2e-start" >&2; exit 1)
+	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "PostgreSQL is unreachable; e2e-start refuses a green no-op run" >&2; exit 1)
+	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_Start_' ./cmd/e2e/...
+
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
 	@test -f secrets/.env.sandbox || (echo "secrets/.env.sandbox missing; create it with FAAS_PADDLE_SANDBOX_API_KEY + FAAS_PADDLE_SANDBOX_WEBHOOK_SECRET from api.sandbox.paddle.com" ; exit 1)
