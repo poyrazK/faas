@@ -1489,6 +1489,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment":                                        "GetEventAcknowledgment",
 	"POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew":                                 "RenewEventAcknowledgment",
 	"POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete":                              "CompleteEventAcknowledgment",
+	"POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry":                                 "RetryEventAcknowledgment",
+	"POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter":                           "DeadLetterEventAcknowledgment",
 	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity":                        "SetEventSubscriptionCapacity",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                                           "GetEventConsumerHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":                                  "GetEventConsumerDeliveryHealth",

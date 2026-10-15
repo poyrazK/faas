@@ -21,7 +21,7 @@ export type EventAcknowledgmentOutcome = {
   /**
    * Deferred acknowledgment operation or scheduler expiry outcome.
    */
-  kind: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired';
+  kind: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired' | 'retry_requested' | 'dead_letter_requested';
   /**
    * Database time of the first retained occurrence.
    */

@@ -13,7 +13,7 @@ export type EventAcknowledgmentHistoryQuery = {
   /**
    * Outcome kind shared by the page traversal.
    */
-  kind?: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired';
+  kind?: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired' | 'retry_requested' | 'dead_letter_requested';
   /**
    * Inclusive first_at bound for the traversal.
    */

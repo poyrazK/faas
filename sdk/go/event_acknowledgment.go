@@ -15,3 +15,5 @@ type (
 	EventAcknowledgmentRequest           = api.EventAcknowledgmentRequest
 	EventAcknowledgmentStatus            = api.EventAcknowledgmentStatus
 )
+
+type EventAcknowledgmentFailureRequest = api.EventAcknowledgmentFailureRequest

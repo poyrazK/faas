@@ -11167,3 +11167,6 @@ const EventAcknowledgmentWriterLiveMax = 256
 const EventAcknowledgmentWriterSlotMaxBytes = 128
 const EventAcknowledgmentWriterRosterMaxBytes = 16 << 10
 const EventAcknowledgmentWriterCapabilityVersion = 1
+
+const EventAcknowledgmentFailureReasonMaxBytes = 128
+const EventAcknowledgmentFailureRequestMaxBytes = 4096

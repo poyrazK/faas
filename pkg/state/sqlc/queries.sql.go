@@ -14026,7 +14026,7 @@ func (q *Queries) EventAckExtend(ctx context.Context, db DBTX, invocationID pgty
 }
 
 const eventAckGet = `-- name: EventAckGet :one
-SELECT invocation_id, attempt, replay_generation, token_digest, phase, completion_digest, lease_seconds, deadline_at, max_attempts, retry_delay_ms FROM event_delivery_acknowledgments WHERE invocation_id=$1
+SELECT invocation_id, attempt, replay_generation, token_digest, phase, completion_digest, rejection_status, lease_seconds, deadline_at, max_attempts, retry_delay_ms FROM event_delivery_acknowledgments WHERE invocation_id=$1
 `
 
 func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryAcknowledgment, error) {
@@ -14039,6 +14039,7 @@ func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.
 		&i.TokenDigest,
 		&i.Phase,
 		&i.CompletionDigest,
+		&i.RejectionStatus,
 		&i.LeaseSeconds,
 		&i.DeadlineAt,
 		&i.MaxAttempts,
@@ -14048,7 +14049,7 @@ func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.
 }
 
 const eventAckInvocationLock = `-- name: EventAckInvocationLock :one
-SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=$1::uuid AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND a.status<>'deleted' FOR UPDATE OF i
 `
 
@@ -14072,6 +14073,7 @@ type EventAckInvocationLockRow struct {
 	OnFailureDestinationID pgtype.UUID
 	LeaseExpiresAt         pgtype.Timestamptz
 	Result                 []byte
+	QuotaReserved          bool
 }
 
 func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg EventAckInvocationLockParams) (EventAckInvocationLockRow, error) {
@@ -14091,6 +14093,7 @@ func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg Event
 		&i.OnFailureDestinationID,
 		&i.LeaseExpiresAt,
 		&i.Result,
+		&i.QuotaReserved,
 	)
 	return i, err
 }
@@ -14195,7 +14198,7 @@ func (q *Queries) EventAckNow(ctx context.Context, db DBTX) (pgtype.Timestamptz,
 const eventAckOffer = `-- name: EventAckOffer :exec
 INSERT INTO event_delivery_acknowledgments (invocation_id,attempt,replay_generation,token_digest,phase,lease_seconds,deadline_at,max_attempts,retry_delay_ms)
 VALUES ($1,$2,$3,$4,'offered',$5,clock_timestamp()+$8::integer*interval '1 second',$6,$7)
-ON CONFLICT (invocation_id) DO UPDATE SET attempt=excluded.attempt,replay_generation=excluded.replay_generation,token_digest=excluded.token_digest,phase='offered',completion_digest=NULL,lease_seconds=excluded.lease_seconds,deadline_at=excluded.deadline_at,max_attempts=excluded.max_attempts,retry_delay_ms=excluded.retry_delay_ms
+ON CONFLICT (invocation_id) DO UPDATE SET attempt=excluded.attempt,replay_generation=excluded.replay_generation,token_digest=excluded.token_digest,phase='offered',completion_digest=NULL,rejection_status=NULL,lease_seconds=excluded.lease_seconds,deadline_at=excluded.deadline_at,max_attempts=excluded.max_attempts,retry_delay_ms=excluded.retry_delay_ms
 `
 
 type EventAckOfferParams struct {
@@ -14444,6 +14447,54 @@ func (q *Queries) EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPo
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const eventAckReject = `-- name: EventAckReject :one
+UPDATE invocations i SET state=CASE WHEN $1::boolean OR attempts>=a.max_attempts THEN 'dead_letter' ELSE 'pending' END,
+ outcome=CASE WHEN $1::boolean OR attempts>=a.max_attempts THEN 'dead_letter' ELSE NULL END,
+ completed_at=CASE WHEN $1::boolean OR attempts>=a.max_attempts THEN $2::timestamptz ELSE NULL END,
+ due_at=$2::timestamptz+a.retry_delay_ms*interval '1 millisecond',
+ lease_expires_at=NULL,quota_reserved=false,instance_id=NULL,last_error=$3::text
+FROM event_delivery_acknowledgments a WHERE i.id=$4::uuid AND a.invocation_id=i.id RETURNING i.state,i.due_at
+`
+
+type EventAckRejectParams struct {
+	Permanent     bool
+	NowAt         pgtype.Timestamptz
+	FailureReason string
+	InvocationID  pgtype.UUID
+}
+
+type EventAckRejectRow struct {
+	State string
+	DueAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventAckReject(ctx context.Context, db DBTX, arg EventAckRejectParams) (EventAckRejectRow, error) {
+	row := db.QueryRow(ctx, eventAckReject,
+		arg.Permanent,
+		arg.NowAt,
+		arg.FailureReason,
+		arg.InvocationID,
+	)
+	var i EventAckRejectRow
+	err := row.Scan(&i.State, &i.DueAt)
+	return i, err
+}
+
+const eventAckRejectReceipt = `-- name: EventAckRejectReceipt :exec
+UPDATE event_delivery_acknowledgments SET phase='rejected',completion_digest=$1::bytea,rejection_status=$2::jsonb WHERE invocation_id=$3::uuid
+`
+
+type EventAckRejectReceiptParams struct {
+	RequestDigest   []byte
+	RejectionStatus []byte
+	InvocationID    pgtype.UUID
+}
+
+func (q *Queries) EventAckRejectReceipt(ctx context.Context, db DBTX, arg EventAckRejectReceiptParams) error {
+	_, err := db.Exec(ctx, eventAckRejectReceipt, arg.RequestDigest, arg.RejectionStatus, arg.InvocationID)
+	return err
 }
 
 const eventAckWriterBeat = `-- name: EventAckWriterBeat :execrows

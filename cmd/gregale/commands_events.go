@@ -26,6 +26,8 @@ func cmdEvents(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "delivery-retry", "delivery-dead-letter":
+		return cmdEventsDeliveryFailure(args[1:], args[0])
 	case "delivery-health-alerts":
 		return cmdEventDeliveryHealthAlerts(args[1:])
 	case "subscription-delivery-health":

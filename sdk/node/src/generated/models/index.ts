@@ -563,6 +563,7 @@ export type { EnvironmentWorkload } from './EnvironmentWorkload.js';
 export type { EnvironmentWorkloadActivationEvidence } from './EnvironmentWorkloadActivationEvidence.js';
 export type { EnvironmentWorkloadSource } from './EnvironmentWorkloadSource.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
+export type { EventAcknowledgmentFailureRequest } from './EventAcknowledgmentFailureRequest.js';
 export type { EventAcknowledgmentHistory } from './EventAcknowledgmentHistory.js';
 export type { EventAcknowledgmentHistoryPage } from './EventAcknowledgmentHistoryPage.js';
 export type { EventAcknowledgmentHistoryQuery } from './EventAcknowledgmentHistoryQuery.js';

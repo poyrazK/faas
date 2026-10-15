@@ -7,6 +7,18 @@
  */
 export type EventAcknowledgmentStatus = {
   /**
+   * Requested negative acknowledgment action; retry may exhaust its captured budget and dead-letter.
+   */
+  disposition?: 'retry' | 'dead-letter';
+  /**
+   * Non-sensitive reason code retained for this attempt.
+   */
+  failure_reason?: string;
+  /**
+   * Saved retry due time; absent for a terminal disposition.
+   */
+  next_attempt_at?: string;
+  /**
    * Durable invocation receiving the deferred processing callback.
    */
   invocation_id: string;

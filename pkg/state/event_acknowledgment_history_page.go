@@ -30,7 +30,7 @@ type acknowledgmentHistoryCursor struct {
 
 func validAcknowledgmentOutcomeKind(kind string) bool {
 	switch kind {
-	case "accepted", "renewed", "renewal_rejected", "completed", "expired":
+	case "accepted", "renewed", "renewal_rejected", "completed", "expired", "retry_requested", "dead_letter_requested":
 		return true
 	default:
 		return false

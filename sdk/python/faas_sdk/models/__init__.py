@@ -1113,6 +1113,7 @@ from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_acknowledgment_failure_request import EventAcknowledgmentFailureRequest
 from .event_acknowledgment_history import EventAcknowledgmentHistory
 from .event_acknowledgment_history_coverage import EventAcknowledgmentHistoryCoverage
 from .event_acknowledgment_history_page import EventAcknowledgmentHistoryPage
@@ -1126,6 +1127,7 @@ from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyReques
 from .event_acknowledgment_recording_coverage import EventAcknowledgmentRecordingCoverage
 from .event_acknowledgment_request import EventAcknowledgmentRequest
 from .event_acknowledgment_status import EventAcknowledgmentStatus
+from .event_acknowledgment_status_disposition import EventAcknowledgmentStatusDisposition
 from .event_acknowledgment_status_processing_state import EventAcknowledgmentStatusProcessingState
 from .event_acknowledgment_window_health import EventAcknowledgmentWindowHealth
 from .event_acknowledgment_window_health_coverage import EventAcknowledgmentWindowHealthCoverage
@@ -5780,6 +5782,7 @@ __all__ = (
     "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventAcknowledgmentFailureRequest",
     "EventAcknowledgmentHistory",
     "EventAcknowledgmentHistoryCoverage",
     "EventAcknowledgmentHistoryPage",
@@ -5793,6 +5796,7 @@ __all__ = (
     "EventAcknowledgmentRecordingCoverage",
     "EventAcknowledgmentRequest",
     "EventAcknowledgmentStatus",
+    "EventAcknowledgmentStatusDisposition",
     "EventAcknowledgmentStatusProcessingState",
     "EventAcknowledgmentWindowHealth",
     "EventAcknowledgmentWindowHealthCoverage",

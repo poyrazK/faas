@@ -23,7 +23,14 @@ type EventAcknowledgmentRequest struct {
 	Token  string          `json:"token"`
 	Result json.RawMessage `json:"result,omitempty"`
 }
+type EventAcknowledgmentFailureRequest struct {
+	Token  string `json:"token"`
+	Reason string `json:"reason"`
+}
 type EventAcknowledgmentStatus struct {
+	Disposition      string     `json:"disposition,omitempty"`
+	FailureReason    string     `json:"failure_reason,omitempty"`
+	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
 	InvocationID     string     `json:"invocation_id"`
 	Attempt          int        `json:"attempt"`
 	ReplayGeneration int64      `json:"replay_generation"`
@@ -62,6 +69,17 @@ func (c *Client) RenewEventAcknowledgment(ctx context.Context, app, id string, r
 func (c *Client) CompleteEventAcknowledgment(ctx context.Context, app, id string, req EventAcknowledgmentRequest) (EventAcknowledgmentStatus, error) {
 	var out EventAcknowledgmentStatus
 	err := c.do(ctx, http.MethodPost, acknowledgmentPath(app, id)+"/complete", req, &out)
+	return out, err
+}
+
+func (c *Client) RetryEventAcknowledgment(ctx context.Context, app, id string, req EventAcknowledgmentFailureRequest) (EventAcknowledgmentStatus, error) {
+	var out EventAcknowledgmentStatus
+	err := c.do(ctx, http.MethodPost, acknowledgmentPath(app, id)+"/retry", req, &out)
+	return out, err
+}
+func (c *Client) DeadLetterEventAcknowledgment(ctx context.Context, app, id string, req EventAcknowledgmentFailureRequest) (EventAcknowledgmentStatus, error) {
+	var out EventAcknowledgmentStatus
+	err := c.do(ctx, http.MethodPost, acknowledgmentPath(app, id)+"/dead-letter", req, &out)
 	return out, err
 }
 

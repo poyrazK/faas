@@ -1,13 +1,17 @@
 from typing import Literal
 
-ListEventAcknowledgmentHistoryPageKind = Literal["accepted", "completed", "expired", "renewal_rejected", "renewed"]
+ListEventAcknowledgmentHistoryPageKind = Literal[
+    "accepted", "completed", "dead_letter_requested", "expired", "renewal_rejected", "renewed", "retry_requested"
+]
 
 LIST_EVENT_ACKNOWLEDGMENT_HISTORY_PAGE_KIND_VALUES: set[ListEventAcknowledgmentHistoryPageKind] = {
     "accepted",
     "completed",
+    "dead_letter_requested",
     "expired",
     "renewal_rejected",
     "renewed",
+    "retry_requested",
 }
 
 

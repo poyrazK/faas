@@ -2,6 +2,7 @@ package appevents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -86,9 +87,9 @@ func writeAcknowledgmentError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "no retained acknowledgment belongs to this application")
 	case errors.Is(err, state.ErrEventAcknowledgmentStale):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_acknowledgment_stale", "Acknowledgment no longer valid", "the lease expired, the attempt was replaced, or completion inputs differ"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_acknowledgment_stale", "Acknowledgment no longer valid", "the lease expired, the attempt was replaced, or callback inputs differ"))
 	case errors.Is(err, context.DeadlineExceeded):
-		api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout, api.CodeInternal, "Acknowledgment request timed out", "retry with the same token and completion result"))
+		api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout, api.CodeInternal, "Acknowledgment request timed out", "retry with the same token and callback inputs"))
 	default:
 		api.WriteProblem(w, api.ErrInternal("event acknowledgment"))
 	}
@@ -183,4 +184,41 @@ func writeAcknowledgmentHistoryPageError(w http.ResponseWriter, err error) bool 
 	default:
 		return writeAcknowledgmentError(w, err)
 	}
+}
+
+func (s *Service) RetryEventAcknowledgment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.rejectEventAcknowledgment(w, r, acct, "retry")
+}
+func (s *Service) DeadLetterEventAcknowledgment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.rejectEventAcknowledgment(w, r, acct, "dead-letter")
+}
+func (s *Service) rejectEventAcknowledgment(w http.ResponseWriter, r *http.Request, acct state.Account, action string) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventSubscriptionControlTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
+	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	store, ok := s.Host.Store().(state.EventAcknowledgmentStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event acknowledgments"))
+		return
+	}
+	var req api.EventAcknowledgmentFailureRequest
+	if httpkit.DecodeJSONSized(r, &req, api.EventAcknowledgmentFailureRequestMaxBytes) != nil {
+		api.WriteProblem(w, api.ErrValidation("provide the current delivery token and a bounded non-sensitive reason code"))
+		return
+	}
+	payload, err := json.Marshal(req.Reason)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid reason code"))
+		return
+	}
+	out, err := store.EventAcknowledgment(ctx, acct.ID, app.ID, r.PathValue("invocationID"), req.Token, action, payload)
+	if writeAcknowledgmentError(w, err) {
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, out)
 }

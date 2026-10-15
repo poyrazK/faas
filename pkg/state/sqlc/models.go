@@ -2905,6 +2905,7 @@ type EventDeliveryAcknowledgment struct {
 	TokenDigest      []byte
 	Phase            string
 	CompletionDigest []byte
+	RejectionStatus  []byte
 	LeaseSeconds     int32
 	DeadlineAt       pgtype.Timestamptz
 	MaxAttempts      int32

@@ -31,6 +31,7 @@ type EventAcknowledgmentStore interface {
 }
 
 type eventAcknowledgment struct {
+	rejectionStatus  json.RawMessage
 	completionDigest []byte
 	claim            InvocationClaim
 	digest           [32]byte
@@ -102,6 +103,15 @@ func acknowledgmentStatus(inv Invocation, ack eventAcknowledgment, now time.Time
 	if ack.claim.Attempt > 0 && inv.Attempts == ack.claim.Attempt && inv.ReplayGeneration == ack.claim.ReplayGeneration {
 		deadline := ack.deadline
 		out.DeadlineAt = &deadline
+	}
+	if ack.phase == "rejected" && inv.Attempts == ack.claim.Attempt && inv.ReplayGeneration == ack.claim.ReplayGeneration {
+		var saved api.EventAcknowledgmentStatus
+		if json.Unmarshal(ack.rejectionStatus, &saved) == nil {
+			out.Disposition, out.FailureReason = saved.Disposition, saved.FailureReason
+			if inv.State == InvocationPending {
+				out.NextAttemptAt = cloneEventReceiptTime(saved.NextAttemptAt)
+			}
+		}
 	}
 	switch inv.State {
 	case InvocationPending:
@@ -191,6 +201,9 @@ func (m *MemStore) EventAcknowledgment(ctx context.Context, account, app, id, to
 	if err := validSubscriptionControlIDs(account, app, id); err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
+	if err := validateAcknowledgmentFailure(action, result); err != nil {
+		return api.EventAcknowledgmentStatus{}, err
+	}
 	if !validAcknowledgmentResult(result) {
 		return api.EventAcknowledgmentStatus{}, ErrInvalidArgument
 	}
@@ -221,6 +234,12 @@ func (m *MemStore) EventAcknowledgment(ctx context.Context, account, app, id, to
 	if subtle.ConstantTimeCompare(digest[:], ack.digest[:]) != 1 || ack.claim.Attempt != inv.Attempts || ack.claim.ReplayGeneration != inv.ReplayGeneration {
 		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
 	}
+	if ack.phase == "rejected" {
+		if action == "renew" {
+			return m.rejectAcknowledgmentRenewalLocked(inv, ack, action, now)
+		}
+		return replayAcknowledgmentFailure(inv, ack, action, result)
+	}
 	if ack.phase == "completed" && inv.State == InvocationCompleted {
 		if action == "accept" || (action == "complete" && bytes.Equal(acknowledgmentCompletionDigest(result), ack.completionDigest)) {
 			return acknowledgmentStatus(inv, ack, now), nil
@@ -231,6 +250,8 @@ func (m *MemStore) EventAcknowledgment(ctx context.Context, account, app, id, to
 		return m.rejectAcknowledgmentRenewalLocked(inv, ack, action, now)
 	}
 	switch action {
+	case "retry", "dead-letter":
+		return m.rejectEventAcknowledgmentLocked(inv, ack, action, result, now)
 	case "accept", "renew":
 		if action == "renew" && ack.phase != "awaiting" {
 			return m.rejectAcknowledgmentRenewalLocked(inv, ack, action, now)

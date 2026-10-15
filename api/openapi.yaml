@@ -49743,7 +49743,7 @@ paths:
         - name: kind
           in: query
           description: Restrict pages to one deferred outcome kind.
-          schema: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired] }
+          schema: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired, retry_requested, dead_letter_requested] }
         - name: from
           in: query
           description: Inclusive first occurrence lower bound, normalized to UTC microseconds.
@@ -50047,6 +50047,102 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry:
+    post:
+      tags: [events]
+      operationId: retryEventAcknowledgment
+      summary: Retry a deferred delivery attempt.
+      description: "Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and schedules the captured backoff; an exhausted captured attempt budget dead-letters instead. Matching repeats return the saved disposition until the attempt or replay generation is replaced. Changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for retryEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for retryEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentFailureRequest' }
+      responses:
+        '200':
+          description: "Retry a deferred delivery attempt result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter:
+    post:
+      tags: [events]
+      operationId: deadLetterEventAcknowledgment
+      summary: Dead-letter a deferred delivery attempt.
+      description: "Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and dead-letters this delivery independently of other consumers. Matching repeats return the saved disposition until replacement; changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for deadLetterEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for deadLetterEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentFailureRequest' }
+      responses:
+        '200':
+          description: "Dead-letter a deferred delivery attempt result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -50569,6 +50665,14 @@ components:
       required: [lease_seconds]
       properties:
         lease_seconds: { type: integer, minimum: 0, maximum: 300, description: Requested processing lease duration; zero disables deferred acknowledgment for future acceptances. }
+    EventAcknowledgmentFailureRequest:
+      type: object
+      additionalProperties: false
+      description: App-authorized negative acknowledgment for the current live attempt; repeat exactly after an uncertain response.
+      required: [token, reason]
+      properties:
+        token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Secret attempt token; never log it or put it in a URL. }
+        reason: { type: string, minLength: 1, maxLength: 128, pattern: '^[a-z0-9_.-]+$', description: Non-sensitive failure code; no payloads or credentials. }
     EventAcknowledgmentRequest:
       type: object
       description: App-authorized callback fenced by the current opaque delivery token.
@@ -50587,7 +50691,7 @@ components:
         replay_generation: { type: integer, format: int64, minimum: 0, description: Replay generation fenced by this outcome. }
         kind:
           type: string
-          enum: [accepted, renewed, renewal_rejected, completed, expired]
+          enum: [accepted, renewed, renewal_rejected, completed, expired, retry_requested, dead_letter_requested]
           description: Deferred acknowledgment operation or scheduler expiry outcome.
         first_at: { type: string, format: date-time, description: Database time of the first retained occurrence. }
         last_at: { type: string, format: date-time, description: Database time of the latest retained occurrence. }
@@ -50598,7 +50702,7 @@ components:
       description: Scope-bound page options selecting coalesced groups by first occurrence.
       properties:
         invocation_id: { type: string, format: uuid, description: Delivery filter shared by every continuation request. }
-        kind: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired], description: Outcome kind shared by the page traversal. }
+        kind: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired, retry_requested, dead_letter_requested], description: Outcome kind shared by the page traversal. }
         from: { type: string, format: date-time, description: Inclusive first_at bound for the traversal. }
         until: { type: string, format: date-time, description: Exclusive first_at bound for the traversal. }
         limit: { type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding. }
@@ -50634,6 +50738,9 @@ components:
       description: Retained invocation and processing lease observation without secret token material.
       required: [invocation_id, attempt, replay_generation, state, processing_state]
       properties:
+        disposition: { type: string, enum: [retry, dead-letter], description: Requested negative acknowledgment action; retry may exhaust its captured budget and dead-letter. }
+        failure_reason: { type: string, maxLength: 128, pattern: '^[a-z0-9_.-]+$', description: Non-sensitive reason code retained for this attempt. }
+        next_attempt_at: { type: string, format: date-time, description: Saved retry due time; absent for a terminal disposition. }
         invocation_id: { type: string, format: uuid, description: Durable invocation receiving the deferred processing callback. }
         attempt: { type: integer, minimum: 0, description: Current execution claim number for this processing observation; zero follows an in-place replay reset. }
         replay_generation: { type: integer, format: int64, minimum: 0, description: Current in-place replay generation fencing old delivery attempts. }

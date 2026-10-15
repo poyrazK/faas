@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.event_acknowledgment_status_disposition import (
+    EventAcknowledgmentStatusDisposition,
+    check_event_acknowledgment_status_disposition,
+)
 from ..models.event_acknowledgment_status_processing_state import (
     EventAcknowledgmentStatusProcessingState,
     check_event_acknowledgment_status_processing_state,
@@ -31,6 +35,12 @@ class EventAcknowledgmentStatus:
     """Underlying durable invocation lifecycle state."""
     processing_state: EventAcknowledgmentStatusProcessingState
     """Processing phase derived from the retained claim and current database clock."""
+    disposition: EventAcknowledgmentStatusDisposition | Unset = UNSET
+    """Requested negative acknowledgment action; retry may exhaust its captured budget and dead-letter."""
+    failure_reason: str | Unset = UNSET
+    """Non-sensitive reason code retained for this attempt."""
+    next_attempt_at: datetime.datetime | Unset = UNSET
+    """Saved retry due time; absent for a terminal disposition."""
     lease_expires_at: datetime.datetime | Unset = UNSET
     """Current invocation lease expiry; absent after expiry recovery."""
     deadline_at: datetime.datetime | Unset = UNSET
@@ -47,6 +57,16 @@ class EventAcknowledgmentStatus:
         state = self.state
 
         processing_state: str = self.processing_state
+
+        disposition: str | Unset = UNSET
+        if not isinstance(self.disposition, Unset):
+            disposition = self.disposition
+
+        failure_reason = self.failure_reason
+
+        next_attempt_at: str | Unset = UNSET
+        if not isinstance(self.next_attempt_at, Unset):
+            next_attempt_at = self.next_attempt_at.isoformat()
 
         lease_expires_at: str | Unset = UNSET
         if not isinstance(self.lease_expires_at, Unset):
@@ -67,6 +87,12 @@ class EventAcknowledgmentStatus:
                 "processing_state": processing_state,
             }
         )
+        if disposition is not UNSET:
+            field_dict["disposition"] = disposition
+        if failure_reason is not UNSET:
+            field_dict["failure_reason"] = failure_reason
+        if next_attempt_at is not UNSET:
+            field_dict["next_attempt_at"] = next_attempt_at
         if lease_expires_at is not UNSET:
             field_dict["lease_expires_at"] = lease_expires_at
         if deadline_at is not UNSET:
@@ -86,6 +112,22 @@ class EventAcknowledgmentStatus:
         state = d.pop("state")
 
         processing_state = check_event_acknowledgment_status_processing_state(d.pop("processing_state"))
+
+        _disposition = d.pop("disposition", UNSET)
+        disposition: EventAcknowledgmentStatusDisposition | Unset
+        if isinstance(_disposition, Unset):
+            disposition = UNSET
+        else:
+            disposition = check_event_acknowledgment_status_disposition(_disposition)
+
+        failure_reason = d.pop("failure_reason", UNSET)
+
+        _next_attempt_at = d.pop("next_attempt_at", UNSET)
+        next_attempt_at: datetime.datetime | Unset
+        if isinstance(_next_attempt_at, Unset):
+            next_attempt_at = UNSET
+        else:
+            next_attempt_at = datetime.datetime.fromisoformat(_next_attempt_at)
 
         _lease_expires_at = d.pop("lease_expires_at", UNSET)
         lease_expires_at: datetime.datetime | Unset
@@ -107,6 +149,9 @@ class EventAcknowledgmentStatus:
             replay_generation=replay_generation,
             state=state,
             processing_state=processing_state,
+            disposition=disposition,
+            failure_reason=failure_reason,
+            next_attempt_at=next_attempt_at,
             lease_expires_at=lease_expires_at,
             deadline_at=deadline_at,
         )

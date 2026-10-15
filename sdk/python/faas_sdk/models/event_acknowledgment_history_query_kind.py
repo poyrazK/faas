@@ -1,13 +1,17 @@
 from typing import Literal
 
-EventAcknowledgmentHistoryQueryKind = Literal["accepted", "completed", "expired", "renewal_rejected", "renewed"]
+EventAcknowledgmentHistoryQueryKind = Literal[
+    "accepted", "completed", "dead_letter_requested", "expired", "renewal_rejected", "renewed", "retry_requested"
+]
 
 EVENT_ACKNOWLEDGMENT_HISTORY_QUERY_KIND_VALUES: set[EventAcknowledgmentHistoryQueryKind] = {
     "accepted",
     "completed",
+    "dead_letter_requested",
     "expired",
     "renewal_rejected",
     "renewed",
+    "retry_requested",
 }
 
 

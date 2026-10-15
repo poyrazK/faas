@@ -3358,6 +3358,7 @@
       "lease_seconds",
       "max_attempts",
       "phase",
+      "rejection_status",
       "replay_generation",
       "retry_delay_ms",
       "token_digest"

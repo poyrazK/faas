@@ -376,3 +376,52 @@ attest configured writer capability and liveness, not delivery success or databa
 data integrity. After a data-loss restore, restart every writer to establish a new
 coverage boundary before trusting automatic windows. A silent data rollback cannot
 be detected from writer liveness alone.
+
+## Explicit retry and dead-letter acknowledgments
+
+A durable consumer can stop its current attempt without waiting for lease expiry:
+
+- `POST .../acknowledgment/retry` schedules the captured execution backoff. An
+  exhausted captured attempt budget dead-letters instead.
+- `POST .../acknowledgment/dead-letter` immediately dead-letters this delivery.
+
+Both accept `{"token":"<delivery token>","reason":"dependency_unavailable"}`.
+The reason must be a non-sensitive code of 1–128 lowercase ASCII letters, digits,
+underscores, periods or hyphens. Never include credentials, tokens or event payloads.
+Callbacks require app-scoped write authority and the current token. They work
+within the live offered or handed-off lease, including a callback racing the
+scheduler's observation of `202`. Stop processing before requesting a disposition;
+the callback does not kill workers or undo effects.
+
+The invocation transition, quota release, saved disposition and diagnostic outcome
+commit atomically. Subscription capacity and ordering follow existing invocation
+state: retry remains pending with its captured due time; dead-letter is terminal.
+Other consumers are unaffected. Claims consume attempts; repeated callbacks do not.
+Existing keyed ordering and at-least-once semantics remain in force.
+
+Responses include `disposition`, `failure_reason` and, for a pending retry,
+`next_attempt_at`. Disposition records the requested action; inspect `state` to
+identify budget-exhausted dead-lettering. Repeat the same action, token and reason
+after an uncertain response. Matching repeats return the original saved response
+without releasing quota, moving the due time or adding history again, even after
+the old lease expires. New claims and replay generations fence old tokens. Changed
+action/reason, cancellation, completed attempts and expired live claims return 409.
+GET reports current state with retained disposition details for the matching
+attempt. Receipts share invocation retention and are replaced on the next offer.
+
+Go methods are `RetryEventAcknowledgment` and `DeadLetterEventAcknowledgment`,
+using `EventAcknowledgmentFailureRequest`. Generated Node and Python clients expose
+the corresponding operations. The CLI reads tokens from a protected JSON file:
+
+```sh
+gregale events delivery-retry my-app INVOCATION_UUID --request-file failure.json
+gregale events delivery-dead-letter my-app INVOCATION_UUID --request-file failure.json
+```
+
+Do not put tokens in command arguments. CLI output does not print the token.
+History adds `retry_requested` and `dead_letter_requested` outcomes, separately
+from lease-expiry and renewal-rate counters. Update clients that validate history
+enums before using these outcomes. Upgrade apid and every scheduler before using
+negative acknowledgments: an older scheduler cannot reset the saved rejection
+receipt on a new offer and fails closed. Drain these attempts with compatible
+schedulers before rollback. No production migration or deployment is performed.

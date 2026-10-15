@@ -726,6 +726,8 @@ type Querier interface {
 	EventAckPhase(ctx context.Context, db DBTX, arg EventAckPhaseParams) error
 	EventAckPolicyGet(ctx context.Context, db DBTX, arg EventAckPolicyGetParams) (int32, error)
 	EventAckPolicySet(ctx context.Context, db DBTX, arg EventAckPolicySetParams) (int64, error)
+	EventAckReject(ctx context.Context, db DBTX, arg EventAckRejectParams) (EventAckRejectRow, error)
+	EventAckRejectReceipt(ctx context.Context, db DBTX, arg EventAckRejectReceiptParams) error
 	EventAckWriterBeat(ctx context.Context, db DBTX, arg EventAckWriterBeatParams) (int64, error)
 	EventAckWriterCoverageEnsure(ctx context.Context, db DBTX) error
 	EventAckWriterCoverageGet(ctx context.Context, db DBTX) (EventAcknowledgmentRecordingCoverage, error)

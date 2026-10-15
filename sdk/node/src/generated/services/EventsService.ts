@@ -11,6 +11,7 @@ import type { ControlEventExecutionLineageCaseBackfillRequest } from '../models/
 import type { ControlEventExecutionLineageRetryJobRequest } from '../models/ControlEventExecutionLineageRetryJobRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
+import type { EventAcknowledgmentFailureRequest } from '../models/EventAcknowledgmentFailureRequest.js';
 import type { EventAcknowledgmentHistory } from '../models/EventAcknowledgmentHistory.js';
 import type { EventAcknowledgmentHistoryPage } from '../models/EventAcknowledgmentHistoryPage.js';
 import type { EventAcknowledgmentPolicy } from '../models/EventAcknowledgmentPolicy.js';
@@ -5263,7 +5264,7 @@ export class EventsService {
     /**
      * Restrict pages to one deferred outcome kind.
      */
-    kind?: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired',
+    kind?: 'accepted' | 'renewed' | 'renewal_rejected' | 'completed' | 'expired' | 'retry_requested' | 'dead_letter_requested',
     /**
      * Inclusive first occurrence lower bound, normalized to UTC microseconds.
      */
@@ -5537,6 +5538,86 @@ export class EventsService {
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment.`,
         504: `Acknowledgment request timed out for completeEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Retry a deferred delivery attempt.
+   * Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and schedules the captured backoff; an exhausted captured attempt budget dead-letters instead. Matching repeats return the saved disposition until the attempt or replay generation is replaced. Changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects.
+   * @returns EventAcknowledgmentStatus Retry a deferred delivery attempt result.
+   * @throws ApiError
+   */
+  public static retryEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for retryEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for retryEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentFailureRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for retryEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for retryEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for retryEventAcknowledgment.`,
+      },
+    });
+  }
+  /**
+   * Dead-letter a deferred delivery attempt.
+   * Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and dead-letters this delivery independently of other consumers. Matching repeats return the saved disposition until replacement; changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects.
+   * @returns EventAcknowledgmentStatus Dead-letter a deferred delivery attempt result.
+   * @throws ApiError
+   */
+  public static deadLetterEventAcknowledgment({
+    slug,
+    invocationId,
+    requestBody,
+  }: {
+    /**
+     * slug identifying the target for deadLetterEventAcknowledgment.
+     */
+    slug: string,
+    /**
+     * invocationID identifying the target for deadLetterEventAcknowledgment.
+     */
+    invocationId: string,
+    requestBody: EventAcknowledgmentFailureRequest,
+  }): CancelablePromise<EventAcknowledgmentStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter',
+      path: {
+        'slug': slug,
+        'invocationID': invocationId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scope, token or policy for deadLetterEventAcknowledgment.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Expired lease, replaced attempt or incompatible completion for deadLetterEventAcknowledgment.`,
+        504: `Acknowledgment request timed out for deadLetterEventAcknowledgment.`,
       },
     });
   }

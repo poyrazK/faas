@@ -1,13 +1,17 @@
 from typing import Literal
 
-EventAcknowledgmentOutcomeKind = Literal["accepted", "completed", "expired", "renewal_rejected", "renewed"]
+EventAcknowledgmentOutcomeKind = Literal[
+    "accepted", "completed", "dead_letter_requested", "expired", "renewal_rejected", "renewed", "retry_requested"
+]
 
 EVENT_ACKNOWLEDGMENT_OUTCOME_KIND_VALUES: set[EventAcknowledgmentOutcomeKind] = {
     "accepted",
     "completed",
+    "dead_letter_requested",
     "expired",
     "renewal_rejected",
     "renewed",
+    "retry_requested",
 }
 
 

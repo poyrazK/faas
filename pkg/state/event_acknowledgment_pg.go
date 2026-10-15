@@ -36,12 +36,12 @@ func (s *PgStore) EventAcknowledgmentPolicy(ctx context.Context, account, app, s
 	return api.EventAcknowledgmentPolicy{SubscriptionID: canonicalMemUUID(sub), LeaseSeconds: int(secondsNow)}, mapErr(err)
 }
 func acknowledgmentInvocation(row sqlc.EventAckInvocationLockRow) Invocation {
-	return Invocation{ID: uuidString(row.ID), AccountID: uuidString(row.AccountID), AppID: uuidString(row.AppID), Source: InvocationSource(row.Source), State: InvocationState(row.State), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, Headers: row.Headers, OperationID: uuidString(row.OperationID), OnSuccessDestinationID: uuidString(row.OnSuccessDestinationID), OnFailureDestinationID: uuidString(row.OnFailureDestinationID), LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), Result: row.Result}
+	return Invocation{ID: uuidString(row.ID), AccountID: uuidString(row.AccountID), AppID: uuidString(row.AppID), Source: InvocationSource(row.Source), State: InvocationState(row.State), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, Headers: row.Headers, OperationID: uuidString(row.OperationID), OnSuccessDestinationID: uuidString(row.OnSuccessDestinationID), OnFailureDestinationID: uuidString(row.OnFailureDestinationID), LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), Result: row.Result, QuotaReserved: row.QuotaReserved}
 }
 func acknowledgmentFromSQL(row sqlc.EventDeliveryAcknowledgment) eventAcknowledgment {
 	var digest [32]byte
 	copy(digest[:], row.TokenDigest)
-	return eventAcknowledgment{completionDigest: row.CompletionDigest, claim: InvocationClaim{Attempt: int(row.Attempt), ReplayGeneration: row.ReplayGeneration}, digest: digest, phase: row.Phase, seconds: int(row.LeaseSeconds), deadline: timeFromPgtype(row.DeadlineAt), maxAttempts: int(row.MaxAttempts), retryDelay: time.Duration(row.RetryDelayMs) * time.Millisecond}
+	return eventAcknowledgment{rejectionStatus: row.RejectionStatus, completionDigest: row.CompletionDigest, claim: InvocationClaim{Attempt: int(row.Attempt), ReplayGeneration: row.ReplayGeneration}, digest: digest, phase: row.Phase, seconds: int(row.LeaseSeconds), deadline: timeFromPgtype(row.DeadlineAt), maxAttempts: int(row.MaxAttempts), retryDelay: time.Duration(row.RetryDelayMs) * time.Millisecond}
 }
 func ackLockInvocation(ctx context.Context, tx pgx.Tx, account, app, id string) (Invocation, error) {
 	row, err := sqlc.New().EventAckInvocationLock(ctx, tx, sqlc.EventAckInvocationLockParams{InvocationID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
@@ -102,6 +102,9 @@ func (s *PgStore) EventAcknowledgment(ctx context.Context, account, app, id, tok
 	if err := validSubscriptionControlIDs(account, app, id); err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
+	if err := validateAcknowledgmentFailure(action, result); err != nil {
+		return api.EventAcknowledgmentStatus{}, err
+	}
 	if !validAcknowledgmentResult(result) {
 		return api.EventAcknowledgmentStatus{}, ErrInvalidArgument
 	}
@@ -141,6 +144,12 @@ func (s *PgStore) EventAcknowledgment(ctx context.Context, account, app, id, tok
 	if subtle.ConstantTimeCompare(digest[:], ack.digest[:]) != 1 || inv.Attempts != ack.claim.Attempt || inv.ReplayGeneration != ack.claim.ReplayGeneration {
 		return api.EventAcknowledgmentStatus{}, ErrEventAcknowledgmentStale
 	}
+	if ack.phase == "rejected" {
+		if action == "renew" {
+			return rejectAcknowledgmentRenewal(ctx, tx, id, action)
+		}
+		return replayAcknowledgmentFailure(inv, ack, action, result)
+	}
 	if ack.phase == "completed" && inv.State == InvocationCompleted {
 		if action == "accept" || (action == "complete" && bytes.Equal(acknowledgmentCompletionDigest(result), ack.completionDigest)) {
 			return acknowledgmentStatus(inv, ack, now), nil
@@ -154,6 +163,8 @@ func (s *PgStore) EventAcknowledgment(ctx context.Context, account, app, id, tok
 		return rejectAcknowledgmentRenewal(ctx, tx, id, action)
 	}
 	switch action {
+	case "retry", "dead-letter":
+		return s.rejectEventAcknowledgmentTx(ctx, tx, inv, ack, action, result, now)
 	case "accept", "renew":
 		if action == "renew" && ack.phase != "awaiting" {
 			return rejectAcknowledgmentRenewal(ctx, tx, id, action)
