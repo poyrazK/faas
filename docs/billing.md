@@ -8,7 +8,7 @@ gregale billing status
 gregale billing portal
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
+Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and function instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
@@ -35,7 +35,10 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed.
+- queued job tasks wait in the queue; they are not failed;
+- object storage, which is billed once the month closes, is billed only up
+  to what the cap still allows after the month's compute and egress overage.
+  Object storage keeps serving within its plan limits.
 
 Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during

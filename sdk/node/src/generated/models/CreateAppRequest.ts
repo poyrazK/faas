@@ -75,7 +75,7 @@ export type CreateAppRequest = {
    */
   request_timeout_s?: number;
   /**
-   * Requests one Node or Python function worker serves at once (ADR-1190). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
    */
   function_concurrency?: number;
   /**
@@ -88,6 +88,10 @@ export type CreateAppRequest = {
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
+  /**
+   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
   /**
    * Upper bound on time-to-ready in seconds. 0 uses the plan default.
    */

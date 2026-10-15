@@ -200,8 +200,10 @@ WRAPPER_MODULES = (
     "job_operations_runtime.py",
     "object_storage_runtime.py",
     "secret_reload_runtime.py",
+    "queue_consumer.py",
     "operations.py",
     "event_consumer_transactions.py",
+    "event_consumer_delivery_context.py",
     "commit_subscriber_wait.py",
     "commit_delivery_report.py",
     "commit_recovery_plan.py",
@@ -1281,6 +1283,9 @@ from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recov
 __all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
 from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+from .event_consumer_delivery_context import (EventConsumerDeliveryContext, EventConsumerDeliveryContextUnavailableError,
+                                              event_consumer_delivery_context_from_headers)
+__all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
 '''
 
 

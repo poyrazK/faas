@@ -1,0 +1,127 @@
+{
+  "nonproduction": true,
+  "account_id": "REPLACE_ACCOUNT_ID",
+  "environment_target": {
+    "project": "acceptance",
+    "project_id": "REPLACE_PROJECT_ID",
+    "from_environment": "staging",
+    "from_environment_id": "REPLACE_SOURCE_ENV_ID",
+    "environment": "protected-test",
+    "environment_id": "REPLACE_TARGET_ENV_ID",
+    "review_origin": "https://console.example",
+    "changes": [
+      {
+        "workload_slug": "acceptance-request",
+        "workload_name": "request",
+        "kind": "image",
+        "source_deployment_id": "REPLACE_SOURCE_DEPLOYMENT_ID",
+        "target_deployment_id": "REPLACE_TARGET_DEPLOYMENT_ID"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "id": "plan",
+      "tool": "gregale_plan_environment_promotion",
+      "arguments": {
+        "project": "acceptance",
+        "from_environment": "staging",
+        "to_environment": "protected-test",
+        "reason": "Protected nonproduction recovery acceptance"
+      },
+      "expect": {
+        "approval_required": true
+      }
+    },
+    {
+      "id": "pending",
+      "tool": "gregale_apply_environment_promotion",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "status": "approval_pending"
+      }
+    },
+    {
+      "id": "restart_pending",
+      "action": "restart_bridge"
+    },
+    {
+      "id": "pending_restored",
+      "tool": "gregale_apply_environment_promotion",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "status": "approval_pending",
+        "review_url": {
+          "ref": "pending.review_url"
+        }
+      }
+    },
+    {
+      "id": "review",
+      "action": "human_review",
+      "result_step": "pending_restored"
+    },
+    {
+      "id": "approved",
+      "tool": "gregale_apply_environment_promotion",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "project_slug": "acceptance",
+        "from_environment": "staging",
+        "to_environment": "protected-test"
+      },
+      "replay": [
+        "promotion_id"
+      ]
+    },
+    {
+      "id": "restart_committed",
+      "action": "restart_bridge"
+    },
+    {
+      "id": "cached",
+      "tool": "gregale_apply_environment_promotion",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "promotion_id": {
+          "ref": "approved.promotion_id"
+        }
+      }
+    },
+    {
+      "id": "observe",
+      "tool": "gregale_get_environment_promotion",
+      "arguments": {
+        "project": "acceptance",
+        "environment": "protected-test",
+        "promotion_id": {
+          "ref": "approved.promotion_id"
+        }
+      },
+      "poll": true,
+      "timeout_seconds": 900,
+      "expect": {
+        "status": "completed",
+        "promotion_id": {
+          "ref": "approved.promotion_id"
+        }
+      }
+    }
+  ]
+}

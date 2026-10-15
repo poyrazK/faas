@@ -571,18 +571,22 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                   `json:"max_retries,omitempty"`
-	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string                `json:"stop_signal,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never. Empty selects the default for
+	// the app's type.
+	Pause            string           `json:"pause,omitempty"`
+	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int              `json:"max_retries,omitempty"`
+	StopGracePeriodS int              `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string           `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app's request wall-clock budget in
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
 	// FunctionConcurrency is how many requests one Node or Python function
-	// worker serves at once (ADR-1190); zero keeps one.
+	// worker serves at once (ADR-1342); zero keeps one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. Binding
 	// and per-invocation overrides take precedence over this policy.
@@ -973,18 +977,20 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                  `json:"max_retries,omitempty"`
-	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
-	StopSignal       *string               `json:"stop_signal,omitempty"`
+	// Pause replaces the declared pause value; "" restores the default.
+	Pause            *string          `json:"pause,omitempty"`
+	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	StopGracePeriodS *int             `json:"stop_grace_period_s,omitempty"`
+	StopSignal       *string          `json:"stop_signal,omitempty"`
 	// RequestTimeoutS overrides the app request wall-clock budget in
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
 	// FunctionConcurrency sets how many requests one Node or Python function
-	// worker serves at once (ADR-1190). It takes effect on the next deploy;
+	// worker serves at once (ADR-1342). It takes effect on the next deploy;
 	// an explicit 0 restores one request per worker.
 	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
@@ -1821,7 +1827,7 @@ type AppResponse struct {
 	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	RequestTimeoutS     int                    `json:"request_timeout_s,omitempty"`
 	// FunctionConcurrency is the requests one function worker serves at
-	// once (ADR-1190); omitted means one.
+	// once (ADR-1342); omitted means one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
@@ -2298,8 +2304,27 @@ type Companions = Sidecars
 
 // CreateDeploymentRequest ships a version (JSON variant; the multipart
 // variant is used for tarball/dockerfile deploys).
+// AppReleaseReview binds a candidate insert to an observed app configuration,
+// exact latest revision and serving set. Empty latest/serving require none.
+type AppReleaseReview struct {
+	Scope                string   `json:"scope,omitempty"`
+	ProjectID            string   `json:"project_id,omitempty"`
+	EnvironmentID        string   `json:"environment_id,omitempty"`
+	WorkloadRevision     int64    `json:"workload_revision,omitempty"`
+	WorkloadConfigHash   string   `json:"workload_config_hash,omitempty"`
+	Protected            bool     `json:"protected,omitempty"`
+	AppID                string   `json:"app_id"`
+	ConfigurationHash    string   `json:"configuration_hash"`
+	LatestDeploymentID   string   `json:"latest_deployment_id"`
+	ServingDeploymentIDs []string `json:"serving_deployment_ids"`
+}
+
 type CreateDeploymentRequest struct {
-	Image string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
+	// ExpectedReview is checked atomically before staging or admitting a native rollout.
+	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
+	// NativeRollout selects reviewed service or worker activation. Traffic must be omitted.
+	NativeRollout string `json:"native_rollout,omitempty"`
+	Image         string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
 	// MCPTaskMigrationOverride explicitly allows this deployment to replace
 	// the final worker for a queued MCP task handler version. The grant is
 	// one-use and consumed atomically with the stable cutover.
@@ -3111,6 +3136,8 @@ type DeploymentWorkerDrainStatus struct {
 }
 
 type DeploymentResponse struct {
+	// StagedReview is the intent snapshot committed with a reviewed candidate.
+	StagedReview           *AppReleaseReview                     `json:"staged_review,omitempty"`
 	WorkerDrain            *DeploymentWorkerDrainStatus          `json:"worker_drain,omitempty"`
 	PromotionHold          *DeploymentPromotionHold              `json:"promotion_hold,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
@@ -3543,9 +3570,11 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	TrafficPercent int `json:"traffic_percent"`
+	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
+	TrafficPercent int               `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
-	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
+	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
+	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -6463,12 +6492,18 @@ type RouteRow struct {
 // total bridge failure. Single-box development retains the loopback gateway
 // control endpoint when Prometheus is not configured.
 type AppRoutesResponse struct {
-	Slug               string   `json:"slug"`
-	AppID              string   `json:"app_id,omitempty"`
-	Routes             []string `json:"routes"`
-	Source             string   `json:"source"`
-	CollectorsExpected int      `json:"collectors_expected"`
-	CollectorsHealthy  int      `json:"collectors_healthy"`
+	Scope              string     `json:"scope,omitempty"`
+	ProjectID          string     `json:"project_id,omitempty"`
+	EnvironmentID      string     `json:"environment_id,omitempty"`
+	Coverage           string     `json:"coverage,omitempty"`
+	WindowStart        *time.Time `json:"window_start,omitempty"`
+	WindowEnd          *time.Time `json:"window_end,omitempty"`
+	Slug               string     `json:"slug"`
+	AppID              string     `json:"app_id,omitempty"`
+	Routes             []string   `json:"routes"`
+	Source             string     `json:"source"`
+	CollectorsExpected int        `json:"collectors_expected"`
+	CollectorsHealthy  int        `json:"collectors_healthy"`
 	// CapHit is true when a collector emitted __route_other__ or the fleet
 	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
 	// unavailable, where cap state is unknown.
@@ -6923,9 +6958,14 @@ type ProjectApplyRequest struct {
 // reserved for future wire shapes (zipball, git bundle); v1
 // only ships "tarball". Empty Format defaults to "tarball".
 type SourceRefDeployRequest struct {
-	Repo   string `json:"repo"`
-	Ref    string `json:"ref"`
-	Format string `json:"format,omitempty"`
+	// ExpectedSource opts into commit-pinned reviewed staging or native rollout.
+	// Repository declarations are not applied in this mode.
+	ExpectedSource *SourceReviewResponse `json:"expected_source,omitempty"`
+	// NativeRollout requires ExpectedSource and omitted traffic for service/worker activation.
+	NativeRollout string `json:"native_rollout,omitempty"`
+	Repo          string `json:"repo"`
+	Ref           string `json:"ref"`
+	Format        string `json:"format,omitempty"`
 	// SourceBranch associates an immutable commit ref with the branch that
 	// triggered a GitHub Actions push. The server verifies this branch still
 	// points at the commit and carries the provenance through final promotion.
@@ -7748,6 +7788,11 @@ type Sidecar struct {
 // Returns nil on success or a *Problem with RFC 7807 status 400
 // (or 403 for stateful image). The handler maps this directly to
 // api.WriteProblem; no further error wrapping needed.
+// ValidSidecarName is shared by the API and private artifact storage boundary.
+func ValidSidecarName(name string) bool {
+	return name != "main" && sidecarNameRe.MatchString(name)
+}
+
 func (s *Sidecar) Validate(limits Limits) *Problem {
 	if s == nil {
 		return nil
@@ -10161,8 +10206,11 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
-// EdgeRuleEventResponse (ADR-964) is one sampled rule match. RuleName and
-// RuleKind are empty once the rule has been deleted.
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match or kind=waf
+// detection. RuleName and RuleKind are empty once the rule has been deleted.
+// Detections (outcome detected, warned or blocked; ADR-831 amendment 5) also
+// carry the CRS rule IDs that scored, their attack categories and the
+// anomaly score.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`
@@ -10177,6 +10225,31 @@ type EdgeRuleEventResponse struct {
 	ClientIP   string    `json:"client_ip,omitempty"`
 	Country    string    `json:"country,omitempty"`
 	UserAgent  string    `json:"user_agent,omitempty"`
+
+	WAFRuleIDs    []int    `json:"waf_rule_ids,omitempty"`
+	WAFCategories []string `json:"waf_categories,omitempty"`
+	WAFScore      int      `json:"waf_score,omitempty"`
+}
+
+// WAFSummary renders a detection's detail for people, for example
+// "sqli, xss · CRS 942100, 941100 · score 10"; empty for other events.
+func (e EdgeRuleEventResponse) WAFSummary() string {
+	if len(e.WAFRuleIDs) == 0 && len(e.WAFCategories) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if len(e.WAFCategories) > 0 {
+		parts = append(parts, strings.Join(e.WAFCategories, ", "))
+	}
+	if len(e.WAFRuleIDs) > 0 {
+		ids := make([]string, len(e.WAFRuleIDs))
+		for i, id := range e.WAFRuleIDs {
+			ids[i] = strconv.Itoa(id)
+		}
+		parts = append(parts, "CRS "+strings.Join(ids, ", "))
+	}
+	parts = append(parts, "score "+strconv.Itoa(e.WAFScore))
+	return strings.Join(parts, " · ")
 }
 
 // EdgeRuleEventsResponse is GET /v1/apps/{slug}/edge-rules/events. Since is
@@ -11194,6 +11267,28 @@ type DebugDependencyLatencyItem struct {
 	// TopErrorType is the most frequent span failure class, from the current
 	// side when it has failures.
 	TopErrorType string `json:"top_error_type,omitempty"`
+	// Queries breaks a database dependency down by normalized query pattern
+	// (literals, placeholders, IN lists and VALUES rows folded), at most 5,
+	// regressions first. QueriesTruncated is set when more patterns were seen.
+	Queries          []DebugDependencyQueryItem `json:"queries,omitempty"`
+	QueriesTruncated bool                       `json:"queries_truncated,omitempty"`
+}
+
+// DebugDependencyQueryItem is one query pattern within a database
+// dependency, with the same latency and failure comparison as its parent.
+type DebugDependencyQueryItem struct {
+	Pattern              string  `json:"pattern"`
+	Calls                int64   `json:"calls"`
+	ErrorCalls           int64   `json:"error_calls"`
+	P95MS                int64   `json:"p95_ms"`
+	BaselineP95MS        int64   `json:"baseline_p95_ms,omitempty"`
+	CurrentP95MS         int64   `json:"current_p95_ms,omitempty"`
+	RegressionFactor     float64 `json:"regression_factor,omitempty"`
+	Regression           bool    `json:"regression"`
+	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
+	CurrentErrorRatePct  float64 `json:"current_error_rate_pct,omitempty"`
+	FailureRegression    bool    `json:"failure_regression"`
+	TopErrorType         string  `json:"top_error_type,omitempty"`
 }
 
 // DebugDependencyImpactEdge is a bounded parent-to-child rollup reconstructed
@@ -11729,6 +11824,14 @@ type DebugRegressionItem struct {
 	// the previous and this deployment on the route (ADR-958 §5); absent when
 	// no dependency regressed or no spans were retained.
 	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
+	// Kind is which signal regressed: "latency" (p95, the original
+	// detector), "errors" (the share of HTTP 5xx responses rose) or
+	// "latency_and_errors". For an errors-only observation AffectedCount is
+	// the number of failed requests and Factor is at least 1.00.
+	Kind             string  `json:"kind"`
+	ErrorRatePct     float64 `json:"error_rate_pct,omitempty"`
+	ErrorRateBasePct float64 `json:"error_rate_base_pct,omitempty"`
+	ErrorCount       int     `json:"error_count,omitempty"`
 }
 
 // DebugSuspectedDependency is a bounded, redacted dependency identity with
@@ -11748,6 +11851,9 @@ type DebugSuspectedDependency struct {
 	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
 	ErrorRatePct         float64 `json:"error_rate_pct,omitempty"`
 	ErrorType            string  `json:"error_type,omitempty"`
+	// Query is the normalized pattern of the database query that regressed
+	// within the dependency, when one did.
+	Query string `json:"query,omitempty"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug
@@ -11930,6 +12036,8 @@ func AllowedRecoverRolloutAction(v string) bool {
 //     serving siblings regain the residual weight. Exact recovery restores
 //     the selected predecessor to 100%. Requires an active rollout.
 type RecoverRolloutRequest struct {
+	// ExpectedReview is an optional atomic guard for exact service recovery.
+	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
 	// Action is the closed-set verb ∈ {advance, promote, abort}.
 	Action string `json:"action"`
 	// Reason is a free-form operator note captured into the
@@ -12665,9 +12773,11 @@ type EventReceiptRecoveryAction struct {
 	Body   *ReplayEventFanoutFailureRequest `json:"body,omitempty"`
 }
 
-// AppHealthResponse describes observed default-scope HTTP serving health.
+// AppHealthResponse describes observed HTTP serving health in one scope.
 // Unknown evidence is explicit; this is not an uptime or reachability guarantee.
 type AppHealthResponse struct {
+	ProjectID            string             `json:"project_id,omitempty"`
+	EnvironmentID        string             `json:"environment_id,omitempty"`
 	AppID                string             `json:"app_id"`
 	Status               string             `json:"status"`
 	Phase                string             `json:"phase"`

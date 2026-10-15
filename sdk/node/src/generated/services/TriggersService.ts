@@ -114,7 +114,7 @@ export class TriggersService {
    * Fires a `triggers:` and `event_triggers:` fragment at the server,
    * validates via the same path the CLI uses, and returns per-row ids
    * and any per-row RFC 7807 codes. Event triggers for the target app
-   * are applied the way a source deploy applies them (ADR-1190):
+   * are applied the way a source deploy applies them (ADR-1342):
    * existing subscriptions are kept, and a failure is one `errors`
    * row after its changes are rolled back.
    *

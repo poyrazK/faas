@@ -118,6 +118,12 @@ type OpsMetrics struct {
 	warmPoolSize *prometheus.GaugeVec
 	// warmPoolResumeTotal counts bounded warm-pool resume outcomes.
 	warmPoolResumeTotal *prometheus.CounterVec
+	// Frozen tier (ADR-1151): freeze attempts, thaws and parks by bounded
+	// outcome or reason, and the instances currently frozen.
+	frozenFreezeTotal *prometheus.CounterVec
+	frozenThawTotal   *prometheus.CounterVec
+	frozenParksTotal  *prometheus.CounterVec
+	frozenInstances   prometheus.Gauge
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -2207,6 +2213,31 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range []string{"success", "missing", "stale"} {
 		warmPoolResumeTotal.WithLabelValues(outcome)
 	}
+	frozenFreezeTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_total",
+		Help: "Idle-timeout freeze attempts (ADR-1151) by outcome: frozen, or why the instance parked or stayed running instead.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenFreezeOutcomes {
+		frozenFreezeTotal.WithLabelValues(outcome)
+	}
+	frozenThawTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_thaw_total",
+		Help: "Thaws of frozen instances for a request (ADR-1151) by outcome.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenThawOutcomes {
+		frozenThawTotal.WithLabelValues(outcome)
+	}
+	frozenParksTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_parks_total",
+		Help: "Frozen instances parked (ADR-1151) by reason; the VM is destroyed and the deployment's snapshot stays.",
+	}, []string{"reason"})
+	for _, reason := range FrozenParkReasons {
+		frozenParksTotal.WithLabelValues(reason)
+	}
+	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_frozen_instances",
+		Help: "Instances this schedd holds frozen in place (ADR-1151).",
+	})
 	// warmupErrors (Tier A8 / ADR-083). Counts probe failures on the
 	// standby warm-up scraper (cmd/gatewayd-public/standby_warmup.go).
 	// Labelled by app slug — the per-app cardinality is bounded by the
@@ -3846,7 +3877,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -4662,7 +4693,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	auditLogWriteTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_audit_log_write_total",
-		Help: "Count of events-table appends the audit emit path completed, labelled by endpoint and kind. /v1/admin/obs/health reads this via PromQL `sum(increase(audit_log_write_total[5m]))` to report 5-minute throughput. Single-registry: registered on every daemon; only the audit emit site (pkg/audit.Auditor.Emit / EmitResult) increments via AuditLogWriteTotal.",
+		Help: "Count of events-table appends the audit emit path completed, labelled by endpoint and kind. /v1/admin/obs/health reads this via PromQL `sum(increase(apid_audit_log_write_total[5m]))` to report 5-minute throughput. Single-registry: registered on every daemon; only the audit emit site (pkg/audit.Auditor.Emit / EmitResult) increments via AuditLogWriteTotal.",
 	}, []string{"endpoint", "kind"})
 	auditLogWriteFailuresTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_audit_log_write_failures_total",
@@ -5353,6 +5384,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
+		frozenFreezeTotal:                          frozenFreezeTotal,
+		frozenThawTotal:                            frozenThawTotal,
+		frozenParksTotal:                           frozenParksTotal,
+		frozenInstances:                            frozenInstances,
 		warmupErrors:                               warmupErrors,
 		writeRedirectTotal:                         writeRedirectTotal,
 		writeRedirectLatency:                       writeRedirectLatency,
@@ -6103,6 +6138,46 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 		return nil
 	}
 	return m.warmPoolResumeTotal.WithLabelValues(outcome)
+}
+
+// Bounded label sets of the frozen-tier series (ADR-1151).
+var (
+	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity"}
+	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
+)
+
+// FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
+func (m *OpsMetrics) FrozenFreezeTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenFreezeTotal.WithLabelValues(outcome)
+}
+
+// FrozenThawTotal is the thaw counter for one outcome.
+func (m *OpsMetrics) FrozenThawTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenThawTotal.WithLabelValues(outcome)
+}
+
+// FrozenParksTotal is the frozen-park counter for one reason.
+func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenParksTotal.WithLabelValues(reason)
+}
+
+// SetFrozenInstances sets the number of instances held frozen.
+func (m *OpsMetrics) SetFrozenInstances(n int) {
+	if m == nil {
+		return
+	}
+	m.frozenInstances.Set(float64(n))
 }
 
 // WarmupErrors returns the per-(app slug) probe-failure counter

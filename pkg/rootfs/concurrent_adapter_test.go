@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// sharedAdapter drives a generated adapter as a shared worker (ADR-1190):
+// sharedAdapter drives a generated adapter as a shared worker (ADR-1342):
 // requests carry __faas_id and the adapter answers them as they finish.
 type sharedAdapter struct {
 	t      *testing.T
@@ -227,7 +227,7 @@ def handler(event, ctx):
     return {"statusCode": 200, "body": {"ms": ms}}
 `
 
-// A sync Python handler shares its worker on threads (ADR-1190). A cancel
+// A sync Python handler shares its worker on threads (ADR-1342). A cancel
 // cannot interrupt the thread: it is acknowledged once the handler returns,
 // the cancelled request sends nothing more, and a streamed body stops.
 func TestPythonFunctionAdapterSyncHandlerSharesOnThreads(t *testing.T) {

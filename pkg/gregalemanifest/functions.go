@@ -28,7 +28,7 @@ type FunctionSpec struct {
 	BucketEvents []FunctionBucketEvent `yaml:"bucket_events,omitempty"`
 	Webhooks     []FunctionWebhook     `yaml:"webhooks,omitempty"`
 
-	// Per-function app settings (ADR-1190). An omitted key leaves the
+	// Per-function app settings (ADR-1342). An omitted key leaves the
 	// app's current setting alone. Concurrency is the function's
 	// function_concurrency: requests one Node or Python worker serves at
 	// once.
@@ -50,7 +50,7 @@ type FunctionSpec struct {
 	Routes []string `yaml:"routes,omitempty"`
 	Entry  bool     `yaml:"entry,omitempty"`
 	// QueueBindings push queue messages to the function and EventTriggers
-	// subscribe it to events (ADR-1190). An omitted queue_bindings leaves
+	// subscribe it to events (ADR-1342). An omitted queue_bindings leaves
 	// the app's bindings alone and an empty list removes them; event
 	// triggers are added and updated, never removed, as on any deploy.
 	QueueBindings []QueueBinding `yaml:"queue_bindings,omitempty"`
@@ -251,7 +251,7 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 	return nil
 }
 
-// validateFunctionSettings checks one function's app settings (ADR-1190)
+// validateFunctionSettings checks one function's app settings (ADR-1342)
 // against the plan. apid stays authoritative; this catches mistakes before
 // any function deploys.
 func validateFunctionSettings(field string, fn FunctionSpec, limits api.Limits) error {

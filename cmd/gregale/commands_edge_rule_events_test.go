@@ -19,7 +19,9 @@ func edgeRuleEventsServer(t *testing.T, gotQuery *string) {
 		_ = json.NewEncoder(w).Encode(api.EdgeRuleEventsResponse{
 			Since: time.Now().Add(-time.Hour),
 			Events: []api.EdgeRuleEventResponse{{ID: "1", RuleID: "r1", RuleName: "scrapers", Outcome: "logged",
-				OccurredAt: time.Now(), Method: "GET", Host: "api.example.com", Path: "/x", ClientIP: "203.0.113.9", Country: "DE"}},
+				OccurredAt: time.Now(), Method: "GET", Host: "api.example.com", Path: "/x", ClientIP: "203.0.113.9", Country: "DE"},
+				{ID: "2", RuleID: "r2", RuleName: "waf", Outcome: "blocked", OccurredAt: time.Now(), Method: "GET", Host: "api.example.com",
+					Path: "/login", WAFRuleIDs: []int{942100}, WAFCategories: []string{"sqli"}, WAFScore: 5}},
 			NextCursor: "123-1",
 		})
 	}))
@@ -45,7 +47,7 @@ func TestCmdEdgeRulesEvents(t *testing.T) {
 			t.Errorf("query %q missing %s", query, want)
 		}
 	}
-	for _, want := range []string{"scrapers", "203.0.113.9", "api.example.com/x", "--cursor 123-1"} {
+	for _, want := range []string{"scrapers", "203.0.113.9", "api.example.com/x", "--cursor 123-1", "blocked", "waf: sqli · CRS 942100 · score 5"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, stdout.String())
 		}

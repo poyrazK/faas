@@ -35,6 +35,9 @@ func durableInstanceLive(store instanceReader) fcvm.LiveInstanceFunc {
 			}
 			return false, err
 		}
+		if !state.State(ins.State).Valid() {
+			return false, errors.New("vmmd: unknown durable instance state")
+		}
 		return state.IsLive(ins.State), nil
 	}
 }

@@ -121,6 +121,7 @@ const CsrfActionSessionRevoke = csrfActionSessionRevoke
 const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
+const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie
@@ -323,7 +324,10 @@ var DataAPITaskKind = dataAPITaskKind
 var DataUpstreamResponseFromState = dataUpstreamResponseFromState
 var DebugCoverageSignal = debugCoverageSignal
 var DebugCoverageTimestamp = debugCoverageTimestamp
+var DebugRegressionCandidateRoutes = debugRegressionCandidateRoutes
 var DebugRegressionObservationToItem = debugRegressionObservationToItem
+var DebugRegressionParams = debugRegressionParams
+var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename
@@ -587,6 +591,7 @@ var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
 var SuspectedDependency = suspectedDependency
+var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
 var SweepUploadSessions = sweepUploadSessions
 var TcpListenerTLSStatusResponse = tcpListenerTLSStatusResponse
@@ -759,6 +764,7 @@ func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.complete
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
 func (r *mfaTestEnv) Cookie() **http.Cookie   { return &r.cookie }
 func (r *mfaTestEnv) H() *http.Handler        { return &r.h }
+func (r *mfaTestEnv) Srv() **server           { return &r.srv }
 func (r *mfaTestEnv) Store() **state.MemStore { return &r.store }
 func (r mfaTestEnv) GenerateEnrolledAccount(p0 *testing.T) ([]string, string, *http.Cookie) {
 	return r.generateEnrolledAccount(p0)
@@ -833,6 +839,7 @@ func (r *server) Durable() *durable.Service                          { return &r
 func (r *server) EdgeRules() *edgerules.Service                      { return &r.edgeRules }
 func (r *server) FeatureFlagsEnabled() *bool                         { return &r.featureFlagsEnabled }
 func (r *server) FlagsWorkloadVerifier() **workloadidentity.Verifier { return &r.flagsWorkloadVerifier }
+func (r *server) WorkloadVerifier() **workloadidentity.Verifier      { return &r.workloadVerifier }
 func (r *server) Log() **slog.Logger                                 { return &r.log }
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
@@ -909,8 +916,10 @@ func (r *server) CancelPendingWork(p0 http.ResponseWriter, p1 *http.Request, p2 
 func (r *server) CaptureProjectEnvironmentValues(p0 context.Context, p1 state.Account, p2 state.Project, p3 string) ([]state.App, state.ProjectEnvironmentCloneValuesSnapshot, error) {
 	return r.captureProjectEnvironmentValues(p0, p1, p2, p3)
 }
-func (r *server) CheckedRollbackSweep(p0 context.Context) error        { return r.checkedRollbackSweep(p0) }
-func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) { r.configureAIGateway(p0, p1) }
+func (r *server) CheckedRollbackSweep(p0 context.Context) error { return r.checkedRollbackSweep(p0) }
+func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) error {
+	return r.configureAIGateway(p0, p1)
+}
 func (r *server) ConfigureDurableEntities(p0 context.Context, p1 func(string) string) error {
 	return r.configureDurableEntities(p0, p1)
 }
@@ -1032,7 +1041,16 @@ func (r *server) GetQueueBindingStatus(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Event, p2 state.Account, p3 bool) error {
 	return r.handleBillingEventWithOptions(p0, p1, p2, p3)
 }
-func (r *server) Handler() http.Handler                       { return r.handler() }
+func (r *server) Handler() http.Handler { return r.handler() }
+
+func (r *server) GitOpsDashboardRequestForTest(request *http.Request) (any, string, error) {
+	body, _, method, err := r.environmentGitOpsDashboardRequest(request)
+	return body, method, err
+}
+func (r *server) GitOpsPreviewArchiveForTest(t *testing.T, definition, resolvedSHA string) {
+	r.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
+		archive: environmentGitOpsArchiveDefinition(t, definition), resolvedSHA: resolvedSHA}
+}
 func (r *server) Idempotent(p0 accountHandler) accountHandler { return r.idempotent(p0) }
 func (r *server) ImagedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.imagedMetricsDiscovery(p0, p1)
@@ -1294,4 +1312,31 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+// AddAuthBindingForTest gives appID an `auth` managed PostgreSQL binding,
+// which marks it as an application Auth app (ADR-1190). The test provider has
+// no auth credential mode, so the binding is reserved directly.
+func AddAuthBindingForTest(t *testing.T, e TestEnv, appID string) {
+	t.Helper()
+	store, _, databaseID := configureSourceRefManagedPostgres(t, sourceRefTestEnv{srv: e.s, store: e.store, acctID: e.acct.ID, appID: appID})
+	now := time.Now().UTC()
+	if _, _, err := store.ReserveBinding(context.Background(), managedpostgres.Binding{
+		ID: "auth-binding-" + appID, AccountID: e.acct.ID, DatabaseID: databaseID, AppID: appID, Scope: api.DefaultEnvScope,
+		EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialAuth, CredentialGeneration: 1,
+		State: managedpostgres.BindingStateProvisioning, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("reserve auth binding: %v", err)
+	}
+}
+
+var ComposeDockerBuildContext = composeDockerBuildContext
+
+func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
+	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
+}
+
+// WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
+func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
+	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
 }

@@ -347,7 +347,7 @@ func TestApplyOverridesRejectsGraceDurationOverflow(t *testing.T) {
 	}
 }
 
-// ADR-1190: a function app's function_concurrency reaches its adapter as
+// ADR-1342: a function app's function_concurrency reaches its adapter as
 // FAAS_FUNCTION_CONCURRENCY; one, the default, leaves the env untouched.
 func TestApplyFunctionConcurrency(t *testing.T) {
 	base := api.AppManifest{Env: map[string]string{"A": "1"}}

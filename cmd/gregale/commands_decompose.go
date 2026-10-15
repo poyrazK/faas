@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"gopkg.in/yaml.v3"
 )
 
 func validateProjectEnvironmentFlag(environment string) error {
@@ -308,7 +309,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return code
 	}
 	if strict && !plan.CanApply {
-		return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
+		return printErr("Project plan cannot be applied", planBlockedError(plan))
 	}
 	return 0
 }
@@ -447,6 +448,40 @@ func resolveScanSource(
 // — a single filepath.Ext() call only drops ".gz" and leaves ".tar"
 // in the slug, which customers typing "deploy fixture.tar.gz" would
 // not expect.
+// composeFileNames are the Compose files Gregale reads as a project, in
+// Compose's own lookup order.
+var composeFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+// composeFileIn returns the first Compose file at the root of dir, or "".
+func composeFileIn(dir string) string {
+	for _, file := range composeFileNames {
+		if info, err := os.Stat(filepath.Join(dir, file)); err == nil && info.Mode().IsRegular() {
+			return file
+		}
+	}
+	return ""
+}
+
+// composeProjectName returns the top-level `name:` of the compose file in
+// dir, or "" when there is none. Compose uses it as the project name, so
+// it is the project slug a redeploy from a renamed directory must keep.
+func composeProjectName(dir string) string {
+	for _, file := range composeFileNames {
+		raw, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Name string `yaml:"name"`
+		}
+		if yaml.Unmarshal(raw, &doc) != nil {
+			return ""
+		}
+		return strings.TrimSpace(doc.Name)
+	}
+	return ""
+}
+
 func defaultProjectSlug(p string) string {
 	if p == "" {
 		return ""
@@ -984,6 +1019,16 @@ func confirmPlan(w io.Writer, r io.Reader, plan api.PlanResponse, excludeSet []s
 // just the first — a deliberate "single problem + tail" ugly
 // message is worse than the joined string in the rare multi-block
 // case.
+// planBlockedError names why a project plan cannot apply. A fixed
+// "over-quota or unsupported configuration" line hid the real reasons,
+// such as a workload slug owned by another project (H10-2).
+func planBlockedError(plan api.PlanResponse) error {
+	if len(plan.CanApplyReasons) == 0 {
+		return errors.New("over-quota or unsupported configuration")
+	}
+	return errors.New(strings.Join(plan.CanApplyReasons, "; "))
+}
+
 func planProblem(plan api.PlanResponse) api.Problem {
 	if plan.CronsNotAllowed {
 		return api.Problem{

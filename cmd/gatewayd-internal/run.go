@@ -929,6 +929,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	applyInvocationAttemptHeaders(req.Header, inv)
 	if state.InvocationHasOperation(inv) {
 		var proof map[string]string
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
@@ -2899,6 +2900,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
 		handler.WithEdgeRuleHitRecorder(hitCounter)
+		// ADR-831 amendment 5: off-path WAF detections become events too.
+		wafInspector.WithEventRecorder(hitCounter)
 		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
@@ -3228,6 +3231,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
 					FlagEvidenceJson:                     row.FlagEvidenceJSON,
+					ContentOutcome:                       row.ContentOutcome,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
@@ -3406,6 +3410,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				S3:     deps.archiveS3,
 				Bucket: deps.archiveBucket,
 				Store:  deps.pgStore,
+				Scope:  deps.pgStore,
 				Log:    log,
 				Ops:    nil,
 			},
@@ -3430,6 +3435,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
@@ -3499,7 +3505,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		attachMux := http.NewServeMux()
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
 			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		// ADR-1330: an interactive image run's task uses the same session.
+		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
+		// ADR-1163: live job task output follows the task VM on its node.
+		logsMux := http.NewServeMux()
+		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
+			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
 	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy

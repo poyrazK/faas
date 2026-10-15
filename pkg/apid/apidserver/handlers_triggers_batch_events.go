@@ -9,7 +9,7 @@ import (
 
 // applyBatchEventTriggers applies a batch manifest's event_triggers to the
 // target app through the same manifest apply a source deploy uses
-// (ADR-1190). A functions manifest subscribes each function this way after
+// (ADR-1342). A functions manifest subscribes each function this way after
 // its deployment, since function deploys never apply manifest triggers.
 // Declarations for other apps are skipped, existing subscriptions are kept,
 // and a failure rolls back what this call created or changed.

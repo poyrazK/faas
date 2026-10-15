@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.workflow_recovery_automatic_queue import WorkflowRecoveryAutomaticQueue
+    from ..models.workflow_recovery_overview import WorkflowRecoveryOverview
 
 
 T = TypeVar("T", bound="WorkflowRecoveryPolicyHealth")
@@ -37,6 +38,10 @@ class WorkflowRecoveryPolicyHealth:
     not been recorded; it does not assert the child is currently running. Pending counts current policy intents
     only. Charges survive review pruning and policy replacement. Paused policies retain their queue and committed
     children continue. Missing evidence is unresolved, never success or failure."""
+    overview: WorkflowRecoveryOverview | Unset = UNSET
+    """Read-only retained recovery observations from one snapshot. Covers manual initial reviews, manual retry
+    disposition/completion observations and the automatic queue, not all workflow outcomes or scheduler liveness.
+    Counts are exact; issues are bounded. Delivery covers the last retained polling alert only."""
     sample_last_progress_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -48,6 +53,10 @@ class WorkflowRecoveryPolicyHealth:
         stall_after_seconds = self.stall_after_seconds
 
         queue = self.queue.to_dict()
+
+        overview: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.overview, Unset):
+            overview = self.overview.to_dict()
 
         sample_last_progress_at: str | Unset = UNSET
         if not isinstance(self.sample_last_progress_at, Unset):
@@ -63,6 +72,8 @@ class WorkflowRecoveryPolicyHealth:
                 "queue": queue,
             }
         )
+        if overview is not UNSET:
+            field_dict["overview"] = overview
         if sample_last_progress_at is not UNSET:
             field_dict["sample_last_progress_at"] = sample_last_progress_at
 
@@ -71,6 +82,7 @@ class WorkflowRecoveryPolicyHealth:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.workflow_recovery_automatic_queue import WorkflowRecoveryAutomaticQueue
+        from ..models.workflow_recovery_overview import WorkflowRecoveryOverview
 
         d = dict(src_dict)
         status = check_workflow_recovery_policy_health_status(d.pop("status"))
@@ -80,6 +92,13 @@ class WorkflowRecoveryPolicyHealth:
         stall_after_seconds = d.pop("stall_after_seconds")
 
         queue = WorkflowRecoveryAutomaticQueue.from_dict(d.pop("queue"))
+
+        _overview = d.pop("overview", UNSET)
+        overview: WorkflowRecoveryOverview | Unset
+        if isinstance(_overview, Unset):
+            overview = UNSET
+        else:
+            overview = WorkflowRecoveryOverview.from_dict(_overview)
 
         _sample_last_progress_at = d.pop("sample_last_progress_at", UNSET)
         sample_last_progress_at: datetime.datetime | Unset
@@ -93,6 +112,7 @@ class WorkflowRecoveryPolicyHealth:
             reason=reason,
             stall_after_seconds=stall_after_seconds,
             queue=queue,
+            overview=overview,
             sample_last_progress_at=sample_last_progress_at,
         )
 

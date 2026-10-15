@@ -66,8 +66,10 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	queueAck := flag.Bool("queue-ack", false, "acknowledge push-queue fixture deliveries without returning customer data")
+	gitOpsResilience := flag.Bool("gitops-resilience", false, "allow bounded native acceptance request and queue delays")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
+	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
 	flag.Parse()
 	if *echoSession {
 		runEchoSession()
@@ -126,6 +128,9 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	if *identityProbe {
+		serveIdentityProbe(mux)
+	}
 	if *durableCounter {
 		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
 	}
@@ -171,10 +176,16 @@ func main() {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
+			if *gitOpsResilience && !waitGitOpsQueueDelay(w, r) {
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if *gitOpsResilience && !waitGitOpsRequestDelay(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)
 	})

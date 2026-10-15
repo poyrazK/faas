@@ -83,7 +83,7 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"combined with scaling", "scaling:\n  min_instances: 1\nfunctions:\n  - name: a\n    root: f\n", api.PlanPro, "cannot be combined with scaling:"},
 		{"non-cron trigger", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: queue\n    app: a\n    config:\n      mode: queue\n", api.PlanPro, "cron triggers only"},
 		{"trigger for unknown function", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: cron\n    app: b\n    schedule: \"* * * * *\"\n    path: /\n", api.PlanPro, "must name one of the functions"},
-		// ADR-1190 per-function settings.
+		// ADR-1342 per-function settings.
 		{"ram above plan", "functions:\n  - name: a\n    root: f\n    ram_mb: 4096\n", api.PlanHobby, "ram_mb 4096 must be between 1 and 256"},
 		{"timeout above plan", "functions:\n  - name: a\n    root: f\n    request_timeout_s: 100000\n", api.PlanPro, "request_timeout_s 100000"},
 		{"negative min instances", "functions:\n  - name: a\n    root: f\n    min_instances: -1\n", api.PlanPro, "min_instances -1"},
@@ -173,7 +173,7 @@ func TestFunctionBucketRuleID(t *testing.T) {
 	}
 }
 
-// ADR-1190: per-function app settings and routes parse and validate.
+// ADR-1342: per-function app settings and routes parse and validate.
 func TestFunctionsManifestSettings(t *testing.T) {
 	m, err := ParseBytes([]byte(`
 functions:

@@ -76,7 +76,7 @@ func isSyntheticInvocation(ctx context.Context) bool {
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 	return isTrustedServiceCallerAssertion(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
-		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
+		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
 		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
@@ -395,7 +395,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		responseStatus := http.StatusBadGateway
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			markStaleTarget(r.Context())
+			markStaleTargetErr(r.Context(), err)
 			responseStatus = http.StatusServiceUnavailable
 		}
 		log.Error("gateway: forwarder stream open failed",
@@ -467,7 +467,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			markStaleTarget(r.Context())
+			markStaleTargetErr(r.Context(), err)
 		}
 		log.Error("gateway: forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
@@ -563,14 +563,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// transport error, matching the public edge's
 				// mid-body failure handling (internal_proxy.go).
 				if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.NotFound) {
-					markStaleTarget(r.Context())
+					markStaleTargetErr(r.Context(), err)
 				}
 				log.Warn("gateway: forwarder stream failed after response commit; aborting",
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-				markStaleTarget(r.Context())
+				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -920,7 +920,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
-				markStaleTarget(r.Context())
+				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)

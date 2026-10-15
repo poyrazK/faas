@@ -544,6 +544,10 @@ func (f *fakeVmmdClient) PauseAndSnapshot(context.Context, *vmmdpb.PauseAndSnaps
 	panic("PauseAndSnapshot: not stubbed")
 }
 
+func (f *fakeVmmdClient) CaptureAdmittedRuntime(context.Context, *vmmdpb.CaptureAdmittedRuntimeRequest, ...grpc.CallOption) (*vmmdpb.CaptureAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "admitted capture is not used by gateway tests")
+}
+
 // WaitBuilderReady and DeleteWarmSnapshot belong to builderd's warm-builder
 // handoff path. The gateway forwarder never invokes them, but the generated
 // vmmd client requires both methods on every test fake.
@@ -564,6 +568,12 @@ func (f *fakeVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 }
 func (f *fakeVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	panic("ResumeWarmInstance: not stubbed")
+}
+func (f *fakeVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
+	panic("FreezeInstance: not stubbed")
+}
+func (f *fakeVmmdClient) ThawInstance(context.Context, *vmmdpb.ThawInstanceRequest, ...grpc.CallOption) (*vmmdpb.ThawInstanceResponse, error) {
+	panic("ThawInstance: not stubbed")
 }
 func (f *fakeVmmdClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	panic("Destroy: not stubbed")

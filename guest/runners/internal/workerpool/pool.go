@@ -2,7 +2,7 @@
 // invocations. Legacy protocol handlers remain one-process-per-request and are
 // selected automatically when the adapter marker is absent. A worker serves
 // one request at a time unless its ready handshake advertises more; such a
-// shared worker multiplexes requests by id (mux.go, ADR-1190).
+// shared worker multiplexes requests by id (mux.go, ADR-1342).
 package workerpool
 
 import (

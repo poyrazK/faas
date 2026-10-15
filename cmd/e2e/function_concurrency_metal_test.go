@@ -29,7 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
-// TestFunctionConcurrencyMetal is the ADR-1190 acceptance on real guests. A
+// TestFunctionConcurrencyMetal is the ADR-1342 acceptance on real guests. A
 // binary function whose handler speaks the shared worker protocol, and real
 // node22 and python312 (async and sync) functions, each deployed with
 // function_concurrency=8, serve eight slow requests at once from one worker
@@ -186,7 +186,7 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		}
 		routed := sharedWorkerGet(t, h, key, entry.Hostname(), "/users/42", time.Minute)
 		fallthrough_ := sharedWorkerGet(t, h, key, entry.Hostname(), "/about", time.Minute)
-		t.Logf("ADR-1190 evidence: %s/users/42 -> who=%s slots=%s secret bytes=%s; %s/about -> who=%s slots=%s",
+		t.Logf("ADR-1342 evidence: %s/users/42 -> who=%s slots=%s secret bytes=%s; %s/about -> who=%s slots=%s",
 			entry.Hostname(), routed.who, routed.slots, routed.tok, entry.Hostname(), fallthrough_.who, fallthrough_.slots)
 		if routed.who != "users" || routed.slots != "4" {
 			t.Fatalf("/users/42 on the entry host reached who=%s slots=%s; want the users function built with concurrency 4", routed.who, routed.slots)
@@ -201,7 +201,7 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		mustGetJSON(t, h, key, "/v1/apps/shop-users/queue-bindings", &bindings)
 		var subscriptions api.EventSubscriptionListResponse
 		mustGetJSON(t, h, key, "/v1/apps/shop-users/event-subscriptions", &subscriptions)
-		t.Logf("ADR-1190 evidence: shop-users queue bindings %+v; event subscriptions %+v", bindings, subscriptions.Subscriptions)
+		t.Logf("ADR-1342 evidence: shop-users queue bindings %+v; event subscriptions %+v", bindings, subscriptions.Subscriptions)
 		if len(bindings) != 1 || bindings[0].Name != "jobs" || bindings[0].QueueName != "user-jobs" || bindings[0].Mode != "push" || bindings[0].WorkloadClass != "http" {
 			t.Fatalf("shop-users queue bindings = %+v; want one push/http binding jobs → user-jobs", bindings)
 		}
@@ -237,7 +237,7 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		for _, row := range envList.Env {
 			envKeys = append(envKeys, row.Key)
 		}
-		t.Logf("ADR-1190 evidence: after the repeat deploy shop-users env keys %v, %d event subscription(s)", envKeys, len(subscriptions.Subscriptions))
+		t.Logf("ADR-1342 evidence: after the repeat deploy shop-users env keys %v, %d event subscription(s)", envKeys, len(subscriptions.Subscriptions))
 		if strings.Join(envKeys, ",") != "WHO" {
 			t.Fatalf("shop-users env keys = %v; prune_env should leave only WHO", envKeys)
 		}
@@ -248,7 +248,7 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 }
 
 // exerciseSharedFunction checks a function deployed with
-// function_concurrency=8 (ADR-1190): one worker answers eight concurrent
+// function_concurrency=8 (ADR-1342): one worker answers eight concurrent
 // 2 s requests, and after a client abandons abandonPath the same worker
 // still serves, past the runner's 5 s cancel deadline. wantCancels, when
 // set, is the cancel count the worker must report. The guest's writable
@@ -277,7 +277,7 @@ func exerciseSharedFunction(t *testing.T, h *e2etest.Harness, key, slug, abandon
 	for reply := range replies {
 		pids[reply.pid] = true
 	}
-	t.Logf("ADR-1190 evidence: %s: 8 concurrent 2 s requests answered in %v by %d worker process(es) %v (first request pid %s)",
+	t.Logf("ADR-1342 evidence: %s: 8 concurrent 2 s requests answered in %v by %d worker process(es) %v (first request pid %s)",
 		slug, elapsed.Round(10*time.Millisecond), len(pids), sortedKeys(pids), first.pid)
 	if len(pids) != 1 || !pids[first.pid] {
 		t.Fatalf("requests ran in workers %v; want the one shared worker %s", sortedKeys(pids), first.pid)
@@ -309,7 +309,7 @@ func exerciseSharedFunction(t *testing.T, h *e2etest.Harness, key, slug, abandon
 			break
 		}
 	}
-	t.Logf("ADR-1190 evidence: %s: after an abandoned %s, worker %s (first %s) reports %s cancel(s)", slug, abandonPath, after.pid, first.pid, after.cancels)
+	t.Logf("ADR-1342 evidence: %s: after an abandoned %s, worker %s (first %s) reports %s cancel(s)", slug, abandonPath, after.pid, first.pid, after.cancels)
 	if wantCancels != "" && after.cancels != wantCancels {
 		t.Fatalf("worker reports %s cancels; want %s", after.cancels, wantCancels)
 	}
@@ -546,7 +546,7 @@ func sharedWorkerCHandlerSource(t *testing.T) []byte {
 }
 
 // sharedWorkerCHandlerFiles is a static C handler speaking the shared worker
-// protocol (ADR-1190): it advertises FAAS_FUNCTION_CONCURRENCY slots, answers
+// protocol (ADR-1342): it advertises FAAS_FUNCTION_CONCURRENCY slots, answers
 // each request on its own thread with the id the runner sent, and
 // acknowledges cancels. /slow answers after 2 s and /hang never answers;
 // every reply names the worker's pid, its WHO env value, its slots, how many

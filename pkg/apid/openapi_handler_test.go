@@ -56,9 +56,9 @@ func TestServeOpenAPISpec_ContentType(t *testing.T) {
 		t.Errorf("body must begin with `openapi: 3.1`; got prefix %q", first40(body))
 	}
 	// Metadata can grow ahead of paths. The endpoint must serve the complete
-	// embedded document, including its root paths section, at any byte offset.
-	if !bytes.Equal(body, OpenAPIYAML()) {
-		t.Error("YAML endpoint did not serve the complete embedded specification")
+	// public document, including its root paths section, at any byte offset.
+	if !bytes.Equal(body, PublicOpenAPIYAML()) {
+		t.Error("YAML endpoint did not serve the complete public specification")
 	}
 	if !bytes.Contains(body, []byte("\npaths:\n")) {
 		t.Errorf("body missing root paths section; first lines: %q", first40(body))

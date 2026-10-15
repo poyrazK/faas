@@ -7,7 +7,7 @@ package main
 // function's RAM, request timeout, concurrency, env and secrets are put on
 // its app before its deployment is built; its idle timeout, minimum
 // instances, cron triggers, bucket events and inbound webhooks are
-// reconciled after (ADR-1190). Once every function is live, the entry
+// reconciled after (ADR-1342). Once every function is live, the entry
 // function's hosts get one kind=route edge rule per declared route.
 // Functions deploy in manifest order and the fan-out stops at the first
 // failure; re-running the deploy converges.
@@ -346,7 +346,7 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 
 // applyFunctionEventTriggers subscribes a function to its declared events
 // through the trigger batch endpoint, which applies them the way a deploy
-// applies a manifest's event_triggers (ADR-1190).
+// applies a manifest's event_triggers (ADR-1342).
 func applyFunctionEventTriggers(ctx context.Context, client functionSetClient, slug, appID string, triggers []gregalemanifest.EventTrigger) error {
 	if len(triggers) == 0 {
 		return nil
@@ -387,7 +387,7 @@ func (d functionSetDeploy) lookupEnv() func(string) string {
 }
 
 // applySettings puts a function's pre-deploy settings on its app before its
-// deployment is built (ADR-1190): RAM and concurrency shape the build, and
+// deployment is built (ADR-1342): RAM and concurrency shape the build, and
 // env and secrets reach its first wake. A new function's app is created
 // first, without a deployment.
 func (d functionSetDeploy) applySettings(ctx context.Context, client functionSetClient, fn plannedFunction) error {
@@ -491,7 +491,7 @@ func sealFunctionSecrets(ctx context.Context, client functionSetClient, slug str
 }
 
 // functionRouteRulePrefix names the edge rules a functions manifest owns
-// (ADR-1190). Rules with any other name are never touched.
+// (ADR-1342). Rules with any other name are never touched.
 const functionRouteRulePrefix = "functions:"
 
 // functionRoutePriority places managed routes after the default priority of

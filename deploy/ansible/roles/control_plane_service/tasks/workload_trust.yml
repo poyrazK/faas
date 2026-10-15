@@ -1,0 +1,55 @@
+---
+# ADR-1141: apid trusts the public JWKS of the cluster workload-identity key
+# every vmmd signs with (vmmd_service tasks/workload_identity.yml). Queue
+# leases verify workload tokens against it, and Flags and Operations fall back
+# to it. The JWKS is public, so it lives outside /etc/faas/secrets where the
+# faas-apid user can read it directly.
+- name: control_plane_service — install the workload-identity JWKS (ADR-1141)
+  ansible.builtin.copy:
+    src: "{{ faas_workload_identity_source_dir }}/workload-identity.jwks.json"
+    dest: "{{ faas_workload_jwks_path }}"
+    owner: root
+    group: root
+    mode: "0444"
+  when: faas_workload_identity_source_dir | length > 0
+  notify: restart faas-apid
+
+- name: control_plane_service — inspect the workload-identity JWKS (ADR-1141)
+  ansible.builtin.stat:
+    path: "{{ faas_workload_jwks_path }}"
+  register: faas_workload_jwks_stat
+
+- name: control_plane_service — read the workload-identity JWKS (ADR-1141)
+  ansible.builtin.slurp:
+    src: "{{ faas_workload_jwks_path }}"
+  register: faas_workload_jwks
+  when: faas_workload_jwks_stat.stat.exists
+
+- name: control_plane_service — workload-identity JWKS is a public RS256 key set (ADR-1141)
+  ansible.builtin.assert:
+    that:
+      - faas_workload_jwks_stat.stat.pw_name == 'root'
+      - faas_workload_jwks_stat.stat.mode == '0444'
+      - (faas_workload_jwks.content | b64decode | from_json)['keys'] | length > 0
+      - (faas_workload_jwks.content | b64decode | from_json)['keys'] | selectattr('d', 'defined') | list | length == 0
+    fail_msg: >-
+      {{ faas_workload_jwks_path }} must be a root-owned 0444 JWKS of public keys
+      (gregalectl workload-identity init writes it)
+  when: faas_workload_jwks_stat.stat.exists
+
+- name: control_plane_service — install workload-trust drop-in (ADR-1141)
+  ansible.builtin.template:
+    src: 99-faas-workload-trust.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-workload-trust.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_workload_jwks_stat.stat.exists
+  notify: restart faas-apid
+
+- name: control_plane_service — remove workload-trust drop-in without a JWKS (ADR-1141)
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/99-faas-workload-trust.conf
+    state: absent
+  when: not faas_workload_jwks_stat.stat.exists
+  notify: restart faas-apid

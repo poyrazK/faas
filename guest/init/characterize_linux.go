@@ -262,7 +262,7 @@ func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exi
 func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
 	deadline := args.Now().Add(api.CharacterizationDeadline)
 	for {
-		if port, addr, ok := probeListening(args.AppPID()); ok {
+		if port, addr, ok := probeListening(args.AppPID(), args.Manifest.EffectivePort()); ok {
 			res.Port = port
 			return true, addr, 0, false
 		}
@@ -287,16 +287,26 @@ func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult)
 // no-child early-out passes. Cross-platform callers always go
 // through probeListening; the unit test pins the early-out
 // contract there.
-func probeListeningLinux(pid int) (int, string, bool) {
+func probeListeningLinux(pid, want int) (int, string, bool) {
 	ownedInodes := ownedSocketInodes(pid)
 	if len(ownedInodes) == 0 {
 		return 0, "", false
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp", ownedInodes); ok {
-		return port, addr, true
+	// The expected port wins in either family; otherwise the first IPv4
+	// listener, then the first IPv6 one, as before (H10-56).
+	port4, addr4, ok4, exact4 := scanListeningFileFor("/proc/net/tcp", ownedInodes, want)
+	if exact4 {
+		return port4, addr4, true
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp6", ownedInodes); ok {
-		return port, addr, true
+	port6, addr6, ok6, exact6 := scanListeningFileFor("/proc/net/tcp6", ownedInodes, want)
+	if exact6 {
+		return port6, addr6, true
+	}
+	if ok4 {
+		return port4, addr4, true
+	}
+	if ok6 {
+		return port6, addr6, true
 	}
 	return 0, "", false
 }

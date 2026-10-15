@@ -108,3 +108,44 @@ func TestWorkflowRecoverySuppressionValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWorkflowRecoveryInitialAutomaticPolicyValidation(t *testing.T) {
+	p := WorkflowRecoveryPolicy{Mode: "automatic_initial", WorkflowNames: []string{"recover"}, Triggers: []string{"initial_failure"}, FailureStatuses: []string{"dead"}, MaxResumeCount: 1, CooldownSeconds: 60, HourlyActionBudget: 10, HourlyExecutionBudget: 1, PauseAfterFailures: 1, RatePerSecond: 1, Reason: "bounded first recovery"}
+	if err := (SetWorkflowRecoveryPolicyRequest{Policy: p}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"mixed_triggers", "retry_trigger", "missing_statuses", "missing_budget", "missing_pause"} {
+		t.Run(scenario, func(t *testing.T) {
+			bad := p
+			switch scenario {
+			case "mixed_triggers":
+				bad.Triggers = []string{"initial_failure", "saved_failure"}
+			case "retry_trigger":
+				bad.Triggers = []string{"saved_failure"}
+			case "missing_statuses":
+				bad.FailureStatuses = nil
+			case "missing_budget":
+				bad.HourlyExecutionBudget = 0
+			case "missing_pause":
+				bad.PauseAfterFailures = 0
+			}
+			if (SetWorkflowRecoveryPolicyRequest{Policy: bad}).Validate() == nil {
+				t.Fatal("unsafe automatic authority accepted")
+			}
+		})
+	}
+}
+
+func TestWorkflowRecoveryInitialAutomaticHealth(t *testing.T) {
+	now := time.Now().UTC()
+	q := WorkflowRecoveryAutomaticQueue{ObservedAt: now, Policy: WorkflowRecoveryPolicyResponse{Policy: WorkflowRecoveryPolicy{Enabled: true, Mode: "automatic_initial"}}, Pending: 1, RemainingBudget: 1, Entries: []WorkflowRecoveryAutomaticQueueEntry{{QueuedAt: now, Action: WorkflowRecoveryAutomaticAction{Status: "pending", LastEvaluation: &WorkflowRecoveryAutomaticEvaluation{EvaluatedAt: now, Reason: "outstanding_recovery"}}}}}
+	h := RecoveryPolicyHealth(q, 300)
+	if h.Status != "blocked" || h.Reason != "outstanding_recovery" {
+		t.Fatalf("initial health %+v", h)
+	}
+	q.Entries = nil
+	q.Pending = 0
+	if h = RecoveryPolicyHealth(q, 300); h.Status != "healthy" {
+		t.Fatalf("initial automatic mode inactive %+v", h)
+	}
+}

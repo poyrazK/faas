@@ -19,7 +19,7 @@ import (
 
 func validateAccountReleaseWebhookFilter(events []string) *api.Problem {
 	if len(events) == 0 || len(events) > len(api.AllowedAccountReleaseWebhookEvents) {
-		return api.ErrAppWebhookInvalid("event_filter must contain 1–4 release events")
+		return api.ErrAppWebhookInvalid("event_filter must contain 1–5 account events")
 	}
 	allowed := make(map[string]struct{}, len(api.AllowedAccountReleaseWebhookEvents))
 	for _, event := range api.AllowedAccountReleaseWebhookEvents {
@@ -28,7 +28,7 @@ func validateAccountReleaseWebhookFilter(events []string) *api.Problem {
 	seen := make(map[string]struct{}, len(events))
 	for _, event := range events {
 		if _, ok := allowed[event]; !ok {
-			return api.ErrAppWebhookInvalid(fmt.Sprintf("event %q is not a release event; allowed: %s", event,
+			return api.ErrAppWebhookInvalid(fmt.Sprintf("event %q is not an account event; allowed: %s", event,
 				strings.Join(api.AllowedAccountReleaseWebhookEvents, ", ")))
 		}
 		if _, duplicate := seen[event]; duplicate {

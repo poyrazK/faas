@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// A shared worker serves several requests at once (ADR-1190). Its ready
+// A shared worker serves several requests at once (ADR-1342). Its ready
 // handshake advertises how many. The pool tags each request with an id,
 // writes requests to the worker's stdin one whole line at a time, and a
 // reader goroutine routes every response line to its request by the id the

@@ -43,9 +43,9 @@ func TestServiceBindingFetchCompatiblePort(t *testing.T) {
 			if !strings.HasSuffix(env[binding], fmt.Sprintf(":%d", ServiceBindingPort)) {
 				t.Fatalf("canonical binding = %s", env[binding])
 			}
-			// Leave room for Node startup on a busy CI runner. Fetch still has
-			// its own two-second request deadline below.
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			// The process budget includes Node startup under concurrent race/
+			// coverage jobs. Fetch retains its own two-second request timeout.
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			// Only the host changes to reach the local fixture. The generated
 			// canonical port is used without replacing the Fetch client.

@@ -1,5 +1,7 @@
 package oci
 
+// adr: 435
+
 import (
 	"context"
 	"encoding/json"
@@ -35,8 +37,8 @@ func platformIndex(t *testing.T, mediaType string, entries ...platformDescriptor
 
 func platformImage(t *testing.T, arch string) (platformDescriptor, []byte, []byte, []byte) {
 	t.Helper()
-	config := []byte(fmt.Sprintf(`{"os":"linux","architecture":%q,"config":{"Cmd":["./app"]}}`, arch))
 	layer := []byte("layer-" + arch)
+	config := []byte(fmt.Sprintf(`{"os":"linux","architecture":%q,"rootfs":{"type":"layers","diff_ids":[%q]},"config":{"Cmd":["./app"]}}`, arch, imageContentDigest(layer)))
 	body, err := json.Marshal(Manifest{SchemaVersion: 2, MediaType: testImageMediaType,
 		Config: Descriptor{Digest: imageContentDigest(config), Size: int64(len(config))},
 		Layers: []Descriptor{{Digest: imageContentDigest(layer), Size: int64(len(layer))}}})
@@ -176,6 +178,8 @@ func TestPlatformSelectionPolicy(t *testing.T) {
 	nested.MediaType = testIndexMediaType
 	missing := amd
 	missing.Platform = nil
+	missingOther := other
+	missingOther.Platform = nil
 	invalid := amd
 	invalid.Digest = "sha256:bad"
 	for _, tc := range []struct {
@@ -193,7 +197,12 @@ func TestPlatformSelectionPolicy(t *testing.T) {
 		{"cpu requirement", []platformDescriptor{variant}, false},
 		{"os requirement", []platformDescriptor{features}, false},
 		{"nested", []platformDescriptor{nested}, false},
-		{"missing platform", []platformDescriptor{missing}, false},
+		// The OCI index spec makes platform optional: a lone child without one
+		// is selected, and its config's own platform is checked afterwards.
+		{"missing platform", []platformDescriptor{missing}, true},
+		{"missing platform beside arm64", []platformDescriptor{arm, missing}, true},
+		{"declared amd64 beats missing platform", []platformDescriptor{amd, missingOther}, true},
+		{"two missing platforms", []platformDescriptor{missing, missingOther}, false},
 		{"invalid digest", []platformDescriptor{invalid}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

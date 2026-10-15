@@ -51,6 +51,15 @@ func (entry *supervisedSocket) stop() {
 	<-entry.done
 }
 
+// startSocket serves one bound listener socket and records it in sockets.
+func (s *Supervisor) startSocket(ctx context.Context, sockets map[int]*supervisedSocket, port int, row state.UDPListener, socket *net.UDPConn, pool *PeerPool, rates *RateLimits) {
+	child, cancel := context.WithCancel(ctx)
+	entry := &supervisedSocket{identity: row, socket: socket, cancel: cancel, done: make(chan error, 1)}
+	sockets[port] = entry
+	server := &Server{Socket: socket, Route: Route{ListenerID: row.ID, PublicPort: row.PublicPort, AppID: row.AppID, AccountID: row.AccountID, ListenerName: row.ListenerName, GuestPort: row.GuestPort}, AllowedSources: s.AllowedSources, Pool: pool, Rates: rates, ResolveTarget: s.ResolveTarget, Forwarder: s.Forwarder, OnError: s.OnError, Metrics: s.Metrics}
+	go func() { entry.done <- server.Serve(child) }()
+}
+
 func (s *Supervisor) Serve(ctx context.Context) error {
 	if s == nil || ctx == nil || s.Source == nil || s.ResolveTarget == nil || s.Forwarder == nil {
 		return errors.New("UDP supervisor requires context, source, resolver and forwarder")
@@ -139,18 +148,18 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				continue
 			}
 			address, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(host, strconv.Itoa(port)))
-			if err != nil {
-				return err
+			if err == nil {
+				var socket *net.UDPConn
+				socket, err = listen("udp4", address)
+				if err == nil {
+					s.startSocket(ctx, sockets, port, row, socket, pool, rates)
+					continue
+				}
 			}
-			socket, err := listen("udp4", address)
-			if err != nil {
-				return fmt.Errorf("bind UDP port %d: %w", port, err)
-			}
-			child, cancel := context.WithCancel(ctx)
-			entry := &supervisedSocket{identity: row, socket: socket, cancel: cancel, done: make(chan error, 1)}
-			sockets[port] = entry
-			server := &Server{Socket: socket, Route: Route{ListenerID: row.ID, PublicPort: row.PublicPort, AppID: row.AppID, AccountID: row.AccountID, ListenerName: row.ListenerName, GuestPort: row.GuestPort}, AllowedSources: s.AllowedSources, Pool: pool, Rates: rates, ResolveTarget: s.ResolveTarget, Forwarder: s.Forwarder, OnError: s.OnError, Metrics: s.Metrics}
-			go func() { entry.done <- server.Serve(child) }()
+			// One unbindable port must not keep every other listener down,
+			// or fail gatewayd-public's startup. Retry next refresh.
+			s.Metrics.reconcileError()
+			report(fmt.Errorf("bind UDP port %d: %w", port, err))
 		}
 		return nil
 	}

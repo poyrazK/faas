@@ -30,7 +30,7 @@ type fakeFunctionSetClient struct {
 	updatedPaths  []string
 	idleUpdates   map[string]int
 	nextID        int
-	// ADR-1190 settings and routes.
+	// ADR-1342 settings and routes.
 	updates  map[string][]api.UpdateAppRequest
 	env      map[string]map[string]string
 	secrets  map[string]map[string]string
@@ -38,7 +38,7 @@ type fakeFunctionSetClient struct {
 	rules    map[string][]api.EdgeRuleResponse
 	ruleLog  []string
 	eventLog []string
-	// ADR-1190 queue bindings and event triggers.
+	// ADR-1342 queue bindings and event triggers.
 	bindings map[string][]api.QueueBindingResponse
 	batches  []api.CreateTriggerBatchRequest
 	batchErr string
@@ -539,7 +539,7 @@ func TestReconcileFunctionWebhooks(t *testing.T) {
 	}
 }
 
-// ADR-1190: a function's build-shaping settings, env and secrets reach its
+// ADR-1342: a function's build-shaping settings, env and secrets reach its
 // app before its deployment is built; a new function's app is reserved
 // first. min_instances follows the deploy.
 func TestFunctionSetAppliesSettingsBeforeDeploy(t *testing.T) {
@@ -609,7 +609,7 @@ func TestFunctionSetAppliesSettingsBeforeDeploy(t *testing.T) {
 	}
 }
 
-// ADR-1190: a function's queue bindings push to it by default and match the
+// ADR-1342: a function's queue bindings push to it by default and match the
 // manifest; its event triggers reach the trigger batch endpoint scoped to
 // its app. An omitted queue_bindings leaves bindings alone.
 func TestFunctionSetQueueBindingsAndEventTriggers(t *testing.T) {
@@ -732,7 +732,7 @@ func TestFunctionSetPruneEnv(t *testing.T) {
 	}
 }
 
-// ADR-1190: routes become kind=route edge rules on the entry function's
+// ADR-1342: routes become kind=route edge rules on the entry function's
 // hosts, most specific first; managed rules the manifest drops are removed
 // and other rules are kept.
 func TestFunctionSetReconcilesRoutes(t *testing.T) {

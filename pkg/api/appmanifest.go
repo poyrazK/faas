@@ -218,8 +218,12 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never. Empty selects the default for
+	// the app's type (EffectivePause).
+	Pause     string           `json:"pause,omitempty"`
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing   *TracingConfig   `json:"tracing,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -235,7 +239,7 @@ type AppManifest struct {
 	// the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
 	// FunctionConcurrency is how many requests one Node or Python function
-	// worker serves at once (ADR-1190). Zero and one keep one request per
+	// worker serves at once (ADR-1342). Zero and one keep one request per
 	// worker; the plan's per-VM concurrency bound caps it.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// ServiceReplicas is the per-deployment replica scaffold (ADR-137
@@ -725,6 +729,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.BeforeCheckpoint != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
 		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
+	}
+	if err := ValidatePause(m.Pause); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.Pause != "" && m.Pause != PauseNever && m.EffectiveExecutionMode() != ExecutionModeRequest {
+		return fmt.Errorf("app manifest: pause %s requires request execution mode; worker, service and job workloads never idle out", m.Pause)
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)

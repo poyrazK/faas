@@ -883,14 +883,14 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if responseFault != nil {
 		capture := newScenarioHTTPResponseWriter(dispatchWriter)
-		p.dispatch(capture, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
+		p.dispatch(capture, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
 		capture.finish(r.Context(), func() {
 			p.observeScenarioHTTPFault(dependencySpan, responseFault.runID, responseFault.callerAppID, responseFault.generation, responseFault.rule)
 			dispatchWriter.Header().Set("X-Gregale-Chaos-Injected", responseFault.rule.Kind)
 		})
 		return
 	}
-	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
 }
 
 // applyScenarioChaos runs only after the normal identity, namespace, tenant,
@@ -1071,7 +1071,7 @@ func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
 			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
@@ -1090,7 +1090,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 	}
 	p.countForward(woken)
 	p.observeWakeAheadCall(caller, target, woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken, deploymentID)
 }
 
 // observeWakeAheadCall feeds the ADR-977 learner. Preview callers are left
@@ -1532,7 +1532,8 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	// the Connection/Upgrade pair.
 	request.Header.Set("x-faas-upgrade", "true")
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
-	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
+	signal := &staleTargetSignal{}
+	signal.onStale = func() { p.retireEndpoint(target.AppID, endpoint.InstanceID, signal.frozen.Load()) }
 	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
 	request, observe := p.withServiceRequestObservation(request, target, caller, endpoint, woken)
 	probeWriter := &serviceProxyUpgradeProbeWriter{
@@ -1595,7 +1596,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1630,6 +1631,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	if maxAttempts > 1 {
 		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
+	frozenRetried := false
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok {
@@ -1649,7 +1651,8 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			}
 		}
 		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
-		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
+		signal := &staleTargetSignal{}
+		signal.onStale = func() { p.retireEndpoint(appID, endpoint.InstanceID, signal.frozen.Load()) }
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
@@ -1678,6 +1681,16 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			p.metrics.IncRetryExhausted(RetrySkipCommitted)
 			buffer.commitTrailers()
 			return
+		}
+		if signal.frozen.Load() && !frozenRetried {
+			// The guest never saw a request vmmd refused as frozen, so one
+			// retry on a thawed replica sits outside the retry policy.
+			frozenRetried = true
+			if next, ok := p.frozenRetryEndpoints(request, appID, deploymentID, endpoint.InstanceID, endpoints); ok {
+				endpoints = next
+				maxAttempts++
+				continue
+			}
 		}
 		if attempt+1 >= maxAttempts {
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
@@ -1891,6 +1904,55 @@ func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
 	p.publishOpenTargets(appID)
 	p.log.Warn("gateway: service proxy quarantined stale endpoint", "app", appID, "instance", instanceID)
+}
+
+// retireEndpoint takes a replica out of rotation after a stale-target
+// signal. A frozen replica (ADR-1151) is idle, not broken, and thaws under
+// the same instance ID: it leaves the cached endpoint list without counting
+// as a breaker failure, and a half-open probe it held is released. Any other
+// stale replica is quarantined.
+func (p *ServiceProxy) retireEndpoint(appID, instanceID string, frozen bool) {
+	if !frozen {
+		p.quarantine(appID, instanceID)
+		return
+	}
+	p.mu.Lock()
+	if cached, ok := p.snapshots[appID]; ok {
+		cached.endpoints = withoutServiceEndpoint(cached.endpoints, instanceID)
+		p.snapshots[appID] = cached
+	}
+	p.mu.Unlock()
+	p.breaker.Release(serviceProxyEndpointKey(appID, instanceID))
+	p.log.Info("gateway: service proxy withdrew frozen endpoint", "app", appID, "instance", instanceID)
+}
+
+// frozenRetryEndpoints picks where to retry a request vmmd refused because
+// its replica is frozen (ADR-1151): another replica when one is left,
+// otherwise the target woken, which thaws the frozen one. ok=false means
+// there is nowhere to retry or the request body cannot be replayed.
+func (p *ServiceProxy) frozenRetryEndpoints(request *http.Request, appID, deploymentID, frozenID string, endpoints []ServiceEndpoint) ([]ServiceEndpoint, bool) {
+	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
+		return nil, false
+	}
+	if rest := withoutServiceEndpoint(endpoints, frozenID); len(rest) > 0 {
+		return rest, true
+	}
+	woken, err := p.wakeAndRefresh(request.Context(), appID, deploymentID)
+	if err != nil || len(woken) == 0 {
+		return nil, false
+	}
+	return woken, true
+}
+
+// withoutServiceEndpoint returns endpoints without instanceID, in order.
+func withoutServiceEndpoint(endpoints []ServiceEndpoint, instanceID string) []ServiceEndpoint {
+	out := make([]ServiceEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.InstanceID != instanceID {
+			out = append(out, endpoint)
+		}
+	}
+	return out
 }
 
 // healthy reports a successful transport for an endpoint, and closes a

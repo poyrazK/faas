@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1190: batch-create applies the target app's event_triggers the way a
+// ADR-1342: batch-create applies the target app's event_triggers the way a
 // source deploy does, so a functions manifest can subscribe a function
 // after its deployment. A repeat call keeps one subscription, and
 // declarations for another app are skipped.

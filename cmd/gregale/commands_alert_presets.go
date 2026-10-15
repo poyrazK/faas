@@ -110,7 +110,7 @@ func cmdAlertPresetEnable(args []string) int {
 	fs := newFlagSet("alerts preset enable", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose and review an alert preset with hidden signing-secret input")
 	slug := fs.String("app", "", "app slug (required)")
-	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
+	webhookURL := fs.String("webhook-url", "", "webhook URL (required, http(s)://...; https recommended)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")

@@ -138,7 +138,7 @@ func waitLive(t *testing.T, p *pool, want int) {
 	}
 }
 
-// ADR-1190: a worker that advertises N slots serves N requests at once in
+// ADR-1342: a worker that advertises N slots serves N requests at once in
 // one process.
 func TestSharedWorkerServesConcurrentRequests(t *testing.T) {
 	p, pid := muxPool(t, 8)

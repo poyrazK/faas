@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -2188,19 +2189,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
-	if req.ExpectedServingDeploymentID != nil && *req.ExpectedServingDeploymentID != "" {
-		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
-			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
-			return
-		}
-		parsed, parseErr := uuid.Parse(*req.ExpectedServingDeploymentID)
-		if parseErr != nil {
-			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
-			return
-		}
-		canonical := parsed.String()
-		req.ExpectedServingDeploymentID = &canonical
+	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
+	r = r.WithContext(guardCtx)
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -2209,12 +2203,23 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
 		return
 	}
+
 	prev := d.TrafficPercent
 	var updated state.Deployment
+	if req.ExpectedReview != nil && (req.TrafficPercent != 100 || req.ExpectedServingDeploymentID == nil || req.ExpectedReview.AppID != app.ID || req.ExpectedReview.Scope != d.Scope || req.ExpectedReview.EnvironmentID == "") {
+		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
+		return
+	}
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		var writeErr error
-		if req.ExpectedServingDeploymentID != nil {
+		if req.ExpectedReview != nil {
+			store, ok := s.store.(state.ReviewedTrafficStore)
+			if !ok {
+				return state.ErrReleaseReviewChanged
+			}
+			updated, writeErr = store.UpdateDeploymentTrafficReviewed(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID, *req.ExpectedReview)
+		} else if req.ExpectedServingDeploymentID != nil {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
 		} else {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
@@ -2226,6 +2231,9 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -2236,7 +2244,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		case errors.Is(err, state.ErrDeploymentNotLive):
 			status := string(d.Status)
-			if current, readErr := s.store.DeploymentByID(r.Context(), id); readErr == nil {
+			if current, readErr := s.store.DeploymentByID(guardCtx, id); readErr == nil {
 				status = string(current.Status)
 			}
 			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
@@ -2247,6 +2255,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// for target=0 on a sole live row (legitimate Σ=0 —
 			// pinned by TestPg_UpdateDeploymentTraffic_SoleLiveRow).
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
+		case trafficguard.PromotionProblem(err) != nil:
+			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -2261,7 +2271,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(r.Context(), "deployment.traffic_percent_changed", &acct.ID, map[string]any{
+		s.audit.Emit(guardCtx, "deployment.traffic_percent_changed", &acct.ID, map[string]any{
 			"app":             app.ID,
 			"deployment":      updated.ID,
 			"traffic_percent": req.TrafficPercent,
@@ -2279,13 +2289,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	// additive. Failure is logged-and-continued — same contract as
 	// the audit emit above.
 	if s.notif != nil {
-		if err := s.notif.Notify(r.Context(), db.NotifyDeploymentChanged,
+		if err := s.notif.Notify(guardCtx, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"traffic","app_id":"%s","deployment_id":"%s","traffic_percent":%d}`,
 				app.ID, updated.ID, req.TrafficPercent)); err != nil {
 			s.log.Warn("apid: notify deployment_changed (traffic) failed", "err", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(guardCtx, updated, app))
 }
 
 // planMaxFor resolves the per-plan MaxMinInstances cap for the
@@ -2369,6 +2379,47 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 	return out
 }
 
+// trafficSplitEarlierRelease reports whether more than one deployment of a
+// scope serves a share of traffic, and the oldest of them as a retypeable
+// ref. A plain rollback then has no single previous release: the latest
+// superseded row is one nobody serves, so `rollback` re-activated a release
+// the customer had rolled away from while the split stayed in place (H10-10).
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID string) (string, bool) {
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 50, 0)
+	if err != nil {
+		return "", false
+	}
+	serving := map[string][]state.Deployment{}
+	for _, d := range deployments {
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
+			serving[d.Scope] = append(serving[d.Scope], d)
+		}
+	}
+	for _, rows := range serving {
+		if len(rows) < 2 {
+			continue
+		}
+		earliest := rows[0]
+		for _, d := range rows[1:] {
+			if d.CreatedAt.Before(earliest.CreatedAt) {
+				earliest = d
+			}
+		}
+		if earliest.Revision > 0 {
+			return fmt.Sprintf("v%d", earliest.Revision), true
+		}
+		return earliest.ID, true
+	}
+	return "", false
+}
+
+func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+		"Traffic is split between deployments",
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, earlier)).
+		WithDocs("https://gregale.dev/docs/deploys#rollback")
+}
+
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
@@ -2420,6 +2471,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			}
 		}
 	} else {
+		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
+			return state.Deployment{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
 			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
@@ -2656,6 +2710,9 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if fresh {
 		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			// The client sees only "capacity_unavailable"; without the cause a
+			// failed cold scenario run cannot be traced (hunt #10).
+			s.log.ErrorContext(r.Context(), "invalidate preview snapshots", "app", app.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not invalidate preview snapshots"))
 			return
 		}
@@ -3854,8 +3911,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if !validCron(req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
+	if problem := cronScheduleProblem(req.Schedule); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	timezone, err := normalizeCronTimezone(req.Timezone)
@@ -4040,9 +4097,11 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
-	if req.Schedule != nil && !validCron(*req.Schedule) {
-		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
-		return
+	if req.Schedule != nil {
+		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var timezone string
 	if req.Timezone != nil {
@@ -5836,6 +5895,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 		len(d.OverrideReadinessProbe) > 0 ||
 		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
+		StagedReview:      d.StagedReview,
 		PromotionHold:     promotionHold,
 		WorkerDrain:       workerDrain,
 		StageState:        append(json.RawMessage(nil), d.StageState...),
@@ -6759,12 +6819,12 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		usage := state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now)
-		charges, err := s.objectStorage.ChargeForUsage(usage)
+		charges, err := s.objectStorage.ChargeForUsage(usage, api.MustLimitsFor(acct.Plan).ObjectStorage.Allowance())
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, acct.Plan)
 		out.ObjectStorage = &objectStorage
 	}
 
@@ -7075,10 +7135,20 @@ func keyPrefixFromHash(hash []byte) string {
 	return api.APIKeyPrefix + hex.EncodeToString(hash)[:12]
 }
 
-// validCron uses the exact parser schedd uses, keeping direct and project
-// cron admission on the same five-field grammar.
-func validCron(s string) bool {
-	return cronexpr.Validate(s) == nil
+// cronScheduleProblem uses the exact parser schedd uses, keeping direct and
+// project cron admission on the same five-field grammar, and says why a
+// schedule is invalid with the parser's reason ("end of range (61) above
+// maximum (59): 61", "never fires"). The handlers used to answer "expected
+// 5-field cron expression" for every bad schedule, which read wrong for
+// five-field input (H10-68).
+func cronScheduleProblem(s string) *api.Problem {
+	err := cronexpr.Validate(s)
+	if err == nil {
+		return nil
+	}
+	reason := strings.TrimPrefix(err.Error(), cronexpr.ErrInvalidSchedule.Error())
+	reason = strings.ReplaceAll(strings.TrimLeft(reason, ":\n "), "\n", "; ")
+	return api.ErrCronInvalid("expected a 5-field cron expression (m h dom mon dow): " + reason)
 }
 
 // streamDeploymentLogs serves the build log for a deployment as a
@@ -7228,8 +7298,12 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// poll sees it. The terminal `DeployLive` flip is
 			// covered by imaged's `MarkDeploymentLive` (handler.go:
 			// 2240) which appends `snapshot_prepare → readiness`.
+			// Every terminal status ends the stream. Cancelled and
+			// superseded rows used to keep it open until the 10-min
+			// backstop, so a waiting `gregale deploy` sat on a
+			// cancelled build for minutes (H10-48).
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
-				if d2.Status == state.DeployLive || d2.Status == state.DeployFailed {
+				if d2.Status == state.DeployLive || d2.Status.IsTerminal() {
 					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
 					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
 					if flusher != nil {

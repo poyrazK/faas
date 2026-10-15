@@ -49,6 +49,7 @@ type tcpTestHarness struct {
 	onWake   func()
 	release  string
 	dead     map[string]bool // instance IDs whose guest dial fails
+	frozen   map[string]bool // instance IDs vmmd refuses as frozen (ADR-1151)
 
 	mu   sync.Mutex
 	hops []Target
@@ -62,7 +63,8 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 		targets: map[netip.Addr]ServiceTCPTarget{
 			netip.MustParseAddr("198.19.0.7"): {AppID: "db", AccountID: "acct", Plan: api.PlanPro, TCPPorts: []int{5432, 443}, IdleTimeout: 5 * time.Minute},
 		},
-		dead: map[string]bool{},
+		dead:   map[string]bool{},
+		frozen: map[string]bool{},
 	}
 	services := NewServiceProxy(ServiceProxyConfig{
 		Provider: h.provider,
@@ -111,6 +113,9 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 			h.mu.Unlock()
 			if h.dead[target.InstanceID] {
 				return fmt.Errorf("%w: refused", ErrTCPGuestUnreachable)
+			}
+			if h.frozen[target.InstanceID] {
+				return fmt.Errorf("%w: %w", ErrTCPGuestUnreachable, instanceFrozenStatus())
 			}
 			return nil
 		},

@@ -22,9 +22,11 @@ class WorkflowRecoveryPolicyEvaluationRequest:
 
     expected_version: int
     policy: WorkflowRecoveryPolicy
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure
-    only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation
-    and execution budgets are separate. Cancellation remains manual."""
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual."""
     workflow: str | Unset = UNSET
     created_after: datetime.datetime | Unset = UNSET
     """Inclusive evaluation start; defaults to seven days before the end."""

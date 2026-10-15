@@ -27,58 +27,63 @@ import (
 )
 
 const (
-	serverSrcPath                 = "server.go"
-	dtoFile                       = "dto.go"
-	devBucketsFile                = "dev_buckets.go"
-	eventReplayBackfillFile       = "event_replay_backfill.go"
-	workflowFile                  = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
-	secretsFile                   = "secrets.go"
-	envFile                       = "env.go"             // issue #395 / ADR-045
-	registryFile                  = "registry_auth.go"   // issue #461 / ADR-062
-	alertsFile                    = "alerts.go"          // issue #396 PR 3 / ADR-045
-	alertsDeliveryFile            = "alerts_delivery.go" // ADR-123 PR-D — AlertDeliveryResponse wire DTO
-	alertsPresetsFile             = "alerts_presets.go"  // ADR-123 / issue #1233 — alert-preset catalog DTOs
-	canaryCustomStageFile         = "canary/dto.go"      // issue #976 / ADR-122 / production-leveling Stream F — CustomStage wire DTO
-	manifestFile                  = "appmanifest.go"
-	cliauthFile                   = "cliauth.go"
-	mfaFile                       = "mfa.go"
-	sessionsFile                  = "sessions.go" // IAM-3 (ADR-039)
-	errorsFile                    = "errors.go"
-	wakeTLFile                    = "wake_timeline.go"    // issue #517 PR-C / ADR-064
-	sidecarTimelineFile           = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
-	orgsFile                      = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
-	scanFile                      = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
-	webhooksFile                  = "webhooks.go"         // issue #476 / ADR-076
-	inboundWebhooksFile           = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
-	realtimeFile                  = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
-	logDrainsFile                 = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
-	billingFile                   = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
-	diffFile                      = "diff.go"             // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
-	upstreamsFile                 = "upstreams.go"        // ADR-098 §9.A PR-B
-	triggerFile                   = "trigger.go"          // issue #757 / ADR-100 — trigger primitive wire DTOs
-	oidcFile                      = "oidc.go"             // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
-	envDiffFile                   = "env_diff.go"         // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
-	operatorConfigFile            = "operator_config.go"  // ADR-132 — operator runtime configuration
-	obsFile                       = "obs.go"              // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
-	corsPresetsFile               = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
-	uploadSessionFile             = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
-	managedPostgresFile           = "managed_postgres.go"
-	openapiContractFile           = "openapi_contract.go"
-	executionsFile                = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
-	executionWorkflowManagedFile  = "execution_workflow_managed.go"  // ADR-171 — server-managed sequential workflow DTOs
-	executionCapabilitiesFile     = "execution_capabilities.go"      // ADR-171 — Runs preflight capability DTOs
-	executionArtifactGrantsFile   = "execution_artifact_grants.go"   // ADR-171 — one-time cross-agent artifact capabilities
-	appTasksFile                  = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
-	imageRunsFile                 = "image_runs.go"                  // ADR-1161 — docker-run-shaped image run DTOs
-	projectsFile                  = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
-	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
-	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
-	queueBindingFile              = "queue_bindings.go"              // first-class queue binding DTOs
-	outboundBindingsFile          = "outbound_bindings.go"           // managed outbound binding DTOs
-	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
-	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
-	runtimePolicyFile             = "runtime_policy.go"              // app and traffic control-plane convergence status
-	runtimeReleasesFile           = "runtime_releases.go"            // ADR-736 immutable runtime identity and update preview DTOs
+	serverSrcPath                    = "server.go"
+	dtoFile                          = "dto.go"
+	eventReplayBackfillFile          = "event_replay_backfill.go"
+	workflowFile                     = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
+	secretsFile                      = "secrets.go"
+	envFile                          = "env.go"             // issue #395 / ADR-045
+	registryFile                     = "registry_auth.go"   // issue #461 / ADR-062
+	alertsFile                       = "alerts.go"          // issue #396 PR 3 / ADR-045
+	alertsDeliveryFile               = "alerts_delivery.go" // ADR-123 PR-D — AlertDeliveryResponse wire DTO
+	alertsPresetsFile                = "alerts_presets.go"  // ADR-123 / issue #1233 — alert-preset catalog DTOs
+	canaryCustomStageFile            = "canary/dto.go"      // issue #976 / ADR-122 / production-leveling Stream F — CustomStage wire DTO
+	manifestFile                     = "appmanifest.go"
+	cliauthFile                      = "cliauth.go"
+	mfaFile                          = "mfa.go"
+	sessionsFile                     = "sessions.go" // IAM-3 (ADR-039)
+	errorsFile                       = "errors.go"
+	wakeTLFile                       = "wake_timeline.go"    // issue #517 PR-C / ADR-064
+	sidecarTimelineFile              = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
+	orgsFile                         = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
+	scanFile                         = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
+	webhooksFile                     = "webhooks.go"         // issue #476 / ADR-076
+	inboundWebhooksFile              = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
+	realtimeFile                     = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
+	logDrainsFile                    = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
+	billingFile                      = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
+	diffFile                         = "diff.go"             // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
+	upstreamsFile                    = "upstreams.go"        // ADR-098 §9.A PR-B
+	triggerFile                      = "trigger.go"          // issue #757 / ADR-100 — trigger primitive wire DTOs
+	oidcFile                         = "oidc.go"             // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
+	envDiffFile                      = "env_diff.go"         // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
+	operatorConfigFile               = "operator_config.go"  // ADR-132 — operator runtime configuration
+	obsFile                          = "obs.go"              // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
+	corsPresetsFile                  = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
+	uploadSessionFile                = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
+	managedPostgresFile              = "managed_postgres.go"
+	openapiContractFile              = "openapi_contract.go"
+	executionsFile                   = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
+	appTasksFile                     = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
+	projectsFile                     = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
+	devSyncFile                      = "dev_sync.go"                    // developer edit-to-live history
+	privateNetworkFile               = "private_network.go"             // Gregale-owned private network fabric DTOs
+	queueBindingFile                 = "queue_bindings.go"              // first-class queue binding DTOs
+	outboundBindingsFile             = "outbound_bindings.go"           // managed outbound binding DTOs
+	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
+	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
+	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
+	applicationStandardsFile         = "application_standards.go"       // ADR-435 immutable application standards
+	applicationStandardResourcesFile = "application_standard_resources.go"
+	applicationStandardMutationsFile = "application_standard_mutations.go"
+	standardAssignmentsFile          = "application_standard_assignments.go"
+	standardRolloutMutationsFile     = "application_standard_operation_mutations.go"
+	executionCapabilitiesFile        = "execution_capabilities.go"     // ADR-171 — Runs preflight capability DTOs
+	executionArtifactGrantsFile      = "execution_artifact_grants.go"  // ADR-171 — one-time cross-agent artifact capabilities
+	executionWorkflowManagedFile     = "execution_workflow_managed.go" // ADR-171 — server-managed sequential workflow DTOs
+	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
+	devBucketsFile                   = "dev_buckets.go"
+	imageRunsFile                    = "image_runs.go" // ADR-1161 — docker-run-shaped image run DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -151,87 +156,92 @@ var routeExclude = map[string]bool{
 	// entries for these same routes — both lists must move
 	// together (operator-only surface, admin scope +
 	// FAAS_ADMIN_EMAILS allowlist).
-	"POST /v1/admin/instances/{id}/force-park":                   true, // PR #1099 P2a
-	"POST /v1/admin/apps/{slug}/force-cold-boot":                 true, // PR #1099 P2b
-	"POST /v1/admin/instances/{id}/force-restart":                true, // PR #1105 P2d
-	"POST /v1/admin/builds/sweep-stuck":                          true, // PR #1099 P2c
-	"GET /v1/admin/ops/jobs/runs":                                true, // operator-only active job-run projection
-	"GET /v1/admin/ops/jobs/runs/{id}":                           true, // operator-only job-run inspection
-	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                   true, // operator-only job-run cancellation
-	"GET /v1/admin/ops/deployments":                              true, // operator-only deployment incident projection
-	"GET /v1/admin/ops/deployments/{id}":                         true, // operator-only deployment inspection
-	"POST /v1/admin/ops/deployments/{id}/cancel":                 true, // operator-only deployment cancellation
-	"POST /v1/admin/ops/deployments/{id}/retry":                  true, // operator-only deployment retry
-	"GET /v1/admin/ops/github/recovery":                          true, // operator-only githubd queue projection
-	"POST /v1/admin/ops/github/deliveries/{id}/retry":            true, // operator-only githubd delivery recovery
-	"POST /v1/admin/ops/github/check-updates/{id}/retry":         true, // operator-only githubd Check Run recovery
-	"POST /v1/admin/ops/accounts/{id}/suspend":                   true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":                   true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":           true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":                      true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":                true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":                   true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/retire":                     true, // operator-only terminal node lifecycle control
-	"POST /v1/compute-nodes/{name}/drain":                        true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
-	"GET /v1/compute-nodes/{name}/drain":                         true, // Workstream B: drain progress endpoint (ADR-137)
-	"GET /v1/admin/operator-intents/{id}":                        true, // PR #1099 P2.3
-	"GET /v1/events":                                             true, // SSE (cookie+Bearer, not s.auth)
-	"GET /login":                                                 true, // dashboard magic-link GET (HTML form, browser-only)
-	"POST /logout":                                               true, // dashboard logout (HTML form, browser-only)
-	"GET /auth/verify":                                           true, // magic-link consume (legacy; PR #1 closed; kept for compat)
-	"GET /oauth/callback":                                        true, // GitHub App install callback
-	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
-	"POST /v1/gitlab/connect":                                    true, // GitLab.com OAuth session + CSRF form
-	"GET /v1/gitlab/callback":                                    true, // GitLab.com OAuth browser callback
-	"GET /v1/gitlab/connection":                                  true, // GitLab.com session-only dashboard status
-	"DELETE /v1/gitlab/connection":                               true, // GitLab.com session-only disconnect
-	"POST /v1/gitlab/disconnect":                                 true, // GitLab.com session + CSRF form
-	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
-	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
-	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
-	"POST /dashboard/dev-bridges/{id}/revoke":                    true, // ADR-379 cookie + CSRF form
-	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
-	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // GitHub activity recovery form; session-cookie + CSRF-only
-	"GET /dashboard/apps/{slug}/data-api":                        true, // ADR-968 session-auth owner HTML workspace
-	"GET /dashboard/apps/{slug}/data-api/types/{id}":             true, // ADR-968 session-auth type download
-	"POST /dashboard/apps/{slug}/data-api/refresh":               true, // ADR-968 session + CSRF contract refresh adapter
-	"POST /dashboard/apps/{slug}/data-api/{operation}":           true, // ADR-968 session + CSRF schema/type task adapter
-	"GET /dashboard":                                             true, // HTML dashboard
-	"GET /dashboard/":                                            true, // HTML dashboard
-	"POST /dashboard/account/delete":                             true, // HTML form
-	"POST /dashboard/account/keys/{id}/delete":                   true, // HTML form (issue #248)
-	"POST /dashboard/account/plan":                               true, // HTML form (issue #248)
-	"POST /dashboard/account/restore":                            true, // HTML form
-	"GET /dashboard/mfa":                                         true, // TOTP challenge page for mfa_pending sessions
-	"POST /dashboard/mfa":                                        true, // HTML form, TOTP challenge
-	"GET /dashboard/account/export":                              true, // session-auth twin of /v1/account/export
-	"GET /dashboard/account/dpa":                                 true, // session-auth twin of DPA
-	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)
-	"POST /dashboard/upgrade":                                    true, // HTML form (hosted-checkout hand-off)
-	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
-	"POST /dashboard/apps/{slug}/crons/{id}/policy":              true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/apps/{slug}/env":                            true, // HTML form, env editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/env/{key}/delete":               true, // HTML form, env editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets":                        true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets/{key}/delete":           true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           true, // HTML form, write-only secrets editor (issue #1397 G2)
-	"POST /dashboard/apps/{slug}/secret-references":              true, // HTML reference form; JSON API is documented separately
-	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": true, // HTML reference removal; JSON API is documented separately
-	"POST /dashboard/apps/{slug}/instances/{action}":             true, // HTML form, app lifecycle controls (issue #1397 G6)
-	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
-	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":           true, // HTML form, edge-rule enforce/log switch (ADR-960)
-	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
-	"POST /dashboard/jobs/{name}/policy":                         true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":        true, // HTML form, failed job partition replay (ADR-385)
-	"POST /dashboard/apps/{slug}/rollback":                       true, // HTML form, app rollback (issue #248)
-	"POST /dashboard/apps/{slug}/deployments/{id}/retry":         true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
-	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":    true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
+	"POST /v1/admin/instances/{id}/force-park":                      true, // PR #1099 P2a
+	"POST /v1/admin/apps/{slug}/force-cold-boot":                    true, // PR #1099 P2b
+	"POST /v1/admin/instances/{id}/force-restart":                   true, // PR #1105 P2d
+	"POST /v1/admin/builds/sweep-stuck":                             true, // PR #1099 P2c
+	"GET /v1/admin/ops/jobs/runs":                                   true, // operator-only active job-run projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                              true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                      true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                                 true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                            true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":                    true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":                     true, // operator-only deployment retry
+	"GET /v1/admin/ops/github/recovery":                             true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":               true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":            true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":                      true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
+	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                        true, // operator-only terminal node lifecycle control
+	"POST /v1/compute-nodes/{name}/drain":                           true, // Workstream B: canonical admin-scoped drain surface (ADR-137)
+	"GET /v1/compute-nodes/{name}/drain":                            true, // Workstream B: drain progress endpoint (ADR-137)
+	"GET /v1/admin/operator-intents/{id}":                           true, // PR #1099 P2.3
+	"GET /v1/events":                                                true, // SSE (cookie+Bearer, not s.auth)
+	"GET /login":                                                    true, // dashboard magic-link GET (HTML form, browser-only)
+	"POST /logout":                                                  true, // dashboard logout (HTML form, browser-only)
+	"GET /auth/verify":                                              true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"GET /oauth/callback":                                           true, // GitHub App install callback
+	"GET /oauth/code-callback":                                      true, // GitHub App user-to-server OAuth callback (PR-C)
+	"POST /v1/gitlab/connect":                                       true, // GitLab.com OAuth session + CSRF form
+	"GET /v1/gitlab/callback":                                       true, // GitLab.com OAuth browser callback
+	"GET /v1/gitlab/connection":                                     true, // GitLab.com session-only dashboard status
+	"DELETE /v1/gitlab/connection":                                  true, // GitLab.com session-only disconnect
+	"POST /v1/gitlab/disconnect":                                    true, // GitLab.com session + CSRF form
+	"POST /dashboard/install/connect":                               true, // GitHub App "Connect GitHub" button (PR-C)
+	"GET /dashboard/dev-bridges":                                    true, // ADR-379 HTML session inventory
+	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
+	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
+	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
+	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/auth":                               true, // ADR-1190 session-auth owner page; the browser calls the Auth app
+	"POST /dashboard/apps/{slug}/auth/settings":                     true, // ADR-1190 session + CSRF typed Auth settings form
+	"POST /dashboard/apps/{slug}/auth/providers":                    true, // ADR-1190 session + CSRF OAuth provider form
+	"POST /dashboard/apps/{slug}/auth/providers/{provider}/disable": true, // ADR-1190 session + CSRF provider removal form
+	"GET /dashboard/apps/{slug}/data-api/types/{id}":                true, // ADR-968 session-auth type download
+	"POST /dashboard/apps/{slug}/data-api/refresh":                  true, // ADR-968 session + CSRF contract refresh adapter
+	"POST /dashboard/apps/{slug}/data-api/{operation}":              true, // ADR-968 session + CSRF schema/type task adapter
+	"GET /dashboard":                                                true, // HTML dashboard
+	"GET /dashboard/":                                               true, // HTML dashboard
+	"POST /dashboard/account/delete":                                true, // HTML form
+	"POST /dashboard/account/keys/{id}/delete":                      true, // HTML form (issue #248)
+	"POST /dashboard/account/plan":                                  true, // HTML form (issue #248)
+	"POST /dashboard/account/restore":                               true, // HTML form
+	"GET /dashboard/mfa":                                            true, // TOTP challenge page for mfa_pending sessions
+	"POST /dashboard/mfa":                                           true, // HTML form, TOTP challenge
+	"GET /dashboard/account/export":                                 true, // session-auth twin of /v1/account/export
+	"GET /dashboard/account/dpa":                                    true, // session-auth twin of DPA
+	"POST /dashboard/raise-overage-cap":                             true, // HTML form (issue #561)
+	"POST /dashboard/upgrade":                                       true, // HTML form (hosted-checkout hand-off)
+	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":               true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":                 true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/apps/{slug}/env":                               true, // HTML form, env editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/env/{key}/delete":                  true, // HTML form, env editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets":                           true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets/{key}/delete":              true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":              true, // HTML form, write-only secrets editor (issue #1397 G2)
+	"POST /dashboard/apps/{slug}/secret-references":                 true, // HTML reference form; JSON API is documented separately
+	"POST /dashboard/apps/{slug}/secret-references/{key}/delete":    true, // HTML reference removal; JSON API is documented separately
+	"POST /dashboard/apps/{slug}/instances/{action}":                true, // HTML form, app lifecycle controls (issue #1397 G6)
+	"POST /dashboard/apps/{slug}/edge-rules":                        true, // HTML form, edge-rule create (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/trace":                  true, // HTML form, read-only edge-rule request trace
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":            true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":              true, // HTML form, edge-rule enforce/log switch (ADR-960)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":            true, // HTML form, edge-rule delete (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/security-headers":       true, // HTML form, security-headers preset (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/recipes":                true, // HTML form, protection recipe (ADR-986)
+	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay":    true, // HTML form, queue DLQ replay (issue #1397 G7)
+	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":           true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
+	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
+	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -339,6 +349,8 @@ func init() {
 var dtoExclude = map[string]bool{
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
+	// Capacity command history uses URL query parameters, not a JSON request body.
+	"EventSubscriptionCapacityCommandsQuery": true,
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
 	// Edge-protection summary parts are inline objects of
@@ -350,7 +362,11 @@ var dtoExclude = map[string]bool{
 	// EdgeRuleParamKind is an internal enum for kind=validate parameter
 	// locations (path, query, header); it never appears on the wire alone.
 	"EdgeRuleParamKind": true,
+	// ADR-1320: a plan's included object storage in month-close billing
+	// units; internal to pricing and never serialized.
+	"ObjectStorageAllowance": true,
 
+	"WorkflowInitialFailureOptions":  true, // client-only inbox query parameters; documented on the route
 	"WorkflowRecoveryHistoryOptions": true, // client-only history query parameters; documented on the route
 	"WorkflowRecoveryReportOptions":  true, // client-only report query parameters; documented on the route
 	// Workflow list options encode URL query parameters, not JSON request bodies.
@@ -379,6 +395,7 @@ var dtoExclude = map[string]bool{
 	"ObjectNotificationTarget":          true,
 	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
 	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeRequest":                true, // Optional purpose on the private browser/device-code mint
 	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
 	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
 	"CliAuthExchangeResponse":           true, // POST /v1/cli-auth/exchange
@@ -600,14 +617,26 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
-	"ObjectStorageReleaseRequirements": true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
-	"EdgeRuleMatchExpr":                true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
-	"DevBridgeScope":                   true, // wire types live in pkg/devbridge; digests never cross the wire
-	"DevBridgeSession":                 true,
-	"DevBridgeActivity":                true, // ADR-379 wire observer types live in pkg/devbridge
-	"DevBridgeRequestRecord":           true,
-	"DevBridgeCredentials":             true,
-	"DevBridgeWebhookReplay":           true,
+	"ApplicationStandardSettings":           true, // appstandards field map checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardAdoption":           true, // appstandards wire types checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardSource":             true,
+	"ApplicationStandardViolation":          true,
+	"ApplicationStandardEffective":          true,
+	"ApplicationStandardDefinition":         true, // appstandards.Definition is a field-typed map; checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardLogDestinationRule": true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardSignatureRule":      true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardSecurityPolicyRule": true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardPublisherRule":      true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardCIDRRule":           true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
+	"ApplicationStandardExtraPortRule":      true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
+	"DevBridgeScope":                        true, // wire types live in pkg/devbridge; digests never cross the wire
+	"DevBridgeSession":                      true,
+	"DevBridgeActivity":                     true, // ADR-379 wire observer types live in pkg/devbridge
+	"DevBridgeRequestRecord":                true,
+	"DevBridgeCredentials":                  true,
+	"DevBridgeWebhookReplay":                true,
+	"EdgeRuleMatchExpr":                     true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
+	"ObjectStorageReleaseRequirements":      true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
 	// lives in pkg/state/feature_flags.go and handler-local request/evidence
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
@@ -1069,10 +1098,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "mcp_admission.go"),
+		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
+		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
+		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
+		filepath.Join(root, "pkg", "api", "mcp_catalog_observer.go"),
+		filepath.Join(root, "pkg", "api", "mcp_catalog_renewal.go"),
+		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),
+		filepath.Join(root, "pkg", "api", "mcp_oauth_retirement.go"),
 		filepath.Join(root, "pkg", "api", "mcp_task_compatibility.go"),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
@@ -1084,15 +1123,22 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_recovery.go"),
 		filepath.Join(root, "pkg", "api", "event_workflow_recovery.go"),
 		filepath.Join(root, "pkg", "api", "workflow_run_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_review.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_evidence.go"),
+		filepath.Join(root, "pkg", "api", "workflow_retry_evidence.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_history.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_change.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_initial_policy_change.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_evaluation.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_health_alerts.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_history.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_report.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_overview.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_polling_alert.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),
@@ -1171,6 +1217,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_validate_params.go"), // kind=validate parameter schemas
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),             // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", cliauthFile),
+		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
+		filepath.Join(root, "pkg", "api", "source_review.go"),
+		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
+		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),
@@ -1228,6 +1278,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-958 — zero-config guest tracing manifest DTO
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
+		filepath.Join(root, "pkg", "api", "queue_leases.go"), // ADR-1140 pull-lease DTOs
 		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
 		filepath.Join(root, "pkg", "api", "binding_release_policy.go"),
 		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
@@ -1241,6 +1292,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
+		filepath.Join(root, "pkg", "api", applicationStandardsFile),
+		filepath.Join(root, "pkg", "api", applicationStandardResourcesFile),
+		filepath.Join(root, "pkg", "api", applicationStandardMutationsFile),
+		filepath.Join(root, "pkg", "api", standardRolloutMutationsFile),
+		filepath.Join(root, "pkg", "api", standardAssignmentsFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
@@ -1296,6 +1352,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_advice.go"),
 		filepath.Join(root, "pkg", "api", "service_wake_ahead.go"),
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
+		filepath.Join(root, "pkg", "api", "route_awake.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

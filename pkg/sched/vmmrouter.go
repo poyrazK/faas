@@ -185,6 +185,33 @@ type WarmResumeVMM interface {
 	ResumeWarmInstance(ctx context.Context, nodeID, instance string) error
 }
 
+// FrozenVMM is the additive frozen-tier capability (ADR-1151): freeze an idle
+// instance in place and thaw it after admission. Separate from RoutedVMM so
+// older vmmd clients and test doubles keep serving the existing lifecycle
+// surface; a node whose client lacks it answers 501 CodeNotImplemented.
+type FrozenVMM interface {
+	FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error)
+	ThawInstance(ctx context.Context, nodeID, instance string, req ThawRequest) (ThawResult, error)
+}
+
+// ThawRequest is the work schedd asks an in-place thaw to run before it
+// returns (ADR-1151).
+type ThawRequest struct {
+	// ImageHealthcheckRequired runs the image healthcheck the deployment
+	// requires, as a warm-pool resume does.
+	ImageHealthcheckRequired bool
+	// RunAfterRestore runs the guest's resume hook, and with it the app's
+	// after_restore callback, as a snapshot restore does.
+	RunAfterRestore bool
+}
+
+// ThawResult is the work vmmd confirmed the thaw ran. A vmmd that predates a
+// ThawRequest field leaves its confirmation false.
+type ThawResult struct {
+	HealthcheckVerified bool
+	AfterRestoreRan     bool
+}
+
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
 // client. cmd/schedd wires the production sched.DialVMMContext;
 // tests inject a recording stub so they don't need a real socket.
@@ -825,6 +852,42 @@ func (r *VMMRouter) ResumeWarmInstanceWithImageHealthcheck(ctx context.Context, 
 	return resumer.ResumeWarmInstanceWithImageHealthcheck(ctx, instance)
 }
 
+// FreezeInstance implements FrozenVMM (ADR-1151). The scheduler commits the
+// durable RUNNING -> FROZEN transition separately; this only forwards the
+// vmmd-side pause.
+func (r *VMMRouter) FreezeInstance(ctx context.Context, nodeID, instance string, reclaim bool) (FreezeReport, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return FreezeReport{}, err
+	}
+	f, ok := cli.(interface {
+		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
+	})
+	if !ok {
+		return FreezeReport{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Freeze unavailable", "vmmd client does not support in-place freeze")
+	}
+	return f.FreezeInstance(ctx, instance, reclaim)
+}
+
+// ThawInstance implements FrozenVMM (ADR-1151). The scheduler admits the thaw
+// and commits FROZEN -> RUNNING separately; this only forwards the vmmd-side
+// resume.
+func (r *VMMRouter) ThawInstance(ctx context.Context, nodeID, instance string, req ThawRequest) (ThawResult, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return ThawResult{}, err
+	}
+	t, ok := cli.(interface {
+		ThawInstance(context.Context, string, ThawRequest) (ThawResult, error)
+	})
+	if !ok {
+		return ThawResult{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Thaw unavailable", "vmmd client does not support in-place thaw")
+	}
+	return t.ThawInstance(ctx, instance, req)
+}
+
 // Destroy implements RoutedVMM.
 func (r *VMMRouter) Destroy(ctx context.Context, nodeID, instance string) error {
 	cli, err := r.resolveFor(ctx, nodeID)
@@ -968,6 +1031,22 @@ func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID str
 		return err
 	}
 	return cli.UpdateEgressAllowlist(ctx, appID, allowlist, egressPorts)
+}
+
+// UpdateAppEgressPolicy routes a complete policy without falling back to an
+// unrevisioned update on nodes that cannot fence physical writes.
+func (r *VMMRouter) UpdateAppEgressPolicy(ctx context.Context, nodeID, appID string, revision int64, allowlist []netip.Prefix, ports []int) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdateAppEgressPolicy(context.Context, string, int64, []netip.Prefix, []int) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: revisioned egress unsupported by node %q", nodeID)
+	}
+	return updater.UpdateAppEgressPolicy(ctx, appID, revision, allowlist, ports)
 }
 
 // UpdateAppCPULimit routes a live app CPU policy to the owning vmmd. Kept
@@ -1142,3 +1221,13 @@ func (r *VMMRouter) Logs(ctx context.Context, nodeID, instance string, sinceSeq 
 // fails the build here, before it surfaces as a runtime nil-method
 // panic in the wake loop.
 var _ RoutedVMM = (*VMMRouter)(nil)
+
+// VMMRouter carries the frozen-tier capability (ADR-1151), and so does the
+// per-node client it forwards to.
+var (
+	_ FrozenVMM = (*VMMRouter)(nil)
+	_           = interface {
+		FreezeInstance(context.Context, string, bool) (FreezeReport, error)
+		ThawInstance(context.Context, string, ThawRequest) (ThawResult, error)
+	}((*VMMClient)(nil))
+)

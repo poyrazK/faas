@@ -27,33 +27,35 @@ import (
 // Candidate workers use a separate app: replacing a worker generation in place
 // lets the scheduler retire old workers before the Task gate can check readiness.
 type mcpNativeReleasePlan struct {
-	WebApp             string   `json:"web_app"`
-	WebPath            string   `json:"web_path"`
-	WorkerApp          string   `json:"worker_app"`
-	WorkerPath         string   `json:"worker_path"`
-	PreviousWorkerApps []string `json:"previous_worker_apps"`
-	ObserverApp        string   `json:"observer_app"`
-	ObserverMetricApp  string   `json:"observer_metric_app"`
-	TokenEnv           string   `json:"token_env,omitempty"`
-	ReleasePolicy      string   `json:"release_policy,omitempty"`
-	TimeoutSeconds     int      `json:"timeout_seconds"`
+	WebApp             string                 `json:"web_app"`
+	WebPath            string                 `json:"web_path"`
+	WorkerApp          string                 `json:"worker_app"`
+	WorkerPath         string                 `json:"worker_path"`
+	PreviousWorkerApps []string               `json:"previous_worker_apps"`
+	ObserverApp        string                 `json:"observer_app"`
+	ObserverMetricApp  string                 `json:"observer_metric_app"`
+	TokenEnv           string                 `json:"token_env,omitempty"`
+	ReleasePolicy      string                 `json:"release_policy,omitempty"`
+	AccessAudit        *mcpAccessAuditOptions `json:"access_audit,omitempty"`
+	TimeoutSeconds     int                    `json:"timeout_seconds"`
 }
 type mcpNativeReleaseState struct {
-	Revision            uint64 `json:"revision,omitempty"`
-	journalExists       bool
-	ReleaseID           string            `json:"release_id,omitempty"`
-	Version             int               `json:"version"`
-	Fingerprint         string            `json:"fingerprint"`
-	Stage               string            `json:"stage"`
-	WebDeployment       string            `json:"web_deployment,omitempty"`
-	WorkerDeployment    string            `json:"worker_deployment,omitempty"`
-	ServingDeployment   string            `json:"serving_deployment"`
-	ServingCaptured     bool              `json:"serving_captured"`
-	PreviousDeployments map[string]string `json:"previous_deployments,omitempty"`
-	WorkerIDs           []string          `json:"worker_ids,omitempty"`
-	Promoted            bool              `json:"promoted"`
-	Parked              map[string]bool   `json:"parked,omitempty"`
-	PendingSubmission   string            `json:"pending_submission,omitempty"`
+	AccessPolicyExpectation *api.MCPAccessPolicyExpectation `json:"-"`
+	Revision                uint64                          `json:"revision,omitempty"`
+	journalExists           bool
+	ReleaseID               string            `json:"release_id,omitempty"`
+	Version                 int               `json:"version"`
+	Fingerprint             string            `json:"fingerprint"`
+	Stage                   string            `json:"stage"`
+	WebDeployment           string            `json:"web_deployment,omitempty"`
+	WorkerDeployment        string            `json:"worker_deployment,omitempty"`
+	ServingDeployment       string            `json:"serving_deployment"`
+	ServingCaptured         bool              `json:"serving_captured"`
+	PreviousDeployments     map[string]string `json:"previous_deployments,omitempty"`
+	WorkerIDs               []string          `json:"worker_ids,omitempty"`
+	Promoted                bool              `json:"promoted"`
+	Parked                  map[string]bool   `json:"parked,omitempty"`
+	PendingSubmission       string            `json:"pending_submission,omitempty"`
 }
 
 func readMCPNativePlan(path string) (mcpNativeReleasePlan, error) {
@@ -76,6 +78,9 @@ func readMCPNativePlan(path string) (mcpNativeReleasePlan, error) {
 	}
 	if p.TimeoutSeconds < 1 || p.TimeoutSeconds > 600 || p.WebPath == "" || p.WorkerPath == "" || p.ObserverMetricApp == "" || len(p.PreviousWorkerApps) > 32 {
 		return p, errors.New("release requires source paths, observer metric app and a 1-600 second deadline")
+	}
+	if err := normalizeMCPAccessAuditOptions(p.AccessAudit); err != nil {
+		return p, err
 	}
 	seen := map[string]bool{}
 	for _, slug := range append([]string{p.WebApp, p.WorkerApp, p.ObserverApp}, p.PreviousWorkerApps...) {
@@ -671,8 +676,25 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 	if err != nil {
 		return err
 	}
+	if mcpReleaseRequiresAuthorization(roles) {
+		fleet := qualifyMCPProtocolDeployment(probeCtx, c, p.WebApp, s.WebDeployment, candidate, cfg.Endpoint, roles, 2*time.Second)
+		if !fleet.Qualified {
+			return errors.New("candidate replicas failed reviewed MCP authorization qualification")
+		}
+	}
 	_, err = verifyMCPRoles(probeCtx, candidate, roles)
-	return err
+	if err != nil {
+		return err
+	}
+	s.AccessPolicyExpectation = nil
+	if p.AccessAudit != nil {
+		audit := collectMCPAccessAudit(probeCtx, c, p.WebApp, cfg, roles, *p.AccessAudit)
+		if !audit.OK {
+			return errors.New("reviewed MCP access policy drift or missing evidence blocks release verification")
+		}
+		s.AccessPolicyExpectation = audit.PolicyExpectation
+	}
+	return nil
 }
 
 func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState, state string) error {
@@ -690,8 +712,21 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 	if cfgWeb.Auth.Mode == "external-oauth" && token == "" {
 		return errors.New("external OAuth verification requires token_env")
 	}
-	if _, err := loadMCPReleasePolicy(p.ReleasePolicy); err != nil {
+	roles, err := loadMCPReleasePolicy(p.ReleasePolicy)
+	if err != nil {
 		return err
+	}
+	if p.AccessAudit != nil {
+		if err := normalizeMCPAccessAuditOptions(p.AccessAudit); err != nil {
+			return err
+		}
+		if !mcpAuthorizationChecksPassed(mcpAccessSourceChecks(cfgWeb, roles)) {
+			return errors.New("reviewed access source and role declarations are inconsistent")
+		}
+		audit := collectMCPAccessAudit(ctx, c, p.WebApp, cfgWeb, roles, *p.AccessAudit)
+		if !audit.OK {
+			return errors.New("reviewed MCP access policy drift or missing evidence blocks release preflight")
+		}
 	}
 	account, err := c.Whoami(ctx)
 	if err != nil {
@@ -892,8 +927,12 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		return err
 	}
 	if !s.Promoted {
-		_, err := c.PatchDeploymentTrafficIfServing(ctx, s.WebDeployment, 100, s.ServingDeployment)
+		_, err := c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, s.WebDeployment, 100, s.ServingDeployment, s.AccessPolicyExpectation)
 		if err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && api.IsMCPPromotionConditionFailure(apiErr.Problem.Code) {
+				return err
+			}
 			// The compare-and-swap may have committed before the client lost its response.
 			current, e := mcpServingDeployment(ctx, c, p.WebApp, "")
 			if e != nil || current != s.WebDeployment {

@@ -64,6 +64,10 @@ export type AppManifest = {
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
   /**
+   * The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
+  /**
    * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
    */
   startup_deadline_s?: number | null;
@@ -76,7 +80,7 @@ export type AppManifest = {
    */
   request_timeout_s?: number | null;
   /**
-   * Requests one Node or Python function worker serves at once (ADR-1190). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
    */
   function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;

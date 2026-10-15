@@ -43,7 +43,11 @@
 // runtimecheck requires them in Bnd) — out of scope here.
 package main
 
-import "github.com/onebox-faas/faas/pkg/capdecl"
+import (
+	"os"
+
+	"github.com/onebox-faas/faas/pkg/capdecl"
+)
 
 // capsDecl is the canonical declaration imaged enforces at boot.
 // The Deny: cap_sys_admin entry is load-bearing — it is what
@@ -74,4 +78,19 @@ var capsDecl = capdecl.Declaration{
 		// the Bnd set into a tripwire for regressions.
 		"cap_sys_admin",
 	},
+}
+
+// canChownToRoot reports whether layer extraction can give staged files to
+// root: imaged runs as root, or holds CAP_CHOWN in its effective set.
+func canChownToRoot() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false
+	}
+	masks := capdecl.ParseStatus(status)
+	missing, unknown := masks.Has([]string{"cap_chown"}, masks.Eff)
+	return missing == "" && len(unknown) == 0
 }

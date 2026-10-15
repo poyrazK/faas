@@ -288,6 +288,25 @@ func (t *devPhaseTracker) observeStageState(raw json.RawMessage) {
 	}
 }
 
+// reconcileFinalStages applies the live deployment's persisted stage history.
+// A build-log stream that drops mid-build never delivers the image_build
+// completion, so in human output the receipt reported build=0ms for a
+// four-minute build (production-us hunt #10, H10-34).
+func (t *devPhaseTracker) reconcileFinalStages(ctx context.Context, client *api.Client) {
+	if t == nil || client == nil {
+		return
+	}
+	deploymentID, _ := t.snapshot()
+	if deploymentID == "" {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if dep, err := client.GetDeployment(readCtx, deploymentID); err == nil {
+		t.observeStageState(dep.StageState)
+	}
+}
+
 func (t *devPhaseTracker) finishRouteSwitch() {
 	if t == nil {
 		return

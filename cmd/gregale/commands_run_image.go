@@ -21,6 +21,9 @@ import (
 const (
 	imageRunPollInterval = 2 * time.Second
 	imageRunPullTimeout  = 10 * time.Minute
+	// imageRunAttachWait bounds the wait for an interactive run's VM: queueing
+	// behind the plan's concurrency plus boot.
+	imageRunAttachWait = 5 * time.Minute
 )
 
 // imageRunEnvFlags collects repeatable KEY=VALUE flags.
@@ -68,14 +71,27 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	pull := fs.String("pull", api.ImageRunPullMissing, "pull policy: missing|always")
 	detach := fs.Bool("detach", false, "queue the run and print its id without waiting")
 	fs.BoolVar(detach, "d", false, "shorthand for --detach")
+	var interactive, tty, both bool
+	fs.BoolVar(&interactive, "interactive", false, "attach stdin and run until the command exits (ADR-1330)")
+	fs.BoolVar(&interactive, "i", false, "shorthand for --interactive")
+	fs.BoolVar(&tty, "tty", false, "give the command a terminal; requires --interactive")
+	fs.BoolVar(&tty, "t", false, "shorthand for --tty")
+	fs.BoolVar(&both, "it", false, "shorthand for --interactive --tty")
+	fs.BoolVar(&both, "ti", false, "shorthand for --interactive --tty")
 	if err := fs.Parse(args); err != nil {
 		return imageRunOptions{}, false
 	}
-	if strings.TrimSpace(*image) == "" || *ram < 0 || *timeout < 0 || *timeout%time.Second != 0 {
-		PrintUsage(osStderr, "usage: gregale run --image IMAGE [--entrypoint CMD] [-e KEY=VALUE]... [--ram MB] [--timeout D] [--pull missing|always] [--detach] [ARG...]", "run")
+	interactive, tty = interactive || both, tty || both
+	if strings.TrimSpace(*image) == "" || *ram < 0 || *timeout < 0 || *timeout%time.Second != 0 || (tty && !interactive) {
+		PrintUsage(osStderr, "usage: gregale run [-i [-t]] --image IMAGE [--entrypoint CMD] [-e KEY=VALUE]... [--ram MB] [--timeout D] [--pull missing|always] [--detach] [ARG...]", "run")
 		return imageRunOptions{}, false
 	}
-	req := api.CreateImageRunRequest{Image: *image, RAMMB: *ram, TimeoutSec: int(*timeout / time.Second), Pull: *pull}
+	if interactive && (*detach || jsonOutput) {
+		PrintFail(osStderr, "--interactive cannot be combined with --detach or --json")
+		return imageRunOptions{}, false
+	}
+	req := api.CreateImageRunRequest{Image: *image, RAMMB: *ram, TimeoutSec: int(*timeout / time.Second), Pull: *pull,
+		Interactive: interactive, TTY: tty}
 	if len(env) > 0 {
 		req.Env = env
 	}
@@ -99,6 +115,9 @@ func cmdRunImage(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if opts.request.Interactive {
+		return runInteractiveImage(ctx, client, opts.request)
+	}
 	queued, err := startImageRun(ctx, client, opts.request)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -150,6 +169,37 @@ func startImageRun(ctx context.Context, client *api.Client, req api.CreateImageR
 	}
 }
 
+// runInteractiveImage is `gregale run -it --image` (ADR-1330): create the
+// run, attach to its task once the VM is up, and relay the session. The exit
+// code is the command's. Leaving before the session starts cancels the run.
+func runInteractiveImage(ctx context.Context, client *api.Client, req api.CreateImageRunRequest) int {
+	stdinFile, tty := interactiveStdin(req.TTY)
+	req.TTY = tty
+	queued, err := startImageRun(ctx, client, req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return 130
+		}
+		return printErr("Could not start the image run", err)
+	}
+	if queued.Attach == nil || queued.Attach.Token == "" {
+		cancelImageRun(ctx, client, queued)
+		return printErr("Interactive session unavailable", errors.New("the server did not return attach credentials"))
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, imageRunAttachWait)
+	defer cancel()
+	conn, err := dialAttach(waitCtx, client, *queued.Attach, tty, stdinFile)
+	if err != nil {
+		cancelImageRun(ctx, client, queued)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return 130
+		}
+		return printErr("Could not attach to the session", err)
+	}
+	defer func() { _ = conn.Close() }()
+	return relayAttachedSession(ctx, conn, tty, stdinFile)
+}
+
 func reportDetachedImageRun(resp api.ImageRunResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -160,9 +210,18 @@ func reportDetachedImageRun(resp api.ImageRunResponse) int {
 	return 0
 }
 
-// waitImageRun waits for the one task, prints its stored output and returns
-// its exit code. Ctrl-C cancels the run.
+// waitImageRun relays the task's output live (ADR-1163), waits for the run to
+// finish and returns the task's exit code. Ctrl-C cancels the run.
 func waitImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResponse) int {
+	var live jobTaskLogFollow
+	var liveErr error
+	if !jsonOutput {
+		live, liveErr = followJobTaskLogs(ctx, client, resp.Job, resp.RunID, 0, osStdout, osStderr)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cancelImageRun(ctx, client, resp)
+			return 130
+		}
+	}
 	for {
 		run, err := client.GetJobRun(ctx, resp.Job, resp.RunID)
 		if err != nil {
@@ -174,7 +233,7 @@ func waitImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResp
 		}
 		switch run.AggregateStatus {
 		case "succeeded", "failed", "cancelled", "dead_letter":
-			return finishImageRun(ctx, client, resp)
+			return finishImageRun(ctx, client, resp, live, liveErr)
 		}
 		if err := sleepContext(ctx, imageRunPollInterval); err != nil {
 			cancelImageRun(ctx, client, resp)
@@ -198,7 +257,10 @@ type imageRunResult struct {
 	Exit int                  `json:"exit_code"`
 }
 
-func finishImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResponse) int {
+// finishImageRun reports the outcome. Output already relayed live is not
+// printed again; when the live stream was unavailable the stored output is
+// printed instead.
+func finishImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResponse, live jobTaskLogFollow, liveErr error) int {
 	tasks, err := client.ListJobRunTasks(ctx, resp.Job, resp.RunID)
 	if err != nil || len(tasks.Tasks) == 0 {
 		return printErr("Could not read the task", errors.Join(err, errors.New("run has no task")))
@@ -215,9 +277,16 @@ func finishImageRun(ctx context.Context, client *api.Client, resp api.ImageRunRe
 		}
 		return result.Exit
 	}
-	_, _ = fmt.Fprint(osStdout, logs.LogContent)
-	if logs.Truncated {
-		PrintWarn(osStderr, "output truncated to the last %d bytes", logs.MaxBytes)
+	switch {
+	case live.Complete():
+	case live.Lines == 0:
+		_, _ = fmt.Fprint(osStdout, logs.LogContent)
+		if logs.Truncated {
+			PrintWarn(osStderr, "output truncated to the last %d bytes", logs.MaxBytes)
+		}
+	default:
+		PrintWarn(osStderr, "live output was incomplete (%s); stored output: %s jobs logs %s %s %d",
+			liveIncompleteReason(live, liveErr), recoveryCLI(), recoveryArgument(resp.Job), resp.RunID, task.TaskIndex)
 	}
 	if result.Exit != 0 && task.ErrorMessage != "" {
 		PrintWarn(osStderr, "%s", task.ErrorMessage)
@@ -251,5 +320,20 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func liveIncompleteReason(live jobTaskLogFollow, err error) string {
+	switch {
+	case live.Gaps > 0:
+		return "some lines were dropped before they could be sent"
+	case live.Reason == api.JobTaskLogsEndStoredOutput:
+		return "the last attempt ended before its output could be streamed"
+	case live.Reason != "":
+		return live.Reason
+	case err != nil:
+		return err.Error()
+	default:
+		return "the stream closed early"
 	}
 }
