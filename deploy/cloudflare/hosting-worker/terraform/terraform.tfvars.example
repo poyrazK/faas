@@ -1,0 +1,11 @@
+account_id         = "00000000000000000000000000000000"
+zone_id            = "00000000000000000000000000000000"
+hosting_domain     = "gregale-hosting.example"
+platform_domains   = ["gregale.dev"]
+name               = "gregale-internal-hosting"
+access_team_domain = "your-team.cloudflareaccess.com"
+internal_emails    = ["operator@example.com"]
+
+# Keep these false for the initial infrastructure apply.
+attach_route   = false
+worker_enabled = false

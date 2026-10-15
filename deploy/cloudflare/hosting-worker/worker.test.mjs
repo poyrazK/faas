@@ -90,11 +90,17 @@ test("JWT signature, audience, expiry, issuer, and internal email are enforced",
 test("cached files remain behind identity, flag, origin, and lease checks", async () => {
   const f = fixture();
   f.release(first, { "index.html": "first release" });
-  assert.equal(await (await f.request()).text(), "first release");
+  const cold = await f.request();
+  assert.equal(cold.headers.get("X-Gregale-Cache"), "MISS");
+  assert.equal(await cold.text(), "first release");
   const reads = f.calls.storage;
-  assert.equal(await (await f.request()).text(), "first release");
+  const warm = await f.request();
+  assert.equal(warm.headers.get("X-Gregale-Cache"), "HIT");
+  assert.equal(await warm.text(), "first release");
   assert.equal(f.calls.storage, reads);
-  assert.equal((await f.request("/", { headers: { "Cf-Access-Jwt-Assertion": "forged" } })).status, 403);
+  const denied = await f.request("/", { headers: { "Cf-Access-Jwt-Assertion": "forged" } });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.headers.get("X-Gregale-Cache"), null);
   f.env.FAAS_FRONTEND_HOSTING_ENABLED = "false";
   assert.equal((await f.request()).status, 404);
   f.env.FAAS_FRONTEND_HOSTING_ENABLED = "true";

@@ -143,6 +143,7 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
   if (request.method === "HEAD") return new Response(null, { headers });
   const key = new Request(`https://${url.hostname}/_gregale/cache/files/${route.site_id}/${release}/${file.sha256}/${file.path}`);
   let response = await deps.cache?.match(key);
+  headers.set("X-Gregale-Cache", response ? "HIT" : "MISS");
   if (!response) {
     const object = await env.ARTIFACTS.get(`hosting/published/${route.site_id}/${release}/files/${file.path}`);
     if (!object || object.size !== file.size) return problem(503, "hosting_artifact_unavailable");

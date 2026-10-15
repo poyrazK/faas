@@ -73,8 +73,17 @@ the platform application/dashboard domain.
 
 Portable tests cover ownership, concurrent quota enforcement, promotion CAS,
 rollback, immutable publication, operator/flag gates, JWT validation, and
-guarded cache hits. Live Cloudflare/R2/Access qualification must precede any
-internal deployment; repository tests do not prove provider configuration.
+guarded cache hits. A disposable, Access-protected trial must produce live
+Cloudflare/R2/Access qualification before real internal applications use the
+pilot; repository tests do not prove provider configuration.
+
+The pilot includes pinned Terraform provisioning with default-off Worker and
+DNS/route controls, disabled alternate public endpoints, and staging-only
+expiration. The CLI-driven live runner records provider inspection, observed
+file-cache hits, upload recovery, promotion/rollback, and independent object
+cleanup. Its optional Worker-switch exercise is restricted to an isolated
+pilot. Infrastructure tests use a mocked provider and do not qualify actual
+Cloudflare permissions or serving; live evidence retains that distinction.
 
 This pilot does not onboard arbitrary customer domains, run SSR, replicate
 artifacts into US/EU origin pools, integrate site membership into project-wide

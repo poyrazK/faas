@@ -7,6 +7,12 @@ public hosting entitlement, customer billing integration, or production SLA.
 
 ## Configure an isolated internal deployment
 
+The [Terraform pilot configuration](../deploy/cloudflare/hosting-worker/terraform/README.md)
+automates the resources below with serving and DNS/routing disabled by default.
+Its outputs supply non-secret bootstrap settings and the live qualification
+deployment identity. Use Terraform or the manual procedure below as the sole
+owner of Worker configuration.
+
 Provision a private R2 bucket and a dedicated Cloudflare KV namespace. Keep the
 bucket private: disable public bucket access and public custom-domain bindings.
 Create a Cloudflare Access application covering every hostname on a separate
@@ -46,8 +52,10 @@ After Access and DNS are ready, attach only the isolated hosting zone's
 wildcard route and explicitly set the Worker's
 `FAAS_FRONTEND_HOSTING_ENABLED = "true"`. Its example disables `workers.dev`
 and preview URLs. Do not attach it to the dashboard, API, customer S3 endpoint,
-or existing timeout Worker routes. No repository command automatically
-provisions resources, changes DNS, or deploys the Worker.
+or existing timeout Worker routes. The Terraform configuration changes cloud
+resources only on an explicit apply; attaching routes and enabling the Worker
+require separate explicit inputs. With manual provisioning, deploy only after
+performing the same isolation and Access checks.
 
 Apply migrations through Gregale's normal deployment process. Add a storage
 lifecycle rule expiring `hosting/staging/` after one day. Published objects
@@ -122,9 +130,87 @@ yet part of customer billing. Keep this feature internal.
 go test -race ./pkg/hosting ./pkg/apid/hosting ./pkg/state/hostingtest
 go test ./cmd/gregale -run 'Test(StaticHosting|HostingUpload|SitesCommand)'
 node --test --test-isolation=none deploy/cloudflare/hosting-worker/worker.test.mjs
+python3 scripts/ci/test_internal_frontend_hosting_qualification.py
 ```
 
 The PostgreSQL suite requires the normal isolated test fixture. A live pilot
 must additionally prove denied unauthenticated/cache-hit requests, disable
 propagation, real R2 conditional publication, interrupted uploads, promotion,
 rollback, and retirement on its own configured Access/Worker/bucket resources.
+
+## Live qualification
+
+Use `scripts/ops/internal-frontend-hosting-qualification.py` against an applied,
+dedicated Terraform pilot and an existing disposable Gregale project and
+environment. The runner creates a fresh `hosting-qual-*` site; it never updates
+an existing customer site. It needs Python 3.12+, a Gregale CLI built from this
+hosting implementation, Terraform, and AWS CLI v2 for authenticated R2 prefix
+inventory. The API must already have the hosting migration, provider settings,
+operator allowlist, and feature flag. The Worker/route must already be enabled.
+The script does not bootstrap credentials or enable API admission.
+
+Set the following credentials in the operator environment, without writing
+them into reports or tfvars:
+
+| Variable | Purpose |
+|---|---|
+| `FAAS_API` | Explicit HTTPS origin for the pilot's Gregale API; there is no production default |
+| `FAAS_TOKEN` | MFA-qualified operator credential for the expected disposable account |
+| `FAAS_FRONTEND_HOSTING_ENABLED` | `1` to opt into the internal CLI on this workstation |
+| `CLOUDFLARE_API_TOKEN` | Read access to the pilot's R2 domains and Worker subdomain settings; also deployment permissions if checking the Worker switch |
+| `HOSTING_QUAL_ACCESS_TOKEN` | Unexpired user Access JWT for the wildcard application and an allowed internal email |
+| `HOSTING_QUAL_R2_ACCESS_KEY` | Bucket-scoped R2 identity that can list objects for cleanup evidence |
+| `HOSTING_QUAL_R2_SECRET_KEY` | Its S3 secret, passed only through the AWS CLI environment |
+
+Obtain the user JWT with the existing Cloudflare Access login flow, for example
+`cloudflared access token --app=https://qualify.YOUR_HOSTING_DOMAIN`, and bind its
+output to `HOSTING_QUAL_ACCESS_TOKEN` without printing it. Service-token
+credentials do not satisfy the Worker's user-email policy. Allow enough token
+lifetime for propagation checks and at least the nine-minute-thirty-second
+retirement grace. Use a fresh report destination on every run:
+
+```bash
+python3 scripts/ops/internal-frontend-hosting-qualification.py \
+  --infrastructure deploy/cloudflare/hosting-worker/terraform \
+  --binary ./bin/gregale \
+  --account QUALIFICATION_ACCOUNT_UUID \
+  --project hosting-qualification \
+  --environment test \
+  --evidence /tmp/hosting-qualification-us.json
+```
+
+The runner checks the output's storage fingerprint, Worker source digest, and
+authenticated account before creating a site. It queries Cloudflare to reject
+public R2 domains, `workers.dev`, or preview URLs. It exercises partial and
+wrong-digest uploads, recovery with renewed grants, finalization retries,
+immutable publication despite an old staging grant, two CLI deployments,
+observed file-cache hits, unauthenticated denial after warming that cache,
+SPA/asset/directory/HEAD/ETag behavior, old asset retention, stale-revision
+promotion refusal, rollback, and retirement.
+
+To also test the independent Worker switch, add `--check-worker-switch` **only
+on a dedicated pilot**: this temporarily stops every site on that Worker. The
+runner requires a clean Terraform plan, inspects each saved switch plan, and
+permits changes only to the Worker version/deployment. It rejects unrelated
+infrastructure/source/binding changes. The original enabled flag is reconciled
+in a `finally` block even after an interrupted apply. Keep `worker_enabled =
+true` in the reviewed local tfvars; do not modify infrastructure concurrently.
+
+After the scenario, including failures and handled interrupts, the runner
+requests site deletion, waits for routing denial and metadata removal, and
+independently verifies that both the staging and published site prefixes are
+empty using authenticated R2 listings. Cleanup has a 15-minute default timeout.
+A successful deletion response alone does not qualify cleanup. The private
+0600 report records site/release IDs, completed checks, observed propagation
+times, cache results, and Cloudflare location codes; no token, signed URL, or
+child-process output is recorded. Existing evidence files are never overwritten.
+If a process is forcibly killed or cleanup fails, use the recorded site ID
+(or generated site name if creation lost its response) to retire/delete it and
+verify both prefixes manually. Restore a failed Worker switch before continuing.
+
+Repeat from a real European runner with a new evidence path to compare actual
+edge locations and cold/warm observations. These are individual observations,
+not a global latency percentile or origin-residency guarantee. Reports explicitly
+list untested API/control-plane outages, regional load, and an omitted Worker
+switch. They never qualify public launch. The existing short routing leases
+and lack of customer billing/domain onboarding remain pilot boundaries.
