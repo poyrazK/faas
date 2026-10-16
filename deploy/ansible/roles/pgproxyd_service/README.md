@@ -37,4 +37,10 @@ Operations: `/healthz`, `/readyz` and `/metrics` are served on
 renders `database_node_metrics_host` (control-plane Prometheus job
 `pgproxyd`), loopback otherwise. Metrics: `pgproxyd_sessions_total{result}`,
 `pgproxyd_active_sessions`, `pgproxyd_wake_seconds`,
-`pgproxyd_cancel_requests_total{result}`.
+`pgproxyd_cancel_requests_total{result}`, `pgproxyd_tls_cert_expiry_seconds`,
+`pgproxyd_tls_cert_reloads_total{result}`.
+
+pgproxyd reloads a renewed public certificate in place. It checks every
+30 s, and the role sends SIGHUP after installing new files. Changing
+`pgproxyd_tls_cert_src` / `pgproxyd_tls_key_src` therefore does not
+restart it or drop sessions.

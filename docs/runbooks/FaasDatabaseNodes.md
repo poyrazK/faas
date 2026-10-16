@@ -62,6 +62,25 @@ To retire a node that still works, set `lifecycle: draining` with
 `managed_postgres.evacuate_draining`. schedd moves its databases off one at
 a time.
 
+## FaasDatabaseProxyCertExpiring (warn) and FaasDatabaseProxyCertExpiryImminent (page)
+
+The public `*.<host_suffix>` certificate pgproxyd serves on a node has
+less than 14 days left (warn) or less than 72 hours (page). Clients verify
+it (`verify-full`), so once it expires no client reaches the node's
+databases. `pgproxyd_tls_cert_expiry_seconds` is the time left on the
+certificate in use.
+
+1. Renew the certificate for `*.<host_suffix>`.
+2. Point `pgproxyd_tls_cert_src` and `pgproxyd_tls_key_src` at the new
+   chain and key, and converge the database nodes.
+
+pgproxyd checks its files every 30 s, and immediately on SIGHUP, which
+the role sends after installing them. It swaps the certificate without
+dropping sessions. If the files don't load (a chain without its key yet,
+an expired or unreadable file), it keeps the one in use and counts
+`pgproxyd_tls_cert_reloads_total{result="failed"}`. To find the cause,
+run `journalctl -u faas-pgproxyd | grep "certificate reload"`.
+
 ## FaasDatabaseArchiveKeeperDown (warn)
 
 `dbbackupd` has been down for 10 minutes. Each database's `archive_command`

@@ -98,6 +98,33 @@ groups:
           description: "The 95th percentile from an authenticated client to a running database on {{ $labels.node }} has exceeded 5 seconds for 15 minutes. Usual causes are boot slots or the RAM ceiling queueing wakes, no spare VMs, or a slow volume."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      # Clients verify pgproxyd's *.<host_suffix> certificate: once it
+      # expires, no client reaches any database on the node. pgproxyd
+      # reloads a renewal in place, so these clear on the next check.
+      - alert: FaasDatabaseProxyCertExpiring
+        expr: min by (node) (pgproxyd_tls_cert_expiry_seconds) < 14 * 86400
+        for: 1h
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "pgproxyd's certificate on {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
+          description: "The public certificate pgproxyd serves on {{ $labels.node }} expires within 14 days. Renew it and install the new chain and key (pgproxyd_tls_cert_src / pgproxyd_tls_key_src); pgproxyd reloads them without a restart."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseProxyCertExpiryImminent
+        expr: min by (node) (pgproxyd_tls_cert_expiry_seconds) < 3 * 86400
+        for: 10m
+        labels:
+          severity: page
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "pgproxyd's certificate on {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
+          description: "The public certificate pgproxyd serves on {{ $labels.node }} expires within 72 hours; after that every client connection to the node's databases fails verification."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
   # schedd's database scheduler. Every replica reports the whole catalog
   # (max) and counts only its own events (sum).
   - name: faas_database_scheduler

@@ -50,10 +50,18 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	cert, err := tls.LoadX509KeyPair(cfg.TLSCertPath, cfg.TLSKeyPath)
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	cert, err := loadPublicCert(cfg.TLSCertPath, cfg.TLSKeyPath, reg, log)
 	if err != nil {
-		return fmt.Errorf("pgproxyd: server certificate: %w", err)
+		return err
 	}
+	// A renewed certificate is picked up within publicCertCheck, or at
+	// once on SIGHUP, without dropping sessions.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go cert.watch(ctx, publicCertCheck, hup)
 	decoy, err := readSecret(cfg.DecoySecretPath, 32)
 	if err != nil {
 		return err
@@ -86,10 +94,8 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	}
 	dialer := pgproxy.NewVmmdDialer(vmmdTLS)
 	defer func() { _ = dialer.Close() }()
-	reg := prometheus.NewRegistry()
-	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	proxy, err := pgproxy.New(pgproxy.Config{
-		TLS: &tls.Config{Certificates: []tls.Certificate{cert}}, HostSuffix: cfg.HostSuffix, DecoySecret: decoy,
+		TLS: &tls.Config{GetCertificate: cert.GetCertificate}, HostSuffix: cfg.HostSuffix, DecoySecret: decoy,
 		PoolMaxServers: cfg.PoolMaxServers, PoolWait: cfg.PoolWait, PoolServerIdle: cfg.PoolServerIdle,
 		InstanceID: uint8(cfg.InstanceID), CancelPeers: cfg.peers, //nolint:gosec // validated 0-255
 		Metrics: pgproxy.NewMetrics(reg),

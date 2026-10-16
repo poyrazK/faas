@@ -48,7 +48,9 @@
     group: faas-pgproxyd
     mode: "0444"
   when: pgproxyd_enabled | bool
-  notify: restart faas-pgproxyd
+  # pgproxyd reloads a renewed certificate in place (within 30 s, at once
+  # on SIGHUP); a restart would drop every client session.
+  notify: reload faas-pgproxyd certificate
 
 - name: pgproxyd_service — install the public certificate key
   ansible.builtin.copy:
@@ -59,7 +61,7 @@
     mode: "0400"
   no_log: true
   when: pgproxyd_enabled | bool
-  notify: restart faas-pgproxyd
+  notify: reload faas-pgproxyd certificate
 
 - name: pgproxyd_service — install the read-only control-plane DSN
   ansible.builtin.copy:

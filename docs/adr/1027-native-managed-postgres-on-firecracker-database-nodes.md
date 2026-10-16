@@ -481,6 +481,20 @@ to create the role, so the two cannot drift.
 Still manual: pgproxyd's public `*.<suffix>` certificate (files), the
 `faas_pgproxyd_postgres_password` Vault value, and each node's PKI bundle.
 
+**Certificate renewal.** pgproxyd used to load its public certificate once,
+so every renewal meant a restart, which drops every client session. It now
+serves through `GetCertificate` and checks the files every 30 s, and
+immediately on SIGHUP.
+- On a change it loads the new chain and key. It keeps the certificate in
+  use if they don't load, if the key doesn't match yet, or if the new one
+  has expired.
+- The role installs the chain and key, then sends SIGHUP rather than
+  restarting.
+- `pgproxyd_tls_cert_expiry_seconds` is the time left on the certificate
+  in use. `FaasDatabaseProxyCertExpiring` warns at 14 days, and
+  `FaasDatabaseProxyCertExpiryImminent` pages at 72 hours, the thresholds
+  ADR-1236 uses for the public edge.
+
 **Monitoring.** Control-plane Prometheus scrapes every database node.
 Database nodes are not compute-registry rows, so apid's HTTP-SD never
 lists them. The manifest renders `prom_database_targets` (node name and

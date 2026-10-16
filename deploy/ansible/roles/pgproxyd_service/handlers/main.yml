@@ -9,3 +9,12 @@
   changed_when: true
   listen: restart faas-pgproxyd
   when: pgproxyd_enabled | bool
+
+# After both the chain and its key are installed: pgproxyd swaps the
+# certificate without dropping sessions. A stopped unit has nothing to
+# reload; it reads the files when it starts.
+- name: pgproxyd_service — reload the public certificate
+  ansible.builtin.shell: systemctl is-active --quiet faas-pgproxyd.service && systemctl kill --signal=HUP faas-pgproxyd.service || true  # noqa: command-instead-of-module
+  changed_when: true
+  listen: reload faas-pgproxyd certificate
+  when: pgproxyd_enabled | bool

@@ -283,3 +283,54 @@ tests:
               summary: Database node db-1 has committed 95% of its volume capacity
               description: Databases, standbys and incoming moves on db-1 have reserved over 90% of its volume_capacity_bytes. New databases, storage growth and standbys go elsewhere or fail with no capacity.
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: an expiring proxy certificate warns at 14 days and pages at 72 hours
+    interval: 1m
+    input_series:
+      # Ten days left, counting down with the clock.
+      - series: pgproxyd_tls_cert_expiry_seconds{job="pgproxyd",instance="10.42.0.5:9109",node="db-1"}
+        values: 864000-60x120
+      # A renewed one on db-2.
+      - series: pgproxyd_tls_cert_expiry_seconds{job="pgproxyd",instance="10.42.0.6:9109",node="db-2"}
+        values: 7776000-60x120
+      # Two and a half days left on db-3.
+      - series: pgproxyd_tls_cert_expiry_seconds{job="pgproxyd",instance="10.42.0.7:9109",node="db-3"}
+        values: 216000-60x120
+    alert_rule_test:
+      - eval_time: 59m
+        alertname: FaasDatabaseProxyCertExpiring
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: FaasDatabaseProxyCertExpiring
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: pgproxyd's certificate on db-1 expires in 9d 22h 59m 0s
+              description: The public certificate pgproxyd serves on db-1 expires within 14 days. Renew it and install the new chain and key (pgproxyd_tls_cert_src / pgproxyd_tls_key_src); pgproxyd reloads them without a restart.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+          - exp_labels:
+              severity: warn
+              component: database-node
+              family: database_nodes
+              node: db-3
+            exp_annotations:
+              summary: pgproxyd's certificate on db-3 expires in 2d 10h 59m 0s
+              description: The public certificate pgproxyd serves on db-3 expires within 14 days. Renew it and install the new chain and key (pgproxyd_tls_cert_src / pgproxyd_tls_key_src); pgproxyd reloads them without a restart.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 11m
+        alertname: FaasDatabaseProxyCertExpiryImminent
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: database-node
+              family: database_nodes
+              node: db-3
+            exp_annotations:
+              summary: pgproxyd's certificate on db-3 expires in 2d 11h 49m 0s
+              description: The public certificate pgproxyd serves on db-3 expires within 72 hours; after that every client connection to the node's databases fails verification.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
