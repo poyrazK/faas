@@ -383,14 +383,13 @@ func cutoverMigrationStatements(t *testing.T, name string) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(string(migration), "-- +goose Down")
-	body := func(part string) string {
-		if !strings.Contains(part, "-- +goose StatementBegin") {
-			return part
-		}
-		return strings.Split(strings.Split(part, "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
+	parts := strings.SplitN(string(migration), "-- +goose Down", 2)
+	if len(parts) != 2 {
+		t.Fatal("missing cutover migration downgrade")
 	}
-	return body(parts[0]), body(parts[1])
+	// Goose directives are SQL comments. Keep all statements surrounding and
+	// inside its blocks when exercising the actual upgrade/downgrade chain.
+	return parts[0], parts[1]
 }
 
 // adr: 568 — serving receipts prove the eligible source keys actually delivered.
