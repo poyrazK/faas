@@ -1350,3 +1350,9 @@ Deadline count alerts accept `UpcomingRecovery` / `ExpiredRecovery` pointers and
 recovery boundaries. Defaults remain warning minus one; explicit zero requires
 zero. Recovery must be below an enabled warning count. See
 [configuration and checkpoint compatibility](../../docs/event-subscription-deadline-window.md#separate-opening-and-recovery-counts).
+
+Set `DeadlineWindow.ExpiredRatio` to `EventDeliveryDeadlineRatioOptions` for an
+expired / pending-with-deadlines ratio condition. Select integer basis-point warning
+and recovery thresholds plus an explicit `MinimumRecipients`; insufficient cohorts
+remain unknown, never fabricated zero. The same full-count read and version 2
+checkpoint handling apply. See [ratio alerts and exact comparisons](../../docs/event-deadline-ratio-alerts.md).

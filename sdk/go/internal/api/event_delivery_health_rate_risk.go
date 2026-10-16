@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,7 +58,8 @@ func rateDeadlineWindow(metric string) (time.Duration, bool) {
 func deliveryRateRiskMetric(metric string) bool {
 	_, deadline := rateDeadlineWindow(metric)
 	_, _, _, countWindow := deadlineCountWindow(metric)
-	return countWindow || deadline || metric == "pending_summary.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
+	_, _, ratioWindow := deadlineRatioWindow(metric)
+	return countWindow || ratioWindow || deadline || metric == "pending_summary.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
 }
 func rateRiskPolicy(o EventDeliveryRateRiskOptions) (time.Duration, time.Duration) {
 	sustain, recovery := o.Sustain, o.RecoverySustain
@@ -112,7 +112,7 @@ func validRateRiskCondition(c EventDeliveryHealthCondition) bool {
 	if _, near := rateDeadlineWindow(c.Metric); near && c.Value > 1 {
 		return false
 	}
-	return c.MinimumSamples == 2 && finiteSLOValue(c.SustainSeconds) && c.SustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.SustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds() && c.Value <= rateRiskMetricValueMax(c.Metric) && math.Trunc(c.Value) == c.Value
+	return c.MinimumSamples == 2 && finiteSLOValue(c.SustainSeconds) && c.SustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.SustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds() && validRateRiskValue(c.Metric, c.Value)
 }
 func knownRateContributor(s string) bool {
 	switch s {
@@ -227,6 +227,9 @@ func validateRatePreviewEvidence(p EventSubscriptionRatePreview, appID, sub stri
 	return ""
 }
 func rateRiskMetricValueMax(metric string) float64 {
+	if _, _, ratio := deadlineRatioWindow(metric); ratio {
+		return float64(EventDeliveryDeadlineRatioBasisPointsMax)
+	}
 	if metric == "rate_preview.deadline_risk_recipients" {
 		return EventSubscriptionRatePreviewSampleMax
 	}
@@ -357,7 +360,12 @@ func updateDeliveryRateRiskCondition(out *EventDeliveryHealthWatchResult, c *del
 		observed = evidence.Summary.ObservedAt
 	}
 	if valid {
-		if within, expired, reason, isWindow := deadlineCountWindow(c.Metric); isWindow {
+		if within, minimum, isRatio := deadlineRatioWindow(c.Metric); isRatio {
+			valid = evidence.WindowEvidenceAvailable && evidence.DeadlineWindow != nil && evidence.DeadlineWindow.WithinMillis == within.Milliseconds()
+			if valid {
+				value, valid = deadlineRatioValue(*evidence.DeadlineWindow, minimum)
+			}
+		} else if within, expired, reason, isWindow := deadlineCountWindow(c.Metric); isWindow {
 			valid = evidence.WindowEvidenceAvailable && evidence.DeadlineWindow != nil && evidence.DeadlineWindow.WithinMillis == within.Milliseconds()
 			if valid {
 				value, valid = deadlineWindowCountValue(*evidence.DeadlineWindow, expired, reason)

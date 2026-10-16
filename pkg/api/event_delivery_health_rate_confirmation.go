@@ -45,9 +45,14 @@ func deliveryHealthRateEvidenceReason(e *EventDeliveryRateEvidence, metric strin
 	if e.Status != "eligible" {
 		return e.Reason
 	}
-	if _, _, _, window := deadlineCountWindow(metric); window {
+	_, minimum, ratio := deadlineRatioWindow(metric)
+	_, _, _, window := deadlineCountWindow(metric)
+	if window || ratio {
 		if !e.WindowEvidenceAvailable {
 			return e.WindowEvidenceReason
+		}
+		if ratio && e.DeadlineWindow != nil && e.DeadlineWindow.Summary.DeadlineRecipients < minimum {
+			return "insufficient_deadline_recipients"
 		}
 	} else if metric == "rate_preview.deadline_risk_recipients" {
 		if !e.PreviewEvidenceAvailable {

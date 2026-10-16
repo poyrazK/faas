@@ -309,3 +309,10 @@ Python exports `awatch_event_subscription_deadlines` with independent total/reas
 warning and recovery counts, fresh confirmation progress and durable alert
 acknowledgments. Its checkpoint format is Python-specific. See
 [async configuration, cancellation and persistence](event-deadline-python-watch.md).
+
+## Expired ratio alerts in Go
+
+`DeadlineWindow.ExpiredRatio` selects expired / all pending deadline-bearing
+recipients with explicit minimum cohort size, integer basis-point warning/recovery
+boundaries and sustained fresh confirmation. Low/empty cohorts remain unknown.
+See [ratio configuration, exact boundaries and checkpoint compatibility](event-deadline-ratio-alerts.md).

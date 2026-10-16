@@ -10,7 +10,9 @@ import (
 
 // EventDeliveryDeadlineWindowOptions selects total and/or reason-specific count alerts.
 // Counts are independent; expired recipients never count as upcoming.
+// ExpiredRatio optionally monitors expired / all pending recipients with deadlines.
 type EventDeliveryDeadlineWindowOptions struct {
+	ExpiredRatio    *EventDeliveryDeadlineRatioOptions
 	Within          time.Duration
 	Upcoming        int64
 	Expired         int64
@@ -29,6 +31,7 @@ func cloneDeadlineWindowOptions(o *EventDeliveryDeadlineWindowOptions) *EventDel
 		return nil
 	}
 	snapshot := *o
+	snapshot.ExpiredRatio = cloneDeadlineRatioOptions(o.ExpiredRatio)
 	snapshot.UpcomingReasons = maps.Clone(o.UpcomingReasons)
 	snapshot.ExpiredReasons = maps.Clone(o.ExpiredReasons)
 	snapshot.UpcomingReasonsRecovery = maps.Clone(o.UpcomingReasonsRecovery)
@@ -50,7 +53,10 @@ func validateDeadlineWindowOptions(o *EventDeliveryDeadlineWindowOptions) error 
 	if o.Within%time.Millisecond != 0 || !ValidEventSubscriptionDeadlineWindow(o.Within.Milliseconds()) || o.Upcoming < 0 || o.Upcoming > EventSubscriptionPendingSummaryCountMax || o.Expired < 0 || o.Expired > EventSubscriptionPendingSummaryCountMax {
 		return ErrValidation("deadline-window alerts require whole milliseconds 100..86400000 and bounded counts")
 	}
-	enabled := o.Upcoming > 0 || o.Expired > 0
+	if err := validateDeadlineRatioOptions(o.ExpiredRatio); err != nil {
+		return err
+	}
+	enabled := o.Upcoming > 0 || o.Expired > 0 || o.ExpiredRatio != nil
 	known := NewEventPendingWaitingReasonCounts()
 	for _, thresholds := range []map[string]int64{o.UpcomingReasons, o.ExpiredReasons} {
 		for reason, count := range thresholds {
@@ -61,7 +67,7 @@ func validateDeadlineWindowOptions(o *EventDeliveryDeadlineWindowOptions) error 
 		}
 	}
 	if !enabled {
-		return ErrValidation("enable at least one total or reason-specific deadline count threshold")
+		return ErrValidation("enable at least one total, reason-specific or expired-ratio deadline threshold")
 	}
 	return validateDeadlineWindowRecovery(o)
 }
@@ -149,6 +155,9 @@ func newDeadlineWindowConditions(o *EventDeliveryDeadlineWindowOptions, sustain,
 			}
 			out = append(out, newDeadlineWindowCountCondition(metric, choice.reasons[reason], clear, sustain, recovery))
 		}
+	}
+	if o.ExpiredRatio != nil {
+		out = append(out, newDeadlineRatioCondition(o, sustain, recovery))
 	}
 	return out
 }

@@ -170,7 +170,7 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		if _, near := rateDeadlineWindow(a.Metric); near && a.Value > 1 {
 			return ErrValidation("invalid near-deadline checkpoint value")
 		}
-		if !validRateContributors(a.Metric, a.RateConstraints) || (deliveryRateRiskMetric(a.Metric) && (a.Value > rateRiskMetricValueMax(a.Metric) || math.Trunc(a.Value) != a.Value)) {
+		if !validRateContributors(a.Metric, a.RateConstraints) || (deliveryRateRiskMetric(a.Metric) && !validRateRiskValue(a.Metric, a.Value)) {
 			return ErrValidation("invalid rate-risk checkpoint evidence")
 		}
 		if a.Metric == "capacity_command_receipt_budget_used_slots" && (a.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(a.Value) != a.Value) {
@@ -325,6 +325,9 @@ func validDeliveryHealthRecoveryPolicy(c EventDeliveryHealthCondition) bool {
 		return c.RecoveryThreshold == c.Threshold && c.RecoverySustainSeconds == c.SustainSeconds
 	}
 	if _, _, _, deadlineCount := deadlineCountWindow(c.Metric); deadlineCount {
+		return math.Trunc(c.RecoveryThreshold) == c.RecoveryThreshold && c.RecoveryThreshold < c.Threshold && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
+	}
+	if _, _, ratio := deadlineRatioWindow(c.Metric); ratio {
 		return math.Trunc(c.RecoveryThreshold) == c.RecoveryThreshold && c.RecoveryThreshold < c.Threshold && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
 	}
 	if deliveryRateRiskMetric(c.Metric) {

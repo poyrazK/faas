@@ -11188,9 +11188,10 @@ const (
 )
 
 const (
-	EventDeliveryRateRiskSustainDefault  = time.Minute
-	EventDeliveryRateRiskRecoveryDefault = time.Minute
-	EventDeliveryRateContributorMaxBytes = 512
+	EventDeliveryRateRiskSustainDefault            = time.Minute
+	EventDeliveryRateRiskRecoveryDefault           = time.Minute
+	EventDeliveryRateContributorMaxBytes           = 512
+	EventDeliveryDeadlineRatioBasisPointsMax int64 = 10000
 )
 
 // Full pending-summary reads have a fixed resource budget, independent of row count.

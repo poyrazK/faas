@@ -599,9 +599,13 @@ type (
 type (
 	EventSubscriptionDeadlineWindow    = api.EventSubscriptionDeadlineWindow
 	EventDeliveryDeadlineWindowOptions = api.EventDeliveryDeadlineWindowOptions
+	EventDeliveryDeadlineRatioOptions  = api.EventDeliveryDeadlineRatioOptions
 )
 
 // EventSubscriptionDeadlineWindowCountsComplete checks complete known cohort partitions.
 func EventSubscriptionDeadlineWindowCountsComplete(v EventSubscriptionDeadlineWindow) bool {
 	return api.EventSubscriptionDeadlineWindowCountsComplete(v)
 }
+
+// EventDeliveryDeadlineRatioBasisPointsMax represents 100% in deadline ratio options.
+const EventDeliveryDeadlineRatioBasisPointsMax = api.EventDeliveryDeadlineRatioBasisPointsMax
