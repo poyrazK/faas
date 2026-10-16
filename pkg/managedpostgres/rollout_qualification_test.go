@@ -31,7 +31,7 @@ func rolloutFixture(t *testing.T) (*Registry, *qualificationProvider, Qualificat
 		t.Fatal(err)
 	}
 	artifact := QualificationArtifact{Version: QualificationArtifactVersion, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: testSpec(), Report: report, Lifecycle: &lifecycle, Approval: &approval}
-	guest := guestqualification.Report{Version: 1, SuiteVersion: 1, RootTest: guestqualification.SuiteContract().Root, HostClass: "native", HostOS: "linux", HostArch: "amd64", SourceClean: true, PostgresMajor: artifact.Spec.PostgresMajor, StartedAt: now.Add(-2 * time.Minute), CompletedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), LeakCheckBefore: true, LeakCheckAfter: true, ResultsSHA256: strings.Repeat("a", 64), Runtime: guestqualification.RuntimeManifest{Version: 1, SourceRevision: strings.Repeat("b", 40), Artifacts: make(map[string]string)}}
+	guest := guestqualification.Report{Version: 1, SuiteVersion: guestqualification.SuiteContract().Version, RootTest: guestqualification.SuiteContract().Root, HostClass: "native", HostOS: "linux", HostArch: "amd64", SourceClean: true, PostgresMajor: artifact.Spec.PostgresMajor, StartedAt: now.Add(-2 * time.Minute), CompletedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), LeakCheckBefore: true, LeakCheckAfter: true, ResultsSHA256: strings.Repeat("a", 64), Runtime: guestqualification.RuntimeManifest{Version: 1, SourceRevision: strings.Repeat("b", 40), Artifacts: make(map[string]string)}}
 	for _, name := range guestqualification.SuiteContract().Artifacts {
 		guest.Runtime.Artifacts[name] = strings.Repeat("c", 64)
 	}

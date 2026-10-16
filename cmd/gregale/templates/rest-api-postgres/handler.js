@@ -9,8 +9,7 @@ if (!process.env.DATABASE_URL || process.env.MIGRATION_DATABASE_URL) {
 }
 let database;
 try {
-  const config = poolConfig(process.env.DATABASE_URL);
-  database = createDatabase(() => new pg.Pool(config));
+  database = createDatabase(() => new pg.Pool(poolConfig(process.env.DATABASE_URL)));
 } catch {
   console.error("Invalid DATABASE_URL configuration");
   process.exit(1);
@@ -22,8 +21,8 @@ async function stop() {
   stopping = true;
   server.close();
   server.closeIdleConnections();
-  await database.close();
-  server.closeAllConnections();
+  try { await database.close(); }
+  finally { server.closeAllConnections(); }
 }
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => {
   void stop().catch(() => { console.error("Database shutdown failed"); process.exitCode = 1; });

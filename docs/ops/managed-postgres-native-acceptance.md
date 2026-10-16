@@ -19,7 +19,7 @@ managed database and binding services, catalog, age/HMAC credential delivery,
 release task, scheduler, vmmd, imaged, builderd and gateway. It needs no Neon key or
 paid provider resources.
 
-The strict verdict requires all thirteen phases and the parent test to pass:
+Suite version 2 requires all fourteen phases and the parent test to pass:
 
 1. Upload a scratch Dockerfile containing the SQL probe compiled from the current
    checkout; run its normal release migration; restore the initial serving guest
@@ -46,22 +46,27 @@ The strict verdict requires all thirteen phases and the parent test to pass:
    exactly one note through the shipped HTTP handler.
 8. Run an ordinary Node application task and require a runtime credential while
    rejecting the migration credential. Serving startup also rejects that secret.
-9. Read to retain a real `pg` pool, capture a fresh snapshot, disconnect external
-   SQL sessions, and require the gateway's `restore` receipt with the same note.
-   A forwarded external request to the lifecycle path must be forbidden.
-10. Capture again and delay the next SQL connection by 2.5 seconds: beyond the
+9. Read to retain a real `pg` pool, capture a fresh snapshot, and independently
+   observe the TLS proxy's session count fall to zero after `before_checkpoint`.
+   Require the gateway's `restore` receipt with the same note. Forwarded external
+   requests to either lifecycle path must be forbidden.
+10. Enable the frozen app tier on the isolated scheduler, freeze the starter with
+    a retained SQL session, then disconnect that session. Require the same guest
+    to thaw, reconnect, and return the unchanged notes dataset through the
+    gateway. Restore the scheduler settings before the following phases.
+11. Capture again and delay the next SQL connection by 2.5 seconds: beyond the
     starter's 1.5-second recovery budget. The one-shot fault is consumed by
     restore, so SQL is healthy for the fresh cold boot.
     Require vmmd's failed-hook acknowledgment, a `cold_boot` wake receipt, stale
     failed snapshot, one resident replacement guest, and unchanged note data.
-11. Rotate the running starter through the public API, await the scheduler and
+12. Rotate the running starter through the public API, await the scheduler and
     public completion state, reject old SQL authentication, preserve the original
     note and perform a new write using the replacement credential.
-12. Stop schedd before rotating the parked starter through the public API, then
+13. Stop schedd before rotating the parked starter through the public API, then
     restart it. Require
     recovered retirement/completion, preserved data and another successful write. An independent SQL read
     confirms the complete notes dataset was neither lost nor replayed.
-13. Stop owned daemons, disable fixture provisioning, delete every owned binding,
+14. Stop owned daemons, disable fixture provisioning, delete every owned binding,
    independently prove encrypted-secret removal and SQL credential retirement,
    then delete the managed database. Cleanup failures fail the parent test;
    role/database teardown and host leak checks are also required.
@@ -79,23 +84,27 @@ this same disposable SQL fixture. Both CI workflows explicitly invoke it with
 `metal,managed_postgres_native`; it does not claim guest execution.
 
 The Go probe retains separate writer and reader pools. The customer Node starter
-retains its shipped writer pool; its source and handlers have no test-only routes. Its source
-manifest opts into a two-second `after_restore` callback; the handler requires a
-loopback peer and the platform header. It discards captured sockets and reads
-the existing marker without mutations. Missing data or unavailable SQL fails
-the callback and readiness. Manual tasks still use fresh short-lived sessions.
+uses the bundled canonical SDK pool adapter; its handlers have no test-only
+routes. Its manifest opts into two-second `before_checkpoint` and `after_restore`
+callbacks requiring a loopback peer and the platform marker. It drains sessions
+before capture and replaces them on restore or thaw before reading the existing
+marker without mutations. Missing data or unavailable SQL fails the callback
+and readiness. Manual tasks still use fresh short-lived sessions.
 The proxy retires sessions only through explicit fault controls or cleanup;
 it does not expire idle connections after thirty seconds.
 
 The local TLS/SCRAM race tests exercise retained sessions beyond that former
-deadline, socket loss, concurrent writes, pre-commit cancellation, hook failure,
+deadline, socket loss, concurrent writes, pre-commit cancellation, checkpoint
+draining, hook deadlines, credential refresh, TLS hostname/password rejection,
 and retirement of held sessions and fresh logins. Mutations use explicit
 transactions and are never automatically retried. A failed COMMIT can still
 have an uncertain outcome; these checks do not establish exactly-once delivery
 for application retries.
 
 The deployed runner must actually pass to establish guest pool/hook acceptance.
-Older seven-phase probe reports fail the expanded verdict.
+Older seven- or thirteen-phase reports fail the suite-version-2 verdict. The new
+checkpoint and frozen-thaw phases require a fresh native run; portable results
+do not qualify them.
 Compilation and local SQL tests alone cannot do so. This fixture does not qualify
 provider pooling, real-provider DNS/Internet access, branching or point-in-time
 recovery: its pooled/direct endpoints share one SQL server. Fresh backend-specific

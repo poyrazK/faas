@@ -29,14 +29,14 @@ func TestSourceKeepsShippedEntrypointsAndManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"handler.js", "app.js", "database.js", "migrate.js", "schema.sql", "package.json", "package-lock.json", "gregale.yaml"} {
+	for _, name := range []string{"handler.js", "app.js", "database.js", "runtime/postgres-pool-runtime.js", "migrate.js", "schema.sql", "package.json", "package-lock.json", "gregale.yaml"} {
 		original, err := fs.ReadFile(templates.FS, "rest-api-postgres/"+name)
 		if err != nil || files[name] != string(original) {
 			t.Fatalf("deployed starter changed %s", name)
 		}
 	}
 	manifest, err := gregalemanifest.ParseBytes([]byte(files["gregale.yaml"]))
-	if err != nil || manifest.Validate() != nil || manifest.Release.Command != "node migrate.js" || manifest.Lifecycle.AfterRestore.TimeoutMS != 2000 {
+	if err != nil || manifest.Validate() != nil || manifest.Release.Command != "node migrate.js" || manifest.Lifecycle.AfterRestore.TimeoutMS != 2000 || manifest.Lifecycle.BeforeCheckpoint == nil || manifest.Lifecycle.BeforeCheckpoint.TimeoutMS != 2000 {
 		t.Fatal("deployed source lost its lifecycle contract")
 	}
 	if files["fixture-ca.pem"] != string(ca) {

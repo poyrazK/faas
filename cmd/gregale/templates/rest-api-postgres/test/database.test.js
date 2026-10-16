@@ -6,9 +6,10 @@ import { createDatabase, poolConfig } from "../database.js";
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function fixture(options = {}) {
-  const pools = [], logs = [];
+  const pools = [], logs = [], next = {};
   const db = createDatabase(() => {
     const pool = new EventEmitter();
+    pool.execute = next.execute; delete next.execute;
     pool.clients = []; pool.ended = 0;
     pool.connect = async () => {
       if (pool.pending) return pool.pending.promise;
@@ -22,7 +23,7 @@ function fixture(options = {}) {
     pool.end = async () => { pool.ended += 1; };
     pools.push(pool); return pool;
   }, { log: (code) => logs.push(code), ...options });
-  return { db, pools, logs };
+  return { db, pools, logs, next };
 }
 
 test("idle SQL errors are handled without printing provider details", async () => {
@@ -105,17 +106,14 @@ test("request deadlines and admission bound an unavailable database", async () =
 });
 
 test("restore cancels captured work and a failed readiness probe stays closed", async () => {
-  const { db, pools } = fixture(); const blocked = deferred();
+  const { db, pools, next } = fixture(); const blocked = deferred();
   pools[0].execute = () => blocked.promise;
   const work = assert.rejects(db.query("SELECT 1"), /database_cancelled/);
   const restore = db.restore(); await tick();
   // Run another restore with a missing-schema error on the fresh pool.
   await restore; await work; blocked.resolve({ rows: [] });
-  pools[1].execute = () => { throw new Error("secret provider detail"); };
-  // The replacement pool is created asynchronously so set its fault before connect.
-  const next = db.restore();
-  queueMicrotask(() => { pools[2].execute = () => { throw new Error("secret"); }; });
-  await assert.rejects(next, /database_unavailable/);
+  next.execute = () => { throw new Error("secret provider detail"); };
+  await assert.rejects(db.restore(), /database_unavailable/);
   assert.equal(db.generation, 1);
   await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
   await db.restore(); assert.equal(db.generation, 2); await db.close();
@@ -131,9 +129,9 @@ test("close during restore prevents late readiness publication", async () => {
 });
 
 test("shutdown aborts an already running readiness probe", async () => {
-  const { db, pools } = fixture();
+  const { db, pools, next } = fixture();
+  next.execute = () => new Promise(() => {});
   const restore = db.restore();
-  queueMicrotask(() => { pools[1].execute = () => new Promise(() => {}); });
   const failure = assert.rejects(restore, /database_unavailable/);
   await tick();
   assert.equal(pools[1].clients.length, 1);

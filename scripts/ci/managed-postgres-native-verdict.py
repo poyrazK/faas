@@ -147,4 +147,4 @@ if __name__ == "__main__":
             verify(data.decode("utf-8").splitlines())
     except (OSError, ValueError, TypeError, KeyError) as error:
         raise SystemExit("PostgreSQL guest evidence rejected") from error
-    print("All thirteen PostgreSQL probe, shipped starter, public rotation, restore, cold-boot and cleanup phases passed.")
+    print("All fourteen PostgreSQL probe, shipped starter, public rotation, checkpoint, thaw, restore, cold-boot and cleanup phases passed.")

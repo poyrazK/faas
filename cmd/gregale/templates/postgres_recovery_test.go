@@ -34,6 +34,10 @@ func TestPostgresStarterRestoreManifest(t *testing.T) {
 	if hook == nil || hook.Path != "/internal/after-restore" || hook.TimeoutMS != 2000 {
 		t.Fatalf("starter hook = %#v", hook)
 	}
+	checkpoint := manifest.Lifecycle.ToAPI().BeforeCheckpoint
+	if checkpoint == nil || checkpoint.Path != "/internal/before-checkpoint" || checkpoint.TimeoutMS != 2000 {
+		t.Fatalf("starter checkpoint hook = %#v", checkpoint)
+	}
 }
 
 // npm installation and mutating SQL require explicit opt-in. CI invokes this

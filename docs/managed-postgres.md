@@ -154,7 +154,8 @@ restore callback; both must succeed before it accepts traffic.
 
 The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
 joins provider v8 evidence with a versioned report from actual execution of all
-thirteen guest phases. `managed-postgres-qualify --verify --rollout` checks the
+fourteen guest phases (suite version 2, including checkpoint draining and frozen
+thaw). `managed-postgres-qualify --verify --rollout` checks the
 approved qualification-bundle manifest, PostgreSQL major, native host class,
 cleanup and expiry without making provider or SQL calls. Before a staging
 canary, opt in with `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`

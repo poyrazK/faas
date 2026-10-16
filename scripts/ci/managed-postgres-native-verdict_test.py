@@ -64,6 +64,13 @@ class VerdictTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "starter_"):
             verdict.verify(old)
 
+    def test_old_starter_evidence_without_checkpoint_or_thaw_is_rejected(self):
+        for phase in ("starter_checkpoint_pool_recovery", "starter_frozen_pool_recovery"):
+            old = [line for line in self.events()
+                   if json.loads(line).get("Test") != verdict.ROOT + "/" + phase]
+            with self.subTest(phase=phase), self.assertRaisesRegex(ValueError, phase):
+                verdict.verify(old)
+
     def test_package_failure_after_cleanup(self):
         with self.assertRaises(ValueError):
             verdict.verify(self.events() + [json.dumps({"Action": "fail"})])
@@ -77,7 +84,8 @@ class VerdictTests(unittest.TestCase):
         data = ("\n".join(self.events()) + "\n").encode()
         report = verdict.make_report(data, "native", True, True, True, 86400)
         self.assertEqual(report["results_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(len(report["checks"]), 13)
+        self.assertEqual(len(report["checks"]), 14)
+        self.assertEqual(report["suite_version"], 2)
         self.assertEqual(set(report["runtime"]["artifacts"]), set(verdict.CONTRACT["artifacts"]))
         self.assertNotIn("Output", report)
         self.assertEqual(report["host_class"], "native")

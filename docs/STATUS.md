@@ -65,10 +65,21 @@ lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20
 record the qualification boundary. Supported native execution remains pending; this change
 does not enable production provisioning or alter Neon resources or billing.
 
+## Restore-aware Node PostgreSQL pools — 2026-10-16
+
+`@gregale/sdk-node/postgres/runtime` extracts the starter's connection ownership
+into a reusable factory-backed adapter. The shipped starter drains sessions
+before checkpoint and reconnects with a bounded read probe on restore or thaw;
+SQL mutations are never replayed. The native gate now requires suite version 2
+and fourteen phases, including independent checkpoint drain and same-guest thaw
+checks. Supported native execution of these new phases remains pending. The
+portable SDK/package and TLS/SCRAM tests are separate from guest qualification;
+this change does not enable provisioning or alter provider resources or billing.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
-The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
-thirteen phases, including the shipped Node starter, real public API rotation,
+That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)
+required thirteen phases, including the shipped Node starter, real public API rotation,
 restored pools and failed-hook cold fallback. The portable public API and restricted
 TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
 record the narrowed API build and outstanding guest execution. The internal GCE

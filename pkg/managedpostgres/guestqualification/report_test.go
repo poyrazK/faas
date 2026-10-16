@@ -13,7 +13,7 @@ import (
 
 func fixtureReport() Report {
 	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
-	report := Report{Version: Version, SuiteVersion: Version, RootTest: SuiteContract().Root, HostClass: "native", HostOS: "linux", HostArch: "amd64", SourceClean: true, PostgresMajor: 17, StartedAt: start, CompletedAt: start.Add(time.Minute), ExpiresAt: start.Add(time.Hour), LeakCheckBefore: true, LeakCheckAfter: true, ResultsSHA256: strings.Repeat("a", 64), Runtime: RuntimeManifest{Version: Version, SourceRevision: strings.Repeat("b", 40), Artifacts: make(map[string]string)}}
+	report := Report{Version: Version, SuiteVersion: SuiteContract().Version, RootTest: SuiteContract().Root, HostClass: "native", HostOS: "linux", HostArch: "amd64", SourceClean: true, PostgresMajor: 17, StartedAt: start, CompletedAt: start.Add(time.Minute), ExpiresAt: start.Add(time.Hour), LeakCheckBefore: true, LeakCheckAfter: true, ResultsSHA256: strings.Repeat("a", 64), Runtime: RuntimeManifest{Version: Version, SourceRevision: strings.Repeat("b", 40), Artifacts: make(map[string]string)}}
 	for _, name := range SuiteContract().Artifacts {
 		report.Runtime.Artifacts[name] = strings.Repeat("c", 64)
 	}
@@ -46,6 +46,7 @@ func TestGuestReadinessRejectsIncompleteAndMismatchedEvidence(t *testing.T) {
 		{"missing base", "guest_runtime_invalid", func(r *Report) { delete(r.Runtime.Artifacts, "node22_base") }},
 		{"extra artifact", "guest_runtime_invalid", func(r *Report) { r.Runtime.Artifacts["unqualified"] = strings.Repeat("d", 64) }},
 		{"old suite", "guest_contract_invalid", func(r *Report) { r.SuiteVersion = 0 }},
+		{"previous suite", "guest_contract_invalid", func(r *Report) { r.SuiteVersion = 1 }},
 		{"missing phase", "guest_phases_incomplete", func(r *Report) { r.Checks = r.Checks[:len(r.Checks)-1] }},
 		{"failed phase", "guest_phases_incomplete", func(r *Report) { r.Checks[0].Passed = false }},
 		{"duplicate phase", "guest_phases_incomplete", func(r *Report) { r.Checks[0] = r.Checks[1] }},
