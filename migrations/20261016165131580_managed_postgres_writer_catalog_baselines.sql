@@ -1,9 +1,12 @@
 -- +goose Up
-ALTER TABLE managed_postgres_cutover_source_fences ADD COLUMN catalog_fingerprint text NOT NULL DEFAULT ''
+ALTER TABLE managed_postgres_cutover_source_fences ADD COLUMN IF NOT EXISTS catalog_fingerprint text NOT NULL DEFAULT ''
  CHECK(catalog_fingerprint='' OR catalog_fingerprint ~ '^[a-f0-9]{64}$'),
- ADD COLUMN catalog_invalidated_at timestamptz;
+ ADD COLUMN IF NOT EXISTS catalog_invalidated_at timestamptz;
 
 -- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF to_regprocedure('guard_managed_postgres_writer_catalog_baseline()') IS NULL THEN
 CREATE FUNCTION guard_managed_postgres_writer_catalog_baseline() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' AND ((OLD.catalog_fingerprint<>'' AND NEW.catalog_fingerprint IS DISTINCT FROM OLD.catalog_fingerprint)
@@ -19,9 +22,21 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END;
+$migration$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid='managed_postgres_cutover_source_fences'::regclass AND tgname='managed_postgres_writer_catalog_baseline') THEN
 CREATE TRIGGER managed_postgres_writer_catalog_baseline BEFORE INSERT OR UPDATE ON managed_postgres_cutover_source_fences
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_writer_catalog_baseline();
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

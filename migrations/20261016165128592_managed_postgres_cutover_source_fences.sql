@@ -1,11 +1,23 @@
 -- +goose Up
 ALTER TABLE managed_postgres_checkpoint_maintenance
  ALTER COLUMN reserved_by_operation_id DROP NOT NULL,
- ADD COLUMN reserved_by_cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT,
- ADD CONSTRAINT managed_postgres_maintenance_original_owner CHECK (
-  (reserved_by_operation_id IS NOT NULL)::integer+(reserved_by_cutover_id IS NOT NULL)::integer=1);
+ ADD COLUMN IF NOT EXISTS reserved_by_cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
 
-CREATE TABLE managed_postgres_cutover_source_fences (
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint
+  WHERE conrelid='managed_postgres_checkpoint_maintenance'::regclass
+   AND conname='managed_postgres_maintenance_original_owner') THEN
+  ALTER TABLE managed_postgres_checkpoint_maintenance
+   ADD CONSTRAINT managed_postgres_maintenance_original_owner CHECK (
+    (reserved_by_operation_id IS NOT NULL)::integer+(reserved_by_cutover_id IS NOT NULL)::integer=1);
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS managed_postgres_cutover_source_fences (
  cutover_id uuid PRIMARY KEY REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT,
  owner_token uuid NOT NULL UNIQUE CHECK(owner_token<>'00000000-0000-0000-0000-000000000000'),
  maintenance_id uuid NOT NULL REFERENCES managed_postgres_checkpoint_maintenance(id) ON DELETE RESTRICT,
@@ -43,13 +55,16 @@ CREATE TABLE managed_postgres_cutover_source_fences (
     OR (remote_terminal_state IN ('released','abandoned') AND close_requested_at IS NOT NULL AND remote_released_at IS NOT NULL)))
   OR (state<>'released' AND remote_terminal_state IS NULL AND remote_released_at IS NULL))
 );
-CREATE UNIQUE INDEX managed_postgres_cutover_source_fence_dataset
+CREATE UNIQUE INDEX IF NOT EXISTS managed_postgres_cutover_source_fence_dataset
  ON managed_postgres_cutover_source_fences(backend_id,backend_fingerprint,source_data_resource_id) WHERE state<>'released';
-CREATE INDEX managed_postgres_cutover_source_fence_due
+CREATE INDEX IF NOT EXISTS managed_postgres_cutover_source_fence_due
  ON managed_postgres_cutover_source_fences(retry_at,cutover_id) WHERE state<>'released';
 
 -- Both source-hold families must serialize even when catalog aliases differ.
 -- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF to_regprocedure('guard_managed_postgres_source_fence_owner()') IS NULL THEN
 CREATE FUNCTION guard_managed_postgres_source_fence_owner() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.state='released' THEN RETURN NEW; END IF;
@@ -72,13 +87,37 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END;
+$migration$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid='managed_postgres_cutover_source_fences'::regclass AND tgname='managed_postgres_cutover_sql_owner') THEN
 CREATE TRIGGER managed_postgres_cutover_sql_owner BEFORE INSERT OR UPDATE OF state,backend_id,backend_fingerprint,source_data_resource_id ON managed_postgres_cutover_source_fences
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_source_fence_owner();
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid='project_environment_clone_postgres_write_fences'::regclass AND tgname='managed_postgres_clone_sql_owner') THEN
 CREATE TRIGGER managed_postgres_clone_sql_owner BEFORE INSERT OR UPDATE OF state,backend_id,backend_fingerprint,source_data_resource_id ON project_environment_clone_postgres_write_fences
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_source_fence_owner();
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF to_regprocedure('guard_managed_postgres_source_fence_evidence()') IS NULL THEN
 CREATE FUNCTION guard_managed_postgres_source_fence_evidence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP IN ('DELETE','TRUNCATE') THEN
@@ -98,13 +137,37 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END;
+$migration$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid='managed_postgres_cutover_source_fences'::regclass AND tgname='managed_postgres_source_fence_evidence') THEN
 CREATE TRIGGER managed_postgres_source_fence_evidence BEFORE UPDATE OR DELETE ON managed_postgres_cutover_source_fences
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_source_fence_evidence();
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid='managed_postgres_cutover_source_fences'::regclass AND tgname='managed_postgres_source_fence_truncate') THEN
 CREATE TRIGGER managed_postgres_source_fence_truncate BEFORE TRUNCATE ON managed_postgres_cutover_source_fences
  FOR EACH STATEMENT EXECUTE FUNCTION guard_managed_postgres_source_fence_evidence();
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF to_regprocedure('guard_managed_postgres_source_fence_cancellation()') IS NULL THEN
 CREATE FUNCTION guard_managed_postgres_source_fence_cancellation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.state='cancelling' AND OLD.state<>'cancelling' THEN
@@ -116,17 +179,46 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END;
+$migration$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid='managed_postgres_cutovers'::regclass AND tgname='managed_postgres_source_fence_cancellation') THEN
 CREATE TRIGGER managed_postgres_source_fence_cancellation BEFORE UPDATE ON managed_postgres_cutovers
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_source_fence_cancellation();
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
 
 ALTER TABLE managed_postgres_cutover_preflights
- ADD COLUMN source_sessions jsonb,
- ADD COLUMN source_sessions_fingerprint text NOT NULL DEFAULT '',
- ADD CONSTRAINT managed_postgres_preflight_source_sessions CHECK(
+ ADD COLUMN IF NOT EXISTS source_sessions jsonb,
+ ADD COLUMN IF NOT EXISTS source_sessions_fingerprint text NOT NULL DEFAULT '';
+
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint
+  WHERE conrelid='managed_postgres_cutover_preflights'::regclass
+   AND conname='managed_postgres_preflight_source_sessions') THEN
+  ALTER TABLE managed_postgres_cutover_preflights
+   ADD CONSTRAINT managed_postgres_preflight_source_sessions CHECK(
   (source_sessions IS NULL AND source_sessions_fingerprint='') OR
-  (source_sessions IS NOT NULL AND jsonb_typeof(source_sessions)='object' AND source_sessions_fingerprint ~ '^[a-f0-9]{64}$')),
- ADD CONSTRAINT managed_postgres_preflight_pending_source_sessions CHECK(state<>'pending' OR source_sessions IS NULL);
+  (source_sessions IS NOT NULL AND jsonb_typeof(source_sessions)='object' AND source_sessions_fingerprint ~ '^[a-f0-9]{64}$'));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint
+  WHERE conrelid='managed_postgres_cutover_preflights'::regclass
+   AND conname='managed_postgres_preflight_pending_source_sessions') THEN
+  ALTER TABLE managed_postgres_cutover_preflights
+   ADD CONSTRAINT managed_postgres_preflight_pending_source_sessions CHECK(state<>'pending' OR source_sessions IS NULL);
+ END IF;
+END;
+$migration$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
