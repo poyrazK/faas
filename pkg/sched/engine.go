@@ -650,6 +650,10 @@ type Engine struct {
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
+	// ownerCacheEnabled (ADR-1345, schedd `owner_cache`) serves production
+	// admissions from owners, the per-app owner cache.
+	ownerCacheEnabled atomic.Bool
+	owners            ownerCache
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
@@ -1789,14 +1793,22 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		ins                  state.Instance
 		insErr               error
 	)
-	concurrently(
-		func() {
-			if app, appErr = e.store.AppByID(ctx, appID); appErr == nil {
-				standardsErr = e.checkApplicationStandardAdmission(ctx, app)
-			}
-		},
-		func() { ins, insErr = e.runningInstanceForWake(ctx, appID, deploymentID, scope) },
-	)
+	appFromCache := false
+	if entry, ok := e.ownerEntryForPhaseOne(ctx, appID, deploymentID); ok {
+		// ADR-1345: the owner cache holds the app (its standards check
+		// passed) and the production deployment; only the instances are read.
+		app, appFromCache = entry.app, true
+		ins, insErr = e.runningInstanceOfDeployment(ctx, appID, entry.dep)
+	} else {
+		concurrently(
+			func() {
+				if app, appErr = e.store.AppByID(ctx, appID); appErr == nil {
+					standardsErr = e.checkApplicationStandardAdmission(ctx, app)
+				}
+			},
+			func() { ins, insErr = e.runningInstanceForWake(ctx, appID, deploymentID, scope) },
+		)
+	}
 	if appErr != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: read application for standard admission: %w", appErr)
@@ -1857,8 +1869,12 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
 	}
 	release()
-	// Admission reuses the app read and standards check made above.
-	ctx = withWakeApp(ctx, app)
+	// Admission reuses the app read and standards check made above. An app
+	// from the owner cache is not handed on: admission either uses the
+	// cache under its generation guard or reads the app afresh.
+	if !appFromCache {
+		ctx = withWakeApp(ctx, app)
+	}
 	// Wake preserves the legacy contract: a ledger refusal surfaces
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
@@ -2851,6 +2867,21 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
+	used := new(bool)
+	result, err := e.admitAndDispatchOnce(withOwnerCacheUse(ctx, used), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
+	if *used && errors.Is(err, state.ErrConflict) {
+		// ADR-1345: an admission decided from the owner cache found its
+		// entry stale: the admission insert refused the moved generation, or
+		// a read checked against the entry (the runtime values' owner)
+		// disagreed first. Nothing was admitted; decide again from fresh reads.
+		e.owners.invalidate(appID, 0)
+		e.observeOwnerCache("refused")
+		return e.admitAndDispatchOnce(withoutOwnerCache(ctx), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
+	}
+	return result, err
+}
+
+func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
 	// A thaw reports how long the shared wake path ran before it was tried.
 	wakeStarted := time.Now()
 	// Explicit deployment, worker/job and config-restart paths may bypass
@@ -2876,6 +2907,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		err    error
 	)
 	deploymentSmoke := deploymentID != "" && trigger == TriggerDeploymentSmoke
+	var (
+		cached   ownerEntry
+		useCache bool
+	)
 	// A coordinated wake resolved app, account and owner moments ago; only the
 	// live deployment is re-read here, so a cutover still fails closed below.
 	selected, reuseSelection := wakeEnvironmentFrom(ctx)
@@ -2892,6 +2927,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Load only the app/account envelope here; the explicit candidate below
 		// is the deployment this private verification request may wake.
 		app, acct, limits, err = e.resolveAppAccount(ctx, appID)
+	} else if entry, ok := e.ownerEntryForAdmission(ctx, appID, deploymentID); ok {
+		// ADR-1345: the owner cache serves the production reads; the
+		// admission insert commits only while their generation holds.
+		cached, useCache = entry, true
+		markOwnerCacheUse(ctx)
+		app, acct, limits, dep = entry.resolved, entry.acct, entry.limits, entry.dep
+		ctx = state.WithRuntimeGenerationGuard(ctx, appID, entry.generation)
 	} else {
 		app, acct, limits, dep, err = e.resolveApp(ctx, appID)
 	}
@@ -2934,6 +2976,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if reuseSelection && dep.ID == selected.deployment.ID {
 		// selected.app already carries this deployment's pinned settings.
 		scaling = selected.owner
+		app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
+	} else if useCache && dep.ID == cached.dep.ID {
+		// cached.resolved already carries this deployment's pinned settings.
+		scaling = cached.scaling
 		app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
 	} else {
 		app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)

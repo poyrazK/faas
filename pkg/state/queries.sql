@@ -1610,6 +1610,11 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
+-- name: LockAppRuntimeGeneration :one
+-- ADR-1345: an admission insert decided from schedd's owner cache commits
+-- only while the app's generation is the one the decision read.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid FOR SHARE;
+
 -- name: AppRuntimeGeneration :one
 -- ADR-1345: the app's runtime generation, which triggers bump in the
 -- writer's transaction for every change a wake depends on.

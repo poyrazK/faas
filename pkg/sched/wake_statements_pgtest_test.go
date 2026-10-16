@@ -337,9 +337,13 @@ func TestPostgresBootStatements(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		snapshot bool
+		// ownerCache wakes once with schedd's owner cache on (ADR-1345),
+		// parks, and traces the next wake, which finds the entry cached.
+		ownerCache bool
 	}{
 		{name: "cold boot"},
 		{name: "snapshot restore", snapshot: true},
+		{name: "cold boot, owner cache warm", ownerCache: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, tracer := tracedPgStore(t)
@@ -376,6 +380,17 @@ func TestPostgresBootStatements(t *testing.T) {
 			}
 			vmm := &fakeVMM{}
 			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithNotifyInPublication()
+			if tc.ownerCache {
+				e.WithOwnerCache()
+				first, err := e.Wake(ctx, app.ID, "", "", "")
+				if err != nil {
+					t.Fatalf("first Wake: %v", err)
+				}
+				if err := e.Park(ctx, first.InstanceID); err != nil {
+					t.Fatalf("Park: %v", err)
+				}
+				vmm.coldBoots = 0
+			}
 
 			tracer.armed.Store(true)
 			result, err := e.Wake(ctx, app.ID, "", "", "")

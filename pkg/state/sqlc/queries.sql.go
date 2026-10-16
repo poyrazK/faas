@@ -45163,6 +45163,19 @@ func (q *Queries) LockAppHealthCollection(ctx context.Context, db DBTX, arg Lock
 	return i, err
 }
 
+const lockAppRuntimeGeneration = `-- name: LockAppRuntimeGeneration :one
+SELECT generation FROM app_runtime_generations WHERE app_id=$1::uuid FOR SHARE
+`
+
+// ADR-1345: an admission insert decided from schedd's owner cache commits
+// only while the app's generation is the one the decision read.
+func (q *Queries) LockAppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, lockAppRuntimeGeneration, appID)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const lockAppSecretRuntimeProcess = `-- name: LockAppSecretRuntimeProcess :one
 SELECT p.generation, p.active, p.started_at
 FROM app_secret_runtime_processes p JOIN apps a ON a.id = p.app_id

@@ -209,6 +209,12 @@ type Config struct {
 	// once. FAAS_FROZEN_FAST_PATH overrides it.
 	FrozenFastPath bool `toml:"frozen_fast_path"`
 
+	// OwnerCache (ADR-1345) serves a production wake's reads from an in-memory
+	// entry per app, dropped when the app's runtime generation moves
+	// (app_runtime_changed); the admission insert commits only while that
+	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
+	OwnerCache bool `toml:"owner_cache"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).
@@ -535,6 +541,14 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_FAST_PATH must be a boolean (got %q)", v)
 		}
 		c.FrozenFastPath = enabled
+	}
+	// ADR-1345: FAAS_OWNER_CACHE overrides owner_cache.
+	if v := os.Getenv("FAAS_OWNER_CACHE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
+		}
+		c.OwnerCache = enabled
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

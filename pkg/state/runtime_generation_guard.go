@@ -1,0 +1,64 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+// ErrRuntimeGenerationMoved refuses an admission decided from an app's
+// runtime generation that has since moved (ADR-1345). Nothing was written;
+// the caller rereads and decides again.
+var ErrRuntimeGenerationMoved = fmt.Errorf("%w: app runtime generation moved", ErrConflict)
+
+type runtimeGenerationGuardKey struct{}
+
+type runtimeGenerationGuard struct {
+	appID      string
+	generation int64
+}
+
+// WithRuntimeGenerationGuard makes instance admission inserts made with ctx
+// require appID's runtime generation to still be generation (ADR-1345): a
+// schedd that decided from its owner cache commits only if nothing the
+// decision read has changed since.
+func WithRuntimeGenerationGuard(ctx context.Context, appID string, generation int64) context.Context {
+	return context.WithValue(ctx, runtimeGenerationGuardKey{}, runtimeGenerationGuard{appID: appID, generation: generation})
+}
+
+func runtimeGenerationGuardFrom(ctx context.Context) (runtimeGenerationGuard, bool) {
+	guard, ok := ctx.Value(runtimeGenerationGuardKey{}).(runtimeGenerationGuard)
+	return guard, ok
+}
+
+// checkRuntimeGenerationTx share-locks the app's generation row inside the
+// admission transaction, after the insert has taken its own locks: writers
+// bump the generation after their row locks, so taking it last cannot close
+// a lock cycle with them.
+func checkRuntimeGenerationTx(ctx context.Context, tx pgx.Tx, guard runtimeGenerationGuard) error {
+	generation, err := sqlc.New().LockAppRuntimeGeneration(ctx, tx, mustPgUUID(guard.appID))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("state: read app runtime generation: %w", err)
+	}
+	if err != nil || generation != guard.generation {
+		return ErrRuntimeGenerationMoved
+	}
+	return nil
+}
+
+// checkRuntimeGenerationLocked is the MemStore mirror; the caller holds m.mu.
+func (m *MemStore) checkRuntimeGenerationLocked(ctx context.Context) error {
+	guard, ok := runtimeGenerationGuardFrom(ctx)
+	if !ok {
+		return nil
+	}
+	generation, err := m.appRuntimeGenerationLocked(guard.appID)
+	if err != nil || generation != guard.generation {
+		return ErrRuntimeGenerationMoved
+	}
+	return nil
+}

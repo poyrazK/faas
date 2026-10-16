@@ -141,7 +141,8 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	ctx context.Context, nodeID, newState string, ramMB int,
 	reserve func(pgx.Tx) error, insert func(instanceInserter) (Instance, error),
 ) (Instance, error) {
-	if !nodeUsageCounts(State(newState)) && reserve == nil {
+	guard, guarded := runtimeGenerationGuardFrom(ctx)
+	if !nodeUsageCounts(State(newState)) && reserve == nil && !guarded {
 		return insert(s.pool)
 	}
 
@@ -201,6 +202,11 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	inst, err := insert(tx)
 	if err != nil {
 		return Instance{}, mapErr(err)
+	}
+	if guarded {
+		if err := checkRuntimeGenerationTx(ctx, tx, guard); err != nil {
+			return Instance{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, fmt.Errorf("state: node reservation: commit (node=%s): %w", nodeID, mapErr(err))

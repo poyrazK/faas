@@ -109,8 +109,13 @@ their own statement, with the counter row locked `FOR SHARE`:
 A writer that bumps the counter waits for the statement, or the statement
 waits for the writer and then sees the new counter. Either way, a statement
 never commits a decision made from an older generation. A mismatch refuses
-with `ErrConflict`, changes nothing, drops the entry and retries once
-through the reloaded entry.
+with `ErrConflict`, changes nothing, drops the entry and retries once from
+fresh reads. Reads checked against the entry before the insert can find the
+staleness first (the runtime values' owner check compares the cached app),
+so an admission that used the cache retries on any `ErrConflict`, not only
+on the generation's. An app taken from the cache is never handed to a path
+that does not carry the guard: wake phase 1 passes on only an app it read
+from the database.
 
 The guard replaces ADR-1342's column guards and its runtime-values read: a
 config edit bumps the counter in the edit's own transaction, so the counter
@@ -168,7 +173,14 @@ rides in those two statements.
 
 ## Rollout
 
-Done on branch `perf/schedd-owner-cache`: steps 1, 2 and 4.
+Done on branch `perf/schedd-owner-cache`: steps 1 to 4, and step 5's
+admission guard. Measured on real Postgres (`TestPostgresBootStatements`): a
+cold boot with the entry cached runs 46 statements in about 41 round trips,
+against 54 in about 46 without the cache. What remains is step 5: the
+runtime values, the cutover barrier and the snapshot choice are still read,
+and the boot's bookkeeping (standards capture, a 14-statement scaling-state
+transaction) and its 9-statement publication still run as their own
+transactions.
 
 1. This ADR.
 2. Migration: the counter table, triggers and notification, the store

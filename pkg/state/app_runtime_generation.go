@@ -46,6 +46,10 @@ func (s *PgStore) AppRuntimeGeneration(ctx context.Context, appID string) (int64
 func (m *MemStore) AppRuntimeGeneration(_ context.Context, appID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appRuntimeGenerationLocked(appID)
+}
+
+func (m *MemStore) appRuntimeGenerationLocked(appID string) (int64, error) {
 	app, ok := m.apps[appID]
 	if !ok {
 		return 0, ErrNotFound

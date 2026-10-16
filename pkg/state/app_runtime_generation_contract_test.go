@@ -4,8 +4,11 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -83,6 +86,32 @@ func testAppRuntimeGeneration(t *testing.T, store runtimeAppEnvTestStore) {
 			}
 		})
 	}
+
+	t.Run("admission insert requires the guarded generation", func(t *testing.T) {
+		ctx := t.Context()
+		f := seedRuntimeAppEnv(t, store)
+		node := runtimeSecretNodeForTest(t, store)
+		dep := f.deployments["production"]
+		generation := generationOf(t, f.app.ID)
+		guarded := state.WithRuntimeGenerationGuard(ctx, f.app.ID, generation)
+		if _, err := store.CreateInstance(guarded, f.app.ID, dep.ID, string(state.StateColdBooting), 256, node, uuid.NewString()); err != nil {
+			t.Fatalf("admission at the current generation: %v", err)
+		}
+		if err := store.MarkAppRuntimeConfigChanged(ctx, f.app.ID); err != nil {
+			t.Fatal(err)
+		}
+		before, err := store.ListInstancesForApp(ctx, f.app.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = store.CreateInstance(guarded, f.app.ID, dep.ID, string(state.StateColdBooting), 256, node, uuid.NewString())
+		if !errors.Is(err, state.ErrRuntimeGenerationMoved) || !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("admission after the generation moved = %v, want ErrRuntimeGenerationMoved", err)
+		}
+		if after, err := store.ListInstancesForApp(ctx, f.app.ID); err != nil || len(after) != len(before) {
+			t.Fatalf("a refused admission left a row: %d -> %d, %v", len(before), len(after), err)
+		}
+	})
 
 	t.Run("account change moves every app it owns", func(t *testing.T) {
 		ctx := t.Context()

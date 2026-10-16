@@ -1621,6 +1621,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		engine.EnableFrozenFastPath()
 		log.Info("frozen fast path enabled (ADR-1342)")
 	}
+	if cfg.OwnerCache {
+		if err := startOwnerCache(ctx, pool, engine, log); err != nil {
+			return err
+		}
+		log.Info("owner cache enabled (ADR-1345)")
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership

@@ -122,6 +122,7 @@ type OpsMetrics struct {
 	// outcome or reason, and the instances currently frozen.
 	frozenFreezeTotal   *prometheus.CounterVec
 	frozenThawTotal     *prometheus.CounterVec
+	ownerCacheTotal     *prometheus.CounterVec
 	frozenParksTotal    *prometheus.CounterVec
 	frozenCompressTotal *prometheus.CounterVec
 	frozenInstances     prometheus.Gauge
@@ -2228,6 +2229,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range FrozenThawOutcomes {
 		frozenThawTotal.WithLabelValues(outcome)
 	}
+	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_owner_cache_total",
+		Help: "schedd owner cache (ADR-1345) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved).",
+	}, []string{"outcome"})
+	for _, outcome := range OwnerCacheOutcomes {
+		ownerCacheTotal.WithLabelValues(outcome)
+	}
 	frozenParksTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_parks_total",
 		Help: "Frozen instances parked (ADR-1151) by reason; the VM is destroyed and the deployment's snapshot stays.",
@@ -3885,7 +3893,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -5394,6 +5402,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		frozenFreezeTotal:                          frozenFreezeTotal,
 		frozenThawTotal:                            frozenThawTotal,
+		ownerCacheTotal:                            ownerCacheTotal,
 		frozenParksTotal:                           frozenParksTotal,
 		frozenCompressTotal:                        frozenCompressTotal,
 		frozenInstances:                            frozenInstances,
@@ -6153,7 +6162,10 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 var (
 	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
-	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
+	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
+	// (ADR-1345).
+	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused"}
+	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
@@ -6174,6 +6186,14 @@ func (m *OpsMetrics) FrozenThawTotal(outcome string) prometheus.Counter {
 		return nil
 	}
 	return m.frozenThawTotal.WithLabelValues(outcome)
+}
+
+// OwnerCacheTotal is the owner cache counter for one outcome (ADR-1345).
+func (m *OpsMetrics) OwnerCacheTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.ownerCacheTotal.WithLabelValues(outcome)
 }
 
 // FrozenParksTotal is the frozen-park counter for one reason.
