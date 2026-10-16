@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ReleaseDatabaseRef } from './ReleaseDatabaseRef.js';
 /**
- * A deployment's release command run (ADR-1331).
+ * A deployment's release command run (ADR-1355).
  */
 export type DeploymentRelease = {
   /**

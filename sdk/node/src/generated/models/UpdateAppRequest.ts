@@ -170,7 +170,7 @@ export type UpdateAppRequest = {
    */
   revision_pin_ttl_seconds?: number | null;
   /**
-   * Set the default rollout for production releases (ADR-1160, ADR-1352). Omit for no change.
+   * Set the default rollout for production releases (ADR-1353, ADR-1352). Omit for no change.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**

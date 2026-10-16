@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A managed PostgreSQL database a release command can migrate (ADR-1331).
+ * A managed PostgreSQL database a release command can migrate (ADR-1355).
  */
 export type ReleaseDatabaseRef = {
   id: string;

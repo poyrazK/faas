@@ -177,7 +177,7 @@ class AppResponse:
     """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
     revision pinning."""
     release_policy: AppResponseReleasePolicy | Unset = UNSET
-    """Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the
+    """Default rollout for production releases that name no rollout policy (ADR-1353). safe (or unset) uses the
     adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake
     5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1352); immediate moves all traffic at
     once."""

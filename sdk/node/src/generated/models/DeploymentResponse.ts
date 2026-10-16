@@ -263,15 +263,15 @@ export type DeploymentResponse = {
    */
   rollout_aborted_reason?: string;
   /**
-   * Evidence recorded with the latest rollout transition (ADR-1237). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort.
+   * Evidence recorded with the latest rollout transition (ADR-1354). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort.
    */
   rollout_decision?: RolloutDecision;
   /**
-   * The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1237). Filled on GET /v1/deployments/{id} and the deployment summary.
+   * The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1354). Filled on GET /v1/deployments/{id} and the deployment summary.
    */
   rollout_hold?: RolloutDecision;
   /**
-   * The deployment's release command run, for a deployment that declares one (ADR-1331). Filled on GET /v1/deployments/{id} and the deployment summary.
+   * The deployment's release command run, for a deployment that declares one (ADR-1355). Filled on GET /v1/deployments/{id} and the deployment summary.
    */
   release?: DeploymentRelease;
   rollback_operation?: RollbackOperation;

@@ -3,7 +3,9 @@ import pytest
 from faas_sdk.models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
 
 
-@pytest.mark.parametrize("code", [None, "invalid_policy_authority", "invalid_polling_data", "invalid_recovery_identity"])
+@pytest.mark.parametrize(
+    "code", [None, "invalid_policy_authority", "invalid_polling_data", "invalid_recovery_identity"]
+)
 def test_automatic_polling_failure_and_legacy_execution_round_trip(code):
     body = {"consecutive_failures": 0, "pause_reason": ""}
     if code is not None:

@@ -156,7 +156,7 @@ export type CreateAppRequest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Default rollout for production releases that name no rollout policy (ADR-1160, ADR-1352). Omit for safe.
+   * Default rollout for production releases that name no rollout policy (ADR-1353, ADR-1352). Omit for safe.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
