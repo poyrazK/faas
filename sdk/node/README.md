@@ -3432,3 +3432,16 @@ Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reporte
 cause. The dashboard preserves the outer exception and cause chain. See
 [Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
 language semantics, incomplete chains, and compatibility.
+
+### Deadline count alerts
+
+`watchEventSubscriptionDeadlines(target, options)` provides sustained upcoming,
+expired and waiting-reason count alerts, separate recovery boundaries, fresh-evidence
+confirmation progress, cancellation and a bounded checkpoint outbox. Load checkpoints
+with `validateEventDeadlineCheckpoint`; acknowledge exact incident/sequence pairs
+with `acknowledgeEventDeadlineAlerts` or the watch's acknowledgment callback.
+
+The Node deadline-only checkpoint format is distinct from Go/CLI delivery-health
+checkpoints. Applications own persistence and notifications: persist before sending,
+replay unacknowledged alerts after a crash, and deduplicate downstream. See
+[configuration, callbacks and recovery semantics](../../docs/event-deadline-node-watch.md).

@@ -295,3 +295,10 @@ boundaries and durations; repeatable flag order does not matter. Resume never
 credits downtime or saved confirmation timers. A failed read stays unknown and
 cannot clear an incident. The CLI does not fall back to sampled counts or take
 recovery actions.
+
+## Node watch
+
+Node applications can use `watchEventSubscriptionDeadlines` for deadline-only
+sustained count conditions, recovery boundaries, confirmation progress and durable
+alert acknowledgments. It uses a separate Node checkpoint format and the existing
+full-count endpoint. See [Node watch configuration and persistence](event-deadline-node-watch.md).

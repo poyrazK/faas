@@ -539,3 +539,11 @@ export type { EventExecutionLineageRetryJobControlFilters } from './generated/mo
 
 export { eventConsumerDeliveryContextFromHeaders, EventConsumerDeliveryContextUnavailableError,
   type EventConsumerDeliveryContext } from './event-consumer-delivery-context.js';
+
+export { watchEventSubscriptionDeadlines, EventDeadlineWatchCallbackError,
+  type EventDeadlineWatchOptions, type EventDeadlineWatchResult, type EventDeadlineConfirmation } from './event-deadline-watch.js';
+export { validateEventDeadlineCheckpoint, acknowledgeEventDeadlineAlerts,
+  type EventDeadlineCheckpoint, type EventDeadlineCondition, type EventDeadlineAlert,
+  type EventDeadlineAcknowledgement } from './event-deadline-checkpoint.js';
+export { EVENT_DEADLINE_REASONS, type EventDeadlineReason, type EventDeadlineTarget,
+  type EventDeadlinePolicyOptions, type EventDeadlinePolicy, type EventDeadlineRule } from './event-deadline-policy.js';
