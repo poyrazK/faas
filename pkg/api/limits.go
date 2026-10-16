@@ -11349,7 +11349,7 @@ const (
 // Internal execution Check summaries contain states and counts only (ADR-1342).
 const CIExecutionCheckSummaryMaxBytes = 8 << 10
 
-// Operator recovery is bounded for each retained execution (ADR-1343).
+// Operator recovery is bounded for each retained execution (ADR-1348).
 const CICheckRetryMaxGenerations = 3
 
 // CI observability is bounded independently of execution admission. Slots are
