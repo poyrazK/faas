@@ -69,6 +69,9 @@ func (s *PgStore) SetIssueApplicationSlackPolicy(ctx context.Context, app, owner
 	if err = q.IssueApplicationSlackPolicyPut(ctx, tx, sqlc.IssueApplicationSlackPolicyPutParams{AppID: appRow.ID, Enabled: in.Enabled, Revision: in.Revision + 1, Events: events, FallbackTeamID: issueUUID(in.FallbackTeamID)}); err != nil {
 		return empty, err
 	}
+	if err = q.IssueApplicationReminderStopSchedules(ctx, tx, appRow.ID); err != nil {
+		return empty, err
+	}
 	if err = q.IssueApplicationSlackReleaseClaims(ctx, tx, appRow.ID); err != nil {
 		return empty, err
 	}

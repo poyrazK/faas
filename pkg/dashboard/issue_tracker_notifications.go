@@ -6,6 +6,10 @@ import (
 )
 
 type IssueTrackerNotificationsView struct {
+	ApplicationRemindersAvailable, ApplicationRemindersSaved                     bool
+	ApplicationReminderPolicy                                                    state.IssueApplicationReminderPolicy
+	ApplicationReminderMin, ApplicationReminderMax, ApplicationReminderRepeatMax int
+
 	ApplicationSlackAvailable, ApplicationSlackSaved       bool
 	ApplicationSlackPolicy                                 state.IssueApplicationSlackPolicy
 	ApplicationSlackEvents                                 []IssueSlackEventChoice

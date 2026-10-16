@@ -61,6 +61,10 @@ func (s *PgStore) GetIssueApplicationTriage(ctx context.Context, app, owner, act
 	for _, r := range rows {
 		out.History = append(out.History, IssueApplicationTriageActivity{IncidentID: issueID(r.IncidentID), ActorID: issueID(r.ActorID), ActorName: r.ActorName, Action: r.Action, Reason: r.Reason, Revision: r.Revision, CreatedAt: r.CreatedAt.Time, SnoozedUntil: trackerSnoozeTime(r.SnoozedUntil)})
 	}
+	out.Reminders, err = applicationReminderHistory(ctx, q, tx, scope.ID)
+	if err != nil {
+		return out, err
+	}
 	return out, tx.Commit(ctx)
 }
 func validateApplicationTriage(req *IssueApplicationTriageAction, revision int64) error {
@@ -119,6 +123,9 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 	case "acknowledge":
 		if out.AcknowledgedAt != nil {
 			return tx.Commit(ctx)
+		}
+		if err = cancelApplicationReminders(ctx, q, tx, issueUUID(app), scope.ID); err != nil {
+			return err
 		}
 		out.AcknowledgedBy = actor
 		now := scope.CheckedAt.Time

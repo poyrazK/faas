@@ -10562,3 +10562,13 @@ const (
 	IssueApplicationSnoozeReasonMaxBytes = 1024
 	IssueApplicationSnoozeMax            = 30 * 24 * time.Hour
 )
+
+// Native response reminders share Slack delivery storage and transport limits.
+const (
+	IssueApplicationReminderMinMinutes     = 5
+	IssueApplicationReminderMaxMinutes     = 1440
+	IssueApplicationReminderDefaultMinutes = 60
+	IssueApplicationRemindersMax           = 3
+	IssueApplicationReminderHistoryMax     = 100
+	IssueApplicationReminderBatch          = 100
+)

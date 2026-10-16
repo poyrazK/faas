@@ -34,12 +34,13 @@ INSERT INTO issue_application_triage_activity(issue_id,incident_id,revision,acto
 -- name: IssueApplicationTriagePrune :exec
 DELETE FROM issue_application_triage_activity h WHERE h.issue_id=$1 AND h.revision IN(SELECT old.revision FROM issue_application_triage_activity old WHERE old.issue_id=$1 ORDER BY old.revision DESC OFFSET $2);
 -- name: IssueApplicationTriageReset :one
-INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='' RETURNING *;
+INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='',reminder_started_at=NULL,last_reminded_at=NULL,reminder_count=0 RETURNING *;
 -- name: IssueApplicationTriageSnoozed :one
 SELECT EXISTS(SELECT 1 FROM issue_application_triage WHERE issue_id=$1 AND snoozed_until>statement_timestamp());
 -- name: IssueApplicationTriageReleaseLease :exec
 UPDATE issue_team_slack_destinations dst SET claim_id=NULL,claim_until=NULL WHERE EXISTS(
- SELECT 1 FROM issue_team_slack_deliveries d JOIN issue_activity act ON act.id=d.activity_id WHERE act.issue_id=$1 AND d.destination_id=dst.id AND d.claim_id=dst.claim_id);
+ SELECT 1 FROM issue_team_slack_deliveries d JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
+ WHERE src.issue_id=$1 AND d.notification_id IS NULL AND d.destination_id=dst.id AND d.claim_id=dst.claim_id);
 -- name: IssueApplicationTriageCancelSlack :exec
 UPDATE issue_team_slack_deliveries d SET status='canceled',last_error='issue_snoozed',claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp()
-FROM issue_activity act WHERE act.id=d.activity_id AND act.issue_id=$1 AND d.status IN ('pending','failed','in_flight');
+FROM issue_slack_delivery_sources src WHERE src.delivery_id=d.id AND src.issue_id=$1 AND d.notification_id IS NULL AND d.status IN ('pending','failed','in_flight');

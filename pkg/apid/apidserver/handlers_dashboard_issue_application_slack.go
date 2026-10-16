@@ -44,5 +44,5 @@ func (s *server) dashboardApplicationSlackView(w http.ResponseWriter, r *http.Re
 	for _, event := range []struct{ key, label string }{{"created", "New issues"}, {"regressed", "Regressions"}, {"impact_threshold_reached", "Customer-impact thresholds"}, {"frequency_threshold_reached", "Event-frequency thresholds"}} {
 		view.ApplicationSlackEvents = append(view.ApplicationSlackEvents, dashboard.IssueSlackEventChoice{Key: event.key, Label: event.label, Selected: slices.Contains(policy.Events, event.key)})
 	}
-	return true
+	return s.dashboardApplicationReminderView(w, r, app, view)
 }

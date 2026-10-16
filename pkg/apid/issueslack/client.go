@@ -161,7 +161,7 @@ func slackRetryAfter(s string, now time.Time) time.Time {
 var safeApplicationValue = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) {
-	labels := map[string]string{"created": "New issue", "regressed": "Issue regressed", "impact_threshold_reached": "Customer-impact threshold reached", "frequency_threshold_reached": "Event-frequency threshold reached"}
+	labels := map[string]string{"application_reminder": "Unacknowledged issue reminder", "created": "New issue", "regressed": "Issue regressed", "impact_threshold_reached": "Customer-impact threshold reached", "frequency_threshold_reached": "Event-frequency threshold reached"}
 	label, ok := labels[c.Kind]
 	if !ok {
 		return nil, state.ErrInvalidArgument
@@ -175,7 +175,7 @@ func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) 
 		detail += "\nRule: " + value
 	}
 	for _, field := range []struct{ key, label string }{
-		{"observed_events", "Events in window"}, {"minimum_events", "Event threshold"}, {"identified_customers", "Verified customers"}, {"minimum_customers", "Customer threshold"}, {"window_seconds", "Window (seconds)"},
+		{"reminder_sequence", "Reminder"}, {"observed_events", "Events in window"}, {"minimum_events", "Event threshold"}, {"identified_customers", "Verified customers"}, {"minimum_customers", "Customer threshold"}, {"window_seconds", "Window (seconds)"},
 	} {
 		value := c.Details[field.key]
 		if _, err := strconv.ParseUint(value, 10, 32); err == nil && len(value) <= 10 {

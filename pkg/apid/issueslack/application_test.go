@@ -9,10 +9,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ADR-1238: native reminders share safe labels and authenticated issue links.
 func TestApplicationSlackMessagesUseSafeLabelsAndIssueLinks(t *testing.T) {
-	for _, kind := range []string{"created", "regressed", "impact_threshold_reached", "frequency_threshold_reached"} {
+	for _, kind := range []string{"created", "regressed", "impact_threshold_reached", "frequency_threshold_reached", "application_reminder"} {
 		t.Run(kind, func(t *testing.T) {
-			c := state.IssueSlackClaim{Application: true, Kind: kind, ID: "delivery", AppSlug: "exports", IssueID: "issue-id", ChannelID: "C0123456789", ThreadTS: "123.456", Details: map[string]string{"environment": "production", "rule_key": "burst", "minimum_events": "50", "observed_events": "51", "minimum_customers": "2", "identified_customers": "3", "window_seconds": "300", "stack": "private-secret", "request_body": "private-secret", "evil": "<!here>"}}
+			c := state.IssueSlackClaim{Application: true, Kind: kind, ID: "delivery", AppSlug: "exports", IssueID: "issue-id", ChannelID: "C0123456789", ThreadTS: "123.456", Details: map[string]string{"environment": "production", "rule_key": "burst", "minimum_events": "50", "observed_events": "51", "minimum_customers": "2", "identified_customers": "3", "window_seconds": "300", "reminder_sequence": "2", "stack": "private-secret", "request_body": "private-secret", "evil": "<!here>"}}
 			raw, err := message(c, "https://gregale.dev")
 			if err != nil {
 				t.Fatal(err)

@@ -3894,6 +3894,25 @@ type IssueActivity struct {
 	Details        []byte
 }
 
+type IssueApplicationReminder struct {
+	ID             pgtype.UUID
+	IssueID        pgtype.UUID
+	ResponseID     pgtype.UUID
+	Sequence       int32
+	PolicyRevision int64
+	Outcome        string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type IssueApplicationReminderPolicy struct {
+	AppID           pgtype.UUID
+	Enabled         bool
+	Revision        int64
+	IntervalMinutes int32
+	RepeatLimit     int32
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type IssueApplicationSlackPolicy struct {
 	AppID             pgtype.UUID
 	Enabled           bool
@@ -3905,14 +3924,17 @@ type IssueApplicationSlackPolicy struct {
 }
 
 type IssueApplicationTriage struct {
-	IssueID        pgtype.UUID
-	IncidentID     pgtype.UUID
-	Revision       int64
-	AcknowledgedBy pgtype.UUID
-	AcknowledgedAt pgtype.Timestamptz
-	SnoozedUntil   pgtype.Timestamptz
-	SnoozedBy      pgtype.UUID
-	SnoozeReason   string
+	IssueID           pgtype.UUID
+	ReminderStartedAt pgtype.Timestamptz
+	LastRemindedAt    pgtype.Timestamptz
+	ReminderCount     int32
+	IncidentID        pgtype.UUID
+	Revision          int64
+	AcknowledgedBy    pgtype.UUID
+	AcknowledgedAt    pgtype.Timestamptz
+	SnoozedUntil      pgtype.Timestamptz
+	SnoozedBy         pgtype.UUID
+	SnoozeReason      string
 }
 
 type IssueApplicationTriageActivity struct {
@@ -4082,6 +4104,7 @@ type IssueTeamSlackDelivery struct {
 	RecipientAccountIds       []pgtype.UUID
 	AssignedTeamID            pgtype.UUID
 	AssignedAccountID         pgtype.UUID
+	ReminderID                pgtype.UUID
 }
 
 type IssueTeamSlackDestination struct {

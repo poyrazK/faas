@@ -40,7 +40,7 @@ func (q *Queries) IssueApplicationTriageAudit(ctx context.Context, db DBTX, arg 
 
 const issueApplicationTriageCancelSlack = `-- name: IssueApplicationTriageCancelSlack :exec
 UPDATE issue_team_slack_deliveries d SET status='canceled',last_error='issue_snoozed',claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp()
-FROM issue_activity act WHERE act.id=d.activity_id AND act.issue_id=$1 AND d.status IN ('pending','failed','in_flight')
+FROM issue_slack_delivery_sources src WHERE src.delivery_id=d.id AND src.issue_id=$1 AND d.notification_id IS NULL AND d.status IN ('pending','failed','in_flight')
 `
 
 func (q *Queries) IssueApplicationTriageCancelSlack(ctx context.Context, db DBTX, issueID pgtype.UUID) error {
@@ -49,21 +49,24 @@ func (q *Queries) IssueApplicationTriageCancelSlack(ctx context.Context, db DBTX
 }
 
 const issueApplicationTriageGet = `-- name: IssueApplicationTriageGet :one
-SELECT tr.issue_id, tr.incident_id, tr.revision, tr.acknowledged_by, tr.acknowledged_at, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason,COALESCE(ack.email::text,'')::text AS acknowledged_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name
+SELECT tr.issue_id, tr.reminder_started_at, tr.last_reminded_at, tr.reminder_count, tr.incident_id, tr.revision, tr.acknowledged_by, tr.acknowledged_at, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason,COALESCE(ack.email::text,'')::text AS acknowledged_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name
 FROM issue_application_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts sleeper ON sleeper.id=tr.snoozed_by WHERE tr.issue_id=$1
 `
 
 type IssueApplicationTriageGetRow struct {
-	IssueID          pgtype.UUID
-	IncidentID       pgtype.UUID
-	Revision         int64
-	AcknowledgedBy   pgtype.UUID
-	AcknowledgedAt   pgtype.Timestamptz
-	SnoozedUntil     pgtype.Timestamptz
-	SnoozedBy        pgtype.UUID
-	SnoozeReason     string
-	AcknowledgedName string
-	SnoozedName      string
+	IssueID           pgtype.UUID
+	ReminderStartedAt pgtype.Timestamptz
+	LastRemindedAt    pgtype.Timestamptz
+	ReminderCount     int32
+	IncidentID        pgtype.UUID
+	Revision          int64
+	AcknowledgedBy    pgtype.UUID
+	AcknowledgedAt    pgtype.Timestamptz
+	SnoozedUntil      pgtype.Timestamptz
+	SnoozedBy         pgtype.UUID
+	SnoozeReason      string
+	AcknowledgedName  string
+	SnoozedName       string
 }
 
 func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriageGetRow, error) {
@@ -71,6 +74,9 @@ func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueI
 	var i IssueApplicationTriageGetRow
 	err := row.Scan(
 		&i.IssueID,
+		&i.ReminderStartedAt,
+		&i.LastRemindedAt,
+		&i.ReminderCount,
 		&i.IncidentID,
 		&i.Revision,
 		&i.AcknowledgedBy,
@@ -184,7 +190,8 @@ func (q *Queries) IssueApplicationTriagePut(ctx context.Context, db DBTX, arg Is
 
 const issueApplicationTriageReleaseLease = `-- name: IssueApplicationTriageReleaseLease :exec
 UPDATE issue_team_slack_destinations dst SET claim_id=NULL,claim_until=NULL WHERE EXISTS(
- SELECT 1 FROM issue_team_slack_deliveries d JOIN issue_activity act ON act.id=d.activity_id WHERE act.issue_id=$1 AND d.destination_id=dst.id AND d.claim_id=dst.claim_id)
+ SELECT 1 FROM issue_team_slack_deliveries d JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
+ WHERE src.issue_id=$1 AND d.notification_id IS NULL AND d.destination_id=dst.id AND d.claim_id=dst.claim_id)
 `
 
 func (q *Queries) IssueApplicationTriageReleaseLease(ctx context.Context, db DBTX, issueID pgtype.UUID) error {
@@ -193,7 +200,7 @@ func (q *Queries) IssueApplicationTriageReleaseLease(ctx context.Context, db DBT
 }
 
 const issueApplicationTriageReset = `-- name: IssueApplicationTriageReset :one
-INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='' RETURNING issue_id, incident_id, revision, acknowledged_by, acknowledged_at, snoozed_until, snoozed_by, snooze_reason
+INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='',reminder_started_at=NULL,last_reminded_at=NULL,reminder_count=0 RETURNING issue_id, reminder_started_at, last_reminded_at, reminder_count, incident_id, revision, acknowledged_by, acknowledged_at, snoozed_until, snoozed_by, snooze_reason
 `
 
 func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriage, error) {
@@ -201,6 +208,9 @@ func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issu
 	var i IssueApplicationTriage
 	err := row.Scan(
 		&i.IssueID,
+		&i.ReminderStartedAt,
+		&i.LastRemindedAt,
+		&i.ReminderCount,
 		&i.IncidentID,
 		&i.Revision,
 		&i.AcknowledgedBy,

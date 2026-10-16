@@ -3961,9 +3961,11 @@ func TestNativeIssueSlackDestinationsThreadRetryAndFenceDeliveries(t *testing.T)
 	mu.Lock()
 	mode = "rate"
 	mu.Unlock()
+	// Anchor Retry-After to the send, allowing receipt/history database latency.
+	rateStarted := time.Now()
 	step(true)
 	latest := deliveries()[0]
-	if latest.Status != "failed" || latest.LastError != "rate_limited" || latest.NextAttemptAt.Before(time.Now().Add(119*time.Second)) {
+	if latest.Status != "failed" || latest.LastError != "rate_limited" || latest.NextAttemptAt.Before(rateStarted.Add(119*time.Second)) {
 		t.Fatal("rate limit", latest)
 	}
 	step(false)

@@ -1579,6 +1579,19 @@ type Querier interface {
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
 	IssueAddTeamMember(ctx context.Context, db DBTX, arg IssueAddTeamMemberParams) error
 	IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error
+	IssueApplicationReminderApp(ctx context.Context, db DBTX, entitledPlans []string) (pgtype.UUID, error)
+	IssueApplicationReminderCancel(ctx context.Context, db DBTX, arg IssueApplicationReminderCancelParams) error
+	IssueApplicationReminderDue(ctx context.Context, db DBTX, arg IssueApplicationReminderDueParams) (IssueApplicationReminderDueRow, error)
+	IssueApplicationReminderEnqueue(ctx context.Context, db DBTX, arg IssueApplicationReminderEnqueueParams) error
+	IssueApplicationReminderHistory(ctx context.Context, db DBTX, arg IssueApplicationReminderHistoryParams) ([]IssueApplicationReminderHistoryRow, error)
+	IssueApplicationReminderPolicy(ctx context.Context, db DBTX, arg IssueApplicationReminderPolicyParams) (IssueApplicationReminderPolicyRow, error)
+	IssueApplicationReminderPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationReminderPolicyPutParams) error
+	IssueApplicationReminderPrune(ctx context.Context, db DBTX, arg IssueApplicationReminderPruneParams) error
+	IssueApplicationReminderReceipt(ctx context.Context, db DBTX, issueID pgtype.UUID) error
+	IssueApplicationReminderRecord(ctx context.Context, db DBTX, arg IssueApplicationReminderRecordParams) error
+	IssueApplicationReminderRelease(ctx context.Context, db DBTX, arg IssueApplicationReminderReleaseParams) error
+	IssueApplicationReminderStart(ctx context.Context, db DBTX, arg IssueApplicationReminderStartParams) error
+	IssueApplicationReminderStopSchedules(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueApplicationSlackCancelPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueApplicationSlackCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueApplicationSlackEnqueue(ctx context.Context, db DBTX, arg IssueApplicationSlackEnqueueParams) error

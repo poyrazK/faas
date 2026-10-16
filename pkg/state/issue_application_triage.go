@@ -16,6 +16,7 @@ type IssueApplicationTriage struct {
 	SnoozedUntil                                                                 *time.Time
 	SnoozedBy, SnoozedName, SnoozeReason                                         string
 	History                                                                      []IssueApplicationTriageActivity
+	Reminders                                                                    []IssueApplicationReminder
 }
 type IssueApplicationTriageActivity struct {
 	IncidentID, ActorID, ActorName, Action, Reason string

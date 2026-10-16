@@ -829,6 +829,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
+		srv.startIssueApplicationReminders(ctx)
 		srv.startIssueSlackDelivery(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write

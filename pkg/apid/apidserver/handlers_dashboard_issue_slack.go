@@ -14,6 +14,10 @@ import (
 
 func (s *server) dashboardTrackerSlackAction(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) bool {
 	kind := r.PostForm.Get("settings_kind")
+	if kind == "application_reminders" {
+		s.dashboardApplicationReminderAction(w, r, acct, app)
+		return true
+	}
 	if kind == "application_slack" {
 		s.dashboardApplicationSlackAction(w, r, acct, app)
 		return true

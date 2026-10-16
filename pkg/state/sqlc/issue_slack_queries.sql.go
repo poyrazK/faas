@@ -13,7 +13,7 @@ import (
 
 const issueApplicationSlackCancelPolicy = `-- name: IssueApplicationSlackCancelPolicy :exec
 UPDATE issue_team_slack_deliveries d SET status='canceled',last_error='destination_unavailable',claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp()
-FROM issue_team_slack_destinations dst WHERE dst.id=d.destination_id AND dst.app_id=$1 AND d.activity_id IS NOT NULL AND d.status IN ('pending','failed','in_flight')
+FROM issue_team_slack_destinations dst WHERE dst.id=d.destination_id AND dst.app_id=$1 AND (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL) AND d.status IN ('pending','failed','in_flight')
 `
 
 func (q *Queries) IssueApplicationSlackCancelPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error {
@@ -22,7 +22,7 @@ func (q *Queries) IssueApplicationSlackCancelPolicy(ctx context.Context, db DBTX
 }
 
 const issueApplicationSlackCount = `-- name: IssueApplicationSlackCount :one
-SELECT count(*) FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id WHERE dst.app_id=$1 AND d.activity_id IS NOT NULL
+SELECT count(*) FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id WHERE dst.app_id=$1 AND (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL)
 `
 
 func (q *Queries) IssueApplicationSlackCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
@@ -68,7 +68,7 @@ func (q *Queries) IssueApplicationSlackEnqueue(ctx context.Context, db DBTX, arg
 
 const issueApplicationSlackHistoryExpire = `-- name: IssueApplicationSlackHistoryExpire :exec
 DELETE FROM issue_team_slack_deliveries target WHERE target.status IN ('succeeded','dead','canceled') AND target.updated_at<$1 AND target.id IN (
- SELECT d.id FROM issue_team_slack_deliveries d WHERE d.activity_id IS NOT NULL AND d.status IN ('succeeded','dead','canceled') AND d.updated_at<$1
+ SELECT d.id FROM issue_team_slack_deliveries d WHERE (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL) AND d.status IN ('succeeded','dead','canceled') AND d.updated_at<$1
  ORDER BY d.delivery_seq LIMIT $2
 )
 `
@@ -86,7 +86,7 @@ func (q *Queries) IssueApplicationSlackHistoryExpire(ctx context.Context, db DBT
 const issueApplicationSlackHistoryTrim = `-- name: IssueApplicationSlackHistoryTrim :execrows
 DELETE FROM issue_team_slack_deliveries WHERE id IN (
  SELECT d.id FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
- WHERE dst.app_id=$1 AND d.activity_id IS NOT NULL AND d.status IN ('succeeded','dead','canceled')
+ WHERE dst.app_id=$1 AND (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL) AND d.status IN ('succeeded','dead','canceled')
  ORDER BY d.delivery_seq LIMIT 1
 )
 `
@@ -175,7 +175,7 @@ func (q *Queries) IssueApplicationSlackPolicyPut(ctx context.Context, db DBTX, a
 
 const issueApplicationSlackReleaseClaims = `-- name: IssueApplicationSlackReleaseClaims :exec
 UPDATE issue_team_slack_destinations dst SET claim_id=NULL,claim_until=NULL WHERE dst.app_id=$1
-AND dst.claim_id IN (SELECT d.claim_id FROM issue_team_slack_deliveries d WHERE d.destination_id=dst.id AND d.activity_id IS NOT NULL AND d.status='in_flight')
+AND dst.claim_id IN (SELECT d.claim_id FROM issue_team_slack_deliveries d WHERE d.destination_id=dst.id AND (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL) AND d.status='in_flight')
 `
 
 func (q *Queries) IssueApplicationSlackReleaseClaims(ctx context.Context, db DBTX, appID pgtype.UUID) error {
@@ -260,7 +260,7 @@ func (q *Queries) IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.U
 }
 
 const issueSlackCandidateDelivery = `-- name: IssueSlackCandidateDelivery :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details,
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details,
  COALESCE(a.account_id=dst.account_id AND a.deleted_at IS NULL AND a.status<>'deleted'
  AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($1::text[])
  AND dst.enabled AND dst.revision=d.destination_revision AND src.eligible,false)::boolean AS eligible
@@ -302,6 +302,7 @@ type IssueSlackCandidateDeliveryRow struct {
 	RecipientAccountIds       []pgtype.UUID
 	AssignedTeamID            pgtype.UUID
 	AssignedAccountID         pgtype.UUID
+	ReminderID                pgtype.UUID
 	AppID                     pgtype.UUID
 	AccountID                 pgtype.UUID
 	TeamID                    pgtype.UUID
@@ -342,6 +343,7 @@ func (q *Queries) IssueSlackCandidateDelivery(ctx context.Context, db DBTX, arg 
 		&i.RecipientAccountIds,
 		&i.AssignedTeamID,
 		&i.AssignedAccountID,
+		&i.ReminderID,
 		&i.AppID,
 		&i.AccountID,
 		&i.TeamID,
@@ -373,7 +375,7 @@ func (q *Queries) IssueSlackClaim(ctx context.Context, db DBTX, arg IssueSlackCl
 }
 
 const issueSlackDeliveryList = `-- name: IssueSlackDeliveryList :many
-SELECT d.id,d.notification_id,d.activity_id,src.issue_id,d.incident_id,d.destination_revision,d.status,d.total_attempts,d.last_error,d.response_code,d.next_attempt_at,d.created_at,d.updated_at,d.channel_id,t.name AS team_name,src.kind,
+SELECT d.id,d.notification_id,d.activity_id,d.reminder_id,src.issue_id,d.incident_id,d.destination_revision,d.status,d.total_attempts,d.last_error,d.response_code,d.next_attempt_at,d.created_at,d.updated_at,d.channel_id,t.name AS team_name,src.kind,
  (dst.enabled AND dst.revision=d.destination_revision AND d.status IN ('failed','dead') AND src.application_retry_allowed)::boolean AS can_retry
 FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
 JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id JOIN app_issue_teams t ON t.id=dst.team_id
@@ -391,6 +393,7 @@ type IssueSlackDeliveryListRow struct {
 	ID                  pgtype.UUID
 	NotificationID      pgtype.UUID
 	ActivityID          pgtype.UUID
+	ReminderID          pgtype.UUID
 	IssueID             pgtype.UUID
 	IncidentID          pgtype.UUID
 	DestinationRevision int64
@@ -420,6 +423,7 @@ func (q *Queries) IssueSlackDeliveryList(ctx context.Context, db DBTX, arg Issue
 			&i.ID,
 			&i.NotificationID,
 			&i.ActivityID,
+			&i.ReminderID,
 			&i.IssueID,
 			&i.IncidentID,
 			&i.DestinationRevision,
@@ -622,7 +626,7 @@ func (q *Queries) IssueSlackFinish(ctx context.Context, db DBTX, arg IssueSlackF
 }
 
 const issueSlackHeld = `-- name: IssueSlackHeld :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
 WHERE d.id=$1 AND d.claim_id=$2 AND d.claim_until>clock_timestamp() AND d.status='in_flight'
 AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.revision=d.destination_revision AND dst.enabled
 `
@@ -659,6 +663,7 @@ func (q *Queries) IssueSlackHeld(ctx context.Context, db DBTX, arg IssueSlackHel
 		&i.RecipientAccountIds,
 		&i.AssignedTeamID,
 		&i.AssignedAccountID,
+		&i.ReminderID,
 	)
 	return i, err
 }
@@ -716,7 +721,7 @@ func (q *Queries) IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRe
 }
 
 const issueSlackRetryGet = `-- name: IssueSlackRetryGet :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed FROM issue_team_slack_deliveries d
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed FROM issue_team_slack_deliveries d
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
 WHERE d.id=$1 AND a.id=$2 AND a.account_id=$3
@@ -752,6 +757,7 @@ type IssueSlackRetryGetRow struct {
 	RecipientAccountIds       []pgtype.UUID
 	AssignedTeamID            pgtype.UUID
 	AssignedAccountID         pgtype.UUID
+	ReminderID                pgtype.UUID
 	TeamID                    pgtype.UUID
 	CurrentRevision           int64
 	Enabled                   bool
@@ -785,6 +791,7 @@ func (q *Queries) IssueSlackRetryGet(ctx context.Context, db DBTX, arg IssueSlac
 		&i.RecipientAccountIds,
 		&i.AssignedTeamID,
 		&i.AssignedAccountID,
+		&i.ReminderID,
 		&i.TeamID,
 		&i.CurrentRevision,
 		&i.Enabled,

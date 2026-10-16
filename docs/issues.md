@@ -639,12 +639,12 @@ The current application-error alert surface has these boundaries (reviewed
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
 | Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation, interactive acknowledgment and per-rule channel overrides |
-| Response | Native issue acknowledgment, timed snoozing and bounded handling history | Native reminders, backup-team escalation and a dedicated incident inbox |
+| Response | Native issue acknowledgment, timed snoozing, bounded reminders and handling history | Backup-team escalation and a dedicated incident inbox |
 
 Native Slack delivery now connects application alerts to team channels.
 Native application issues now have dashboard acknowledgment and snoozing.
-Tracker-sync reminders and escalation remain separate; native application alerts
-do not yet have those policies. Ending an ignore
+Native application reminders now follow shared response state; backup-team
+escalation remains available only for tracker incidents. Ending an ignore
 period does not retroactively notify about suppressed customer-impact crossings.
 
 ## Limits
@@ -1063,7 +1063,7 @@ activity and generic webhooks still commit. These omissions are not backfilled.
 Terminal history expires after seven days, with bounded cleanup; an expired thread
 root can cause a later alert to start a fresh thread. Tracker retention remains
 independent. Native application acknowledgment and snoozing are described below;
-application reminders, escalation and interactive Slack actions remain future work.
+application escalation and interactive Slack actions remain future work.
 
 ## GitHub and Linear tracker links
 
@@ -1858,8 +1858,9 @@ the currently eligible native Slack routing team. This narrow page does not gran
 access to occurrence evidence or app settings. Owner plan eligibility, account
 status and abuse holds also apply.
 
-Acknowledgment records who saw the issue and when. It does not resolve the issue,
-change ownership, or suppress subsequent alerts. Snooze native alerts for up to
+Acknowledgment records who saw the issue and when. It does not resolve the issue
+or change ownership. It stops reminders for the current response; future new-issue,
+regression and threshold alerts remain enabled. Snooze native alerts for up to
 30 days with an optional reason (1,024 UTF-8 bytes). Snoozing cancels outstanding
 native Slack jobs for that issue and skips new native deliveries while active.
 An already sending HTTP message may still arrive. Capture, threshold evaluation,
@@ -1878,6 +1879,45 @@ membership/ownership. Merging preserves the destination's response; source alias
 are not actionable and their response is not transferred. History is bounded across
 responses and historical actors do not establish present access.
 
-Native application reminders, escalation, a snoozed-incident inbox/filter and Slack
-interactive actions remain future work. This dashboard feature adds no public API
+Native application reminders are described below. Escalation, a snoozed-incident
+inbox/filter and Slack interactive actions remain future work. This dashboard feature adds no public API
 or SDK endpoint.
+
+### Remind the team about an unacknowledged native issue
+
+In **Tracker sync notifications**, app owners can configure the separate **Native
+issue reminders** section. Enable native application Slack alerts and reminders,
+choose an interval from 5 minutes to one day, and allow one to three attempts per
+response. Defaults are disabled, 60 minutes and three attempts.
+
+Timing starts when a new selected native alert is admitted to the Slack queue while
+reminders are enabled. Opt-in does not replay historical alerts. A reminder goes to
+the current assigned team's eligible Slack destination, or the explicit native
+fallback, and replies in that issue's thread for that destination revision.
+Reassignment affects future routing; old jobs retain their captured route and
+membership/assignment eligibility checks.
+
+Acknowledgment or resolution stops reminders. Snoozes pause them and allow a full
+interval after expiry; clearing snooze may make an overdue reminder eligible
+immediately. Reopen, regression and split-out start a fresh response. Captures do
+not postpone an existing timer. Saving changed reminder settings cancels outstanding
+reminder deliveries and permits a full interval before the next attempt. It preserves
+the number already attempted, acknowledgment and snooze. Identical saves change
+nothing. Disabling/re-enabling reminder policy can resume an already timed response
+after a full interval. Changing native application Slack policy clears timers;
+a newly admitted selected alert is required to start timing again.
+
+**Native reminder history** on the issue response page shows the last 100 attempts
+across responses, their admission outcome and retained delivery status/team. A queued
+attempt is not proof of receipt or investigation. Missing routing and full-queue
+outcomes consume an attempt and increment the native Slack missed counters. They
+advance the interval rather than retrying admission in a tight loop. Transport
+retries use the same reminder job and do not consume another slot. Owner manual
+retry requires the current response and reminder/native destination policies.
+
+Workers process bounded batches about once per minute; delivery can occur after
+the selected due time. Messages already sending may arrive after cancellation.
+Reminders use the shared native queue/history cap and expire with its transport
+history; pruning old reminder history also removes its old deliveries. Generic
+issue activity/webhooks and tracker reminders remain independent. Native backup-team
+escalation and interactive Slack actions remain future work.
