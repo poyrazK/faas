@@ -5,6 +5,7 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
+	StagedReleasesSupported   bool   `json:"staged_releases_supported"`
 	ConfigEnabled             bool   `json:"config_enabled"`
 	ConfigMaxBytes            int    `json:"config_max_bytes"`
 	ConfigRedirectsMax        int    `json:"config_redirects_max"`
@@ -89,6 +90,7 @@ type HostingSite struct {
 }
 
 type HostingRelease struct {
+	FirstPromotedAt       *time.Time      `json:"first_promoted_at,omitempty"`
 	ArtifactBytes         int64           `json:"artifact_bytes"`
 	ID                    string          `json:"id"`
 	SiteID                string          `json:"site_id"`

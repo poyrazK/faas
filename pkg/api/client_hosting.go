@@ -86,3 +86,9 @@ func (c *Client) RetireHostingRelease(ctx context.Context, site, release string)
 	err := c.do(ctx, http.MethodDelete, hostingReleasePath(site, release), nil, &out)
 	return out, err
 }
+
+func (c *Client) GetHostingCapabilities(ctx context.Context) (HostingCapabilities, error) {
+	var out HostingCapabilities
+	err := c.do(ctx, http.MethodGet, "/v1/internal/hosting/capabilities", nil, &out)
+	return out, err
+}

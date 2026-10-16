@@ -106,10 +106,10 @@ before half their TTL expires; completed uploads are not repeated. Progress
 counts completed files and bytes. Server finalization still verifies the
 size/digest before promotion.
 
-Deploy, rollback, and suspend/resume use the revision the operator reviewed;
+Publishing a staged release, rollback, and suspend/resume use the revision the operator reviewed;
 conflicts never automatically retry with a newer revision. On cancellation or
 an uncertain response, refresh the inventory: server work may have finished.
-Verified releases can be published; incomplete ones can be verified or retired.
+Verified releases can be reviewed and published; incomplete ones can be verified or retired.
 Retired/deleting resources count against limits until safe cleanup finishes.
 Publication is displayed separately from accepted intent and serving health;
 legacy leased sites show untracked publication. Cloudflare Access sign-in for
@@ -117,6 +117,13 @@ site visits is separate from the Gregale session. No cloud configuration or
 feature switch is changed merely by shipping the dashboard code.
 
 ## Deploy and roll back
+
+The [stage, review and publish workflow](internal-frontend-hosting-releases.md)
+adds stage-only deployment, immutable release comparisons, explicit reviewed
+promotion and bounded durable-publication waiting. Complete its coordinated
+writer/publisher upgrade before using staging. CLI deployment retains combined
+publishing by default; the internal dashboard defaults to staging.
+
 
 An independently gated [custom-domain and managed HTTPS pilot](internal-frontend-hosting-domains.md)
 adds DNS verification, private Access applications, certificate status, and

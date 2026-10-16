@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 
@@ -25,11 +26,14 @@ func cmdSites(args []string) int {
 		return printErr("Internal frontend hosting is disabled", errors.New("set FAAS_FRONTEND_HOSTING_ENABLED=1 on an operator workstation; the server must also enable the feature"))
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|deploy|releases|rollback|suspend|resume|retire|delete> [flags]", "sites")
+		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|deploy|releases|diff|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
 		return 1
 	}
 	if args[0] == "deploy" {
 		return cmdSitesDeploy(args[1:])
+	}
+	if args[0] == "diff" || args[0] == "promote" {
+		return cmdSitesReview(args[0], args[1:])
 	}
 	return cmdSitesManage(args[0], args[1:])
 }
@@ -89,8 +93,17 @@ func cmdSitesDeploy(args []string) int {
 	siteID := flags.String("site", "", "site UUID (required)")
 	dir := flags.String("path", "dist", "already-built static directory")
 	spa := flags.Bool("spa", false, "serve index.html for extensionless HTML navigations")
+	noPromote := flags.Bool("no-promote", false, "verify and stage the release without making it routable")
+	wait := flags.Bool("wait", false, "wait for durable publication after promotion")
+	timeout := flags.Duration("wait-timeout", api.HostingPublicationWaitDefault, "bounded publication wait")
 	if err := flags.Parse(args); err != nil || rejectUnexpectedFlagArgs(flags) {
 		return 1
+	}
+	if *noPromote && *wait {
+		return printErr("Invalid deployment options", errors.New("--no-promote cannot be combined with --wait"))
+	}
+	if err := validateHostingWait(*wait, *timeout); err != nil {
+		return printErr("Invalid wait options", err)
 	}
 	manifest, err := staticHostingManifest(*dir, *spa)
 	if err != nil {
@@ -100,10 +113,23 @@ func cmdSitesDeploy(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	site, err := client.GetHostingSite(ctx, *siteID)
 	if err != nil {
 		return printErr("Hosting site unavailable", err)
+	}
+	if *wait && !site.DurableRouting {
+		return printErr("Publication waiting unavailable", errors.New("leased sites have no durable publication receipt; no release was created"))
+	}
+	if *noPromote {
+		caps, err := client.GetHostingCapabilities(ctx)
+		if err != nil {
+			return printErr("Hosting capabilities unavailable", err)
+		}
+		if !caps.StagedReleasesSupported {
+			return printErr("Staging unavailable", errors.New("upgrade all API writers and publishers before using staged deployment"))
+		}
 	}
 	release, err := client.CreateHostingRelease(ctx, site.ID, manifest)
 	if err != nil {
@@ -116,14 +142,23 @@ func cmdSitesDeploy(args []string) int {
 	if err := uploadHostingFiles(ctx, *dir, manifest, grants.Uploads); err != nil {
 		return printErr("Upload failed; retire release "+release.ID+" before retrying", err)
 	}
-	if _, err = client.FinalizeHostingRelease(ctx, site.ID, release.ID); err != nil {
-		return printErr("Release verification failed", err)
+	verified, err := client.FinalizeHostingRelease(ctx, site.ID, release.ID)
+	if err != nil {
+		return printErr("Release verification failed; inspect retained release "+release.ID, err)
+	}
+	release = verified
+	if *noPromote {
+		return jsonOut(writeJSON(struct {
+			State            string             `json:"state"`
+			Release          api.HostingRelease `json:"release"`
+			ExpectedRevision int64              `json:"expected_revision"`
+		}{State: "staged", Release: release, ExpectedRevision: site.Revision}))
 	}
 	site, err = client.PromoteHostingRelease(ctx, site.ID, api.PromoteHostingReleaseRequest{ReleaseID: release.ID, ExpectedRevision: site.Revision})
 	if err != nil {
 		return printErr("Promotion failed; the verified release is retained as "+release.ID, err)
 	}
-	return jsonOut(writeJSON(site))
+	return finishHostingPromotion(ctx, client, site, *wait, *timeout)
 }
 
 func staticHostingManifest(dir string, spa bool) (api.HostingManifest, error) {

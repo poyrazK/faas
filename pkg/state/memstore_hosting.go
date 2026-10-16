@@ -184,6 +184,11 @@ func (m *MemStore) PromoteHostingRelease(_ context.Context, account, site, id st
 	if s.Status != "active" || expected < 1 || s.Revision != expected || r.SiteID != site || r.State != "ready" {
 		return api.HostingSite{}, ErrConflict
 	}
+	if r.FirstPromotedAt == nil {
+		at := time.Now().UTC()
+		r.FirstPromotedAt = &at
+	}
+	m.hostingReleases[id] = r
 	s.Revision++
 	s.ActiveReleaseID = id
 	m.hostingSites[site] = s
@@ -362,7 +367,7 @@ func (m *MemStore) HostingRouteSnapshot(_ context.Context, site string) (Hosting
 	out := hostingPublicationSnapshot(s, p)
 	for _, r := range m.hostingReleases {
 		if r.SiteID == site && r.State != "deleted" {
-			out.Releases = append(out.Releases, api.HostingRelease{ID: r.ID, SiteID: r.SiteID, State: r.State})
+			out.Releases = append(out.Releases, cloneHostingRelease(api.HostingRelease{ID: r.ID, SiteID: r.SiteID, State: r.State, FirstPromotedAt: r.FirstPromotedAt}))
 		}
 	}
 	return out, nil

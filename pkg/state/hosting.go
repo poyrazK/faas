@@ -107,6 +107,10 @@ func cloneHostingRelease(r api.HostingRelease) api.HostingRelease {
 		}
 		r.Manifest.Config = &cfg
 	}
+	if r.FirstPromotedAt != nil {
+		at := *r.FirstPromotedAt
+		r.FirstPromotedAt = &at
+	}
 	if r.RetiredAt != nil {
 		t := *r.RetiredAt
 		r.RetiredAt = &t

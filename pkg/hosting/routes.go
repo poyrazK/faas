@@ -91,7 +91,7 @@ func (p *KV) Put(ctx context.Context, route Route) error {
 func NewRoute(site api.HostingSite, releases []api.HostingRelease, enabled bool, now time.Time) Route {
 	r := Route{Version: 1, Enabled: enabled && site.Status == "active" && !site.Suspended, Hostname: site.Hostname, SiteID: site.ID, OriginID: site.OriginID, ActiveReleaseID: site.ActiveReleaseID, Revision: site.Revision, ExpiresAt: now.Add(api.HostingRouteLease).Unix(), ReadyReleases: []string{}}
 	for _, release := range releases {
-		if release.SiteID == site.ID && release.State == "ready" {
+		if release.SiteID == site.ID && release.State == "ready" && (release.FirstPromotedAt != nil || release.ID == site.ActiveReleaseID) {
 			r.ReadyReleases = append(r.ReadyReleases, release.ID)
 		}
 	}

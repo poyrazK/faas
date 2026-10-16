@@ -1397,6 +1397,7 @@ type Querier interface {
 	HostingReleaseDeleted(ctx context.Context, db DBTX, arg HostingReleaseDeletedParams) (int64, error)
 	HostingReleaseGet(ctx context.Context, db DBTX, arg HostingReleaseGetParams) (HostingRelease, error)
 	HostingReleaseList(ctx context.Context, db DBTX, arg HostingReleaseListParams) ([]HostingRelease, error)
+	HostingReleaseMarkPromoted(ctx context.Context, db DBTX, arg HostingReleaseMarkPromotedParams) (int64, error)
 	HostingReleasePromote(ctx context.Context, db DBTX, arg HostingReleasePromoteParams) (HostingSite, error)
 	HostingReleaseReady(ctx context.Context, db DBTX, arg HostingReleaseReadyParams) (HostingRelease, error)
 	HostingReleaseRetire(ctx context.Context, db DBTX, arg HostingReleaseRetireParams) (HostingRelease, error)

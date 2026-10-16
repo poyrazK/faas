@@ -106,7 +106,7 @@ SELECT * FROM hosting_route_publications WHERE site_id = sqlc.arg(site_id)::uuid
 SELECT * FROM hosting_sites WHERE id = sqlc.arg(site_id)::uuid AND durable_routing;
 
 -- name: HostingRoutingReleaseList :many
-SELECT id, site_id, state FROM hosting_releases WHERE site_id = sqlc.arg(site_id)::uuid AND state <> 'deleted' ORDER BY id;
+SELECT id, site_id, state, first_promoted_at FROM hosting_releases WHERE site_id = sqlc.arg(site_id)::uuid AND state <> 'deleted' ORDER BY id;
 
 -- name: HostingRouteSiteLock :one
 SELECT * FROM hosting_sites WHERE id = sqlc.arg(site_id)::uuid AND durable_routing FOR UPDATE;
@@ -148,3 +148,7 @@ SELECT COALESCE(sum(r.artifact_bytes), 0)::bigint AS payload_bytes,
  COALESCE(sum(sqlc.arg(copies)::bigint * r.artifact_bytes + sqlc.arg(manifest_reservation)::bigint) FILTER (WHERE r.state = 'retiring'), 0)::bigint AS retiring_reserved_bytes
 FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
 WHERE s.account_id = sqlc.arg(account_id)::uuid AND r.state <> 'deleted';
+
+-- name: HostingReleaseMarkPromoted :execrows
+UPDATE hosting_releases SET first_promoted_at = COALESCE(first_promoted_at, clock_timestamp())
+WHERE site_id = sqlc.arg(site_id)::uuid AND id = sqlc.arg(id)::uuid AND state = 'ready';

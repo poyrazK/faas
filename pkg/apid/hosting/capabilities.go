@@ -15,7 +15,8 @@ func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	out := api.HostingCapabilities{
-		ConfigEnabled: s.configEnabled(), ConfigMaxBytes: api.HostingConfigMaxBytes,
+		StagedReleasesSupported: true,
+		ConfigEnabled:           s.configEnabled(), ConfigMaxBytes: api.HostingConfigMaxBytes,
 		ConfigRedirectsMax: api.HostingConfigRedirectsMax, ConfigHeaderRulesMax: api.HostingConfigHeaderRulesMax,
 		ConfigHeadersPerRuleMax: api.HostingConfigHeadersPerRuleMax, ConfigHeaderValueMaxBytes: api.HostingConfigHeaderValueMaxBytes,
 		AccountStorageMaxBytes: api.HostingAccountStorageMaxBytes, AccountPendingUploadsMax: api.HostingAccountPendingUploadsMax,

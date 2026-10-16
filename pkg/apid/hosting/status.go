@@ -10,6 +10,7 @@ import (
 )
 
 func (s Service) GetStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
 	site, ok := s.site(w, r, acct)
 	if !ok {
 		return

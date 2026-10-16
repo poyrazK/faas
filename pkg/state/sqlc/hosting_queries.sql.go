@@ -94,7 +94,7 @@ func (q *Queries) HostingReleaseCount(ctx context.Context, db DBTX, siteID pgtyp
 
 const hostingReleaseCreate = `-- name: HostingReleaseCreate :one
 INSERT INTO hosting_releases(id, site_id, manifest, artifact_bytes)
-VALUES($1::uuid, $2::uuid, $3::jsonb, $4::bigint) RETURNING id, site_id, state, manifest, created_at, retired_at, retirement_generation, retirement_published_at, artifact_bytes
+VALUES($1::uuid, $2::uuid, $3::jsonb, $4::bigint) RETURNING id, site_id, state, manifest, created_at, retired_at, retirement_generation, retirement_published_at, artifact_bytes, first_promoted_at
 `
 
 type HostingReleaseCreateParams struct {
@@ -122,6 +122,7 @@ func (q *Queries) HostingReleaseCreate(ctx context.Context, db DBTX, arg Hosting
 		&i.RetirementGeneration,
 		&i.RetirementPublishedAt,
 		&i.ArtifactBytes,
+		&i.FirstPromotedAt,
 	)
 	return i, err
 }
@@ -154,7 +155,7 @@ func (q *Queries) HostingReleaseDeleted(ctx context.Context, db DBTX, arg Hostin
 }
 
 const hostingReleaseGet = `-- name: HostingReleaseGet :one
-SELECT r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
+SELECT r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes, r.first_promoted_at FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
 WHERE s.account_id = $1::uuid AND r.site_id = $2::uuid AND r.id = $3::uuid
 `
 
@@ -177,12 +178,13 @@ func (q *Queries) HostingReleaseGet(ctx context.Context, db DBTX, arg HostingRel
 		&i.RetirementGeneration,
 		&i.RetirementPublishedAt,
 		&i.ArtifactBytes,
+		&i.FirstPromotedAt,
 	)
 	return i, err
 }
 
 const hostingReleaseList = `-- name: HostingReleaseList :many
-SELECT r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
+SELECT r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes, r.first_promoted_at FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
 WHERE s.account_id = $1::uuid AND r.site_id = $2::uuid AND r.state <> 'deleted'
 ORDER BY r.created_at DESC, r.id DESC
 `
@@ -211,6 +213,7 @@ func (q *Queries) HostingReleaseList(ctx context.Context, db DBTX, arg HostingRe
 			&i.RetirementGeneration,
 			&i.RetirementPublishedAt,
 			&i.ArtifactBytes,
+			&i.FirstPromotedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -220,6 +223,24 @@ func (q *Queries) HostingReleaseList(ctx context.Context, db DBTX, arg HostingRe
 		return nil, err
 	}
 	return items, nil
+}
+
+const hostingReleaseMarkPromoted = `-- name: HostingReleaseMarkPromoted :execrows
+UPDATE hosting_releases SET first_promoted_at = COALESCE(first_promoted_at, clock_timestamp())
+WHERE site_id = $1::uuid AND id = $2::uuid AND state = 'ready'
+`
+
+type HostingReleaseMarkPromotedParams struct {
+	SiteID pgtype.UUID
+	ID     pgtype.UUID
+}
+
+func (q *Queries) HostingReleaseMarkPromoted(ctx context.Context, db DBTX, arg HostingReleaseMarkPromotedParams) (int64, error) {
+	result, err := db.Exec(ctx, hostingReleaseMarkPromoted, arg.SiteID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const hostingReleasePromote = `-- name: HostingReleasePromote :one
@@ -266,7 +287,7 @@ func (q *Queries) HostingReleasePromote(ctx context.Context, db DBTX, arg Hostin
 const hostingReleaseReady = `-- name: HostingReleaseReady :one
 UPDATE hosting_releases r SET state = 'ready' FROM hosting_sites s
 WHERE s.id = r.site_id AND s.account_id = $1::uuid
-AND r.site_id = $2::uuid AND r.id = $3::uuid AND s.status = 'active' AND r.state IN ('pending', 'ready') RETURNING r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes
+AND r.site_id = $2::uuid AND r.id = $3::uuid AND s.status = 'active' AND r.state IN ('pending', 'ready') RETURNING r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes, r.first_promoted_at
 `
 
 type HostingReleaseReadyParams struct {
@@ -288,6 +309,7 @@ func (q *Queries) HostingReleaseReady(ctx context.Context, db DBTX, arg HostingR
 		&i.RetirementGeneration,
 		&i.RetirementPublishedAt,
 		&i.ArtifactBytes,
+		&i.FirstPromotedAt,
 	)
 	return i, err
 }
@@ -296,7 +318,7 @@ const hostingReleaseRetire = `-- name: HostingReleaseRetire :one
 UPDATE hosting_releases r SET state = 'retiring', retired_at = clock_timestamp(), retirement_generation = $1::bigint
 FROM hosting_sites s WHERE s.id = r.site_id AND s.account_id = $2::uuid
 AND r.site_id = $3::uuid AND r.id = $4::uuid AND r.state IN ('pending', 'ready')
-AND s.active_release_id IS DISTINCT FROM r.id RETURNING r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes
+AND s.active_release_id IS DISTINCT FROM r.id RETURNING r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes, r.first_promoted_at
 `
 
 type HostingReleaseRetireParams struct {
@@ -324,6 +346,7 @@ func (q *Queries) HostingReleaseRetire(ctx context.Context, db DBTX, arg Hosting
 		&i.RetirementGeneration,
 		&i.RetirementPublishedAt,
 		&i.ArtifactBytes,
+		&i.FirstPromotedAt,
 	)
 	return i, err
 }
@@ -598,13 +621,14 @@ func (q *Queries) HostingRouteSiteLock(ctx context.Context, db DBTX, siteID pgty
 }
 
 const hostingRoutingReleaseList = `-- name: HostingRoutingReleaseList :many
-SELECT id, site_id, state FROM hosting_releases WHERE site_id = $1::uuid AND state <> 'deleted' ORDER BY id
+SELECT id, site_id, state, first_promoted_at FROM hosting_releases WHERE site_id = $1::uuid AND state <> 'deleted' ORDER BY id
 `
 
 type HostingRoutingReleaseListRow struct {
-	ID     pgtype.UUID
-	SiteID pgtype.UUID
-	State  string
+	ID              pgtype.UUID
+	SiteID          pgtype.UUID
+	State           string
+	FirstPromotedAt pgtype.Timestamptz
 }
 
 func (q *Queries) HostingRoutingReleaseList(ctx context.Context, db DBTX, siteID pgtype.UUID) ([]HostingRoutingReleaseListRow, error) {
@@ -616,7 +640,12 @@ func (q *Queries) HostingRoutingReleaseList(ctx context.Context, db DBTX, siteID
 	items := []HostingRoutingReleaseListRow{}
 	for rows.Next() {
 		var i HostingRoutingReleaseListRow
-		if err := rows.Scan(&i.ID, &i.SiteID, &i.State); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.SiteID,
+			&i.State,
+			&i.FirstPromotedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

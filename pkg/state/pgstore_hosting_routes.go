@@ -98,7 +98,7 @@ func (s *PgStore) HostingRouteSnapshot(ctx context.Context, site string) (Hostin
 		NextAttemptAt: hostingTime(publication.NextAttemptAt), LastAttemptAt: hostingTime(publication.LastAttemptAt),
 		RetryCount: publication.RetryCount, LastErrorCode: publication.LastErrorCode})
 	for _, release := range releases {
-		out.Releases = append(out.Releases, api.HostingRelease{ID: uuidString(release.ID), SiteID: uuidString(release.SiteID), State: release.State})
+		out.Releases = append(out.Releases, api.HostingRelease{ID: uuidString(release.ID), SiteID: uuidString(release.SiteID), State: release.State, FirstPromotedAt: hostingTimePointer(release.FirstPromotedAt)})
 	}
 	return out, tx.Commit(ctx)
 }

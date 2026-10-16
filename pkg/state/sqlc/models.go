@@ -4100,6 +4100,7 @@ type HostingRelease struct {
 	RetirementGeneration  int64
 	RetirementPublishedAt pgtype.Timestamptz
 	ArtifactBytes         int64
+	FirstPromotedAt       pgtype.Timestamptz
 }
 
 type HostingRoutePublication struct {

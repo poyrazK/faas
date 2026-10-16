@@ -43,6 +43,7 @@ func TestHostingStores(t *testing.T) {
 			t.Run("publication_status", func(t *testing.T) { publicationStatusLifecycle(t, store) })
 			t.Run("pending_upload_usage", func(t *testing.T) { pendingUploadUsage(t, store) })
 			t.Run("account_storage_usage", func(t *testing.T) { accountStorageUsage(t, store) })
+			t.Run("staged_release_visibility", func(t *testing.T) { stagedReleaseVisibility(t, store) })
 			t.Run("custom_domains", func(t *testing.T) { customDomainLifecycle(t, store) })
 			t.Run("custom_domain_recovery", func(t *testing.T) { customDomainRecovery(t, store) })
 			t.Run("custom_domain_quota", func(t *testing.T) { customDomainQuota(t, store) })

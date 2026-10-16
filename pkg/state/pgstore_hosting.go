@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -33,6 +34,10 @@ func hostingSiteRow(r sqlc.HostingSite) api.HostingSite {
 
 func hostingReleaseRow(r sqlc.HostingRelease) (api.HostingRelease, error) {
 	out := api.HostingRelease{ArtifactBytes: r.ArtifactBytes, ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time, RetirementGeneration: r.RetirementGeneration}
+	if r.FirstPromotedAt.Valid {
+		t := r.FirstPromotedAt.Time
+		out.FirstPromotedAt = &t
+	}
 	if r.RetiredAt.Valid {
 		t := r.RetiredAt.Time
 		out.RetiredAt = &t
@@ -267,6 +272,12 @@ func (s *PgStore) PromoteHostingRelease(ctx context.Context, account, site, rele
 	if err != nil {
 		return api.HostingSite{}, err
 	}
+	if count, markErr := q.HostingReleaseMarkPromoted(ctx, tx, sqlc.HostingReleaseMarkPromotedParams{SiteID: i, ID: rid}); markErr != nil || count != 1 {
+		if markErr != nil {
+			return api.HostingSite{}, markErr
+		}
+		return api.HostingSite{}, ErrConflict
+	}
 	if _, err = bumpHostingRoute(ctx, tx, i); err != nil {
 		return api.HostingSite{}, err
 	}
@@ -356,4 +367,12 @@ func (s *PgStore) PurgeHostingSite(ctx context.Context, account, site string) er
 		return ErrConflict
 	}
 	return err
+}
+
+func hostingTimePointer(at pgtype.Timestamptz) *time.Time {
+	if !at.Valid {
+		return nil
+	}
+	t := at.Time
+	return &t
 }

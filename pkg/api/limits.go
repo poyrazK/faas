@@ -11251,6 +11251,9 @@ const (
 // publication work, retained artifacts, and the edge kill-switch convergence.
 const (
 	HostingFilesMax                            = 1000
+	HostingPublicationWaitDefault              = 2 * time.Minute
+	HostingPublicationWaitMax                  = 10 * time.Minute
+	HostingPublicationPollInterval             = time.Second
 	HostingConfigMaxBytes                      = 32 << 10
 	HostingConfigRedirectsMax                  = 32
 	HostingConfigHeaderRulesMax                = 16

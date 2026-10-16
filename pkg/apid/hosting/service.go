@@ -39,6 +39,7 @@ func (s Service) Require(next httpkit.AccountHandler) httpkit.AccountHandler {
 }
 
 func (s Service) guard(w http.ResponseWriter, acct state.Account) bool {
+	w.Header().Set("Cache-Control", "no-store")
 	if !s.Host.HostingEnabled() {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "frontend_hosting_disabled", "Frontend hosting unavailable", "internal frontend hosting is disabled"))
 		return false

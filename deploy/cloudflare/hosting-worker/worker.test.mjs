@@ -428,3 +428,16 @@ test('SPA fallback precedes the custom 404 and custom domains use the same prote
   const redirect=await f.customRequest('/old',{headers});assert.equal(redirect.status,308);assert.equal(redirect.headers.get('Location'),'/new');
   assert.equal((await f.customRequest('/old')).status,403);
 });
+
+test('verified but never-promoted artifacts remain unreachable outside routing inventory', async () => {
+  const f=fixture();
+  f.release(first,{'index.html':'live','old.js':'retained'});
+  f.release(second,{'index.html':'staged','new.js':'not live'});
+  assert.equal(await (await f.request()).text(),'live');
+  assert.equal((await f.request('/new.js')).status,404);
+  assert.equal((await f.request(`/_gregale/releases/${second}/index.html`)).status,404);
+  f.route.active_release_id=second;f.route.ready_releases=[first,second];f.route.revision++;
+  assert.equal(await (await f.request()).text(),'staged');
+  assert.equal(await (await f.request('/new.js')).text(),'not live');
+  assert.equal(await (await f.request('/old.js')).text(),'retained');
+});
