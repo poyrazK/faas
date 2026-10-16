@@ -2482,7 +2482,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		}
 	} else {
 		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
-			return state.Deployment{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+			return state.Deployment{}, nil, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
 		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
