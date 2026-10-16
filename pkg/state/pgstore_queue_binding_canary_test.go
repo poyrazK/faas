@@ -6,10 +6,14 @@ package state_test
 import (
 	"encoding/json"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgQueueCanaryAcknowledgementFences(t *testing.T) {
@@ -42,6 +46,21 @@ func TestPgQueueCanaryAcknowledgementFences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertBorrowers := func(completed int64) {
+		t.Helper()
+		raw, err := sqlc.New().ReadCloneDeploymentBorrowers(ctx, pool, pgtype.UUID{Bytes: uuid.MustParse(dep.ID), Valid: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var counts map[string]int64
+		if err = json.Unmarshal(raw, &counts); err != nil {
+			t.Fatal(err)
+		}
+		if counts["queue_binding_canaries_deployment_id_fkey"] != 1 || counts["queue_binding_canaries_completed_deployment_id_fkey"] != completed {
+			t.Fatalf("canary deployment references omitted: %v", counts)
+		}
+	}
+	assertBorrowers(0)
 	trigger := created.Changes[0].TriggerID
 	if _, err = s.CreateQueueBindingCanary(ctx, account.ID, app.ID, req); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate: %v", err)
@@ -81,6 +100,7 @@ func TestPgQueueCanaryAcknowledgementFences(t *testing.T) {
 	if err != nil || got.Status != "succeeded" || got.CompletedAt == nil {
 		t.Fatalf("proof: %+v %v", got, err)
 	}
+	assertBorrowers(1)
 	proofRevision, err := s.ReadBindingPromotionRevision(ctx, account.ID, app.ID)
 	if err != nil {
 		t.Fatal(err)

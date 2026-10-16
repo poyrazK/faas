@@ -6917,9 +6917,11 @@ func (q *Queries) CloneEnvironmentCleanupHasReplacement(ctx context.Context, db 
 }
 
 const cloneEnvironmentCleanupHasScopeBorrowers = `-- name: CloneEnvironmentCleanupHasScopeBorrowers :one
-WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$3::uuid)
+WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$2::uuid)
 SELECT
  (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM binding_verification_runs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM project_binding_verification_runs p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_webhooks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
@@ -6937,24 +6939,24 @@ SELECT
  OR EXISTS(SELECT 1 FROM object_buckets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_issues p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=$1::text)
  OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
- OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=($2::uuid)::text)
- OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=($2::uuid)::text)
- OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=($2::uuid)::text)
- OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=($2::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text))
- OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=$2::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=$1::text))
- OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=($2::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text))
+ OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=($3::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text))
+ OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=$3::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=$1::text))
+ OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=($3::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text))
  OR EXISTS(SELECT 1 FROM instance_runtime_config_receipts p JOIN instances i ON i.id=p.instance_id WHERE i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM snapshot_runtime_config_receipts p JOIN snapshots s ON s.id=p.snapshot_id JOIN deployments d ON d.id=s.deployment_id WHERE d.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
- OR EXISTS(SELECT 1 FROM github_deploy_branches p WHERE p.project_id=$3::uuid AND p.scope=$1::text)
- OR EXISTS(SELECT 1 FROM project_environment_cleanup_jobs p WHERE p.project_id=$3::uuid AND p.environment_slug=$1::text)
- OR EXISTS(SELECT 1 FROM project_environment_promotions p WHERE p.project_id=$3::uuid AND (p.from_environment=$1::text OR p.to_environment=$1::text))
- OR EXISTS(SELECT 1 FROM project_environment_approvals p WHERE p.account_id=$4::uuid AND p.project_slug=(SELECT slug FROM projects WHERE id=$3::uuid) AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM github_deploy_branches p WHERE p.project_id=$2::uuid AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_cleanup_jobs p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_promotions p WHERE p.project_id=$2::uuid AND (p.from_environment=$1::text OR p.to_environment=$1::text))
+ OR EXISTS(SELECT 1 FROM project_environment_approvals p WHERE p.account_id=$4::uuid AND p.project_slug=(SELECT slug FROM projects WHERE id=$2::uuid) AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM object_storage_s3_credentials p WHERE p.managed_app_id IN (SELECT id FROM scoped_apps) AND p.managed_scope=$1::text)
- OR EXISTS(SELECT 1 FROM project_environment_clone_operations p WHERE p.project_id=$3::uuid AND p.id<>$5::uuid AND p.status<>'compensated' AND (p.source_environment=$1::text OR p.target_environment=$1::text))
- OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=($2::uuid)::text AND p.operation_id<>$5::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=($2::uuid)::text AND p.operation_id<>$5::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=($2::uuid)::text)
- OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=$3::uuid AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_operations p WHERE p.project_id=$2::uuid AND p.id<>$5::uuid AND p.status<>'compensated' AND (p.source_environment=$1::text OR p.target_environment=$1::text))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=($3::uuid)::text AND p.operation_id<>$5::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=($3::uuid)::text AND p.operation_id<>$5::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM app_envs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_secrets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_environment_secret_refs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
@@ -6964,8 +6966,8 @@ SELECT
 
 type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
 	Environment   string
-	EnvironmentID pgtype.UUID
 	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
 	AccountID     pgtype.UUID
 	OperationID   pgtype.UUID
 }
@@ -6976,8 +6978,8 @@ type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
 func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
 	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
 		arg.Environment,
-		arg.EnvironmentID,
 		arg.ProjectID,
+		arg.EnvironmentID,
 		arg.AccountID,
 		arg.OperationID,
 	)
@@ -45921,6 +45923,17 @@ func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg Loc
 	return items, nil
 }
 
+const lockCloneBindingEnvironmentCleanupBorrowers = `-- name: LockCloneBindingEnvironmentCleanupBorrowers :exec
+LOCK TABLE binding_verification_runs,project_binding_verification_runs,project_release_stages IN SHARE MODE
+`
+
+// These retained binding receipts and stages were added after the original
+// migration-owned writer fence. Keep their writers out of the deletion window.
+func (q *Queries) LockCloneBindingEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneBindingEnvironmentCleanupBorrowers)
+	return err
+}
+
 const lockCloneCheckpointObjectPublicationBucket = `-- name: LockCloneCheckpointObjectPublicationBucket :one
 SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND environment_clone_operation_id=$4 FOR UPDATE
 `
@@ -65433,6 +65446,7 @@ func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, d
 
 const readCloneDeploymentBorrowers = `-- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
+    'binding_verification_runs_deployment_id_fkey', (SELECT count(*) FROM binding_verification_runs WHERE deployment_id = $1::uuid),
     'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = $1::uuid),
     'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = $1::uuid),
     'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = $1::uuid),
@@ -65441,6 +65455,8 @@ SELECT (jsonb_build_object(
     'profile_deployment_checks_deployment_id_fkey', (SELECT count(*) FROM profile_deployment_checks WHERE deployment_id = $1::uuid),
     'profile_periodic_monitors_deployment_id_fkey', (SELECT count(*) FROM profile_periodic_monitors WHERE deployment_id = $1::uuid),
     'profile_route_alert_state_deployment_id_fkey', (SELECT count(*) FROM profile_route_alert_state WHERE deployment_id = $1::uuid),
+    'queue_binding_canaries_deployment_id_fkey', (SELECT count(*) FROM queue_binding_canaries WHERE deployment_id = $1::uuid),
+    'queue_binding_canaries_completed_deployment_id_fkey', (SELECT count(*) FROM queue_binding_canaries WHERE completed_deployment_id = $1::uuid),
     'runtime_upgrade_gateway_drains_serving_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE serving_deployment_id = $1::uuid),
     'runtime_upgrade_operations_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_operations WHERE deployment_id = $1::uuid),
     'runtime_upgrade_operations_serving_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_operations WHERE serving_deployment_id = $1::uuid),
@@ -65646,6 +65662,7 @@ SELECT
  (SELECT count(*) FROM project_environment_route_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_route_policies,
  (SELECT count(*) FROM project_environment_workload_specs p WHERE p.environment_id=$1::uuid) AS project_environment_workload_specs,
  (SELECT count(*) FROM project_release_sets p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_sets,
+ (SELECT count(*) FROM project_release_stages p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_stages,
  (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$2::text)) AS runtime_environment_scaling_states,
  (SELECT count(*) FROM scoped_deployments d WHERE EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS owned_deployments,
  (SELECT count(*) FROM scoped_deployments d WHERE NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS foreign_deployments
@@ -65681,6 +65698,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	ProjectEnvironmentRoutePolicies      int64
 	ProjectEnvironmentWorkloadSpecs      int64
 	ProjectReleaseSets                   int64
+	ProjectReleaseStages                 int64
 	RuntimeEnvironmentScalingStates      int64
 	OwnedDeployments                     int64
 	ForeignDeployments                   int64
@@ -65719,6 +65737,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.ProjectEnvironmentRoutePolicies,
 		&i.ProjectEnvironmentWorkloadSpecs,
 		&i.ProjectReleaseSets,
+		&i.ProjectReleaseStages,
 		&i.RuntimeEnvironmentScalingStates,
 		&i.OwnedDeployments,
 		&i.ForeignDeployments,
