@@ -12,6 +12,7 @@ import (
 )
 
 type environmentGitOpsMemory struct {
+	retirements    map[string]EnvironmentWorkloadRetirement
 	source         EnvironmentGitSource
 	revisions      map[string]EnvironmentDesiredRevision
 	runs           map[string]EnvironmentGitOpsRun

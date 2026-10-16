@@ -486,6 +486,12 @@
       "filename": "20261006160235001_application_standard_environment_review_fences.sql",
       "sha256": "6c8f85eb7f6a85b8ba69ef2dfe61ca3c0680b004d90aeb7f01ad5e2c03219e70",
       "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261012080000001,
+      "filename": "20261012080000001_application_standard_shared_base_read_fences.sql",
+      "sha256": "7e32b6e6d00fc1a7660ebc3fb1914ad077db761b7ccd7951765e7ab0c2184f28",
+      "postcondition": "ddl-only"
     }
   ]
 }

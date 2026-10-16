@@ -768,6 +768,12 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			a == "--wait-for-ack" || a == "-wait-for-ack" ||
 			strings.HasPrefix(a, "--wait-for-ack=") || strings.HasPrefix(a, "-wait-for-ack="):
 			flags = append(flags, a)
+		case strings.HasPrefix(a, "-") && a != "-":
+			// No KEY or KEY=VALUE starts with "-", so this is a flag the
+			// command does not define. Hand it to the flag parser, which
+			// names it; left among the keys, `unset KEY --yes` reported
+			// "Invalid secret key" without saying which (hunt #10, H10-85).
+			flags = append(flags, a)
 		default:
 			pairs = append(pairs, a)
 		}

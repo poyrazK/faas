@@ -174,7 +174,7 @@ func TestEnvironmentGitOpsEmptyMembershipCannotBypassWorkloadPruning(t *testing.
 			t.Fatal(err)
 		}
 		plan := claimedIntentPlan(t, store, lease, empty)
-		if plan.CanApply() || !strings.Contains(strings.Join(plan.BlockingReasons, " "), "workload pruning adapter") {
+		if plan.CanApply() || !strings.Contains(strings.Join(plan.BlockingReasons, " "), "workload_pruning_policy retain") {
 			t.Fatalf("empty definition bypassed graph pruning gate: %+v", plan)
 		}
 		if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, plan); !errors.Is(err, state.ErrConflict) {
@@ -281,7 +281,7 @@ func TestEnvironmentGitOpsWorkloadPruningBlocksBeforeWrites(t *testing.T) {
 			t.Fatalf("pruning removed existing workload: %+v %v", current, err)
 		}
 		runs, err := store.ListEnvironmentGitOpsRuns(t.Context(), source.AccountID, source.ID, 10)
-		if err != nil || len(runs) != 1 || runs[0].Status != "blocked" || !strings.Contains(string(runs[0].Plan), "workload pruning adapter") {
+		if err != nil || len(runs) != 1 || runs[0].Status != "blocked" || !strings.Contains(string(runs[0].Plan), "workload_pruning_policy retain") {
 			t.Fatalf("workload prune preflight: %+v %v", runs, err)
 		}
 	})

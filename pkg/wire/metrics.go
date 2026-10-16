@@ -120,10 +120,11 @@ type OpsMetrics struct {
 	warmPoolResumeTotal *prometheus.CounterVec
 	// Frozen tier (ADR-1151): freeze attempts, thaws and parks by bounded
 	// outcome or reason, and the instances currently frozen.
-	frozenFreezeTotal *prometheus.CounterVec
-	frozenThawTotal   *prometheus.CounterVec
-	frozenParksTotal  *prometheus.CounterVec
-	frozenInstances   prometheus.Gauge
+	frozenFreezeTotal   *prometheus.CounterVec
+	frozenThawTotal     *prometheus.CounterVec
+	frozenParksTotal    *prometheus.CounterVec
+	frozenCompressTotal *prometheus.CounterVec
+	frozenInstances     prometheus.Gauge
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -2234,6 +2235,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, reason := range FrozenParkReasons {
 		frozenParksTotal.WithLabelValues(reason)
 	}
+	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_compress_total",
+		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenCompressOutcomes {
+		frozenCompressTotal.WithLabelValues(outcome)
+	}
 	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_frozen_instances",
 		Help: "Instances this schedd holds frozen in place (ADR-1151).",
@@ -3877,7 +3885,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -5387,6 +5395,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		frozenFreezeTotal:                          frozenFreezeTotal,
 		frozenThawTotal:                            frozenThawTotal,
 		frozenParksTotal:                           frozenParksTotal,
+		frozenCompressTotal:                        frozenCompressTotal,
 		frozenInstances:                            frozenInstances,
 		warmupErrors:                               warmupErrors,
 		writeRedirectTotal:                         writeRedirectTotal,
@@ -6146,6 +6155,9 @@ var (
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity"}
 	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
+	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
+	// unavailable (no memory-only swap) and error park it.
+	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
 )
 
 // FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
@@ -6170,6 +6182,14 @@ func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
 		return nil
 	}
 	return m.frozenParksTotal.WithLabelValues(reason)
+}
+
+// FrozenCompressTotal is the frozen-compression counter for one outcome.
+func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenCompressTotal.WithLabelValues(outcome)
 }
 
 // SetFrozenInstances sets the number of instances held frozen.

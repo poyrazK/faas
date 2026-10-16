@@ -112,6 +112,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DATABASE_URL` | shared | `default` | yes |  | `url` | DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement |
 | `FAAS_DATABASE_URL_DIRECT` | shared | `default` |  |  | `` | Session-scoped DSN reaching PostgreSQL directly, bypassing a transaction-mode pooler on the ordinary DSN. LISTEN and session pg_advisory_lock resolve here (pkg/db/direct.go); setting it also switches the ordinary pool to QueryExecModeExec so named prepared statements cannot outlive a pooled transaction. Unset = no pooler, direct pool is the ordinary pool |
 | `FAAS_DATA_PLACEMENT` | apid | `runtime-config` |  |  | `` |  |
+| `FAAS_DB_BOOT_WAIT` | shared | `default` |  |  | `` | ADR-1344; under a Type=notify unit db.Open waits for an unreachable database while activating, extending the start timeout, instead of exiting into the restart limit. "0" restores fail-fast |
 | `FAAS_DB_NOTIFY_HUB` | shared | `default` |  |  | `` | ADR-190; "0" restores one LISTEN connection per subscriber instead of one per daemon, and selects db.DaemonMaxConnectionsNotifyHubDisabled so the daemon's pool is sized for that mode |
 | `FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS` | schedd | `default` |  |  | `` |  |
@@ -243,6 +244,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_STREAMING` | gatewayd-internal | `default` |  |  | `` | emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143) |
 | `FAAS_GATEWAY_SYNTH_SOCKET` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_SYNTH_TARGET` | schedd | `dropin` |  |  | `` |  |
+| `FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR` | gatewayd-internal | `default` |  |  | `` | ADR-1132 optional override for the node-local wake-ahead learner snapshot directory; defaults to /var/lib/faas/wake-ahead, which the unit allows writing |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
 | `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
@@ -507,6 +509,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SECRETS_SNAPSHOT_FILE` | guest | `guest` |  |  | `` | guest-init stamps the mode-0400 tmpfs snapshot path containing the atomic secret values and revision for opted-in apps |
 | `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206/279 opt-in: mint a signed caller assertion on every internal service call. Workloads can fetch public verification keys from /v1/service-caller-keys; keep this off until the deployment's verifier rollout is ready. A signing failure remains additive and forwards the call unsigned |
 | `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
+| `FAAS_SERVICE_MAP_ENABLED` | apid | `default` |  | 0 | `` | ADR-1131 operator gate for GET /v1/service-map and /dashboard/service-map; explicit 1 enables the internal preview |
 | `FAAS_SERVICE_TCP_ENABLED` | vmmd | `default` |  |  | `` | ADR-576 opt-in private TCP service addressing: new netns admit guest TCP to 198.19.0.0/16, the runtime host policy DNATs it onto the tenant-bridge service listeners, and the node records compute_nodes.service_address_ready_at. Pair with the nftables role's faas_service_tcp_enabled |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |
 | `FAAS_SIGN_KEY` | imaged | `default` |  |  | `` |  |

@@ -1135,6 +1135,8 @@ from .environment_definition import EnvironmentDefinition
 from .environment_definition_api_version import EnvironmentDefinitionApiVersion
 from .environment_definition_configuration import EnvironmentDefinitionConfiguration
 from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
+from .environment_definition_workload_pruning_policy import EnvironmentDefinitionWorkloadPruningPolicy
+from .environment_definition_workload_recoveries import EnvironmentDefinitionWorkloadRecoveries
 from .environment_definition_workloads import EnvironmentDefinitionWorkloads
 from .environment_desired_revision import EnvironmentDesiredRevision
 from .environment_field_ownership_request import EnvironmentFieldOwnershipRequest
@@ -1184,6 +1186,9 @@ from .environment_workload_activation_evidence import EnvironmentWorkloadActivat
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
+from .environment_workload_retirement import EnvironmentWorkloadRetirement
+from .environment_workload_retirement_impact import EnvironmentWorkloadRetirementImpact
+from .environment_workload_retirement_phase import EnvironmentWorkloadRetirementPhase
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
@@ -1661,6 +1666,7 @@ from .get_route_health_investigation_signal import GetRouteHealthInvestigationSi
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
+from .get_service_map_range import GetServiceMapRange
 from .get_worker_rollout_observation_scope import GetWorkerRolloutObservationScope
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
@@ -2401,9 +2407,15 @@ from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
 from .open_api_contract_unknown import OpenAPIContractUnknown
 from .operation_accepted_response import OperationAcceptedResponse
+from .operation_approval_request import OperationApprovalRequest
+from .operation_approval_request_decision import OperationApprovalRequestDecision
+from .operation_approval_spec import OperationApprovalSpec
+from .operation_approval_spec_approver import OperationApprovalSpecApprover
 from .operation_artifact_request import OperationArtifactRequest
 from .operation_artifact_upload_request import OperationArtifactUploadRequest
 from .operation_artifact_upload_response import OperationArtifactUploadResponse
+from .operation_attempt_logs import OperationAttemptLogs
+from .operation_attempt_logs_correlation import OperationAttemptLogsCorrelation
 from .operation_business_compensation import OperationBusinessCompensation
 from .operation_business_compensation_payload import OperationBusinessCompensationPayload
 from .operation_business_compensation_payload_kind import OperationBusinessCompensationPayloadKind
@@ -2471,6 +2483,7 @@ from .operation_executions_response import OperationExecutionsResponse
 from .operation_job_artifact_response import OperationJobArtifactResponse
 from .operation_job_control_response import OperationJobControlResponse
 from .operation_job_report_request import OperationJobReportRequest
+from .operation_limits import OperationLimits
 from .operation_list_response import OperationListResponse
 from .operation_milestone import OperationMilestone
 from .operation_milestone_request import OperationMilestoneRequest
@@ -2497,8 +2510,12 @@ from .operation_report_request import OperationReportRequest
 from .operation_response import OperationResponse
 from .operation_response_state import OperationResponseState
 from .operation_result_artifact import OperationResultArtifact
+from .operation_signal_receipt import OperationSignalReceipt
+from .operation_signal_request import OperationSignalRequest
 from .operation_start_request import OperationStartRequest
 from .operation_subject import OperationSubject
+from .operation_subject_signal_request import OperationSubjectSignalRequest
+from .operation_subject_signal_response import OperationSubjectSignalResponse
 from .operation_subject_spec import OperationSubjectSpec
 from .operation_submission_lookup_request import OperationSubmissionLookupRequest
 from .operation_submission_lookup_response import OperationSubmissionLookupResponse
@@ -2507,6 +2524,17 @@ from .operation_submission_scope import OperationSubmissionScope
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_timeline_attempt import OperationTimelineAttempt
+from .operation_timeline_attempt_outcome import OperationTimelineAttemptOutcome
+from .operation_timeline_entry import OperationTimelineEntry
+from .operation_timeline_entry_kind import OperationTimelineEntryKind
+from .operation_timeline_response import OperationTimelineResponse
+from .operation_timeline_response_state import OperationTimelineResponseState
+from .operation_usage import OperationUsage
+from .operation_waiting_state import OperationWaitingState
+from .operation_waiting_state_approver import OperationWaitingStateApprover
+from .operation_waiting_state_kind import OperationWaitingStateKind
+from .operation_webhook_binding_response import OperationWebhookBindingResponse
 from .operation_workflow_action_obligation import OperationWorkflowActionObligation
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
@@ -3590,6 +3618,7 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -4172,6 +4201,9 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_map_edge import ServiceMapEdge
+from .service_map_node import ServiceMapNode
+from .service_map_response import ServiceMapResponse
 from .service_reliability_policies import ServiceReliabilityPolicies
 from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
@@ -5859,6 +5891,8 @@ __all__ = (
     "EnvironmentDefinitionApiVersion",
     "EnvironmentDefinitionConfiguration",
     "EnvironmentDefinitionQueuePruningPolicy",
+    "EnvironmentDefinitionWorkloadPruningPolicy",
+    "EnvironmentDefinitionWorkloadRecoveries",
     "EnvironmentDefinitionWorkloads",
     "EnvironmentDesiredRevision",
     "EnvironmentFieldOwnershipRequest",
@@ -5906,6 +5940,9 @@ __all__ = (
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",
+    "EnvironmentWorkloadRetirement",
+    "EnvironmentWorkloadRetirementImpact",
+    "EnvironmentWorkloadRetirementPhase",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
@@ -6359,6 +6396,7 @@ __all__ = (
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
     "GetRuntimePolicyStatusEdgeRulesScope",
+    "GetServiceMapRange",
     "GetWorkerRolloutObservationScope",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
@@ -7039,9 +7077,15 @@ __all__ = (
     "OpenAPIContractDiffResponseSource",
     "OpenAPIContractUnknown",
     "OperationAcceptedResponse",
+    "OperationApprovalRequest",
+    "OperationApprovalRequestDecision",
+    "OperationApprovalSpec",
+    "OperationApprovalSpecApprover",
     "OperationArtifactRequest",
     "OperationArtifactUploadRequest",
     "OperationArtifactUploadResponse",
+    "OperationAttemptLogs",
+    "OperationAttemptLogsCorrelation",
     "OperationBusinessCompensation",
     "OperationBusinessCompensationPayload",
     "OperationBusinessCompensationPayloadKind",
@@ -7109,6 +7153,7 @@ __all__ = (
     "OperationJobArtifactResponse",
     "OperationJobControlResponse",
     "OperationJobReportRequest",
+    "OperationLimits",
     "OperationListResponse",
     "OperationMilestone",
     "OperationMilestoneRequest",
@@ -7135,8 +7180,12 @@ __all__ = (
     "OperationResponse",
     "OperationResponseState",
     "OperationResultArtifact",
+    "OperationSignalReceipt",
+    "OperationSignalRequest",
     "OperationStartRequest",
     "OperationSubject",
+    "OperationSubjectSignalRequest",
+    "OperationSubjectSignalResponse",
     "OperationSubjectSpec",
     "OperationSubmissionLookupRequest",
     "OperationSubmissionLookupResponse",
@@ -7145,6 +7194,17 @@ __all__ = (
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationTimelineAttempt",
+    "OperationTimelineAttemptOutcome",
+    "OperationTimelineEntry",
+    "OperationTimelineEntryKind",
+    "OperationTimelineResponse",
+    "OperationTimelineResponseState",
+    "OperationUsage",
+    "OperationWaitingState",
+    "OperationWaitingStateApprover",
+    "OperationWaitingStateKind",
+    "OperationWebhookBindingResponse",
     "OperationWorkflowActionObligation",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
@@ -8074,6 +8134,7 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOperationWebhookBindingRequest",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
@@ -8640,6 +8701,9 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceMapEdge",
+    "ServiceMapNode",
+    "ServiceMapResponse",
     "ServiceReliabilityPolicies",
     "ServiceReliabilityPolicy",
     "ServiceReplicas",

@@ -225,7 +225,10 @@ write the services' lifecycle setting when services are added.
 (Amended 2026-10-13: schedd metrics are prefixed `schedd_`, as every schedd
 series is. A thaw answers the gateway as a restore, as a warm-pool resume
 does; `gateway_wake_latency_seconds` stays unlabeled because ADR-092 pins it
-as a §12 contract, and thaw latency is `vmmd_thaw_seconds`.)
+as a §12 contract, and thaw latency is `vmmd_thaw_seconds`.) The canary
+watches them on `deploy/grafana/frozen-tier.json`; the `frozen_tier` alert
+family covers failing and slow thaws, freeze errors, memory-pressure parks,
+the per-node cap and quiet resume errors (`docs/runbooks/FaasFrozenTier.md`).
 
 ## Rollout
 
@@ -274,6 +277,9 @@ amendment under "Decision".)
   back to a release without the `frozen` state only after
   `schedd_frozen_instances` reads 0: an older schedd neither thaws nor parks
   a frozen row. The migration's down step parks any frozen rows left.
+- Hosts with the `zswap` role (ADR-906 decision 6) compress frozen VMs under
+  memory pressure instead of parking them; a compressed VM thaws more
+  slowly, as its pages fault back in, but still skips a snapshot restore.
 - Turning the tier on needs vmmd with `FreezeInstance` first. An older vmmd
   answers Unimplemented and the instance parks as before.
 - In the simulation, a request that finds no running VM waits 3.4 ms on

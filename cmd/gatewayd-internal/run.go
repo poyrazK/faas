@@ -3867,6 +3867,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	// wakeAheadPersisted closes after the ADR-1132 learner snapshot's final
+	// write, so shutdown can wait for it.
+	var wakeAheadPersisted chan struct{}
 	// guestServices is the same proxy, typed, so the ADR-576 TCP path shares
 	// its identity, authorizer, endpoint leases, wake and breaker.
 	var guestServices *gateway.ServiceProxy
@@ -3883,6 +3886,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
 		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics())
+		// ADR-1132: the measured evidence survives restarts and deploys
+		// through a node-local snapshot instead of being relearned.
+		wakeAheadPersisted = make(chan struct{})
+		go func(dir string) {
+			defer close(wakeAheadPersisted)
+			gateway.PersistWakeAhead(ctx, wakeAheadLearner, dir, api.ServiceWakeAheadSnapshotInterval, nil, log)
+		}(envOrGateway("FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", gateway.DefaultWakeAheadStateDir))
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
@@ -3913,6 +3923,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			EvictEndpoint:      serviceEndpointEvictor(deps.backend),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
 				releaseID, deploymentID, err := pgStore.ResolveServiceRelease(ctx, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID)
@@ -4302,6 +4313,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// upgrade wire real shutdown without touching call sites.
 		for _, s := range servers {
 			_ = s.Shutdown(shutdownCtx)
+		}
+		if wakeAheadPersisted != nil {
+			select {
+			case <-wakeAheadPersisted:
+			case <-shutdownCtx.Done():
+			}
 		}
 		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
 		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).

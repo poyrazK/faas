@@ -106,7 +106,7 @@ func (m *MemStore) deploymentLayerKeysLocked(d Deployment) []string {
 
 func (m *MemStore) deploymentLayerArtifactReferencedLocked(d Deployment) bool {
 	now := time.Now().UTC()
-	active := d.DeletedAt == nil && (d.Status == DeployLive || !d.Status.IsTerminal()) || m.workflowRetainsDeploymentLocked(d.ID)
+	active := d.DeletedAt == nil && (d.Status == DeployLive || !d.Status.IsTerminal()) || m.workflowRetainsDeploymentLocked(d.ID) || m.workloadRetirementRetainsDeploymentLocked(d.ID)
 	for _, instance := range m.instances {
 		active = active || instance.DeploymentID == d.ID && layerArtifactInstanceActive(instance.State)
 	}
