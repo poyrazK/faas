@@ -1,3 +1,5 @@
+-- filename: 20261016153050927_environment_cache_policies.sql
+
 -- +goose Up
 CREATE TABLE IF NOT EXISTS project_environment_cache_policies (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

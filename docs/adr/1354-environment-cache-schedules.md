@@ -52,5 +52,5 @@ acknowledgements. Do not disclose gateway addresses or unrelated environment dat
 At-or-after timestamps permit outage catch-up; this is not real-time scheduling.
 Executing actions cannot be cancelled or reversed. Terminal records accumulate
 until owner deletion; retention/compaction is separate work. Operators must run
-normal apid workers and install migration 20261015190000001. Updated serving
+normal apid workers and install migration 20261016153051002. Updated serving
 gateways and prior cache migrations remain necessary for convergence evidence.

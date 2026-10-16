@@ -25,7 +25,7 @@ time, cancel the original and insert a successor in one transaction. Self links
 are rejected, predecessor/successor links are unique and deferred foreign keys
 allow both links to commit together. The original remains a cancelled receipt;
 new records expose replaces_schedule_id and old ones replaced_by_schedule_id.
-This extends migration 20261015190000001 through a new append-only migration.
+This extends migration 20261016153051002 through a new append-only migration.
 
 Lock account, app and environment in existing intent order, then lock the exact
 original schedule row before inspecting pending status. Worker SKIP LOCKED claims
@@ -48,4 +48,4 @@ the successor UUID to withdraw the new delegation; cancelling its cancelled
 predecessor is an idempotent acknowledgement, not recursive cancellation. Accepted
 replacement is separate from action execution and gateway convergence. Retained
 receipts and chains grow until owner deletion; pages are not cross-request
-snapshots. Rollout requires migration 20261015200000001 then updated apid.
+snapshots. Rollout requires migration 20261016153051010 then updated apid.

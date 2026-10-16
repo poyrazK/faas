@@ -4314,7 +4314,7 @@ known rejections become terminal failures with a stable code. Execution occurs
 at or after the timestamp, including delayed recovery after outages. No recurring
 schedules, precise deadline guarantee or cancellation of in-progress actions.
 
-Roll out migration `20261015190000001`, then updated apid (including its normal
+Roll out migration `20261016153051002`, then updated apid (including its normal
 background workers). Policy convergence and purge completion also require the
 previously documented gateway observer/purge migrations and upgraded gateways.
 Design: [ADR-1354](adr/1354-environment-cache-schedules.md).
@@ -4347,7 +4347,7 @@ To withdraw the new delegation, cancel the **successor UUID**; cancelling an alr
 cancelled original is idempotent and leaves the successor scheduled. Acceptance,
 action execution and gateway convergence remain distinct.
 
-Roll out migration `20261015200000001` before updated apid. Prior schedule/gateway
+Roll out migration `20261016153051010` before updated apid. Prior schedule/gateway
 requirements remain applicable. Design: [ADR-1355](adr/1355-cache-schedule-discovery-and-replacement.md).
 
 ### Durable cache schedule activity
@@ -4376,7 +4376,7 @@ Events have a 30-day retention window plus bounded maintenance lag, and are also
 removed on account/app/project/environment physical deletion. There is no
 historical reconstruction of pruned events. Recording begins in the
 updated apid writers, with no invented backfill for earlier changes. Install
-migration `20261015210000001`, upgrade **all apid writers/workers**, and establish
+migration `20261016153051018`, upgrade **all apid writers/workers**, and establish
 an initial schedule-list baseline before relying on activity catch-up. Mixed old
 writers cannot publish events; do not enable consumers until rollout completes.
 Go, Node and Python clients expose the same bounded read endpoint.
@@ -4405,7 +4405,7 @@ convergence.
 
 ### Activity retention and recovery
 
-Migration `20261015220000001` adds a durable pruned-prefix floor. Upgrade all apid
+Migration `20261016153051026` adds a durable pruned-prefix floor. Upgrade all apid
 readers/writers before enabling consumers: old readers cannot report expired
 checkpoints correctly. Apid cleanup runs at startup and once a minute, locking
 at most 20 available environments and removing at most 1000 expired events per

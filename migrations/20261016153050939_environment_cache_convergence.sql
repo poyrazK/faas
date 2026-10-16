@@ -1,3 +1,5 @@
+-- filename: 20261016153050939_environment_cache_convergence.sql
+
 -- +goose Up
 CREATE TABLE IF NOT EXISTS environment_cache_gateway_sessions (
  node_id uuid PRIMARY KEY REFERENCES compute_nodes(id) ON DELETE CASCADE,

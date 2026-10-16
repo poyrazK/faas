@@ -1,3 +1,5 @@
+-- filename: 20261016153051018_environment_cache_schedule_activity.sql
+
 -- +goose Up
 CREATE TABLE IF NOT EXISTS environment_cache_schedule_event_counters (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

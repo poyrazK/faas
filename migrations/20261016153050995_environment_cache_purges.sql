@@ -1,3 +1,5 @@
+-- filename: 20261016153050995_environment_cache_purges.sql
+
 -- +goose Up
 CREATE TABLE IF NOT EXISTS environment_cache_purges (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY CHECK (id>0 AND id<=9007199254740991),

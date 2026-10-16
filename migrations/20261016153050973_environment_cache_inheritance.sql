@@ -1,3 +1,5 @@
+-- filename: 20261016153050973_environment_cache_inheritance.sql
+
 -- +goose Up
 -- Preserve a monotonic revision when returning to live app inheritance.
 ALTER TABLE project_environment_cache_policies ADD COLUMN IF NOT EXISTS inherited boolean NOT NULL DEFAULT false;

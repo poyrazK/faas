@@ -37,7 +37,7 @@ convergence remains independently observed.
 
 Cleanup backlog or writer contention can extend retention beyond 30 days. Batch
 bounds constrain work per transaction, not total event cardinality or scan cost.
-Install migration 20261015220000001 and upgrade all apid readers/writers before
+Install migration 20261016153051026 and upgrade all apid readers/writers before
 consumers rely on the protocol. Old readers detect gaps as conflicts rather than
 exposing recovery metadata. Rollback of pruning restores both floor and events.
 The native Problem extension is available to Go, Node and Python clients.

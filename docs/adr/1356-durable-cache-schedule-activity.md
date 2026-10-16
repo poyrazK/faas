@@ -48,7 +48,7 @@ No push destinations, recurring notifications, event filtering or pruning are
 introduced. Ledger storage grows until physical owner deletion. Each page is a
 snapshot of committed activity; a tail checkpoint remains valid for later events.
 The feed begins at upgraded writers and fabricates no historical events. Roll
-out migration 20261015210000001 and all apid writers/workers before enabling feed
+out migration 20261016153051018 and all apid writers/workers before enabling feed
 consumers; establish the initial baseline through schedule discovery. Mixed old
 writers cannot satisfy the publication guarantee. Full schedule state and sampled
 gateway evidence remain available through their existing scoped read APIs.

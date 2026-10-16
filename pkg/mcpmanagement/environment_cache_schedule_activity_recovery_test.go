@@ -15,7 +15,7 @@ func TestCacheScheduleActivityMCPExpiredRecovery(t *testing.T) {
 	opts.AllowWrites = false
 	cs, ctx := connectConfiguredTestServer(t, backend, opts, "2026-07-28")
 	initial := decodeActivity(t, callTool(t, ctx, cs, "gregale_get_environment_cache_schedule_activity", activityArgs("", 1), false)).Cursor
-	seedSchedule(t, f, time.Now().Add(time.Hour))
+	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 	if err := f.store.PruneEnvironmentCacheScheduleActivity(ctx, time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestCacheScheduleActivityMCPExpiredRecovery(t *testing.T) {
 		if string(out["code"]) != `"cursor_expired"` || json.Unmarshal(out["activity_recovery"], &recovery) != nil || recovery.EnvironmentID != f.env.ID || recovery.RestartCursor == "" {
 			t.Fatal(out)
 		}
-		seedSchedule(t, f, time.Now().Add(time.Hour))
+		seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 		page := decodeActivity(t, callTool(t, ctx, cs, tool, activityArgs(recovery.RestartCursor, 1), false))
 		if len(page.Entries) != 1 {
 			t.Fatal("recovery missed concurrent event", page)
@@ -101,7 +101,7 @@ func TestCacheScheduleActivityMCPWatchExpiresDuringWait(t *testing.T) {
 		if r.URL.Path == "/v1/apps/alpha/cache/schedules/activity" {
 			reads++
 			if reads == 2 {
-				seedSchedule(t, f, time.Now().Add(time.Hour))
+				seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 				if err := f.store.PruneEnvironmentCacheScheduleActivity(r.Context(), time.Now().Add(time.Minute)); err != nil {
 					t.Error(err)
 				}

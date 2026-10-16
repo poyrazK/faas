@@ -190,7 +190,7 @@ func TestEnvironmentCacheHistoryMigrationBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, file, _, _ := runtime.Caller(0)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../migrations/20261015170000001_environment_cache_policy_history.sql"))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../migrations/20261016153050985_environment_cache_policy_history.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}

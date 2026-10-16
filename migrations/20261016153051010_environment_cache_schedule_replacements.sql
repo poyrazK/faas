@@ -1,3 +1,5 @@
+-- filename: 20261016153051010_environment_cache_schedule_replacements.sql
+
 -- +goose Up
 ALTER TABLE environment_cache_schedules DROP CONSTRAINT IF EXISTS environment_cache_schedule_replaces;
 ALTER TABLE environment_cache_schedules DROP CONSTRAINT IF EXISTS environment_cache_schedule_replaced;

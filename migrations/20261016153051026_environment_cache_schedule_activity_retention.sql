@@ -1,3 +1,5 @@
+-- filename: 20261016153051026_environment_cache_schedule_activity_retention.sql
+
 -- +goose Up
 ALTER TABLE environment_cache_schedule_event_counters
  ADD COLUMN IF NOT EXISTS pruned_through bigint NOT NULL DEFAULT 0 CHECK (pruned_through>=0 AND pruned_through<=last_sequence);

@@ -1,3 +1,5 @@
+-- filename: 20261016153050917_scoped_route_content_provenance.sql
+
 -- Deployment-isolated learned cacheability (ADR-1345).
 -- +goose Up
 ALTER TABLE request_telemetry DROP CONSTRAINT request_telemetry_content_outcome_check;

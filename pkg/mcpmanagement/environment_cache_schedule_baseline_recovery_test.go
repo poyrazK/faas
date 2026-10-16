@@ -34,7 +34,7 @@ func decodeBaseline(t *testing.T, out map[string]json.RawMessage) environmentSch
 func TestCacheScheduleBaselineRecoveryReconnectAndCatchUp(t *testing.T) {
 	f, b, opts := newEnvironmentScheduleFixture(t)
 	opts.AllowWrites = false
-	seedSchedule(t, f, time.Now().Add(time.Hour))
+	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 	seedSchedule(t, f, time.Now().Add(2*time.Hour))
 	cs, ctx := connectConfiguredTestServer(t, b, opts, "2026-07-28")
 	first := decodeBaseline(t, callTool(t, ctx, cs, recoverActivityTool, recoveryArgs("", 1), false))
@@ -75,7 +75,7 @@ func TestCacheScheduleBaselineRecoveryEmptyAndConcurrentCreation(t *testing.T) {
 			b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if create && !listed && r.URL.Path == "/v1/apps/alpha/cache/schedules" {
 					listed = true
-					seedSchedule(t, f, time.Now().Add(time.Hour))
+					seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 				}
 				base.Config.Handler.ServeHTTP(w, r)
 			}))
@@ -100,7 +100,7 @@ func TestCacheScheduleBaselineRecoveryEmptyAndConcurrentCreation(t *testing.T) {
 
 func TestCacheScheduleBaselineRecoveryRejectsInvalidTokens(t *testing.T) {
 	f, b, opts := newEnvironmentScheduleFixture(t)
-	seedSchedule(t, f, time.Now().Add(time.Hour))
+	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 	seedSchedule(t, f, time.Now().Add(2*time.Hour))
 	cs, ctx := connectConfiguredTestServer(t, b, opts, "2026-07-28")
 	first := decodeBaseline(t, callTool(t, ctx, cs, recoverActivityTool, recoveryArgs("", 1), false))
@@ -147,7 +147,7 @@ func TestCacheScheduleBaselineRecoveryRejectsInvalidTokens(t *testing.T) {
 
 func TestCacheScheduleBaselineRecoveryRestartsWhenOvertaken(t *testing.T) {
 	f, b, opts := newEnvironmentScheduleFixture(t)
-	seedSchedule(t, f, time.Now().Add(time.Hour))
+	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 	seedSchedule(t, f, time.Now().Add(2*time.Hour))
 	cs, ctx := connectConfiguredTestServer(t, b, opts, "2026-07-28")
 	first := decodeBaseline(t, callTool(t, ctx, cs, recoverActivityTool, recoveryArgs("", 1), false))
@@ -174,7 +174,7 @@ func TestCacheScheduleBaselineRecoveryWithholdsOvertakenOrRevokedPage(t *testing
 	for _, mode := range []string{"retention", "revoked"} {
 		t.Run(mode, func(t *testing.T) {
 			f, base, opts := newEnvironmentScheduleFixture(t)
-			seedSchedule(t, f, time.Now().Add(time.Hour))
+			seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 			revoked := false
 			b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if revoked {
@@ -259,7 +259,7 @@ func TestCacheScheduleBaselineRecoveryRejectsForgedCheckpoint(t *testing.T) {
 
 func TestCacheScheduleBaselineRecoveryCancellationRetriesSameToken(t *testing.T) {
 	f, base, opts := newEnvironmentScheduleFixture(t)
-	seedSchedule(t, f, time.Now().Add(time.Hour))
+	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 	seedSchedule(t, f, time.Now().Add(2*time.Hour))
 	var block atomic.Bool
 	entered, released := make(chan struct{}), make(chan struct{})

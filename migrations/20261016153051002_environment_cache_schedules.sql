@@ -1,3 +1,5 @@
+-- filename: 20261016153051002_environment_cache_schedules.sql
+
 -- +goose Up
 CREATE TABLE IF NOT EXISTS environment_cache_schedules (
  schedule_id uuid PRIMARY KEY,
