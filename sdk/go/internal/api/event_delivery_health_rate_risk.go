@@ -13,6 +13,7 @@ import (
 // Growth measures net pending-count increases between complete observations while
 // the shared token bucket is throttled. DeadlineRisk counts modeled/expired risks.
 type EventDeliveryRateRiskOptions struct {
+	DeadlineWindow  *EventDeliveryDeadlineWindowOptions
 	ThrottledGrowth int64
 	DeadlineRisk    int64
 	DeadlineWithin  time.Duration
@@ -23,6 +24,9 @@ type EventDeliveryRateRiskOptions struct {
 // EventDeliveryRateEvidence is a local proof diagnostic, never a reservation.
 // Risk-detail truncation is independent of complete aggregate pending coverage.
 type EventDeliveryRateEvidence struct {
+	DeadlineWindow            *EventSubscriptionDeadlineWindow `json:"deadline_window,omitempty"`
+	WindowEvidenceAvailable   bool                             `json:"window_evidence_available"`
+	WindowEvidenceReason      string                           `json:"window_evidence_reason"`
 	Status                    string                           `json:"status"`
 	Reason                    string                           `json:"reason"`
 	Summary                   *EventSubscriptionPendingSummary `json:"summary,omitempty"`
@@ -54,7 +58,8 @@ func rateDeadlineWindow(metric string) (time.Duration, bool) {
 }
 func deliveryRateRiskMetric(metric string) bool {
 	_, deadline := rateDeadlineWindow(metric)
-	return deadline || metric == "pending_summary.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
+	_, _, countWindow := deadlineCountWindow(metric)
+	return countWindow || deadline || metric == "pending_summary.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
 }
 func rateRiskPolicy(o EventDeliveryRateRiskOptions) (time.Duration, time.Duration) {
 	sustain, recovery := o.Sustain, o.RecoverySustain
@@ -71,11 +76,14 @@ func validateRateRiskOptions(o *EventDeliveryRateRiskOptions) error {
 		return nil
 	}
 	sustain, recovery := rateRiskPolicy(*o)
+	if err := validateDeadlineWindowOptions(o.DeadlineWindow); err != nil {
+		return err
+	}
 	if o.DeadlineWithin < 0 || o.DeadlineWithin > EventDeliveryHealthWatchThresholdMax || (o.DeadlineWithin > 0 && (o.DeadlineWithin < EventDeliveryHealthWatchThresholdMin || o.DeadlineWithin%time.Millisecond != 0)) {
 		return ErrValidation("deadline window must be whole milliseconds within watch duration bounds")
 	}
 
-	if o.ThrottledGrowth < 0 || o.DeadlineRisk < 0 || o.ThrottledGrowth > EventSubscriptionPendingSummaryCountMax || o.DeadlineRisk > EventSubscriptionRatePreviewSampleMax || o.ThrottledGrowth == 0 && o.DeadlineRisk == 0 && o.DeadlineWithin == 0 || sustain < EventDeliveryHealthWatchThresholdMin || sustain > EventDeliveryHealthWatchThresholdMax || recovery < EventDeliveryHealthWatchThresholdMin || recovery > EventDeliveryHealthWatchThresholdMax {
+	if o.ThrottledGrowth < 0 || o.DeadlineRisk < 0 || o.ThrottledGrowth > EventSubscriptionPendingSummaryCountMax || o.DeadlineRisk > EventSubscriptionRatePreviewSampleMax || o.ThrottledGrowth == 0 && o.DeadlineRisk == 0 && o.DeadlineWithin == 0 && o.DeadlineWindow == nil || sustain < EventDeliveryHealthWatchThresholdMin || sustain > EventDeliveryHealthWatchThresholdMax || recovery < EventDeliveryHealthWatchThresholdMin || recovery > EventDeliveryHealthWatchThresholdMax {
 		return ErrValidation("rate-risk alerts require enabled bounded thresholds and bounded warning/recovery sustain durations")
 	}
 	return nil
@@ -97,6 +105,7 @@ func newRateRiskConditions(o *EventDeliveryRateRiskOptions) []*deliveryHealthCon
 	if o.DeadlineWithin > 0 {
 		out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: "pending_summary.deadline_within_millis." + strconv.FormatInt(o.DeadlineWithin.Milliseconds(), 10), State: "unknown", Threshold: 1, MinimumSamples: 2, SustainSeconds: sustain.Seconds(), RecoveryThreshold: 0, RecoverySustainSeconds: recovery.Seconds()}})
 	}
+	out = append(out, newDeadlineWindowConditions(o.DeadlineWindow, sustain, recovery)...)
 	return out
 }
 func validRateRiskCondition(c EventDeliveryHealthCondition) bool {
@@ -249,9 +258,23 @@ func validatePendingSummaryEvidence(p EventSubscriptionPendingSummary, appID, su
 	return validateRatePreviewEvidence(controls, appID, sub)
 }
 
-func (c *Client) readDeliveryRateEvidence(ctx context.Context, app, sub, appID string, tracker *deliveryRateTracker, maxAge time.Duration, modeled bool) *EventDeliveryRateEvidence {
+func (c *Client) readDeliveryRateEvidence(ctx context.Context, app, sub, appID string, tracker *deliveryRateTracker, maxAge time.Duration, modeled bool, window *EventDeliveryDeadlineWindowOptions) *EventDeliveryRateEvidence {
 	out := &EventDeliveryRateEvidence{Status: "unknown", Reason: "summary_read_failure", Contributors: "evidence_unavailable", DeadlineEvidenceReason: "deadline_evidence_unavailable", PreviewEvidenceReason: "not_requested"}
-	summary, err := c.GetEventSubscriptionPendingSummary(ctx, app, sub)
+	var summary EventSubscriptionPendingSummary
+	var err error
+	if window == nil {
+		summary, err = c.GetEventSubscriptionPendingSummary(ctx, app, sub)
+	} else {
+		var counts EventSubscriptionDeadlineWindow
+		counts, err = c.GetEventSubscriptionDeadlineWindow(ctx, app, sub, window.Within.Milliseconds())
+		out.DeadlineWindow = &counts
+		summary = counts.Summary
+		out.WindowEvidenceAvailable = err == nil && counts.WithinMillis == window.Within.Milliseconds() && EventSubscriptionDeadlineWindowCountsComplete(counts)
+		out.WindowEvidenceReason = "deadline_window_evidence_unavailable"
+		if out.WindowEvidenceAvailable {
+			out.WindowEvidenceReason = "complete_deadline_window_available"
+		}
+	}
 	if err != nil {
 		tracker.previous = nil
 		return out
@@ -334,7 +357,15 @@ func updateDeliveryRateRiskCondition(out *EventDeliveryHealthWatchResult, c *del
 		observed = evidence.Summary.ObservedAt
 	}
 	if valid {
-		if within, isDeadline := rateDeadlineWindow(c.Metric); isDeadline {
+		if within, expired, isWindow := deadlineCountWindow(c.Metric); isWindow {
+			valid = evidence.WindowEvidenceAvailable && evidence.DeadlineWindow != nil && evidence.DeadlineWindow.WithinMillis == within.Milliseconds()
+			if valid {
+				value = float64(evidence.DeadlineWindow.UpcomingRecipients)
+				if expired {
+					value = float64(evidence.Summary.AlreadyExpiredCount)
+				}
+			}
+		} else if within, isDeadline := rateDeadlineWindow(c.Metric); isDeadline {
 			if evidence.Summary.EarliestDeadlineAt != nil && !evidence.Summary.EarliestDeadlineAt.After(observed.Add(within)) {
 				value = 1
 			}

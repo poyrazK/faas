@@ -12,6 +12,9 @@ from ...models.event_subscription_deadline_page import EventSubscriptionDeadline
 from ...models.list_event_subscription_deadlines_status import (
     ListEventSubscriptionDeadlinesStatus,
 )
+from ...models.list_event_subscription_deadlines_waiting_reason import (
+    ListEventSubscriptionDeadlinesWaitingReason,
+)
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -25,6 +28,8 @@ def _get_kwargs(
     status: ListEventSubscriptionDeadlinesStatus | Unset = "all",
     cursor: str | Unset = UNSET,
     limit: int | Unset = 50,
+    within_millis: int | Unset = UNSET,
+    waiting_reason: ListEventSubscriptionDeadlinesWaitingReason | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -48,6 +53,14 @@ def _get_kwargs(
     params["cursor"] = cursor
 
     params["limit"] = limit
+
+    params["within_millis"] = within_millis
+
+    json_waiting_reason: str | Unset = UNSET
+    if not isinstance(waiting_reason, Unset):
+        json_waiting_reason = waiting_reason
+
+    params["waiting_reason"] = json_waiting_reason
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -123,6 +136,8 @@ def sync_detailed(
     status: ListEventSubscriptionDeadlinesStatus | Unset = "all",
     cursor: str | Unset = UNSET,
     limit: int | Unset = 50,
+    within_millis: int | Unset = UNSET,
+    waiting_reason: ListEventSubscriptionDeadlinesWaitingReason | Unset = UNSET,
 ) -> Response[EventSubscriptionDeadlinePage | Problem]:
     """List pending deliveries by effective deadline.
 
@@ -146,6 +161,8 @@ def sync_detailed(
         status (ListEventSubscriptionDeadlinesStatus | Unset):  Default: 'all'.
         cursor (str | Unset):
         limit (int | Unset):  Default: 50.
+        within_millis (int | Unset):
+        waiting_reason (ListEventSubscriptionDeadlinesWaitingReason | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,6 +180,8 @@ def sync_detailed(
         status=status,
         cursor=cursor,
         limit=limit,
+        within_millis=within_millis,
+        waiting_reason=waiting_reason,
     )
 
     response = client.get_httpx_client().request(
@@ -182,6 +201,8 @@ def sync(
     status: ListEventSubscriptionDeadlinesStatus | Unset = "all",
     cursor: str | Unset = UNSET,
     limit: int | Unset = 50,
+    within_millis: int | Unset = UNSET,
+    waiting_reason: ListEventSubscriptionDeadlinesWaitingReason | Unset = UNSET,
 ) -> EventSubscriptionDeadlinePage | Problem | None:
     """List pending deliveries by effective deadline.
 
@@ -205,6 +226,8 @@ def sync(
         status (ListEventSubscriptionDeadlinesStatus | Unset):  Default: 'all'.
         cursor (str | Unset):
         limit (int | Unset):  Default: 50.
+        within_millis (int | Unset):
+        waiting_reason (ListEventSubscriptionDeadlinesWaitingReason | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -223,6 +246,8 @@ def sync(
         status=status,
         cursor=cursor,
         limit=limit,
+        within_millis=within_millis,
+        waiting_reason=waiting_reason,
     ).parsed
 
 
@@ -236,6 +261,8 @@ async def asyncio_detailed(
     status: ListEventSubscriptionDeadlinesStatus | Unset = "all",
     cursor: str | Unset = UNSET,
     limit: int | Unset = 50,
+    within_millis: int | Unset = UNSET,
+    waiting_reason: ListEventSubscriptionDeadlinesWaitingReason | Unset = UNSET,
 ) -> Response[EventSubscriptionDeadlinePage | Problem]:
     """List pending deliveries by effective deadline.
 
@@ -259,6 +286,8 @@ async def asyncio_detailed(
         status (ListEventSubscriptionDeadlinesStatus | Unset):  Default: 'all'.
         cursor (str | Unset):
         limit (int | Unset):  Default: 50.
+        within_millis (int | Unset):
+        waiting_reason (ListEventSubscriptionDeadlinesWaitingReason | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -276,6 +305,8 @@ async def asyncio_detailed(
         status=status,
         cursor=cursor,
         limit=limit,
+        within_millis=within_millis,
+        waiting_reason=waiting_reason,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -293,6 +324,8 @@ async def asyncio(
     status: ListEventSubscriptionDeadlinesStatus | Unset = "all",
     cursor: str | Unset = UNSET,
     limit: int | Unset = 50,
+    within_millis: int | Unset = UNSET,
+    waiting_reason: ListEventSubscriptionDeadlinesWaitingReason | Unset = UNSET,
 ) -> EventSubscriptionDeadlinePage | Problem | None:
     """List pending deliveries by effective deadline.
 
@@ -316,6 +349,8 @@ async def asyncio(
         status (ListEventSubscriptionDeadlinesStatus | Unset):  Default: 'all'.
         cursor (str | Unset):
         limit (int | Unset):  Default: 50.
+        within_millis (int | Unset):
+        waiting_reason (ListEventSubscriptionDeadlinesWaitingReason | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -335,5 +370,7 @@ async def asyncio(
             status=status,
             cursor=cursor,
             limit=limit,
+            within_millis=within_millis,
+            waiting_reason=waiting_reason,
         )
     ).parsed

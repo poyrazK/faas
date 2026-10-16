@@ -67,6 +67,14 @@ func parseSubscriptionDeadlineQuery(rawQuery string) (api.EventSubscriptionDeadl
 			} else {
 				q.DeadlineBefore = &at
 			}
+		case "within_millis":
+			n, err := strconv.ParseInt(raw[0], 10, 64)
+			if err != nil || !api.ValidEventSubscriptionDeadlineWindow(n) {
+				return q, state.ErrInvalidArgument
+			}
+			q.WithinMillis = n
+		case "waiting_reason":
+			q.WaitingReason = raw[0]
 		case "status":
 			q.Status = raw[0]
 		case "cursor":

@@ -11,6 +11,8 @@ import (
 
 // EventSubscriptionDeadlineQuery selects effective deadlines, never modeled slots.
 type EventSubscriptionDeadlineQuery struct {
+	WithinMillis   int64  `json:"WithinMillis,omitempty"`
+	WaitingReason  string `json:"WaitingReason,omitempty"`
 	DeadlineFrom   *time.Time
 	DeadlineBefore *time.Time
 	Status         string
@@ -19,6 +21,15 @@ type EventSubscriptionDeadlineQuery struct {
 }
 
 func (q EventSubscriptionDeadlineQuery) Validate() error {
+	if q.WithinMillis != 0 && (!ValidEventSubscriptionDeadlineWindow(q.WithinMillis) || q.Status == "expired") {
+		return fmt.Errorf("within_millis requires an upcoming deadline window of 100..86400000 ms")
+	}
+	if q.WaitingReason != "" {
+		if _, ok := NewEventPendingWaitingReasonCounts()[q.WaitingReason]; !ok {
+			return fmt.Errorf("unknown waiting_reason")
+		}
+	}
+
 	if q.Status != "" && q.Status != "all" && q.Status != "expired" && q.Status != "upcoming" {
 		return fmt.Errorf("status must be all, expired or upcoming")
 	}
@@ -65,6 +76,12 @@ func (c *Client) ListEventSubscriptionDeadlines(ctx context.Context, app, sub st
 		return out, ErrValidation(err.Error())
 	}
 	values := url.Values{}
+	if q.WithinMillis != 0 {
+		values.Set("within_millis", strconv.FormatInt(q.WithinMillis, 10))
+	}
+	if q.WaitingReason != "" {
+		values.Set("waiting_reason", q.WaitingReason)
+	}
 	if q.DeadlineFrom != nil {
 		values.Set("deadline_from", q.DeadlineFrom.UTC().Format(time.RFC3339Nano))
 	}

@@ -248,6 +248,10 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
 	if o.RateRisk != nil {
 		snapshot := *o.RateRisk
+		if snapshot.DeadlineWindow != nil {
+			window := *snapshot.DeadlineWindow
+			snapshot.DeadlineWindow = &window
+		}
 		o.RateRisk = &snapshot
 	}
 	if o.SLO != nil {
@@ -334,7 +338,7 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 		binding = binding && strings.EqualFold(appID, health.Routing.AppID)
 		if o.RateRisk != nil {
 			if binding {
-				out.RateEvidence = c.readDeliveryRateEvidence(ctx, app, sub, appID, &rateTracker, o.MaxAge, o.RateRisk.DeadlineRisk > 0)
+				out.RateEvidence = c.readDeliveryRateEvidence(ctx, app, sub, appID, &rateTracker, o.MaxAge, o.RateRisk.DeadlineRisk > 0, o.RateRisk.DeadlineWindow)
 			} else {
 				rateTracker.previous = nil
 				out.RateEvidence = &EventDeliveryRateEvidence{Status: "unknown", Reason: "binding_mismatch", Contributors: "evidence_unavailable"}

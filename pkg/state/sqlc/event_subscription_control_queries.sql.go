@@ -358,12 +358,14 @@ WITH deadlines AS (
  WHERE b.account_id=$2::uuid AND b.app_id=$3::uuid AND b.subscription_id=$4::text AND b.consumer_kind='application' AND b.routing_state='pending' AND b.accepted_at<=$5::timestamptz
 ), page AS MATERIALIZED (
  SELECT outbox_id, accepted_at, next_attempt_at, lease_until, routing_mode, capacity_scope, source, event_id, deadline_at FROM deadlines WHERE deadline_at IS NOT NULL
- AND ($6::timestamptz IS NULL OR deadline_at>=$6::timestamptz)
- AND ($7::timestamptz IS NULL OR deadline_at<$7::timestamptz)
- AND ($8::text<>'expired' OR deadline_at<=$5::timestamptz)
- AND ($8::text<>'upcoming' OR deadline_at>$5::timestamptz)
- AND (NOT $9::boolean OR (deadline_at,accepted_at,outbox_id)>($10::timestamptz,$11::timestamptz,$12::bigint))
- ORDER BY deadline_at,accepted_at,outbox_id LIMIT $13::integer
+ AND ($6::bigint=0 OR deadline_at<$5::timestamptz+$6::bigint*interval '1 millisecond')
+ AND ($7::text='' OR (CASE WHEN NOT (routing_mode='event' AND coalesce(lease_until>$1::timestamptz,false)) AND event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz)<>'' THEN event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz) ELSE event_backlog_waiting_reason('pending',capacity_scope,routing_mode,lease_until,next_attempt_at,'application',NULL,$1::timestamptz) END)=$7::text)
+ AND ($8::timestamptz IS NULL OR deadline_at>=$8::timestamptz)
+ AND ($9::timestamptz IS NULL OR deadline_at<$9::timestamptz)
+ AND ($10::text<>'expired' OR deadline_at<=$5::timestamptz)
+ AND ($10::text<>'upcoming' OR deadline_at>$5::timestamptz)
+ AND (NOT $11::boolean OR (deadline_at,accepted_at,outbox_id)>($12::timestamptz,$13::timestamptz,$14::bigint))
+ ORDER BY deadline_at,accepted_at,outbox_id LIMIT $15::integer
 )
 SELECT page.outbox_id, page.accepted_at, page.next_attempt_at, page.lease_until, page.routing_mode, page.capacity_scope, page.source, page.event_id, page.deadline_at,(CASE WHEN NOT (page.routing_mode='event' AND coalesce(page.lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',page.capacity_scope,page.routing_mode,page.lease_until,page.next_attempt_at,'application',NULL,$1::timestamptz) END)::text AS waiting_reason
 FROM page CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz) AS reason) control
@@ -376,6 +378,8 @@ type EventSubscriptionDeadlinePageParams struct {
 	AppID           pgtype.UUID
 	SubscriptionID  string
 	WindowAt        pgtype.Timestamptz
+	WithinMillis    int64
+	WaitingReason   string
 	DeadlineFrom    pgtype.Timestamptz
 	DeadlineBefore  pgtype.Timestamptz
 	StatusFilter    string
@@ -406,6 +410,8 @@ func (q *Queries) EventSubscriptionDeadlinePage(ctx context.Context, db DBTX, ar
 		arg.AppID,
 		arg.SubscriptionID,
 		arg.WindowAt,
+		arg.WithinMillis,
+		arg.WaitingReason,
 		arg.DeadlineFrom,
 		arg.DeadlineBefore,
 		arg.StatusFilter,
@@ -433,6 +439,89 @@ func (q *Queries) EventSubscriptionDeadlinePage(ctx context.Context, db DBTX, ar
 			&i.EventID,
 			&i.DeadlineAt,
 			&i.WaitingReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventSubscriptionDeadlineWindowCounts = `-- name: EventSubscriptionDeadlineWindowCounts :many
+WITH pending AS (
+ SELECT b.accepted_at,b.next_attempt_at,b.lease_until,b.routing_mode,b.capacity_scope,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=$3::uuid AND b.app_id=$4::uuid AND b.subscription_id=$5::text AND b.consumer_kind='application' AND b.routing_state='pending'
+), control AS MATERIALIZED (
+ SELECT event_subscription_delivery_waiting_reason($3::uuid,$4::uuid,$5::text,$1::timestamptz) AS reason
+)
+SELECT observation.reason::text AS waiting_reason,
+ count(*)::bigint AS pending_recipients,count(deadline_at)::bigint AS deadline_recipients,
+ count(*) FILTER (WHERE deadline_at<=$1::timestamptz)::bigint AS expired_recipients,
+ count(*) FILTER (WHERE deadline_at>$1::timestamptz AND deadline_at<$2::timestamptz)::bigint AS upcoming_recipients,
+ min(deadline_at) FILTER (WHERE isfinite(deadline_at))::timestamptz AS earliest_deadline_at,
+ min(deadline_at) FILTER (WHERE deadline_at>$1::timestamptz AND deadline_at<$2::timestamptz AND isfinite(deadline_at))::timestamptz AS earliest_upcoming_deadline_at,
+ coalesce(bool_or(accepted_at IS NULL OR NOT isfinite(accepted_at) OR accepted_at>$1::timestamptz OR (deadline_at IS NOT NULL AND NOT isfinite(deadline_at)) OR (next_attempt_at IS NOT NULL AND NOT isfinite(next_attempt_at)) OR (lease_until IS NOT NULL AND NOT isfinite(lease_until))),false)::boolean AS clock_invalid,
+ coalesce(bool_or(lease_until>$1::timestamptz),false)::boolean AS active_leases,
+ coalesce(bool_or(next_attempt_at>$1::timestamptz),false)::boolean AS scheduled_retries
+FROM pending CROSS JOIN control CROSS JOIN LATERAL (
+ SELECT CASE WHEN deadline_at<=$1::timestamptz OR deadline_at<$2::timestamptz THEN
+ CASE WHEN NOT (routing_mode='event' AND coalesce(lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',capacity_scope,routing_mode,lease_until,next_attempt_at,'application',NULL,$1::timestamptz) END ELSE '' END AS reason
+) observation GROUP BY observation.reason
+`
+
+type EventSubscriptionDeadlineWindowCountsParams struct {
+	ObservedAt     pgtype.Timestamptz
+	WindowEndAt    pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+type EventSubscriptionDeadlineWindowCountsRow struct {
+	WaitingReason              string
+	PendingRecipients          int64
+	DeadlineRecipients         int64
+	ExpiredRecipients          int64
+	UpcomingRecipients         int64
+	EarliestDeadlineAt         pgtype.Timestamptz
+	EarliestUpcomingDeadlineAt pgtype.Timestamptz
+	ClockInvalid               bool
+	ActiveLeases               bool
+	ScheduledRetries           bool
+}
+
+func (q *Queries) EventSubscriptionDeadlineWindowCounts(ctx context.Context, db DBTX, arg EventSubscriptionDeadlineWindowCountsParams) ([]EventSubscriptionDeadlineWindowCountsRow, error) {
+	rows, err := db.Query(ctx, eventSubscriptionDeadlineWindowCounts,
+		arg.ObservedAt,
+		arg.WindowEndAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionDeadlineWindowCountsRow{}
+	for rows.Next() {
+		var i EventSubscriptionDeadlineWindowCountsRow
+		if err := rows.Scan(
+			&i.WaitingReason,
+			&i.PendingRecipients,
+			&i.DeadlineRecipients,
+			&i.ExpiredRecipients,
+			&i.UpcomingRecipients,
+			&i.EarliestDeadlineAt,
+			&i.EarliestUpcomingDeadlineAt,
+			&i.ClockInvalid,
+			&i.ActiveLeases,
+			&i.ScheduledRetries,
 		); err != nil {
 			return nil, err
 		}

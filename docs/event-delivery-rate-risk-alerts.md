@@ -4,7 +4,8 @@ The Go SDK delivery-health watch supports opt-in `RateRisk` conditions using
 [full pending summaries](event-subscription-pending-summary.md) and optional
 [read-only rate previews](event-subscription-rate-preview.md). This adds no server
 scheduler, automatic notification destination, configuration mutation or migration.
-The watch reads health and a full pending summary, then a matching rate preview
+The watch reads health and a full pending summary (nested in a deadline-window
+response when that option is selected), then a matching rate preview
 only when modeled-risk monitoring is selected. Configuration changes between the
 summary and preview make model evidence unknown; summary-based evidence remains
 independent. The next poll refreshes both.
@@ -30,7 +31,7 @@ result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, subscriptionID,
     })
 ```
 
-Set a count or DeadlineWithin to zero to disable that condition. All three disabled is invalid.
+Set a count or DeadlineWithin to zero to disable that condition. All three disabled is invalid unless DeadlineWindow count conditions are enabled.
 DeadlineWithin accepts whole milliseconds from 100 ms through 24 h.
 Growth thresholds range from 1 through the exact JSON count bound 9007199254740991.
 Modeled-risk thresholds range from 1 through the preview sample bound of 1000. Warning and recovery
@@ -120,3 +121,7 @@ rebuilt from fresh evidence. A valid first growth baseline waits for a compariso
 it does not resolve a resumed incident. Subsequent evidence loss closes confirmation
 with `confirmation_lost`; it never claims recovery. Resume cannot restore live proof
 from a checkpoint, nor can callbacks mutate the watch's internal progress snapshots.
+
+For complete upcoming counts and separate expired waiting-reason partitions, use
+[deadline-window monitoring](event-subscription-deadline-window.md). It adds optional
+sustained count alerts and matching relative-window/reason triage filters.

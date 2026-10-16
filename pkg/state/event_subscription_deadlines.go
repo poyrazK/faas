@@ -47,7 +47,7 @@ func (s *PgStore) ListEventSubscriptionDeadlines(ctx context.Context, account, a
 	if err != nil {
 		return zero, err
 	}
-	rows, err := q.EventSubscriptionDeadlinePage(ctx, tx, sqlc.EventSubscriptionDeadlinePageParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: stamp, WindowAt: pgtypeFromTime(cursor.WindowAt), DeadlineFrom: nullableTimestamptzPtr(normalized.DeadlineFrom), DeadlineBefore: nullableTimestamptzPtr(normalized.DeadlineBefore), StatusFilter: normalized.Status, HasAfter: normalized.Cursor != "", AfterDeadlineAt: nullableTimestamptz(cursor.DeadlineAt), AfterAcceptedAt: nullableTimestamptz(cursor.AcceptedAt), AfterOutboxID: cursor.OutboxID, PageLimit: int32(normalized.Limit + 1)})
+	rows, err := q.EventSubscriptionDeadlinePage(ctx, tx, sqlc.EventSubscriptionDeadlinePageParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: canonicalMemUUID(sub), ObservedAt: stamp, WindowAt: pgtypeFromTime(cursor.WindowAt), DeadlineFrom: nullableTimestamptzPtr(normalized.DeadlineFrom), DeadlineBefore: nullableTimestamptzPtr(normalized.DeadlineBefore), StatusFilter: normalized.Status, WithinMillis: normalized.WithinMillis, WaitingReason: normalized.WaitingReason, HasAfter: normalized.Cursor != "", AfterDeadlineAt: nullableTimestamptz(cursor.DeadlineAt), AfterAcceptedAt: nullableTimestamptz(cursor.AcceptedAt), AfterOutboxID: cursor.OutboxID, PageLimit: int32(normalized.Limit + 1)})
 	if err != nil {
 		return zero, pendingSummaryError(err)
 	}

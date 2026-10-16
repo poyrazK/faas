@@ -157,6 +157,8 @@ WITH deadlines AS (
  WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uuid AND b.subscription_id=sqlc.arg(subscription_id)::text AND b.consumer_kind='application' AND b.routing_state='pending' AND b.accepted_at<=sqlc.arg(window_at)::timestamptz
 ), page AS MATERIALIZED (
  SELECT * FROM deadlines WHERE deadline_at IS NOT NULL
+ AND (sqlc.arg(within_millis)::bigint=0 OR deadline_at<sqlc.arg(window_at)::timestamptz+sqlc.arg(within_millis)::bigint*interval '1 millisecond')
+ AND (sqlc.arg(waiting_reason)::text='' OR (CASE WHEN NOT (routing_mode='event' AND coalesce(lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND event_subscription_delivery_waiting_reason(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(subscription_id)::text,sqlc.arg(observed_at)::timestamptz)<>'' THEN event_subscription_delivery_waiting_reason(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(subscription_id)::text,sqlc.arg(observed_at)::timestamptz) ELSE event_backlog_waiting_reason('pending',capacity_scope,routing_mode,lease_until,next_attempt_at,'application',NULL,sqlc.arg(observed_at)::timestamptz) END)=sqlc.arg(waiting_reason)::text)
  AND (sqlc.narg(deadline_from)::timestamptz IS NULL OR deadline_at>=sqlc.narg(deadline_from)::timestamptz)
  AND (sqlc.narg(deadline_before)::timestamptz IS NULL OR deadline_at<sqlc.narg(deadline_before)::timestamptz)
  AND (sqlc.arg(status_filter)::text<>'expired' OR deadline_at<=sqlc.arg(window_at)::timestamptz)
@@ -167,3 +169,27 @@ WITH deadlines AS (
 SELECT page.*,(CASE WHEN NOT (page.routing_mode='event' AND coalesce(page.lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',page.capacity_scope,page.routing_mode,page.lease_until,page.next_attempt_at,'application',NULL,sqlc.arg(observed_at)::timestamptz) END)::text AS waiting_reason
 FROM page CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(subscription_id)::text,sqlc.arg(observed_at)::timestamptz) AS reason) control
 ORDER BY page.deadline_at,page.accepted_at,page.outbox_id;
+
+-- name: EventSubscriptionDeadlineWindowCounts :many
+WITH pending AS (
+ SELECT b.accepted_at,b.next_attempt_at,b.lease_until,b.routing_mode,b.capacity_scope,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.app_id=sqlc.arg(app_id)::uuid AND b.subscription_id=sqlc.arg(subscription_id)::text AND b.consumer_kind='application' AND b.routing_state='pending'
+), control AS MATERIALIZED (
+ SELECT event_subscription_delivery_waiting_reason(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(subscription_id)::text,sqlc.arg(observed_at)::timestamptz) AS reason
+)
+SELECT observation.reason::text AS waiting_reason,
+ count(*)::bigint AS pending_recipients,count(deadline_at)::bigint AS deadline_recipients,
+ count(*) FILTER (WHERE deadline_at<=sqlc.arg(observed_at)::timestamptz)::bigint AS expired_recipients,
+ count(*) FILTER (WHERE deadline_at>sqlc.arg(observed_at)::timestamptz AND deadline_at<sqlc.arg(window_end_at)::timestamptz)::bigint AS upcoming_recipients,
+ min(deadline_at) FILTER (WHERE isfinite(deadline_at))::timestamptz AS earliest_deadline_at,
+ min(deadline_at) FILTER (WHERE deadline_at>sqlc.arg(observed_at)::timestamptz AND deadline_at<sqlc.arg(window_end_at)::timestamptz AND isfinite(deadline_at))::timestamptz AS earliest_upcoming_deadline_at,
+ coalesce(bool_or(accepted_at IS NULL OR NOT isfinite(accepted_at) OR accepted_at>sqlc.arg(observed_at)::timestamptz OR (deadline_at IS NOT NULL AND NOT isfinite(deadline_at)) OR (next_attempt_at IS NOT NULL AND NOT isfinite(next_attempt_at)) OR (lease_until IS NOT NULL AND NOT isfinite(lease_until))),false)::boolean AS clock_invalid,
+ coalesce(bool_or(lease_until>sqlc.arg(observed_at)::timestamptz),false)::boolean AS active_leases,
+ coalesce(bool_or(next_attempt_at>sqlc.arg(observed_at)::timestamptz),false)::boolean AS scheduled_retries
+FROM pending CROSS JOIN control CROSS JOIN LATERAL (
+ SELECT CASE WHEN deadline_at<=sqlc.arg(observed_at)::timestamptz OR deadline_at<sqlc.arg(window_end_at)::timestamptz THEN
+ CASE WHEN NOT (routing_mode='event' AND coalesce(lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',capacity_scope,routing_mode,lease_until,next_attempt_at,'application',NULL,sqlc.arg(observed_at)::timestamptz) END ELSE '' END AS reason
+) observation GROUP BY observation.reason;

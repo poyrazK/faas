@@ -73,6 +73,7 @@ import type { EventSubscriptionCapacityCommandReceipt } from '../models/EventSub
 import type { EventSubscriptionCapacityCommands } from '../models/EventSubscriptionCapacityCommands.js';
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeadlinePage } from '../models/EventSubscriptionDeadlinePage.js';
+import type { EventSubscriptionDeadlineWindow } from '../models/EventSubscriptionDeadlineWindow.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { EventSubscriptionPendingSummary } from '../models/EventSubscriptionPendingSummary.js';
@@ -2914,6 +2915,8 @@ export class EventsService {
     status = 'all',
     cursor,
     limit = 50,
+    withinMillis,
+    waitingReason,
   }: {
     /**
      * Application slug for a deadline-ordered pending-delivery listing.
@@ -2943,6 +2946,14 @@ export class EventsService {
      * Maximum returned recipients; keep unchanged across pages.
      */
     limit?: number,
+    /**
+     * Optional upcoming window strictly after the first page window_at and before window_at plus this horizon. Normalizes all/omitted status to upcoming; expired status is rejected. Keep unchanged across pages.
+     */
+    withinMillis?: number,
+    /**
+     * Optional known observed backlog waiting reason, applied before pagination at each page observation. Keep unchanged across pages; reasons remain live.
+     */
+    waitingReason?: 'circuit_open' | 'circuit_probe_wait' | 'circuit_recovery_rate_limited' | 'subscription_paused' | 'subscription_rate_limited' | 'ordering_blocked' | 'capacity_consumer' | 'capacity_app' | 'capacity_account' | 'routing_in_progress' | 'receipt_processing' | 'retry_backoff' | 'workflow_routing' | 'ready',
   }): CancelablePromise<EventSubscriptionDeadlinePage> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -2957,6 +2968,8 @@ export class EventsService {
         'status': status,
         'cursor': cursor,
         'limit': limit,
+        'within_millis': withinMillis,
+        'waiting_reason': waitingReason,
       },
       errors: {
         400: `Subscription UUID, deadline filters, page size or cursor are invalid or expired.`,
@@ -2964,6 +2977,49 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Deadline listing exceeded its read budget; no partial page was returned.`,
+      },
+    });
+  }
+  /**
+   * Count upcoming delivery deadlines and observed waiting reasons.
+   * Read-only, payload-free full pending summary and deadline cohorts from one Repeatable Read snapshot. Upcoming deadlines are strictly after summary.observed_at and strictly before window_end_at. Already-expired recipients are separate in summary.already_expired_count. Each cohort has an exact partition of observed backlog waiting reasons, including zero keys. Counts have no sample cap and include only retained captured pending application recipients with effective deadlines; processing, future arrivals and recipients without deadlines are excluded from cohorts. Waiting reasons are observations, not unique causes or execution guarantees. Fixed request and statement budgets apply; timeout returns no partial counts. Require summary.complete before interpreting coverage or recovery. This does not predict admissions, change state, reserve capacity or extend deadlines.
+   * @returns EventSubscriptionDeadlineWindow Full pending summary, separate upcoming and expired counts, and exact waiting-reason partitions.
+   * @throws ApiError
+   */
+  public static getEventSubscriptionDeadlineWindow({
+    slug,
+    subscriptionId,
+    withinMillis,
+  }: {
+    /**
+     * Application slug for full deadline-window monitoring.
+     */
+    slug: string,
+    /**
+     * Owned application subscription UUID whose retained pending deadlines are being counted.
+     */
+    subscriptionId: string,
+    /**
+     * Positive whole-millisecond horizon from this snapshot observation; upper deadline boundary is exclusive.
+     */
+    withinMillis: number,
+  }): CancelablePromise<EventSubscriptionDeadlineWindow> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadline-window',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'within_millis': withinMillis,
+      },
+      errors: {
+        400: `Subscription UUID or within_millis is invalid, missing, repeated or unsupported.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Deadline-window read exceeded its budget; no partial counts were returned.`,
       },
     });
   }

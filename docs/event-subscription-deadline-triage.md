@@ -24,11 +24,15 @@ expired row can still have the backlog waiting reason `ready`.
 | `status` | `all` (default), `expired`, or `upcoming` |
 | `limit` | 1..100 recipients; default 50 |
 | `cursor` | Opaque continuation returned by the previous page |
+| `within_millis` | Optional relative upcoming horizon, 100..86400000 ms, anchored to the first page |
+| `waiting_reason` | Optional known observed backlog reason, applied before pagination |
 
 Time bounds accept RFC3339 timestamps and normalize to UTC microseconds. When both
 are present, the normalized lower bound must precede the upper bound. Unknown or
 repeated query parameters are rejected. Optional filter omission and its documented
-default are equivalent.
+default are equivalent. A relative window normalizes omitted/`all` status to
+`upcoming`; combining it with `expired` is rejected. Its upper boundary is exclusive.
+Waiting reasons remain live on each page. Preserve both new filters across pages.
 
 Rows sort by effective deadline ascending, then acceptance time ascending, then
 internal receipt identity ascending. Tie-breakers allow continuation even if the
@@ -105,3 +109,7 @@ An empty page does not prove successful delivery or deadline safety. Use the
 [the rate preview](event-subscription-rate-preview.md) for bounded advisory admission
 modeling. This listing performs no retry, replay, acknowledgement, recovery,
 configuration mutation or production DDL. No migration is required.
+
+For complete upcoming counts and separate expired waiting-reason partitions, use
+[deadline-window monitoring](event-subscription-deadline-window.md). It adds optional
+sustained count alerts and matching relative-window/reason triage filters.

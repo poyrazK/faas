@@ -11209,3 +11209,8 @@ const (
 	EventSubscriptionDeadlineReadTimeout     = EventSubscriptionPendingSummaryTimeout
 	EventSubscriptionDeadlineStatementMillis = EventSubscriptionPendingSummaryStatementMillis
 )
+
+const (
+	EventSubscriptionDeadlineWindowMinMillis int64 = 100
+	EventSubscriptionDeadlineWindowMaxMillis int64 = 24 * 60 * 60 * 1000
+)

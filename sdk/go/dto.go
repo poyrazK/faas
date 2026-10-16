@@ -594,3 +594,14 @@ type (
 	EventSubscriptionDeadlineRecipient = api.EventSubscriptionDeadlineRecipient
 	EventSubscriptionDeadlinePage      = api.EventSubscriptionDeadlinePage
 )
+
+// Full, disjoint deadline-window counts and opt-in sustained count alerts.
+type (
+	EventSubscriptionDeadlineWindow    = api.EventSubscriptionDeadlineWindow
+	EventDeliveryDeadlineWindowOptions = api.EventDeliveryDeadlineWindowOptions
+)
+
+// EventSubscriptionDeadlineWindowCountsComplete checks complete known cohort partitions.
+func EventSubscriptionDeadlineWindowCountsComplete(v EventSubscriptionDeadlineWindow) bool {
+	return api.EventSubscriptionDeadlineWindowCountsComplete(v)
+}

@@ -35,6 +35,9 @@ func subscriptionDeadlineQuery(account, app, sub string, q api.EventSubscription
 	if validSubscriptionControlIDs(account, app, sub) != nil || q.Validate() != nil {
 		return q, c, ErrInvalidArgument
 	}
+	if q.WithinMillis > 0 {
+		q.Status = "upcoming"
+	}
 	if q.Status == "" {
 		q.Status = "all"
 	}
@@ -70,7 +73,7 @@ func subscriptionDeadlineQuery(account, app, sub string, q api.EventSubscription
 	return q, saved, nil
 }
 func subscriptionDeadlineMatches(deadline time.Time, q api.EventSubscriptionDeadlineQuery, window time.Time) bool {
-	return !deadline.IsZero() && (q.DeadlineFrom == nil || !deadline.Before(*q.DeadlineFrom)) && (q.DeadlineBefore == nil || deadline.Before(*q.DeadlineBefore)) && (q.Status != "expired" || !deadline.After(window)) && (q.Status != "upcoming" || deadline.After(window))
+	return !deadline.IsZero() && (q.WithinMillis == 0 || deadline.Before(window.Add(time.Duration(q.WithinMillis)*time.Millisecond))) && (q.DeadlineFrom == nil || !deadline.Before(*q.DeadlineFrom)) && (q.DeadlineBefore == nil || deadline.Before(*q.DeadlineBefore)) && (q.Status != "expired" || !deadline.After(window)) && (q.Status != "upcoming" || deadline.After(window))
 }
 func subscriptionDeadlineEntryBefore(a, b subscriptionDeadlineEntry) bool {
 	if !a.DeadlineAt.Equal(b.DeadlineAt) {

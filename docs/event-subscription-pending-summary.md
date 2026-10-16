@@ -74,3 +74,7 @@ See [watch configuration](event-delivery-rate-risk-alerts.md) and
 To identify individual pending deliveries by effective deadline, use the
 [deadline triage listing](event-subscription-deadline-triage.md). It supports
 absolute bounds and live pagination independently of the preview sample cap.
+
+For complete upcoming counts and separate expired waiting-reason partitions, use
+[deadline-window monitoring](event-subscription-deadline-window.md). It adds optional
+sustained count alerts and matching relative-window/reason triage filters.

@@ -39930,6 +39930,14 @@ paths:
           in: query
           description: Maximum returned recipients; keep unchanged across pages.
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: within_millis
+          in: query
+          description: Optional upcoming window strictly after the first page window_at and before window_at plus this horizon. Normalizes all/omitted status to upcoming; expired status is rejected. Keep unchanged across pages.
+          schema: { type: integer, format: int64, minimum: 100, maximum: 86400000 }
+        - name: waiting_reason
+          in: query
+          description: Optional known observed backlog waiting reason, applied before pagination at each page observation. Keep unchanged across pages; reasons remain live.
+          schema: { type: string, enum: [circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, ready] }
       responses:
         '200':
           description: A bounded live page of pending deliveries with effective deadlines.
@@ -39946,6 +39954,49 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '504':
           description: Deadline listing exceeded its read budget; no partial page was returned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadline-window:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionDeadlineWindow
+      summary: Count upcoming delivery deadlines and observed waiting reasons.
+      description: "Read-only, payload-free full pending summary and deadline cohorts from one Repeatable Read snapshot. Upcoming deadlines are strictly after summary.observed_at and strictly before window_end_at. Already-expired recipients are separate in summary.already_expired_count. Each cohort has an exact partition of observed backlog waiting reasons, including zero keys. Counts have no sample cap and include only retained captured pending application recipients with effective deadlines; processing, future arrivals and recipients without deadlines are excluded from cohorts. Waiting reasons are observations, not unique causes or execution guarantees. Fixed request and statement budgets apply; timeout returns no partial counts. Require summary.complete before interpreting coverage or recovery. This does not predict admissions, change state, reserve capacity or extend deadlines."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for full deadline-window monitoring.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose retained pending deadlines are being counted.
+          schema: { type: string, format: uuid }
+        - name: within_millis
+          in: query
+          required: true
+          description: Positive whole-millisecond horizon from this snapshot observation; upper deadline boundary is exclusive.
+          schema: { type: integer, format: int64, minimum: 100, maximum: 86400000 }
+      responses:
+        '200':
+          description: Full pending summary, separate upcoming and expired counts, and exact waiting-reason partitions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeadlineWindow' }
+        '400':
+          description: Subscription UUID or within_millis is invalid, missing, repeated or unsupported.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Deadline-window read exceeded its budget; no partial counts were returned.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -73543,6 +73594,26 @@ components:
           items: { $ref: '#/components/schemas/EventSubscriptionDeadlineRecipient' }
         has_more: { type: boolean, description: "A lookahead row existed in this page snapshot; later pages can still be empty as routing state changes." }
         next_cursor: { type: string, maxLength: 4096, description: "Present only when has_more is true. Carries no authorization." }
+
+    EventSubscriptionDeadlineWindow:
+      type: object
+      description: Complete, disjoint deadline cohorts with the full pending summary from one read-only snapshot. Upcoming means observed_at < deadline < window_end_at; expired means deadline <= observed_at. Incomplete summary coverage invalidates all counts for alert confirmation.
+      required: [coverage, summary, within_millis, window_end_at, upcoming_recipients, upcoming_waiting_reasons, expired_waiting_reasons]
+      properties:
+        coverage: { type: string, enum: [all_retained_captured_pending_application_deadline_window] }
+        summary: { $ref: '#/components/schemas/EventSubscriptionPendingSummary' }
+        within_millis: { type: integer, format: int64, minimum: 100, maximum: 86400000 }
+        window_end_at: { type: string, format: date-time }
+        upcoming_recipients: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        earliest_upcoming_deadline_at: { type: string, format: date-time, description: Omitted exactly when upcoming_recipients is zero. }
+        upcoming_waiting_reasons:
+          type: object
+          description: Exact partition of upcoming_recipients over every known backlog waiting reason, including explicit zero keys. Labels do not establish unique causes.
+          additionalProperties: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expired_waiting_reasons:
+          type: object
+          description: Exact partition of summary.already_expired_count over every known backlog waiting reason, including explicit zero keys.
+          additionalProperties: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
 
     EventSubscriptionPendingSummary:
       type: object

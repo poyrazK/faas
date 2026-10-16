@@ -1421,6 +1421,14 @@ from .event_subscription_deadline_page import EventSubscriptionDeadlinePage
 from .event_subscription_deadline_page_coverage import EventSubscriptionDeadlinePageCoverage
 from .event_subscription_deadline_recipient import EventSubscriptionDeadlineRecipient
 from .event_subscription_deadline_recipient_waiting_reason import EventSubscriptionDeadlineRecipientWaitingReason
+from .event_subscription_deadline_window import EventSubscriptionDeadlineWindow
+from .event_subscription_deadline_window_coverage import EventSubscriptionDeadlineWindowCoverage
+from .event_subscription_deadline_window_expired_waiting_reasons import (
+    EventSubscriptionDeadlineWindowExpiredWaitingReasons,
+)
+from .event_subscription_deadline_window_upcoming_waiting_reasons import (
+    EventSubscriptionDeadlineWindowUpcomingWaitingReasons,
+)
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_pending_summary import EventSubscriptionPendingSummary
@@ -1859,6 +1867,7 @@ from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
 from .list_event_subscription_capacity_commands_outcome import ListEventSubscriptionCapacityCommandsOutcome
 from .list_event_subscription_deadlines_status import ListEventSubscriptionDeadlinesStatus
+from .list_event_subscription_deadlines_waiting_reason import ListEventSubscriptionDeadlinesWaitingReason
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -6093,6 +6102,10 @@ __all__ = (
     "EventSubscriptionDeadlinePageCoverage",
     "EventSubscriptionDeadlineRecipient",
     "EventSubscriptionDeadlineRecipientWaitingReason",
+    "EventSubscriptionDeadlineWindow",
+    "EventSubscriptionDeadlineWindowCoverage",
+    "EventSubscriptionDeadlineWindowExpiredWaitingReasons",
+    "EventSubscriptionDeadlineWindowUpcomingWaitingReasons",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
     "EventSubscriptionPendingSummary",
@@ -6513,6 +6526,7 @@ __all__ = (
     "ListEventReplayBackfillItemsState",
     "ListEventSubscriptionCapacityCommandsOutcome",
     "ListEventSubscriptionDeadlinesStatus",
+    "ListEventSubscriptionDeadlinesWaitingReason",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",

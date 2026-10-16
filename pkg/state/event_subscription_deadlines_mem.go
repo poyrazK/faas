@@ -75,6 +75,9 @@ func (m *MemStore) ListEventSubscriptionDeadlines(ctx context.Context, account, 
 			}
 			// Effective age deadlines exclude ordered work, so no ordering-blocker scan is needed.
 			backlogObservation(&backlog.EventBacklogRecipient, now)
+			if query.WaitingReason != "" && backlog.WaitingReason != query.WaitingReason {
+				continue
+			}
 			entry.EventSource, entry.EventID, entry.WaitingReason = identity.Source, identity.ID, backlog.WaitingReason
 			entry.NextAttemptAt, entry.LeaseUntil = cloneEventReceiptTime(backlog.NextAttemptAt), cloneEventReceiptTime(backlog.LeaseUntil)
 			if !subscriptionDeadlineEntryValid(entry, now) {

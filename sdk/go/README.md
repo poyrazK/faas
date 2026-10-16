@@ -1328,3 +1328,9 @@ compatibility](../../docs/event-subscription-pending-summary.md).
 effective deadline with absolute bounds, expired/upcoming classification and
 scoped cursors. Pages are live and read-only; no payloads or recovery actions are
 included. See [deadline triage](../../docs/event-subscription-deadline-triage.md).
+
+`GetEventSubscriptionDeadlineWindow` counts upcoming deadlines within a selected
+horizon and partitions upcoming/expired cohorts by observed waiting reason. Set
+`RateRisk.DeadlineWindow` to `EventDeliveryDeadlineWindowOptions{Within: 5*time.Minute,
+Upcoming: 50, Expired: 1}` for sustained count alerts. The selected endpoint replaces
+the standalone summary read. See [window counts and alert semantics](../../docs/event-subscription-deadline-window.md).
