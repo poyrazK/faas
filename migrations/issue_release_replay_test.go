@@ -38,7 +38,7 @@ func TestIssueReleaseWebhookVocabularyAndRoutingReplay(t *testing.T) {
 	exec(`INSERT INTO issue_team_slack_destinations(id,app_id,account_id,team_id,channel_id,token_sealed) VALUES($1,$2,$3,$4,'C0123456789','sealed'::bytea)`, destination, app, account, team)
 	exec(`INSERT INTO issue_team_slack_threads(destination_id,destination_revision,incident_id,channel_id,root_ts) VALUES($1,1,$2,'C1111111111','123.456')`, destination, incident)
 	before := replayConstraintFingerprint(t, pool)
-	exec(`DELETE FROM goose_db_version WHERE version_id=20261016150000001`)
+	exec(`DELETE FROM goose_db_version WHERE version_id=20261016185908063`)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
