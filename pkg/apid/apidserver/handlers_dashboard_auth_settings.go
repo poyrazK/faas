@@ -108,9 +108,9 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	return change, nil
 }
 
-// hostedPageChange reads branding, CAPTCHA, email delivery and activity
-// retention. The page sends the CAPTCHA provider, site key and secret
-// together, and the email provider, sender and API key together.
+// hostedPageChange reads branding, CAPTCHA, SMS, email delivery and
+// activity retention. The page sends each of CAPTCHA, SMS and email with all
+// of its values, because their secrets are write-only.
 func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	for name, target := range map[string]**string{"brand_name": &change.UIName, "brand_color": &change.UIColor, "brand_logo_url": &change.UILogoURL} {
 		if form.Has(name) {
@@ -120,6 +120,9 @@ func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	}
 	if form.Has("captcha_provider") {
 		change.Captcha = &authsettings.Captcha{Provider: form.Get("captcha_provider"), SiteKey: strings.TrimSpace(form.Get("captcha_site_key")), Secret: strings.TrimSpace(form.Get("captcha_secret"))}
+	}
+	if form.Has("sms_provider") {
+		change.SMS = &authsettings.SMS{Provider: form.Get("sms_provider"), Account: strings.TrimSpace(form.Get("sms_account")), Sender: strings.TrimSpace(form.Get("sms_sender")), Secret: strings.TrimSpace(form.Get("sms_secret"))}
 	}
 	if form.Has("email_provider") {
 		change.Email = &authsettings.Email{Provider: form.Get("email_provider"), From: strings.TrimSpace(form.Get("email_from")), APIKey: strings.TrimSpace(form.Get("email_api_key"))}
@@ -207,7 +210,7 @@ func (s *server) applyDashboardAuthSecrets(w http.ResponseWriter, r *http.Reques
 	}
 	for _, key := range unset {
 		resp := s.forwardDashboardJSON(r, acct, http.MethodDelete, base+url.PathEscape(key), api.DefaultEnvScope, key, nil, s.deleteSecret)
-		if resp.Code != http.StatusNotFound && !dashboardMutationSucceeded(w, resp) {
+		if !secretAlreadyAbsent(resp) && !dashboardMutationSucceeded(w, resp) {
 			return
 		}
 	}
@@ -229,6 +232,16 @@ func (s *server) applyDashboardAuthSecrets(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	redirectDashboardAuth(w, r, app.Slug, changed, "")
+}
+
+// secretAlreadyAbsent reports a removal of a secret the app does not have,
+// which the secrets API answers with 400 secret_not_found.
+func secretAlreadyAbsent(resp *httptest.ResponseRecorder) bool {
+	if resp.Code == http.StatusNotFound {
+		return true
+	}
+	var problem api.Problem
+	return resp.Code == http.StatusBadRequest && json.Unmarshal(resp.Body.Bytes(), &problem) == nil && problem.Code == api.CodeSecretNotFound
 }
 
 func redirectDashboardAuth(w http.ResponseWriter, r *http.Request, slug, changed, message string) {

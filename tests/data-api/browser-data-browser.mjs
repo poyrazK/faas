@@ -7,13 +7,14 @@ import {browserCsvExport} from './browser-csv-export.mjs'
 import {browserCsvImport} from './browser-csv-import.mjs'
 import assert from 'node:assert/strict'
 import {browserInspector} from './browser-inspector.mjs'
+import {waitUntil} from './browser-wait.mjs'
 export async function browserDataBrowser(url){
  const inspectorURL=new URL(url),session=await (await fetch(new URL('session',inspectorURL),{headers:{Authorization:'Bearer '+inspectorURL.hash.slice(1)}})).json()
  let guidedArtifact
  const apiHeaders={Authorization:'Bearer '+session.identities.alice.token,'Content-Type':'application/json','Content-Profile':'api',Prefer:'return=representation'}
 
  await browserInspector(url,async evaluate=>{
-  const until=async expression=>{for(let i=0;i<150;i++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,30))}assert.fail('Data browser did not finish the requested action: '+await evaluate("document.querySelector('#data-status').textContent+' / '+document.querySelector('#access-status').textContent+' / '+document.querySelector('#access-results').textContent+' / '+document.querySelector('#csv-status').textContent+' / '+document.querySelector('#csv-progress').textContent"))}
+  const until=expression=>waitUntil(evaluate,expression,async()=>'Data browser did not finish the requested action: '+await evaluate("document.querySelector('#data-status').textContent+' / '+document.querySelector('#access-status').textContent+' / '+document.querySelector('#access-results').textContent+' / '+document.querySelector('#csv-status').textContent+' / '+document.querySelector('#csv-progress').textContent"))
   await until("document.querySelector('#resource')?.options.length>0")
   await evaluate(`document.querySelector('#resource').value=JSON.stringify(['tables','api.notes']);document.querySelector('#resource').dispatchEvent(new Event('change'));
    document.querySelector('#identity').value='alice';document.querySelector('#identity').dispatchEvent(new Event('change'));

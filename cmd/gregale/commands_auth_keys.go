@@ -388,6 +388,10 @@ type authPublicSettings struct {
 	Activity struct {
 		RetentionDays *int `json:"retention_days"`
 	} `json:"activity"`
+	Phone struct {
+		Enabled  bool   `json:"enabled"`
+		Provider string `json:"provider"`
+	} `json:"phone"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

@@ -204,3 +204,20 @@ test('sends the CAPTCHA token the Auth app requires', async () => {
   await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
   assert.equal('gotrue_meta_security' in api.calls.at(-1).body, false)
 })
+
+test('phone sign-in texts a code and verifies it', async () => {
+  const api = server({
+    'POST /auth/v1/otp': () => [200, {}],
+    'POST /auth/v1/verify': call => call.body.token === '123456' ? [200, tokens(1)] : [403, { error_code: 'otp_expired' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPhone({ phone: '+447700900123', captchaToken: 't1' })
+  assert.deepEqual(api.calls[0].body, { phone: '+447700900123', channel: 'sms', create_user: false, gotrue_meta_security: { captcha_token: 't1' } })
+  await assert.rejects(auth.verifyPhone({ phone: '+447700900123', code: '000000' }), { status: 403, code: 'otp_expired' })
+  const session = await auth.verifyPhone({ phone: '+447700900123', code: '123456' })
+  assert.equal(session.accessToken, 'access-1')
+  assert.deepEqual(api.calls[2].body, { type: 'sms', phone: '+447700900123', token: '123456' })
+  assert.equal((await auth.getSession()).accessToken, 'access-1')
+  await auth.signInWithPhone({ phone: '+15555550100', createUser: true })
+  assert.equal(api.calls[3].body.create_user, true)
+})
