@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func (j *nativePublicationIntentFixture) Begin(ctx context.Context, r nativeSnap
 	return r, errors.Join(j.writeErr, ctx.Err())
 }
 func (j *nativePublicationIntentFixture) Require(ctx context.Context, r nativeSnapshotPublicationIntent) error {
-	if r != j.intent {
+	if !reflect.DeepEqual(r, j.intent) {
 		return errors.New("original durable intent changed")
 	}
 	return errors.Join(j.err, ctx.Err())
@@ -132,7 +133,7 @@ func TestNativeExclusivePublicationRetainsOriginalKeysAndReaderOwnership(t *test
 		t.Fatal("publication omitted cohort object preflight")
 	}
 	capture, err := f.q.readCapture(f.incoming)
-	if err != nil || capture != f.capture || f.v.checkEnvironmentQualificationSnapshotSupport() == nil {
+	if err != nil || !reflect.DeepEqual(capture, f.capture) || f.v.checkEnvironmentQualificationSnapshotSupport() == nil {
 		t.Fatal("read/publication primitive completed or enabled native capture", err)
 	}
 }

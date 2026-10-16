@@ -265,6 +265,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_secrets.scope",
 		"app_tasks.deployment_scope",
 		"app_webhooks.scope",
+		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"custom_domains.environment_id",
 		"customer_operation_definitions.scope",
 		"customer_operation_workflow_states.scope",
@@ -284,6 +285,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"environment_managed_fields.environment_id",
 		"environment_management_overrides.environment_id",
 		"environment_workload_graphs.environment_id",
+		"environment_workload_retirements.environment_id", // ADR-1331: immutable retained retirement evidence; journal/source deletion guards prevent cleanup cascades.
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"github_deploy_branches.scope",

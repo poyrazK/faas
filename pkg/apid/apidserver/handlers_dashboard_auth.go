@@ -24,7 +24,8 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data := dashboard.AuthAdminData{Slug: app.Slug, Providers: authsettings.Providers, Changed: r.URL.Query().Get("changed"), Error: r.URL.Query().Get("error")}
+	changed := r.URL.Query().Get("changed")
+	data := dashboard.AuthAdminData{Slug: app.Slug, Providers: authsettings.Providers, Changed: changed, Error: r.URL.Query().Get("error"), RestartPending: strings.HasSuffix(changed, "-restart-pending")}
 	isAuth, err := s.appHasAuthBinding(ctx, acct, app)
 	switch {
 	case err != nil:

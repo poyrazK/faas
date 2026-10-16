@@ -221,11 +221,44 @@ func TestRenderOAuthCodeCallback_StateMismatch(t *testing.T) {
 	}
 }
 
-// TestRenderOAuthCodeCallback_GithubdErrorPropagates pins the
-// transport-failure path: state cookie matches, but githubd returns
-// a non-nil err → 502 with code=github_unreachable. The handler
-// must surface the error to the dashboard so the retry button can
-// render.
+// Account ownership conflicts are actionable 409 responses in both JSON and
+// browser HTML. Neither response may disclose upstream diagnostics.
+func TestRenderOAuthCodeCallback_AccountConflict(t *testing.T) {
+	for _, accept := range []string{"application/json", "text/html"} {
+		t.Run(accept, func(t *testing.T) {
+			upstream := api.ErrGitHubAccountConflict()
+			upstream.Detail, upstream.Hint = "private-owner@example.com", "private-database-diagnostic"
+			gh := &oauthCodeCallbackFake{exchangeErr: upstream}
+			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+			stateToken := mintStateToken(t)
+			r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
+			r.Header.Set("Accept", accept)
+			r.AddCookie(sessionCookie)
+			r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, r)
+			body := rec.Body.String()
+			if rec.Code != http.StatusConflict || gh.gotCalls != 1 {
+				t.Fatalf("callback = %d, exchange calls = %d; want 409 and 1 call", rec.Code, gh.gotCalls)
+			}
+			for _, want := range []string{api.CodeGitHubAccountConflict, "GitHub account conflict", "another Gregale account", "contact support"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("conflict response missing %q: %s", want, body)
+				}
+			}
+			for _, secret := range []string{"private-owner", "private-database", "oauth-code-xyz", stateToken} {
+				if strings.Contains(body, secret) {
+					t.Errorf("conflict response leaked %q", secret)
+				}
+			}
+			if accept == "text/html" && !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+				t.Errorf("browser response is not HTML: %s", rec.Header().Get("Content-Type"))
+			}
+		})
+	}
+}
+
+// Transport failures remain 502 responses with code=github_unreachable.
 func TestRenderOAuthCodeCallback_GithubdErrorPropagates(t *testing.T) {
 	gh := &oauthCodeCallbackFake{exchangeErr: errors.New("dial tcp: connection refused")}
 	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)

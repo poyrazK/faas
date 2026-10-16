@@ -355,7 +355,7 @@ jobs:
         if: steps.migrations.outputs.changed == 'true'
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.migrations.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: bash scripts/ci/migrations-replay-safety.sh
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
@@ -493,6 +493,22 @@ jobs:
           python3 scripts/ci/managed-postgres-native-verdict_test.py
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
+      - name: GitOps source approval and native graph compilation (no KVM)
+        if: matrix.shard == 4
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
+          GOGC: 10
+          GOMEMLIMIT: 2GiB
+          GOMAXPROCS: 2
+          GREGALE_GITOPS_ACCEPTANCE: '1'
+        run: |
+          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(fakeregistry|testdata/helloserver/)|scripts/test-environment-gitops-native|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          # TestMain prepares the shared daemons before the HTTP case starts.
+          go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
+          go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
+          rm -f "$RUNNER_TEMP/gitops-native.test"
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.

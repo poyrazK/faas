@@ -326,6 +326,7 @@ type stagePoolResumeVMM struct {
 	*stagePoolPausedVMM
 	resumeCalls int
 	resumeHook  func()
+	resumeErr   error
 }
 
 func (v *stagePoolResumeVMM) ResumeWarmInstance(context.Context, string, string) error {
@@ -333,7 +334,31 @@ func (v *stagePoolResumeVMM) ResumeWarmInstance(context.Context, string, string)
 	if v.resumeHook != nil {
 		v.resumeHook()
 	}
-	return nil
+	return v.resumeErr
+}
+
+// A promotion conflict belongs to another caller: keep its lease, and let the
+// request fall through to the ordinary wake path instead of failing it.
+func TestStageWarmPromotionConflictFallsThroughWithoutDestroyingLease(t *testing.T) {
+	ctx := t.Context()
+	f := seedStageSnapshotPolicy(t, 1, false)
+	stage := stagePoolInstance(t, f, f.stage)
+	if err := f.store.SetInstanceRuntime(ctx, stage.ID, "fc-stage", "10.100.0.2", 20001); err != nil {
+		t.Fatal(err)
+	}
+	app, err := state.AppForDeployment(ctx, f.store, f.stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &stagePoolResumeVMM{stagePoolPausedVMM: &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}, resumeErr: state.ErrConflict}
+	engine := newEngine(t, f.store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, accepted, err := engine.promoteWarmInstanceLocked(ctx, app, f.account, api.MustLimitsFor(f.account.Plan), f.stage, string(state.InstanceModeNormal)); err != nil || accepted || vmm.resumeCalls != 1 || vmm.destroys != 0 {
+		t.Fatalf("conflicting promotion: accepted=%v resume=%d destroyed=%d err=%v; want fallthrough", accepted, vmm.resumeCalls, vmm.destroys, err)
+	}
+	row, err := f.store.InstanceByID(ctx, stage.ID)
+	if err != nil || row.State != string(state.StateWarm) {
+		t.Fatalf("conflicting promotion retired another caller's lease: %+v %v", row, err)
+	}
 }
 
 func TestStageWarmPromotionRejectsChangedOwnerOrInputsDuringResume(t *testing.T) {

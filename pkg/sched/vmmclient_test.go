@@ -40,6 +40,7 @@ type fakeVMM struct {
 	wakeExecutionFn    func(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
 	fallbackReason     string
 	parkFn             func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
+	warmFn             func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
 	destFn             func(ctx context.Context, instance string) error
 	appTaskWake        fcvm.AppTaskWakeRequest
 	appTaskExecute     apptaskproto.Request
@@ -99,6 +100,9 @@ func (f *fakeVMM) Park(ctx context.Context, instance string, spec fcvm.SnapshotS
 // engine_test). The fake's Park handles the legacy PauseAndSnapshot
 // RPC; WarmSnapshot does the same for the new RPC.
 func (f *fakeVMM) WarmSnapshot(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
+	if f.warmFn != nil {
+		return f.warmFn(ctx, instance, spec)
+	}
 	return fcvm.SnapshotInfo{MemBytes: 130 * 1024 * 1024, VMStateBytes: 4096}, nil
 }
 

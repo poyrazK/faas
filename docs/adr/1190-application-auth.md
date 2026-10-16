@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -97,8 +97,7 @@ leaked-password checks, TOTP enrolment and nineteen OAuth providers. Turning
 MFA off stops new TOTP enrolments only, so users who enrolled keep verifying.
 The front sets every enabled provider's callback to its own `/auth/v1/callback`.
 `/settings/v1` reports the running configuration without credentials, since the
-CLI and dashboard cannot read secrets back. The hosted pages render no CAPTCHA,
-so CAPTCHA stays a raw secret setting. GoTrue rate-limits on `X-Real-IP`, which the
+CLI and dashboard cannot read secrets back. GoTrue rate-limits on `X-Real-IP`, which the
 public gateway replaces with the verified client address. GoTrue v2.197.0
 logs requests and audit events at info, with user email addresses, even when
 its log level is set to `warn`, so the front reads GoTrue's output and drops
@@ -318,6 +317,60 @@ repeated addresses within a batch are skipped because concurrent creates of
 one address race inside GoTrue. Responses report rows by position and never
 echo addresses.
 
+### Lifecycle events and activity
+
+`gregale auth config --events on` sets `AUTH_LIFECYCLE_EVENTS` and, if needed,
+mints the `events:publish`-only key. Triggers on `auth.users` and
+`auth.sessions` record `auth.user.created`, `confirmed`, `signed_in`, `banned`,
+`unbanned` and `deleted` in a `gregale_auth` outbox, in the same transaction
+as the change, so no path into GoTrue (sign-up, OAuth, invitation, import,
+administration) is missed. Rows hold the user ID and non-personal facts only,
+because published events are stored in Gregale's control plane; consumers read
+anything else from their own database. The triggers read optional GoTrue
+columns through `to_jsonb`, and record nothing until the front enables them at
+startup; turning events off clears the outbox.
+
+The front publishes the outbox through the app-scoped producer API (ADR-929),
+keyed by row ID so retries deduplicate. It drains after requests that may
+change users and at startup, never by polling, so an idle Auth app neither
+wakes nor keeps a scale-to-zero database awake. A claim leases rows, so
+instances draining together do not publish twice; failures back off up to an
+hour, and rows older than three days are dropped (`pkg/api/limits.go`).
+
+`GET /admin/v1/activity` reads GoTrue's audit log, newest first, overall or
+for one user, through the owner's admin key; the dashboard's Activity tab, the
+user panel and `gregale auth activity` use it. GoTrue records an
+administrator's action with the zero actor ID and the affected user in its
+traits, so such entries are reported against that user and marked as an
+administrator's. With `AUTH_AUDIT_RETENTION_DAYS` the front deletes older
+entries in batches, after requests and at most every six hours, never on a
+timer; the dashboard's CSV export is built in the owner's browser from these
+pages. The release task adds indexes on time, actor and affected
+user, because GoTrue indexes the log only by instance. GoTrue v2.197.0 leaves
+the log's IP address empty, so none is shown.
+
+### Passkeys, branding and CAPTCHA
+
+GoTrue v2.197.0 implements passkeys (`GOTRUE_PASSKEY_ENABLED`) with
+discoverable credentials. Gregale owns the WebAuthn relying party: its ID is
+the Auth app's host, or a parent domain the owner names
+(`AUTH_PASSKEY_RP_ID`) that the Auth app's host lies under, so a custom-domain
+Auth app and its site share passkeys. The allowed origins are the HTTPS
+origins among the Auth app, site and redirect URLs on that domain. The hosted
+pages sign in with a passkey and offer to add one after a password sign-in or
+sign-up; `@gregale/auth` registers, lists, renames and removes them.
+
+The hosted pages show a name (also used in emails and passkey prompts), an
+accent colour served as `/ui/brand.css`, and a logo from an HTTPS URL. A logo
+is loaded by URL, not stored, because a free plan's secrets are too small to
+hold one, and the pages' policy allows only that URL's origin for images.
+
+CAPTCHA (Cloudflare Turnstile or hCaptcha) is a typed setting. GoTrue verifies
+the token on sign-up, password and magic-link sign-in, recovery and the start
+of a passkey sign-in; the hosted pages render the provider's widget and add a
+fresh token to each of those requests. Only when CAPTCHA is on does the pages'
+policy allow the provider's script, frame, style and connection origins.
+
 ### Scale to zero
 
 The gateway, Data API and realtime service verify tokens against cached JWKS.
@@ -345,7 +398,8 @@ in `pkg/api/limits.go`.
    probe, binding constraints, delivery policy, API enums and CLI modes.
 2. The `auth` template, `gregale auth create|status`, and the migration
    overlay check. Signing-key rotation (`gregale auth keys`) and typed settings
-   (`gregale auth config|providers` and the dashboard) followed.
+   (`gregale auth config|providers` and the dashboard) followed, then
+   lifecycle events and the activity view.
 3. The `gregale_auth` schema and helpers, the verifier allowance, the
    `/authz/v1` API, declarative `AUTH_AUTHZ` roles and policies, and `--auth`
    for the Data API and edge JWT rules.

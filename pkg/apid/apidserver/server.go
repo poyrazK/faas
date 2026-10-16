@@ -387,6 +387,9 @@ type server struct {
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled bool
+	// ADR-435: keep standards intent/exception mutations disabled until
+	// consumer convergence, rollout recovery and native acceptance pass.
+	applicationStandardMutationsEnabled bool
 	// interactiveAppTasksEnabled additionally admits ADR-1037 interactive
 	// sessions (`gregale app exec -it`). It requires appTaskAPIEnabled.
 	interactiveAppTasksEnabled bool
@@ -1453,6 +1456,29 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgActivity)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.previewApplicationStandardAssignment))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-reviews/{review}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardReview)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-operations/{operation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardOperation)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-reviews/{review}/approve", s.applicationStandardRolloutRoute("review", s.approveApplicationStandardReview))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/pause", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationPause)))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationResume)))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort", s.applicationStandardRolloutRoute("operation", s.controlApplicationStandardOperation(state.ApplicationStandardOperationAbort)))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardExceptions)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardAssignments)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-assignments/{assignment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardAssignment)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardEnrollment)))))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent", s.applicationStandardMutationRoute(authz.OrgActionSetApplicationStandardLocalIntent, s.setApplicationStandardLocalIntent))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.approveApplicationStandardException))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.revokeApplicationStandardException))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandards)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards/{standard}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardVersion)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standards/{standard}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.publishApplicationStandardVersion))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-log-destinations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardLogDestinations)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-log-destinations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.createApplicationStandardLogDestination))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-log-destinations/{resource}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardLogDestination)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-publishers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardPublishers)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-publishers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.createApplicationStandardPublisher))))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-publishers/{resource}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardPublisher)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgApps)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.requireVerifiedEmail(s.idempotent(s.createOrgApp)))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.patchOrg)))))

@@ -15,6 +15,28 @@ set -- $values
 connections="${1:?missing connection count}"
 capacity="${2:?missing ordinary capacity}"
 
+# WAL archiving health (ADR-1344 §3). pg_stat_archiver covers the local
+# archive copy; the marker file is touched by archive_command after each
+# successful off-host push, which is otherwise best-effort and silent.
+archiver="$(psql -d faas -At -F ' ' -c "
+SELECT archived_count, failed_count,
+       COALESCE(extract(epoch FROM last_archived_time)::bigint, 0)
+FROM pg_stat_archiver;
+")"
+set -- $archiver
+archived="${1:?missing archived count}"
+archive_failed="${2:?missing archive failure count}"
+last_archived="${3:?missing last archived time}"
+
+offhost_configured=0
+if test -r /var/lib/pgsql/backup-rclone.conf; then
+  offhost_configured=1
+fi
+offhost_last_success=0
+if test -e /var/lib/pgsql/archive/.offhost-last-success; then
+  offhost_last_success="$(stat -c %Y /var/lib/pgsql/archive/.offhost-last-success)"
+fi
+
 cat >"$tmp" <<EOF
 # HELP faas_postgres_client_connections PostgreSQL client sessions across all databases.
 # TYPE faas_postgres_client_connections gauge
@@ -22,6 +44,21 @@ faas_postgres_client_connections $connections
 # HELP faas_postgres_ordinary_connection_capacity Connection slots available before the superuser reserve.
 # TYPE faas_postgres_ordinary_connection_capacity gauge
 faas_postgres_ordinary_connection_capacity $capacity
+# HELP faas_postgres_wal_archived_total WAL segments archived to the local archive since stats reset.
+# TYPE faas_postgres_wal_archived_total counter
+faas_postgres_wal_archived_total $archived
+# HELP faas_postgres_wal_archive_failed_total Failed local WAL archive attempts since stats reset.
+# TYPE faas_postgres_wal_archive_failed_total counter
+faas_postgres_wal_archive_failed_total $archive_failed
+# HELP faas_postgres_wal_last_archived_timestamp_seconds Unix time of the last WAL segment archived locally (0 if never).
+# TYPE faas_postgres_wal_last_archived_timestamp_seconds gauge
+faas_postgres_wal_last_archived_timestamp_seconds $last_archived
+# HELP faas_postgres_offhost_wal_configured 1 when off-host WAL push credentials are installed.
+# TYPE faas_postgres_offhost_wal_configured gauge
+faas_postgres_offhost_wal_configured $offhost_configured
+# HELP faas_postgres_offhost_wal_last_success_timestamp_seconds Unix time of the last successful off-host WAL push (0 if never).
+# TYPE faas_postgres_offhost_wal_last_success_timestamp_seconds gauge
+faas_postgres_offhost_wal_last_success_timestamp_seconds $offhost_last_success
 EOF
 chmod 0644 "$tmp"
 mv "$tmp" "$output"

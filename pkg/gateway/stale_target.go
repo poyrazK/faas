@@ -59,11 +59,22 @@ func markStaleTarget(ctx context.Context) {
 // flagged frozen first so the handler withdraws it without quarantine.
 func markStaleTargetErr(ctx context.Context, err error) {
 	if signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal); ok && signal != nil {
-		if p, ok := grpcerr.FromStatus(err); ok && p != nil && p.Code == api.CodeInstanceFrozen {
+		if instanceFrozenRefusal(err) {
 			signal.frozen.Store(true)
 		}
 	}
 	markStaleTarget(ctx)
+}
+
+// instanceFrozenRefusal reports whether err is vmmd refusing a forward
+// because the guest is frozen (ADR-1151). vmmd refuses before it dials the
+// guest, so the guest never saw the request.
+func instanceFrozenRefusal(err error) bool {
+	if err == nil {
+		return false
+	}
+	p, ok := grpcerr.FromStatus(err)
+	return ok && p != nil && p.Code == api.CodeInstanceFrozen
 }
 
 func staleTargetDetected(ctx context.Context) bool {

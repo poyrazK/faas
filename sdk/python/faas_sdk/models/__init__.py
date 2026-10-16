@@ -192,6 +192,7 @@ from .app_manifest_execution_mode_type_1 import AppManifestExecutionModeType1
 from .app_manifest_execution_mode_type_2_type_1 import AppManifestExecutionModeType2Type1
 from .app_manifest_execution_mode_type_3_type_1 import AppManifestExecutionModeType3Type1
 from .app_manifest_healthcheck import AppManifestHealthcheck
+from .app_manifest_pause import AppManifestPause
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
@@ -310,6 +311,68 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .application_standard_adoption import ApplicationStandardAdoption
+from .application_standard_assignment import ApplicationStandardAssignment
+from .application_standard_assignment_list import ApplicationStandardAssignmentList
+from .application_standard_assignment_scope import ApplicationStandardAssignmentScope
+from .application_standard_cidr_rule import ApplicationStandardCIDRRule
+from .application_standard_cidr_rule_mode import ApplicationStandardCIDRRuleMode
+from .application_standard_cidr_rule_override import ApplicationStandardCIDRRuleOverride
+from .application_standard_definition import ApplicationStandardDefinition
+from .application_standard_effective import ApplicationStandardEffective
+from .application_standard_effective_sources import ApplicationStandardEffectiveSources
+from .application_standard_enrollment import ApplicationStandardEnrollment
+from .application_standard_enrollment_materialized_fields_item import (
+    ApplicationStandardEnrollmentMaterializedFieldsItem,
+)
+from .application_standard_enrollment_state import ApplicationStandardEnrollmentState
+from .application_standard_exception import ApplicationStandardException
+from .application_standard_exception_field import ApplicationStandardExceptionField
+from .application_standard_exception_list import ApplicationStandardExceptionList
+from .application_standard_exception_status import ApplicationStandardExceptionStatus
+from .application_standard_exception_value_type_1 import ApplicationStandardExceptionValueType1
+from .application_standard_extra_port_rule import ApplicationStandardExtraPortRule
+from .application_standard_extra_port_rule_mode import ApplicationStandardExtraPortRuleMode
+from .application_standard_extra_port_rule_override import ApplicationStandardExtraPortRuleOverride
+from .application_standard_list import ApplicationStandardList
+from .application_standard_log_destination import ApplicationStandardLogDestination
+from .application_standard_log_destination_kind import ApplicationStandardLogDestinationKind
+from .application_standard_log_destination_list import ApplicationStandardLogDestinationList
+from .application_standard_log_destination_rule import ApplicationStandardLogDestinationRule
+from .application_standard_log_destination_rule_mode import ApplicationStandardLogDestinationRuleMode
+from .application_standard_log_destination_rule_override import ApplicationStandardLogDestinationRuleOverride
+from .application_standard_operation import ApplicationStandardOperation
+from .application_standard_operation_state import ApplicationStandardOperationState
+from .application_standard_operation_target import ApplicationStandardOperationTarget
+from .application_standard_operation_target_state import ApplicationStandardOperationTargetState
+from .application_standard_publisher import ApplicationStandardPublisher
+from .application_standard_publisher_list import ApplicationStandardPublisherList
+from .application_standard_publisher_rule import ApplicationStandardPublisherRule
+from .application_standard_publisher_rule_mode import ApplicationStandardPublisherRuleMode
+from .application_standard_publisher_rule_override import ApplicationStandardPublisherRuleOverride
+from .application_standard_review import ApplicationStandardReview
+from .application_standard_review_blocker import ApplicationStandardReviewBlocker
+from .application_standard_review_blocker_field import ApplicationStandardReviewBlockerField
+from .application_standard_review_blocker_scope import ApplicationStandardReviewBlockerScope
+from .application_standard_review_request import ApplicationStandardReviewRequest
+from .application_standard_review_request_scope import ApplicationStandardReviewRequestScope
+from .application_standard_reviewed_app import ApplicationStandardReviewedApp
+from .application_standard_reviewed_app_changed_fields_item import ApplicationStandardReviewedAppChangedFieldsItem
+from .application_standard_security_policy_rule import ApplicationStandardSecurityPolicyRule
+from .application_standard_security_policy_rule_mode import ApplicationStandardSecurityPolicyRuleMode
+from .application_standard_security_policy_rule_override import ApplicationStandardSecurityPolicyRuleOverride
+from .application_standard_security_policy_rule_value import ApplicationStandardSecurityPolicyRuleValue
+from .application_standard_settings import ApplicationStandardSettings
+from .application_standard_settings_security_policy import ApplicationStandardSettingsSecurityPolicy
+from .application_standard_signature_rule import ApplicationStandardSignatureRule
+from .application_standard_signature_rule_mode import ApplicationStandardSignatureRuleMode
+from .application_standard_signature_rule_override import ApplicationStandardSignatureRuleOverride
+from .application_standard_source import ApplicationStandardSource
+from .application_standard_source_mode import ApplicationStandardSourceMode
+from .application_standard_source_override import ApplicationStandardSourceOverride
+from .application_standard_source_scope import ApplicationStandardSourceScope
+from .application_standard_version import ApplicationStandardVersion
+from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
 from .apply_durable_entity_quota_policy_body import ApplyDurableEntityQuotaPolicyBody
@@ -341,6 +404,12 @@ from .apply_platform_tenant_surface_response_cert_state import ApplyPlatformTena
 from .apply_platform_tenant_surface_response_status import ApplyPlatformTenantSurfaceResponseStatus
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
+from .approve_application_standard_exception_request import ApproveApplicationStandardExceptionRequest
+from .approve_application_standard_exception_request_field import ApproveApplicationStandardExceptionRequestField
+from .approve_application_standard_exception_request_value_type_1 import (
+    ApproveApplicationStandardExceptionRequestValueType1,
+)
+from .approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
 from .approve_environment_git_revision_request import ApproveEnvironmentGitRevisionRequest
 from .approve_environment_git_revision_response import ApproveEnvironmentGitRevisionResponse
 from .approve_route_lifecycle_request import ApproveRouteLifecycleRequest
@@ -527,6 +596,7 @@ from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
 from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
 from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
@@ -557,6 +627,7 @@ from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
+from .create_app_request_pause import CreateAppRequestPause
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
@@ -567,6 +638,10 @@ from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
+from .create_application_standard_log_destination_request import CreateApplicationStandardLogDestinationRequest
+from .create_application_standard_log_destination_request_kind import CreateApplicationStandardLogDestinationRequestKind
+from .create_application_standard_publisher_request import CreateApplicationStandardPublisherRequest
+from .create_application_standard_version_request import CreateApplicationStandardVersionRequest
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
@@ -1057,6 +1132,8 @@ from .environment_definition import EnvironmentDefinition
 from .environment_definition_api_version import EnvironmentDefinitionApiVersion
 from .environment_definition_configuration import EnvironmentDefinitionConfiguration
 from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
+from .environment_definition_workload_pruning_policy import EnvironmentDefinitionWorkloadPruningPolicy
+from .environment_definition_workload_recoveries import EnvironmentDefinitionWorkloadRecoveries
 from .environment_definition_workloads import EnvironmentDefinitionWorkloads
 from .environment_desired_revision import EnvironmentDesiredRevision
 from .environment_field_ownership_request import EnvironmentFieldOwnershipRequest
@@ -1106,6 +1183,9 @@ from .environment_workload_activation_evidence import EnvironmentWorkloadActivat
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
+from .environment_workload_retirement import EnvironmentWorkloadRetirement
+from .environment_workload_retirement_impact import EnvironmentWorkloadRetirementImpact
+from .environment_workload_retirement_phase import EnvironmentWorkloadRetirementPhase
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
@@ -3747,6 +3827,7 @@ from .reuse_workflow_operation_artifact_x_gregale_operation_execution_kind impor
 from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
     ReuseWorkflowOperationUploadXGregaleOperationExecutionKind,
 )
+from .revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_edge_rules_request import RollbackEdgeRulesRequest
@@ -4124,6 +4205,7 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
 from .set_automation_enabled_request import SetAutomationEnabledRequest
 from .set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
 from .set_automation_publish_policy_request import SetAutomationPublishPolicyRequest
@@ -4318,6 +4400,7 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_pause import UpdateAppRequestPause
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -4854,6 +4937,66 @@ __all__ = (
     "AppHealthResponse",
     "AppHealthResponsePhase",
     "AppHealthResponseStatus",
+    "ApplicationStandardAdoption",
+    "ApplicationStandardAssignment",
+    "ApplicationStandardAssignmentList",
+    "ApplicationStandardAssignmentScope",
+    "ApplicationStandardCIDRRule",
+    "ApplicationStandardCIDRRuleMode",
+    "ApplicationStandardCIDRRuleOverride",
+    "ApplicationStandardDefinition",
+    "ApplicationStandardEffective",
+    "ApplicationStandardEffectiveSources",
+    "ApplicationStandardEnrollment",
+    "ApplicationStandardEnrollmentMaterializedFieldsItem",
+    "ApplicationStandardEnrollmentState",
+    "ApplicationStandardException",
+    "ApplicationStandardExceptionField",
+    "ApplicationStandardExceptionList",
+    "ApplicationStandardExceptionStatus",
+    "ApplicationStandardExceptionValueType1",
+    "ApplicationStandardExtraPortRule",
+    "ApplicationStandardExtraPortRuleMode",
+    "ApplicationStandardExtraPortRuleOverride",
+    "ApplicationStandardList",
+    "ApplicationStandardLogDestination",
+    "ApplicationStandardLogDestinationKind",
+    "ApplicationStandardLogDestinationList",
+    "ApplicationStandardLogDestinationRule",
+    "ApplicationStandardLogDestinationRuleMode",
+    "ApplicationStandardLogDestinationRuleOverride",
+    "ApplicationStandardOperation",
+    "ApplicationStandardOperationState",
+    "ApplicationStandardOperationTarget",
+    "ApplicationStandardOperationTargetState",
+    "ApplicationStandardPublisher",
+    "ApplicationStandardPublisherList",
+    "ApplicationStandardPublisherRule",
+    "ApplicationStandardPublisherRuleMode",
+    "ApplicationStandardPublisherRuleOverride",
+    "ApplicationStandardReview",
+    "ApplicationStandardReviewBlocker",
+    "ApplicationStandardReviewBlockerField",
+    "ApplicationStandardReviewBlockerScope",
+    "ApplicationStandardReviewedApp",
+    "ApplicationStandardReviewedAppChangedFieldsItem",
+    "ApplicationStandardReviewRequest",
+    "ApplicationStandardReviewRequestScope",
+    "ApplicationStandardSecurityPolicyRule",
+    "ApplicationStandardSecurityPolicyRuleMode",
+    "ApplicationStandardSecurityPolicyRuleOverride",
+    "ApplicationStandardSecurityPolicyRuleValue",
+    "ApplicationStandardSettings",
+    "ApplicationStandardSettingsSecurityPolicy",
+    "ApplicationStandardSignatureRule",
+    "ApplicationStandardSignatureRuleMode",
+    "ApplicationStandardSignatureRuleOverride",
+    "ApplicationStandardSource",
+    "ApplicationStandardSourceMode",
+    "ApplicationStandardSourceOverride",
+    "ApplicationStandardSourceScope",
+    "ApplicationStandardVersion",
+    "ApplicationStandardViolation",
     "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",
@@ -4903,6 +5046,7 @@ __all__ = (
     "AppManifestExecutionModeType2Type1",
     "AppManifestExecutionModeType3Type1",
     "AppManifestHealthcheck",
+    "AppManifestPause",
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
@@ -4958,6 +5102,10 @@ __all__ = (
     "AppRestartResponse",
     "AppRoutesResponse",
     "AppRoutesResponseSource",
+    "ApproveApplicationStandardExceptionRequest",
+    "ApproveApplicationStandardExceptionRequestField",
+    "ApproveApplicationStandardExceptionRequestValueType1",
+    "ApproveApplicationStandardReviewRequest",
     "ApproveEnvironmentGitRevisionRequest",
     "ApproveEnvironmentGitRevisionResponse",
     "ApproveRouteLifecycleRequest",
@@ -5203,6 +5351,7 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ControlApplicationStandardOperationRequest",
     "ControlEventExecutionLineageCaseBackfillRequest",
     "ControlEventExecutionLineageRetryJobRequest",
     "ControlRealtimeReplayJobAction",
@@ -5225,6 +5374,10 @@ __all__ = (
     "CreateAPIConsumerRateCardRequestRouteWeights",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateApplicationStandardLogDestinationRequest",
+    "CreateApplicationStandardLogDestinationRequestKind",
+    "CreateApplicationStandardPublisherRequest",
+    "CreateApplicationStandardVersionRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",
@@ -5233,6 +5386,7 @@ __all__ = (
     "CreateAppRequestCrawlerPolicy",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
+    "CreateAppRequestPause",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestServiceBindingPolicy",
@@ -5715,6 +5869,8 @@ __all__ = (
     "EnvironmentDefinitionApiVersion",
     "EnvironmentDefinitionConfiguration",
     "EnvironmentDefinitionQueuePruningPolicy",
+    "EnvironmentDefinitionWorkloadPruningPolicy",
+    "EnvironmentDefinitionWorkloadRecoveries",
     "EnvironmentDefinitionWorkloads",
     "EnvironmentDesiredRevision",
     "EnvironmentFieldOwnershipRequest",
@@ -5762,6 +5918,9 @@ __all__ = (
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",
+    "EnvironmentWorkloadRetirement",
+    "EnvironmentWorkloadRetirementImpact",
+    "EnvironmentWorkloadRetirementPhase",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
@@ -8155,6 +8314,7 @@ __all__ = (
     "RetryPolicyDTO",
     "ReuseWorkflowOperationArtifactXGregaleOperationExecutionKind",
     "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
+    "RevokeApplicationStandardExceptionRequest",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackEdgeRulesRequest",
@@ -8525,6 +8685,7 @@ __all__ = (
     "SessionListResponse",
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
+    "SetApplicationStandardLocalIntentRequest",
     "SetAppStaticEgressIPRequest",
     "SetAutomationEnabledRequest",
     "SetAutomationFailurePolicyRequest",
@@ -8708,6 +8869,7 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestPause",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",

@@ -107,6 +107,7 @@ var appSettingsAdditionalLabels = map[string]string{
 	"restart_policy":                  "Restart policy",
 	"after_restore":                   "After-restore hook",
 	"before_checkpoint":               "Before-checkpoint hook",
+	"pause":                           "Pause tier",
 	"profiling":                       "Profiling",
 	"startup_deadline_s":              "Startup deadline (seconds)",
 	"max_retries":                     "Maximum retries",

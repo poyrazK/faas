@@ -126,8 +126,18 @@ func (s *PgStore) insertInstanceWithNodeReservation(
 }
 
 // Additional admission checks share the node reservation's transaction and
-// retain their locks until the instance row publishes the reservation.
+// retain their locks until the instance row publishes the reservation. A busy
+// application-standard fence replays the whole transaction.
 func (s *PgStore) insertInstanceWithReservations(
+	ctx context.Context, nodeID, newState string, ramMB int,
+	reserve func(pgx.Tx) error, insert func(instanceInserter) (Instance, error),
+) (Instance, error) {
+	return retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
+		return s.insertInstanceWithReservationsOnce(ctx, nodeID, newState, ramMB, reserve, insert)
+	})
+}
+
+func (s *PgStore) insertInstanceWithReservationsOnce(
 	ctx context.Context, nodeID, newState string, ramMB int,
 	reserve func(pgx.Tx) error, insert func(instanceInserter) (Instance, error),
 ) (Instance, error) {

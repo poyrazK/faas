@@ -283,6 +283,32 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent":                   "SetApplicationStandardLocalIntent",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":                    "ApproveApplicationStandardException",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke": "RevokeApplicationStandardException",
+	// ADR-435: these hyphenated routes use the existing typed client names.
+	"POST /v1/orgs/{slug}/application-standard-reviews/{review}/approve":      "ApproveApplicationStandardReview",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/pause":  "PauseApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume": "ResumeApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort":  "AbortApplicationStandardOperation",
+
+	"GET /v1/orgs/{slug}/application-standard-assignments":              "ListApplicationStandardAssignments",
+	"GET /v1/orgs/{slug}/application-standard-assignments/{assignment}": "GetApplicationStandardAssignment",
+
+	"POST /v1/orgs/{slug}/application-standard-reviews":                              "PreviewApplicationStandardAssignment",
+	"GET /v1/orgs/{slug}/application-standard-reviews/{review}":                      "GetApplicationStandardReview",
+	"GET /v1/orgs/{slug}/application-standard-operations/{operation}":                "GetApplicationStandardOperation",
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":          "ListApplicationStandardExceptions",
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}":                     "GetApplicationStandardEnrollment",
+	"GET /v1/orgs/{slug}/application-standards":                                      "ListApplicationStandards",
+	"GET /v1/orgs/{slug}/application-standards/{standard}":                           "GetApplicationStandardVersion",
+	"POST /v1/orgs/{slug}/application-standards/{standard}/versions":                 "PublishApplicationStandardVersion",
+	"GET /v1/orgs/{slug}/application-standard-log-destinations":                      "ListApplicationStandardLogDestinations",
+	"POST /v1/orgs/{slug}/application-standard-log-destinations":                     "CreateApplicationStandardLogDestination",
+	"GET /v1/orgs/{slug}/application-standard-log-destinations/{resource}":           "GetApplicationStandardLogDestination",
+	"GET /v1/orgs/{slug}/application-standard-publishers":                            "ListApplicationStandardPublishers",
+	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
+	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
@@ -1438,7 +1464,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invocations":                                                    "ListInvocations",
 	"GET /v1/invocations/{id}":                                               "GetInvocation",
 
-	// ADR-638: historical subscription replay is a metadata-only preview.
+	// ADR-645: historical subscription replay is a metadata-only preview.
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
 	// ADR-639: historical subscription replay is a bounded durable backfill.
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays": "CreateEventReplayBackfill",

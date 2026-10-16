@@ -26,7 +26,7 @@ func (s *Spool) commitArchive(upload string) error {
 		return fmt.Errorf("logarchive: mark accepted upload: %w", err)
 	}
 	// The committed fragment is no longer pending, even if installing the
-	// history below needs another pass. NewSpool uses the same accounting.
+	// history below needs another pass. CountExisting uses the same accounting.
 	s.written -= info.Size()
 	if s.written < 0 {
 		s.written = 0

@@ -9,5 +9,8 @@ package dashboard
 type AuthAdminData struct {
 	Slug, AuthOrigin, Message string
 	CSRFToken, Changed, Error string
-	Providers                 []string
+	// RestartPending reports a change saved while the app was already
+	// restarting, which may not have loaded it.
+	RestartPending bool
+	Providers      []string
 }
