@@ -167,3 +167,12 @@ Disabling collection does not delete observations or stop static serving.
 keeps admission disabled. Upgrade all apid writers/Workers before admitting
 configured manifests. See [the release configuration guide](../../../../docs/internal-frontend-hosting-config.md)
 for file format, limits, API/CLI/dashboard opt-ins and fail-closed disabling.
+
+## Private previews (independent opt-in)
+
+`previews_enabled` defaults false. It adds no per-preview provider resources and
+sets only the independent Worker serving switch; generated apid environment
+keeps admission off. Previews use the existing wildcard DNS, TLS, Worker route
+and internal Access application and require durable routing. Follow the
+[preview guide](../../../../docs/internal-frontend-hosting-previews.md) for the
+coordinated migration/upgrade, separate API/dashboard/CLI gates and safe cleanup.

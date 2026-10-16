@@ -26,8 +26,11 @@ func cmdSites(args []string) int {
 		return printErr("Internal frontend hosting is disabled", errors.New("set FAAS_FRONTEND_HOSTING_ENABLED=1 on an operator workstation; the server must also enable the feature"))
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|deploy|releases|diff|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
+		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|deploy|releases|diff|previews|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
 		return 1
+	}
+	if args[0] == "previews" {
+		return cmdSitesPreviews(args[1:])
 	}
 	if args[0] == "deploy" {
 		return cmdSitesDeploy(args[1:])

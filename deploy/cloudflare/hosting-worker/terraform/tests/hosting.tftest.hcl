@@ -221,3 +221,19 @@ run "release_config_independent_serving_gate" {
     error_message = "Release configuration must not enable API admission or general serving."
   }
 }
+
+run "private_previews_default_off" {
+  command = plan
+  assert {
+    condition     = !var.previews_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED"]) == "false" && output.apid_environment.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED == "0"
+    error_message = "Private previews must default off independently at API and edge."
+  }
+}
+run "private_previews_independent_gate" {
+  command = plan
+  variables { previews_enabled = true }
+  assert {
+    condition     = output.hosting.previews_enabled && !output.hosting.worker_enabled && output.apid_environment.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED == "0" && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED"]) == "true"
+    error_message = "Preview serving must not enable API admission or the main worker gate."
+  }
+}

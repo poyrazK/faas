@@ -4090,6 +4090,23 @@ type HostingDomainClaim struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type HostingPreview struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	SiteID              pgtype.UUID
+	ReleaseID           pgtype.UUID
+	Hostname            string
+	OriginID            string
+	ExpiresAt           pgtype.Timestamptz
+	Revoked             bool
+	Generation          int64
+	PublishedGeneration int64
+	PublishedAt         pgtype.Timestamptz
+	NextAttemptAt       pgtype.Timestamptz
+	LastErrorCode       string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type HostingRelease struct {
 	ID                    pgtype.UUID
 	SiteID                pgtype.UUID

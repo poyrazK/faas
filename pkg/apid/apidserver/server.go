@@ -1307,6 +1307,9 @@ func (s *server) handler() http.Handler {
 	// handler repeats the gate so direct invocation cannot bypass it.
 	mux.HandleFunc("GET /v1/internal/hosting/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.Capabilities)))))
 	mux.HandleFunc("GET /v1/internal/hosting/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.Usage)))))
+	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListPreviews)))))
+	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RequirePreviews(s.idempotent(s.hosting.CreatePreview)))))))
+	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/previews/{preview}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RequirePreviews(s.idempotent(s.hosting.RevokePreview)))))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/domains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListDomains)))))
 	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/domains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RequireDomains(s.idempotent(s.hosting.CreateDomain)))))))
 	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/domains/{domain}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RequireDomains(s.idempotent(s.hosting.DeleteDomain)))))))

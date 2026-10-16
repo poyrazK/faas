@@ -63,3 +63,16 @@ func TestReleaseConfigOptInRequiresHostingProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewAdmissionRequiresProviderConfiguration(t *testing.T) {
+	for _, enabled := range []string{"true", "1"} {
+		if _, err := Load(func(key string) string {
+			if key == "FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED" {
+				return enabled
+			}
+			return ""
+		}, "gregale.dev"); err == nil {
+			t.Fatal("enabled previews accepted missing isolated origin")
+		}
+	}
+}

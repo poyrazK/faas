@@ -124,6 +124,7 @@ func (s *server) runHostingReconciler(ctx context.Context) {
 		return
 	}
 	go s.runHostingDomainReconciler(ctx)
+	go s.runHostingPreviewReconciler(ctx)
 	ticker := time.NewTicker(api.HostingReconcileInterval)
 	defer ticker.Stop()
 	for {
@@ -151,4 +152,32 @@ func (h hostingHost) HostingTrafficReader() hosting.TrafficReader {
 
 func (h hostingHost) HostingConfigEnabled() bool {
 	return h.s.runtimeBool(runtimeConfigFrontendHostingConfig, false)
+}
+
+func (h hostingHost) HostingPreviewsEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingPreviews, false)
+}
+func (h hostingHost) HostingPreviewStore() state.HostingPreviewStore {
+	store, _ := h.s.store.(state.HostingPreviewStore)
+	return store
+}
+func (s *server) runHostingPreviewReconciler(ctx context.Context) {
+	h := hostingHost{s}
+	store := h.HostingPreviewStore()
+	if store == nil {
+		return
+	}
+	ticker := time.NewTicker(api.HostingReconcileInterval)
+	defer ticker.Stop()
+	for {
+		r := hostingapi.PreviewReconciler{Store: store, Sites: h.HostingStore(), Publisher: s.hostingConfig.Artifacts, OriginID: h.HostingOriginID()}
+		if err := r.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("hosting preview reconciliation pending")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

@@ -11316,3 +11316,17 @@ const (
 	HostingDomainValidationRetryInterval       = 30 * time.Minute
 	HostingDomainRemovalGrace                  = 2*HostingRouteCacheTTL + HostingStorageTimeout
 )
+
+// Private immutable previews share release bytes and the existing wildcard Access policy.
+const (
+	HostingPreviewsPerSite       = 8
+	HostingPreviewTTLDefault     = 24 * time.Hour
+	HostingPreviewTTLMin         = 5 * time.Minute
+	HostingPreviewTTLMax         = 72 * time.Hour
+	HostingPreviewRetry          = 30 * time.Second
+	HostingPreviewRepairInterval = 6 * time.Hour
+	HostingPreviewRemovalGrace   = 2*HostingRouteCacheTTL + HostingStorageTimeout
+	HostingPreviewPageSize       = 100
+)
+
+const HostingPreviewConcurrency = 2

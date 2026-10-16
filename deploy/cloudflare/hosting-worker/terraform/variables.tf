@@ -121,3 +121,9 @@ variable "release_config_enabled" {
   default     = false
   description = "Serve immutable release redirects, approved headers and custom 404 pages; API admission remains independently disabled."
 }
+
+variable "previews_enabled" {
+  description = "Serve private immutable previews. Independent of API admission; default off."
+  type        = bool
+  default     = false
+}

@@ -92,3 +92,19 @@ func (c *Client) GetHostingCapabilities(ctx context.Context) (HostingCapabilitie
 	err := c.do(ctx, http.MethodGet, "/v1/internal/hosting/capabilities", nil, &out)
 	return out, err
 }
+
+func (c *Client) ListHostingPreviews(ctx context.Context, site string) ([]HostingPreview, error) {
+	var out []HostingPreview
+	err := c.do(ctx, http.MethodGet, hostingSitePath(site)+"/previews", nil, &out)
+	return out, err
+}
+func (c *Client) CreateHostingPreview(ctx context.Context, site string, req CreateHostingPreviewRequest) (HostingPreview, error) {
+	var out HostingPreview
+	err := c.do(ctx, http.MethodPost, hostingSitePath(site)+"/previews", req, &out)
+	return out, err
+}
+func (c *Client) RevokeHostingPreview(ctx context.Context, site, id string, generation int64) (HostingPreview, error) {
+	var out HostingPreview
+	err := c.do(ctx, http.MethodDelete, hostingSitePath(site)+"/previews/"+url.PathEscape(id), RevokeHostingPreviewRequest{ExpectedGeneration: generation}, &out)
+	return out, err
+}

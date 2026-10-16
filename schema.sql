@@ -27413,6 +27413,36 @@ CREATE TABLE public.hosting_domains (
 
 
 --
+-- Name: hosting_previews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_previews (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    hostname text NOT NULL,
+    origin_id text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked boolean DEFAULT false NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    published_generation bigint DEFAULT 0 NOT NULL,
+    published_at timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_previews_check CHECK (((published_generation >= 0) AND (published_generation <= generation))),
+    CONSTRAINT hosting_previews_check1 CHECK ((expires_at > created_at)),
+    CONSTRAINT hosting_previews_check2 CHECK ((revoked = (generation = 2))),
+    CONSTRAINT hosting_previews_check3 CHECK (((published_generation > 0) = (published_at IS NOT NULL))),
+    CONSTRAINT hosting_previews_generation_check CHECK ((generation = ANY (ARRAY[(1)::bigint, (2)::bigint]))),
+    CONSTRAINT hosting_previews_hostname_check CHECK ((((length(hostname) >= 40) AND (length(hostname) <= 253)) AND (hostname = lower(hostname)))),
+    CONSTRAINT hosting_previews_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'publication_unavailable'::text, 'origin_unavailable'::text]))),
+    CONSTRAINT hosting_previews_origin_id_check CHECK ((origin_id ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: hosting_releases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -41401,6 +41431,22 @@ ALTER TABLE ONLY public.hosting_domains
 
 
 --
+-- Name: hosting_previews hosting_previews_hostname_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_hostname_key UNIQUE (hostname);
+
+
+--
+-- Name: hosting_previews hosting_previews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: hosting_releases hosting_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49423,6 +49469,27 @@ CREATE INDEX hosting_domains_due ON public.hosting_domains USING btree (next_att
 --
 
 CREATE INDEX hosting_domains_site ON public.hosting_domains USING btree (site_id, created_at);
+
+
+--
+-- Name: hosting_previews_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_previews_due ON public.hosting_previews USING btree (next_attempt_at, id);
+
+
+--
+-- Name: hosting_previews_release; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_previews_release ON public.hosting_previews USING btree (release_id);
+
+
+--
+-- Name: hosting_previews_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_previews_site ON public.hosting_previews USING btree (site_id);
 
 
 --
@@ -62466,6 +62533,30 @@ ALTER TABLE ONLY public.hosting_domains
 
 ALTER TABLE ONLY public.hosting_domains
     ADD CONSTRAINT hosting_domains_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_previews hosting_previews_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_previews hosting_previews_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.hosting_releases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_previews hosting_previews_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE RESTRICT;
 
 
 --

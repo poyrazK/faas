@@ -204,6 +204,11 @@ func (m *MemStore) RetireHostingRelease(_ context.Context, account, site, id str
 	if !ok || !found || s.AccountID != account || r.SiteID != site {
 		return api.HostingRelease{}, ErrNotFound
 	}
+	for _, p := range m.hostingPreviews {
+		if p.ReleaseID == id {
+			return api.HostingRelease{}, ErrConflict
+		}
+	}
 	if s.ActiveReleaseID == id || r.State != "pending" && r.State != "ready" {
 		return api.HostingRelease{}, ErrConflict
 	}
@@ -224,6 +229,11 @@ func (m *MemStore) DeleteHostingReleaseRecord(_ context.Context, account, site, 
 	}
 	if s.DurableRouting && (r.RetirementPublishedAt == nil || time.Since(*r.RetirementPublishedAt) < api.HostingRetirementGrace) {
 		return ErrConflict
+	}
+	for _, p := range m.hostingPreviews {
+		if p.ReleaseID == id {
+			return ErrConflict
+		}
 	}
 	delete(m.hostingReleases, id)
 	return nil
@@ -251,6 +261,15 @@ func (m *MemStore) DeleteHostingSite(_ context.Context, account, site string) (a
 			m.hostingReleases[id] = r
 		}
 	}
+	for id, p := range m.hostingPreviews {
+		if p.SiteID == site && !p.Revoked {
+			p.Revoked = true
+			p.Generation = 2
+			p.NextAttemptAt = now
+			p.LastErrorCode = ""
+			m.hostingPreviews[id] = p
+		}
+	}
 	for id, row := range m.hostingDomains {
 		if row.Domain.SiteID == site && row.Domain.State != "deleting" {
 			row.Domain.State = "deleting"
@@ -268,6 +287,11 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.hostingSites[site]
+	for _, p := range m.hostingPreviews {
+		if p.SiteID == site {
+			return ErrConflict
+		}
+	}
 	for _, domain := range m.hostingDomains {
 		if domain.Domain.SiteID == site {
 			return ErrConflict

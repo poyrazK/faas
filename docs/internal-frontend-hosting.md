@@ -421,3 +421,5 @@ operations panel. It is separate from catalog storage accounting and billing.
 The [runnable pilot workflow](internal-frontend-hosting-pilot.md) bundles the
 private DNS/Access and provider-fault adapters plus prepare/qualify/recovery-cleanup
 commands. Its relay requires a separate default-off bootstrap opt-in.
+
+Private immutable URLs for staged releases are documented in the [preview guide](internal-frontend-hosting-previews.md). They require separate default-off opt-ins.

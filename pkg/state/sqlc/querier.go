@@ -1391,6 +1391,15 @@ type Querier interface {
 	HostingDomainReleaseBatch(ctx context.Context, db DBTX, leaseToken pgtype.UUID) error
 	HostingDomainReserve(ctx context.Context, db DBTX, arg HostingDomainReserveParams) error
 	HostingDomainSave(ctx context.Context, db DBTX, arg HostingDomainSaveParams) (HostingDomain, error)
+	HostingPreviewCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingPreviewCreate(ctx context.Context, db DBTX, arg HostingPreviewCreateParams) (HostingPreview, error)
+	HostingPreviewDeleteSite(ctx context.Context, db DBTX, siteID pgtype.UUID) error
+	HostingPreviewDue(ctx context.Context, db DBTX, arg HostingPreviewDueParams) ([]pgtype.UUID, error)
+	HostingPreviewFinish(ctx context.Context, db DBTX, arg HostingPreviewFinishParams) (int64, error)
+	HostingPreviewList(ctx context.Context, db DBTX, arg HostingPreviewListParams) ([]HostingPreview, error)
+	HostingPreviewPrepare(ctx context.Context, db DBTX, arg HostingPreviewPrepareParams) (HostingPreview, error)
+	HostingPreviewPurge(ctx context.Context, db DBTX, arg HostingPreviewPurgeParams) (int64, error)
+	HostingPreviewRevoke(ctx context.Context, db DBTX, arg HostingPreviewRevokeParams) (HostingPreview, error)
 	HostingProjectEnvironmentOwned(ctx context.Context, db DBTX, arg HostingProjectEnvironmentOwnedParams) (bool, error)
 	HostingReleaseCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingReleaseCreate(ctx context.Context, db DBTX, arg HostingReleaseCreateParams) (HostingRelease, error)

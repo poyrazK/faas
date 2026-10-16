@@ -441,3 +441,69 @@ test('verified but never-promoted artifacts remain unreachable outside routing i
   assert.equal(await (await f.request('/new.js')).text(),'not live');
   assert.equal(await (await f.request('/old.js')).text(),'retained');
 });
+
+function previewFixture(overrides={}) {
+ const f=fixture(); const head=f.durable({preview_allowed:true, enabled:false, active_release_id:'',ready_releases:[]});
+ f.env.HOSTING_DOMAIN='hosting.example';f.env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED='true';
+ const id='55555555-5555-4555-8555-555555555555';const host=`p-${id}.hosting.example`;
+ const p={version:1,id,hostname:host,site_id:site,canonical_hostname:hostname,origin_id:origin,release_id:second,expires_at:Math.floor(now/1000)+300,generation:1,revoked:false,...overrides};
+ const key=`hosting/previews/${host}.json`;f.objects.set(key,JSON.stringify(p));
+ return {...f,p,head,key,host,previewRequest(path='/',options={}){return f.request(path,{...options,hostname:host});}};
+}
+
+test('private previews serve a staged first release without production or retained-release exposure',async()=>{
+ const f=previewFixture();f.release(first,{'index.html':'live','old.js':'old'});f.release(second,{'index.html':'preview','new.js':'new'});
+ assert.equal(await(await f.previewRequest()).text(),'preview');assert.equal((await f.request()).status,503);
+ assert.equal((await f.previewRequest('/old.js')).status,404);
+ assert.equal((await f.previewRequest(`/_gregale/releases/${first}/index.html`)).status,404);
+ assert.equal(await(await f.previewRequest(`/_gregale/releases/${second}/index.html`)).text(),'preview');
+ // A promotion/rollback changes canonical routing, never the preview binding.
+ const live={...f.head,enabled:true,active_release_id:first,ready_releases:[first],generation:2};f.objects.set(`hosting/routes/${hostname}.json`,JSON.stringify(live));f.advance(61000);
+ assert.equal(await(await f.request()).text(),'live');assert.equal(await(await f.previewRequest()).text(),'preview');
+ assert.equal((await f.request(`/_gregale/releases/${second}/index.html`)).status,404);assert.equal(f.calls.routes,0);
+});
+
+test('preview flags and Access are enforced before cold or warm preview lookups',async()=>{
+ const f=previewFixture();f.release(second,{'index.html':'preview'});
+ f.env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED='false';assert.equal((await f.previewRequest()).status,404);assert.equal(f.calls.storage,0);assert.equal(f.calls.cache,0);
+ f.env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED='true';assert.equal((await f.previewRequest('/',{headers:{'Cf-Access-Jwt-Assertion':''}})).status,403);assert.equal(f.calls.storage,0);
+ const warm=await f.previewRequest();assert.equal(warm.status,200);
+ for(const method of ['GET','HEAD'])assert.equal((await f.previewRequest('/',{method,headers:{'Cf-Access-Jwt-Assertion':await token({email:'outsider@example.com'}),'If-None-Match':warm.headers.get('ETag')}})).status,403);
+ f.env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED='false';assert.equal((await f.previewRequest('/',{method:'HEAD'})).status,404);
+ f.env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED='true';f.env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED='false';assert.equal((await f.previewRequest()).status,503);assert.equal(f.calls.routes,0);
+});
+
+test('warm preview expiry denies GET HEAD and 304 without waiting for route cache eviction',async()=>{
+ const f=previewFixture({expires_at:Math.floor(now/1000)+10});f.release(second,{'index.html':'preview'});
+ const warm=await f.previewRequest();assert.equal(warm.status,200);f.advance(11000);
+ for(const method of ['GET','HEAD'])assert.equal((await f.previewRequest('/',{method,headers:{'If-None-Match':warm.headers.get('ETag')}})).status,503);
+ assert.equal(f.calls.routes,0);
+});
+
+test('preview tombstones and canonical suspension/deletion stop warm content after bounded head refresh',async()=>{
+ for(const change of ['revoke','suspend','delete','missing-permission']){
+  const f=previewFixture();f.release(second,{'index.html':'preview'});const warm=await f.previewRequest();assert.equal(warm.status,200);
+  if(change==='revoke')f.objects.set(f.key,JSON.stringify({...f.p,revoked:true,generation:2}));
+  else f.objects.set(`hosting/routes/${hostname}.json`,JSON.stringify({...f.head,preview_allowed:change==='delete',deleted:change==='delete',generation:2}));
+  f.advance(61000);
+  for(const method of ['GET','HEAD'])assert.equal((await f.previewRequest('/',{method,headers:{'If-None-Match':warm.headers.get('ETag')}})).status,503,change);
+  assert.equal(f.calls.routes,0);
+ }
+});
+
+test('invalid preview identities fail closed and preview traffic is excluded from production analytics',async()=>{
+ for(const overrides of [{site_id:first},{origin_id:'b'.repeat(64)},{canonical_hostname:`${first}.hosting.example`},{id:first},{release_id:'invalid'},{expires_at:Infinity},{generation:2},{revoked:true}]){
+  const f=previewFixture(overrides);f.release(second,{'index.html':'preview'});assert.equal((await f.previewRequest()).status,503);assert.equal(f.calls.routes,0);
+ }
+ const f=previewFixture();f.release(second,{'index.html':'preview'});const points=[];f.env.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED='true';f.env.ANALYTICS={writeDataPoint:p=>points.push(p)};
+ assert.equal((await f.previewRequest()).status,200);assert.equal(points.length,0);
+});
+
+test('preview configuration uses its own release with SPA, redirects, headers, and config serving gate',async()=>{
+ const f=previewFixture();f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';
+ f.release(second,{'index.html':'preview','404.html':'preview missing'},true,{version:1,redirects:[{from:'/old',to:'/new',status:308}],headers:[{path:'/*',values:{'x-frame-options':'DENY'}}],not_found:'404.html'});
+ assert.equal((await f.previewRequest('/old')).headers.get('Location'),'/new');
+ const home=await f.previewRequest('/dashboard',{headers:{Accept:'text/html'}});assert.equal(await home.text(),'preview');assert.equal(home.headers.get('X-Frame-Options'),'DENY');
+ assert.equal(await(await f.previewRequest('/missing.js',{headers:{Accept:'text/html'}})).text(),'preview missing');
+ f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='false';assert.equal((await f.previewRequest()).status,503);
+});

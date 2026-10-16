@@ -131,3 +131,5 @@ Local coverage includes memory/PostgreSQL visibility and atomic CAS, marker
 cloning, migration backfill/constraints/downgrade, CLI conflicts/timeouts and
 read-only review, immutable comparisons and browser upload behavior. Live
 DNS/TLS/CDN/Access and regional validation remain pending.
+
+Private immutable URLs for staged releases are documented in the [preview guide](internal-frontend-hosting-previews.md). They require separate default-off opt-ins.

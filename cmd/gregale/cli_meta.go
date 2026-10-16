@@ -510,6 +510,7 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List owned internal sites"},
 			{Name: "status", Short: "Inspect intent, publication, and pending retries", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
 			{Name: "deploy", Short: "Publish a prebuilt static directory", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "no-promote", Bool: true}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
+			{Name: "previews", Short: "Create, list, or revoke a private immutable release preview", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}, {Name: "preview", Value: "ID"}, {Name: "ttl", Value: "DURATION"}, {Name: "expected-generation", Value: "N"}}},
 			{Name: "diff", Short: "Compare a verified release with the active site revision", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
 			{Name: "promote", Short: "Publish using the reviewed site revision", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}, {Name: "expected-revision", Value: "N"}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
 			{Name: "releases", Short: "List releases", Flags: []cliFlag{{Name: "site", Value: "ID"}}},

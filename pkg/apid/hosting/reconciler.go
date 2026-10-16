@@ -143,7 +143,26 @@ func (r Reconciler) reconcileSite(ctx context.Context, site api.HostingSite) err
 	if !matching {
 		return nil
 	}
+	// Preview references must be checked before deleting bytes, including while
+	// their management flag is off. Creation is fenced by the site lock/state.
+	var previews []api.HostingPreview
+	if store, ok := r.Store.(state.HostingPreviewStore); ok {
+		previews, err = store.ListHostingPreviews(ctx, site.AccountID, site.ID)
+		if err != nil {
+			return err
+		}
+	}
 	for _, release := range releases {
+		pinned := false
+		for _, p := range previews {
+			if p.ReleaseID == release.ID {
+				pinned = true
+				break
+			}
+		}
+		if pinned {
+			continue
+		}
 		since := release.RetiredAt
 		if site.DurableRouting {
 			since = release.RetirementPublishedAt

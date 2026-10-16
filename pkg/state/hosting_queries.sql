@@ -60,12 +60,14 @@ RETURNING *;
 UPDATE hosting_releases r SET state = 'retiring', retired_at = clock_timestamp(), retirement_generation = sqlc.arg(generation)::bigint
 FROM hosting_sites s WHERE s.id = r.site_id AND s.account_id = sqlc.arg(account_id)::uuid
 AND r.site_id = sqlc.arg(site_id)::uuid AND r.id = sqlc.arg(id)::uuid AND r.state IN ('pending', 'ready')
-AND s.active_release_id IS DISTINCT FROM r.id RETURNING r.*;
+AND s.active_release_id IS DISTINCT FROM r.id
+AND NOT EXISTS(SELECT 1 FROM hosting_previews p WHERE p.release_id=r.id) RETURNING r.*;
 
 -- name: HostingReleaseDeleted :execrows
 DELETE FROM hosting_releases r USING hosting_sites s
 WHERE s.id = r.site_id AND s.account_id = sqlc.arg(account_id)::uuid
 AND r.site_id = sqlc.arg(site_id)::uuid AND r.id = sqlc.arg(id)::uuid AND r.state = 'retiring'
+AND NOT EXISTS(SELECT 1 FROM hosting_previews p WHERE p.release_id=r.id)
 AND (NOT s.durable_routing OR r.retirement_published_at <= sqlc.arg(safe_before)::timestamptz);
 
 -- name: HostingSiteDelete :one
@@ -80,6 +82,7 @@ WHERE site_id = sqlc.arg(site_id)::uuid AND state IN ('pending', 'ready');
 DELETE FROM hosting_sites s WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(id)::uuid AND s.status = 'deleting'
 AND NOT EXISTS(SELECT 1 FROM hosting_releases r WHERE r.site_id = s.id AND r.state <> 'deleted')
 AND NOT EXISTS(SELECT 1 FROM hosting_domains d WHERE d.site_id = s.id)
+AND NOT EXISTS(SELECT 1 FROM hosting_previews p WHERE p.site_id = s.id)
 AND (NOT s.durable_routing OR EXISTS(SELECT 1 FROM hosting_route_publications p WHERE p.site_id = s.id
  AND p.published_generation = p.generation AND p.published_at <= sqlc.arg(safe_before)::timestamptz));
 

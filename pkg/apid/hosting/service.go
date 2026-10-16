@@ -61,7 +61,7 @@ func failure(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrNotFound):
 		p = api.NewProblem(http.StatusNotFound, "not_found", "Not found", "no such hosting resource")
 	case errors.Is(err, state.ErrConflict):
-		p = api.NewProblem(http.StatusConflict, "hosting_release_conflict", "Hosting state changed", "refresh the site revision; only ready releases can be promoted and active releases cannot be retired")
+		p = api.NewProblem(http.StatusConflict, "hosting_release_conflict", "Hosting state changed", "refresh the site revision; only ready releases can be promoted and active or preview-referenced releases cannot be retired")
 	case errors.Is(err, state.ErrInvalidArgument), errors.Is(err, artifacts.ErrInvalidArtifact):
 		p = api.ErrValidation("invalid hosting manifest or uploaded artifact")
 	case errors.Is(err, state.ErrHostingQuota):
@@ -69,6 +69,10 @@ func failure(w http.ResponseWriter, err error) {
 		var quota *state.HostingQuotaError
 		if errors.As(err, &quota) {
 			p.Limit, p.Observed = &quota.Limit, &quota.Observed
+			if quota.Resource == "previews" {
+				p.Code = "hosting_preview_quota_exceeded"
+				p.Detail = "revoke unused previews and wait for safe cleanup before creating another"
+			}
 			if quota.Resource == "storage_bytes" {
 				p.Code = "hosting_storage_quota_exceeded"
 				p.Detail = "retained releases and pending uploads reserve storage until artifact cleanup succeeds"

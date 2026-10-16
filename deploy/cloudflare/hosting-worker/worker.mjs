@@ -117,6 +117,37 @@ function canonicalHostname(hostname, domain) {
     hostname === `${hostname.split(".")[0]}.${domain}`;
 }
 
+function previewHostname(hostname, domain) {
+  const label = hostname.split('.')[0];
+  return label.startsWith('p-') && UUID.test(label.slice(2)) && hostname === `${label}.${domain}`;
+}
+
+async function previewRouteFor(url, env, ctx, deps) {
+  const key = new Request(`https://${url.hostname}/_gregale/cache/previews/v1/${env.ORIGIN_ID}`);
+  let response = await deps.cache?.match(key);
+  const until = Number(response?.headers.get('X-Gregale-Route-Until'));
+  if (!(until > deps.now() && until <= deps.now() + ROUTE_CACHE_TTL_MS)) response = null;
+  if (!response) {
+    const object = await env.ARTIFACTS.get(`hosting/previews/${url.hostname}.json`);
+    if (!object || object.size > MAX_ROUTE_BYTES) throw new Error('preview unavailable');
+    const body = await new Response(object.body).text();
+    if (body.length > MAX_ROUTE_BYTES) throw new Error('invalid preview head');
+    response = new Response(body, { headers: { 'Cache-Control': 'public, max-age=60', 'X-Gregale-Route-Until': String(deps.now() + ROUTE_CACHE_TTL_MS) } });
+    if (deps.cache) ctx.waitUntil(deps.cache.put(key, response.clone()));
+  }
+  const p = JSON.parse(await response.text());
+  // Recheck expiry and revocation on every request, including warm HEAD/304.
+  if (p.version !== 1 || !UUID.test(p.id) || p.hostname !== url.hostname ||
+      p.hostname !== `p-${p.id}.${env.HOSTING_DOMAIN}` || !UUID.test(p.site_id) || !UUID.test(p.release_id) ||
+      p.canonical_hostname !== `${p.site_id}.${env.HOSTING_DOMAIN}` || !DIGEST.test(env.ORIGIN_ID || '') || p.origin_id !== env.ORIGIN_ID ||
+      p.generation !== 1 || p.revoked !== false || !Number.isSafeInteger(p.expires_at) || p.expires_at * 1000 <= deps.now()) throw new Error('preview unavailable');
+  const head = await durableRouteFor(new URL(`https://${p.canonical_hostname}/`), env, ctx, deps);
+  if (head?.preview_allowed !== true || head.site_id !== p.site_id) throw new Error('preview site unavailable');
+  const route = { ...head, enabled: true, active_release_id: p.release_id, ready_releases: [p.release_id] };
+  if (!validDurableRoute(route, p.canonical_hostname, env.ORIGIN_ID)) throw new Error('preview site unavailable');
+  return route;
+}
+
 async function domainBindingFor(url, env, ctx, deps) {
   if (!/^[a-z0-9.-]+$/.test(url.hostname) || url.hostname.length > MAX_DOMAIN_HOSTNAME_BYTES) throw new Error("invalid hostname");
   const key = new Request(`https://${url.hostname}/_gregale/cache/domains/v1/${env.ORIGIN_ID}`);
@@ -302,6 +333,19 @@ async function dispatch(request, env, ctx, deps, trace) {
   if (!env.ROUTES || !env.ARTIFACTS) return fail(503, "hosting_unconfigured");
   try {
     const url = new URL(request.url);
+    const isPreview = previewHostname(url.hostname, env.HOSTING_DOMAIN);
+    if (env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED === 'true' && !env.HOSTING_DOMAIN) return fail(503, 'hosting_unconfigured');
+    if (isPreview) {
+      if (env.FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED !== 'true') return fail(404, 'frontend_hosting_previews_disabled');
+      if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED !== 'true') return fail(503, 'hosting_route_unavailable');
+      if (!(await verifyAccess(request, env, deps))) return fail(403, 'internal_access_required');
+      if (!new Set(['GET', 'HEAD']).has(request.method)) return fail(405, 'method_not_allowed');
+      const route = await previewRouteFor(url, env, ctx, deps);
+      const selected = await resolveFile(request, url, env, ctx, deps, route);
+      if (!selected) return fail(404, 'hosting_file_not_found');
+      // Preview traffic is intentionally excluded from production traffic metrics.
+      return await serveFile(request, url, env, ctx, deps, route, selected, trace);
+    }
     let binding;
     let routingURL = url;
     if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED === "true" && !env.HOSTING_DOMAIN) return fail(503, "hosting_unconfigured");

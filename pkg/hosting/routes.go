@@ -16,6 +16,7 @@ import (
 
 type Route struct {
 	Version         int      `json:"version"`
+	PreviewAllowed  bool     `json:"preview_allowed,omitempty"`
 	Enabled         bool     `json:"enabled"`
 	Hostname        string   `json:"hostname"`
 	SiteID          string   `json:"site_id"`
@@ -103,6 +104,7 @@ func NewDurableRoute(site api.HostingSite, releases []api.HostingRelease, genera
 	r := NewRoute(site, releases, true, time.Time{})
 	r.Version, r.Generation, r.ExpiresAt = 2, generation, 0
 	r.Deleted = site.Status == "deleting"
+	r.PreviewAllowed = site.Status == "active" && !site.Suspended
 	r.Enabled = r.Enabled && r.ActiveReleaseID != "" && !r.Deleted
 	return r
 }

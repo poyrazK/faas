@@ -39,5 +39,12 @@ func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 		out.DomainHostnameMaxBytes = api.HostingDomainHostnameMaxBytes
 		out.DomainCNAMETarget = h.HostingDomainProvider().Target()
 	}
+	if h, ok := s.Host.(PreviewHost); ok && h.HostingPreviewsEnabled() && s.Host.HostingDurableRoutingEnabled() && h.HostingPreviewStore() != nil {
+		out.PreviewsEnabled = true
+		out.PreviewsPerSite = api.HostingPreviewsPerSite
+		out.PreviewTTLDefaultSeconds = int64(api.HostingPreviewTTLDefault / time.Second)
+		out.PreviewTTLMinSeconds = int64(api.HostingPreviewTTLMin / time.Second)
+		out.PreviewTTLMaxSeconds = int64(api.HostingPreviewTTLMax / time.Second)
+	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }

@@ -131,6 +131,7 @@ const hostingReleaseDeleted = `-- name: HostingReleaseDeleted :execrows
 DELETE FROM hosting_releases r USING hosting_sites s
 WHERE s.id = r.site_id AND s.account_id = $1::uuid
 AND r.site_id = $2::uuid AND r.id = $3::uuid AND r.state = 'retiring'
+AND NOT EXISTS(SELECT 1 FROM hosting_previews p WHERE p.release_id=r.id)
 AND (NOT s.durable_routing OR r.retirement_published_at <= $4::timestamptz)
 `
 
@@ -318,7 +319,8 @@ const hostingReleaseRetire = `-- name: HostingReleaseRetire :one
 UPDATE hosting_releases r SET state = 'retiring', retired_at = clock_timestamp(), retirement_generation = $1::bigint
 FROM hosting_sites s WHERE s.id = r.site_id AND s.account_id = $2::uuid
 AND r.site_id = $3::uuid AND r.id = $4::uuid AND r.state IN ('pending', 'ready')
-AND s.active_release_id IS DISTINCT FROM r.id RETURNING r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes, r.first_promoted_at
+AND s.active_release_id IS DISTINCT FROM r.id
+AND NOT EXISTS(SELECT 1 FROM hosting_previews p WHERE p.release_id=r.id) RETURNING r.id, r.site_id, r.state, r.manifest, r.created_at, r.retired_at, r.retirement_generation, r.retirement_published_at, r.artifact_bytes, r.first_promoted_at
 `
 
 type HostingReleaseRetireParams struct {
@@ -848,6 +850,7 @@ const hostingSitePurge = `-- name: HostingSitePurge :execrows
 DELETE FROM hosting_sites s WHERE s.account_id = $1::uuid AND s.id = $2::uuid AND s.status = 'deleting'
 AND NOT EXISTS(SELECT 1 FROM hosting_releases r WHERE r.site_id = s.id AND r.state <> 'deleted')
 AND NOT EXISTS(SELECT 1 FROM hosting_domains d WHERE d.site_id = s.id)
+AND NOT EXISTS(SELECT 1 FROM hosting_previews p WHERE p.site_id = s.id)
 AND (NOT s.durable_routing OR EXISTS(SELECT 1 FROM hosting_route_publications p WHERE p.site_id = s.id
  AND p.published_generation = p.generation AND p.published_at <= $3::timestamptz))
 `

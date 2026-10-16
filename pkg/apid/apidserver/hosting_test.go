@@ -23,7 +23,7 @@ func TestHostingRoutesDefaultOffAndOperatorOnly(t *testing.T) {
 			root := "/v1/internal/hosting/sites"
 			site := root + "/11111111-1111-4111-8111-111111111111"
 			release := site + "/releases/22222222-2222-4222-8222-222222222222"
-			for _, route := range []struct{ method, path string }{{"GET", "/v1/internal/hosting/capabilities"}, {"GET", "/v1/internal/hosting/usage"}, {"GET", root}, {"POST", root}, {"GET", site}, {"GET", site + "/status"}, {"GET", site + "/traffic"}, {"GET", site + "/domains"}, {"POST", site + "/domains"}, {"DELETE", site + "/domains/33333333-3333-4333-8333-333333333333"}, {"POST", site + "/domains/33333333-3333-4333-8333-333333333333/recover"}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
+			for _, route := range []struct{ method, path string }{{"GET", "/v1/internal/hosting/capabilities"}, {"GET", "/v1/internal/hosting/usage"}, {"GET", root}, {"POST", root}, {"GET", site}, {"GET", site + "/status"}, {"GET", site + "/traffic"}, {"GET", site + "/previews"}, {"POST", site + "/previews"}, {"DELETE", site + "/previews/33333333-3333-4333-8333-333333333333"}, {"GET", site + "/domains"}, {"POST", site + "/domains"}, {"DELETE", site + "/domains/33333333-3333-4333-8333-333333333333"}, {"POST", site + "/domains/33333333-3333-4333-8333-333333333333/recover"}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
 				response := env.Do(t, route.method, route.path, map[string]any{}, nil)
 				want := 503
 				code := "frontend_hosting_disabled"
@@ -92,6 +92,27 @@ func TestHostingReleaseConfigRuntimeOptIn(t *testing.T) {
 		}
 		if m.Bool(key, true) {
 			t.Fatal("hot disable did not override bootstrap")
+		}
+	}
+}
+
+func TestHostingPreviewRuntimeOptIn(t *testing.T) {
+	// adr: 202610161954 — preview admission is independent and defaults off.
+	for _, value := range []string{"", "false", "true", "1"} {
+		m := apidserver.NewRuntimeConfigManager(func(name string) string {
+			if name == "FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED" {
+				return value
+			}
+			return ""
+		})
+		if m.Bool("frontend_hosting_previews_enabled", false) != (value == "true" || value == "1") {
+			t.Fatal(value)
+		}
+		if err := m.Apply("frontend_hosting_previews_enabled", []byte("false")); err != nil {
+			t.Fatal(err)
+		}
+		if m.Bool("frontend_hosting_previews_enabled", true) {
+			t.Fatal("hot disable ignored")
 		}
 	}
 }
