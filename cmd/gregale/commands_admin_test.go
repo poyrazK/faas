@@ -310,7 +310,7 @@ func TestAdminRefund_HappyPathHitsAPID(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.AdminRefundResponse{
 			AccountID: targetID, InvoiceID: invoiceID, Provider: "polar",
 			ProviderRefundID: "refund-1", ChargeID: "order-1", AmountCents: 500,
-			Currency: "EUR", Status: "succeeded",
+			Currency: "USD", Status: "succeeded",
 		})
 	}))
 	defer srv.Close()

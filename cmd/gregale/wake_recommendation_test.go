@@ -35,7 +35,7 @@ func TestRenderTriggerClassSummary(t *testing.T) {
 	if !strings.Contains(got, "2 of your last 3 wakes were monitors/crawlers") {
 		t.Fatalf("summary = %q", got)
 	}
-	if !strings.Contains(got, "≈ €") {
+	if !strings.Contains(got, "≈ $") {
 		t.Fatalf("summary missing cost estimate: %q", got)
 	}
 }
