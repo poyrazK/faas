@@ -336,6 +336,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq, aiForm)
 	if aiPlan != nil {
 		h.observeContentPolicy(w, metricIntegrationID, aiPlan.content)
+		if aiPlan.unmetered {
+			// ADR-1370: the AI policy lets this write through outside the caps.
+			w.Header().Set(AIUnmeteredHeader, "allowed")
+			h.Metrics.ObserveAIUnmetered(metricIntegrationID)
+		}
 	}
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
@@ -657,6 +662,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
 			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
+			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
 		}
 		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
 	}

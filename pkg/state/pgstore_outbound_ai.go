@@ -30,6 +30,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		       ai_daily_cost_limit_millicents = $5, ai_monthly_cost_limit_millicents = $6,
 		       ai_request_log_enabled = $7, ai_user_daily_token_limit = $8,
 		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, ai_log_export = $11,
+		       ai_allow_unmetered = $12,
 		       -- ADR-997: turning AI handling off also clears the content policy,
 		       -- and its moderation check (ADR-1340).
 		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
@@ -47,7 +48,8 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		   AND provider_auth_mode = 'managed' AND enabled`,
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Provider, policy.DailyTokenLimit,
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
-		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport)
+		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport,
+		policy.AllowUnmetered)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -99,7 +101,7 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 	rows, err := s.pool.Query(ctx, `
 		SELECT caller, model, requests, error_requests, usage_unknown_requests,
 		       input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
-		       images, audio_seconds, characters
+		       images, audio_seconds, characters, video_seconds
 		  FROM outbound_ai_usage_daily
 		 WHERE integration_id = $1 AND usage_date = $2::date
 		 ORDER BY caller, model
@@ -113,7 +115,7 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 		var item OutboundAIUsageItem
 		if err := rows.Scan(&item.Caller, &item.Model, &item.Requests, &item.ErrorRequests, &item.UsageUnknownRequests,
 			&item.InputTokens, &item.CachedInputTokens, &item.CacheWriteTokens, &item.OutputTokens, &item.CostMillicents,
-			&item.Images, &item.AudioSeconds, &item.Characters); err != nil {
+			&item.Images, &item.AudioSeconds, &item.Characters, &item.VideoSeconds); err != nil {
 			return OutboundAIUsage{}, mapErr(err)
 		}
 		rollupTokens += item.InputTokens + item.OutputTokens
@@ -183,7 +185,7 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 		SELECT model_prefix, input_millicents_per_mtok, cached_input_millicents_per_mtok,
 		       cache_write_millicents_per_mtok, output_millicents_per_mtok,
 		       input_image_millicents_per_mtok, output_image_millicents_per_mtok, millicents_per_image,
-		       millicents_per_audio_minute, millicents_per_million_characters
+		       millicents_per_audio_minute, millicents_per_million_characters, millicents_per_video_second
 		  FROM outbound_ai_price_entries WHERE price_list_id = $1
 		 ORDER BY model_prefix`, listID)
 	if err != nil {
@@ -195,7 +197,7 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
-			&entry.MillicentsPerMillionCharacters); err != nil {
+			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond); err != nil {
 			return OutboundAIPriceList{}, mapErr(err)
 		}
 		list.Entries = append(list.Entries, entry)
@@ -234,11 +236,11 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 			    (price_list_id, model_prefix, input_millicents_per_mtok, cached_input_millicents_per_mtok,
 			     cache_write_millicents_per_mtok, output_millicents_per_mtok, input_image_millicents_per_mtok,
 			     output_image_millicents_per_mtok, millicents_per_image, millicents_per_audio_minute,
-			     millicents_per_million_characters)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
+			     millicents_per_million_characters, millicents_per_video_second)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
 			entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok, entry.OutputMillicentsPerMTok,
 			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerImage,
-			entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters); err != nil {
+			entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond); err != nil {
 			return mapErr(err)
 		}
 	}

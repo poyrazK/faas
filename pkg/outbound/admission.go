@@ -119,6 +119,9 @@ type Integration struct {
 	// AILogExport writes each settled app call to the export outbox for the
 	// app's log drains (ADR-1340).
 	AILogExport bool
+	// AIAllowUnmetered lets through writes the gateway can neither meter
+	// nor knows to be free; otherwise they are refused (ADR-1370).
+	AIAllowUnmetered bool
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
@@ -232,6 +235,9 @@ func (i Integration) Validate() error {
 	}
 	if i.AILogExport && i.AIProvider == "" {
 		return fmt.Errorf("%w: AI log export requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIAllowUnmetered && i.AIProvider == "" {
+		return fmt.Errorf("%w: allowing unmetered AI calls requires an AI provider", ErrInvalidIntegration)
 	}
 	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
 		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)

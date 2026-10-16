@@ -47,6 +47,9 @@ type OutboundIntegrationOffer struct {
 	// AIContentPolicy is the integration's content guardrails (ADR-997)
 	// and moderation check (ADR-1340).
 	AIContentPolicy api.OutboundAIContentPolicy
+	// AIAllowUnmetered lets through writes the gateway cannot meter
+	// (ADR-1370).
+	AIAllowUnmetered bool
 	// AILogExport sends settled app calls to the app's log drains
 	// (ADR-1340).
 	AILogExport bool
@@ -76,6 +79,8 @@ type OutboundAIUsageItem struct {
 	Images       int64
 	AudioSeconds int64
 	Characters   int64
+	// VideoSeconds is seconds of generated video (ADR-1370).
+	VideoSeconds int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.
@@ -114,6 +119,9 @@ type OutboundAIPolicy struct {
 	// LogExport sends settled app calls to the app's log drains; it
 	// requires a provider (ADR-1340).
 	LogExport bool
+	// AllowUnmetered lets through writes the gateway cannot meter; it
+	// requires a provider (ADR-1370).
+	AllowUnmetered bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
@@ -121,7 +129,7 @@ func (p OutboundAIPolicy) valid() bool {
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
 		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
-		(!p.LogExport || p.Provider != "")
+		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

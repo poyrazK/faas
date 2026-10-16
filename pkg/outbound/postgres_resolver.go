@@ -62,7 +62,7 @@ const integrationPolicySQL = `
 	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms,
 	       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
 	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
-	       integration.ai_moderation_categories, integration.ai_moderation_on_error
+	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -92,7 +92,7 @@ const currentAIPricesSQL = `
 	SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
 	       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
 	       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
-	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters
+	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters, entry.millicents_per_video_second
 	  FROM outbound_ai_price_entries entry
 	 WHERE entry.price_list_id = (
 	       SELECT list.id FROM outbound_ai_price_lists list
@@ -120,7 +120,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var policyUpdatedAt time.Time
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
-	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport bool
+	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport, aiAllowUnmetered bool
 	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	err := results.QueryRow().
@@ -131,7 +131,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent, &contentPolicy.Email,
 			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms,
 			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
-			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError)
+			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -259,6 +259,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		AccountPlan:       api.Plan(plan),
 		AIContentPolicy:   contentPolicy,
 		AILogExport:       aiLogExport,
+		AIAllowUnmetered:  aiAllowUnmetered,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
@@ -277,7 +278,7 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
-			&entry.MillicentsPerMillionCharacters); err != nil {
+			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

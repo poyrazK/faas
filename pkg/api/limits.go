@@ -894,6 +894,15 @@ const (
 	// the per-million-token ceiling.
 	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
 	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
+	// Video (ADR-1370): the ceiling of a price per second of video; the
+	// largest video request body the gateway reads to size it; the
+	// duration a request without one reserves; and the bounds of one
+	// request's seconds per video and videos.
+	MaxOutboundAIPriceMillicentsPerVideoSecond int64 = 10_000_000
+	OutboundAIVideoBodyMaxBytes                int64 = 32 << 20
+	OutboundAIVideoDefaultSeconds                    = 8
+	OutboundAIVideoSecondsMax                        = 600
+	OutboundAIVideosPerCallMax                       = 8
 	OutboundAIPriceEntriesMax                        = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5

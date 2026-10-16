@@ -36,6 +36,7 @@ type Metrics struct {
 	aiReplays              *prometheus.CounterVec
 	aiEvaluations          *prometheus.CounterVec
 	aiBatches              *prometheus.CounterVec
+	aiUnmetered            *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
@@ -134,7 +135,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"integration_id", "kind", "action"}),
 		aiMedia: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_media_total",
-			Help: "Settled AI media usage by integration and kind (images, audio_seconds, or characters) (ADR-997).",
+			Help: "Settled AI media usage by integration and kind (images, audio_seconds, characters, or video_seconds) (ADR-997, ADR-1370).",
 		}, []string{"integration_id", "kind"}),
 		aiReplays: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_replays_total",
@@ -148,6 +149,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_batches_settled_total",
 			Help: "Provider batches the worker settled, by outcome (known, unknown, or error) (ADR-1360).",
 		}, []string{"outcome"}),
+		aiUnmetered: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_unmetered_calls_total",
+			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1370).",
+		}, []string{"integration_id"}),
 		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_route_canary_calls_total",
 			Help: "Calls of routes with an active canary, by the target tried first (canary or baseline) (ADR-1340).",
@@ -190,6 +195,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiReplays,
 		m.aiEvaluations,
 		m.aiBatches,
+		m.aiUnmetered,
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
 		m.aiModeration,
@@ -314,7 +320,8 @@ func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, u
 	if m.aiMedia == nil {
 		return
 	}
-	for kind, value := range map[string]int64{"images": usage.Images, "audio_seconds": usage.AudioSeconds, "characters": usage.Characters} {
+	for kind, value := range map[string]int64{"images": usage.Images, "audio_seconds": usage.AudioSeconds, "characters": usage.Characters,
+		"video_seconds": usage.VideoSeconds} {
 		if value > 0 {
 			m.aiMedia.WithLabelValues(integrationID, kind).Add(float64(value))
 		}
@@ -335,6 +342,14 @@ func (m *Metrics) ObserveAIEvaluation(result string) {
 		return
 	}
 	m.aiEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIUnmetered counts one write let through unmetered.
+func (m *Metrics) ObserveAIUnmetered(integrationID string) {
+	if m == nil || m.aiUnmetered == nil {
+		return
+	}
+	m.aiUnmetered.WithLabelValues(integrationID).Inc()
 }
 
 // ObserveAIBatchSettled counts one settled provider batch.

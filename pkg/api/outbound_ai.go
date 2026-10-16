@@ -42,6 +42,10 @@ type OutboundAIPriceEntry struct {
 	MillicentsPerImage             *int64 `json:"millicents_per_image,omitempty"`
 	MillicentsPerAudioMinute       *int64 `json:"millicents_per_audio_minute,omitempty"`
 	MillicentsPerMillionCharacters *int64 `json:"millicents_per_million_characters,omitempty"`
+	// MillicentsPerVideoSecond prices each second of generated video
+	// (ADR-1370). A model prefix may name a resolution after "@", such as
+	// "veo-3.1-generate-001@4k", which wins for calls at that resolution.
+	MillicentsPerVideoSecond *int64 `json:"millicents_per_video_second,omitempty"`
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -62,7 +66,8 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 			}
 		}
 		if !optionalWithin(entry.MillicentsPerImage, MaxOutboundAIPriceMillicentsPerImage) ||
-			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) {
+			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) ||
+			!optionalWithin(entry.MillicentsPerVideoSecond, MaxOutboundAIPriceMillicentsPerVideoSecond) {
 			return false
 		}
 		if _, dup := seen[entry.ModelPrefix]; dup {

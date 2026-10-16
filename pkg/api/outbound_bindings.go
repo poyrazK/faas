@@ -72,6 +72,9 @@ type OutboundIntegrationOffer struct {
 	// AILogExport sends each settled app call to the app's log drains
 	// (ADR-1340).
 	AILogExport bool `json:"ai_log_export"`
+	// AIAllowUnmetered lets through writes the gateway cannot meter, outside
+	// the caps (ADR-1370).
+	AIAllowUnmetered bool `json:"ai_allow_unmetered"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -128,6 +131,10 @@ type PutOutboundAIPolicyRequest struct {
 	// LogExport sends each settled call of an app to that app's log drains
 	// as one JSON line, without prompts or completions (ADR-1340).
 	LogExport bool `json:"log_export,omitempty"`
+	// AllowUnmetered lets through writes the gateway can neither meter nor
+	// knows to be free, such as realtime client secrets, vector stores or
+	// fine-tuning jobs. Their spend is outside the caps (ADR-1370).
+	AllowUnmetered bool `json:"allow_unmetered,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
@@ -136,7 +143,7 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
 		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
 		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
-		(!r.LogExport || r.AIProvider != "")
+		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "")
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
@@ -160,6 +167,8 @@ type OutboundAIUsageItem struct {
 	Images       int64 `json:"images"`
 	AudioSeconds int64 `json:"audio_seconds"`
 	Characters   int64 `json:"characters"`
+	// VideoSeconds is seconds of generated video (ADR-1370).
+	VideoSeconds int64 `json:"video_seconds"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

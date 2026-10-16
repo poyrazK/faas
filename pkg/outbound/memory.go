@@ -81,6 +81,8 @@ type AIUsageTotals struct {
 	CostMillicents                                                 int64
 	// Media usage (ADR-997).
 	Images, AudioSeconds, Characters int64
+	// VideoSeconds is seconds of generated video (ADR-1370).
+	VideoSeconds int64
 }
 
 // AIUserUsageTotals is one end user's UTC-day rollup (ADR-994).
@@ -617,6 +619,7 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	row.Images += record.Usage.Images
 	row.AudioSeconds += record.Usage.AudioSeconds
 	row.Characters += record.Usage.Characters
+	row.VideoSeconds += record.Usage.VideoSeconds
 	state.aiUsage[key] = row
 	crossings := []aiBudgetCrossing{
 		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount, ""},

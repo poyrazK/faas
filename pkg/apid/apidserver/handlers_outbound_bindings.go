@@ -42,6 +42,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AIRequestLogContent:            offer.AIRequestLogContent,
 		AIContentPolicy:                offer.AIContentPolicy.Normalized(),
 		AILogExport:                    offer.AILogExport,
+		AIAllowUnmetered:               offer.AIAllowUnmetered,
 	}
 }
 

@@ -17,6 +17,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// AIUnmeteredHeader marks a write the gateway let through without metering
+// because the AI policy allows it (ADR-1370).
+const AIUnmeteredHeader = "X-Gregale-AI-Unmetered"
+
 // AIModerationHeader names a moderated call's result: "passed",
 // "flagged=<categories>", or "error" (ADR-1340).
 const AIModerationHeader = "X-Gregale-AI-Moderation"

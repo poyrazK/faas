@@ -33,6 +33,20 @@ type AIUsage struct {
 	Images            int64
 	AudioSeconds      int64
 	Characters        int64
+	// VideoSeconds is seconds of generated video, and VideoResolution the
+	// resolution they are priced at; it is not stored (ADR-1370).
+	VideoSeconds    int64
+	VideoResolution string
+}
+
+// priceModel is the name a call is priced under: a video call's model
+// with its resolution, so "<model>@<resolution>" prices win over the
+// model's own (ADR-1370).
+func (u AIUsage) priceModel() string {
+	if u.VideoSeconds > 0 && u.VideoResolution != "" {
+		return u.Model + "@" + u.VideoResolution
+	}
+	return u.Model
 }
 
 // BudgetTokens is the amount a response consumes from a daily token limit.
@@ -228,7 +242,7 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 		return fmt.Errorf("%w: AI usage model is invalid", ErrInvalidIntegration)
 	}
 	for _, value := range []int64{usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens,
-		usage.InputImageTokens, usage.OutputImageTokens, usage.Images, usage.AudioSeconds, usage.Characters} {
+		usage.InputImageTokens, usage.OutputImageTokens, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds} {
 		if value < 0 || value > 3*api.OutboundAIMaxTokensPerResponse {
 			return fmt.Errorf("%w: AI usage token count is out of range", ErrInvalidIntegration)
 		}

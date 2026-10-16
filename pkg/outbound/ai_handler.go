@@ -132,6 +132,9 @@ type aiSettlement struct {
 	// which the binary audio response does not report (ADR-997).
 	media      aiMediaKind
 	characters int64
+	// video is a video call's seconds and resolution (ADR-1370).
+	videoSeconds    int64
+	videoResolution string
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
 	// route places a route attempt in its route, and moderation is the
@@ -152,6 +155,17 @@ func speechUsage(integration Integration, settlement aiSettlement, status int, u
 		return AIUsage{Model: usage.Model, Known: true, Characters: settlement.characters}, AIUsageOutcomeKnown
 	}
 	return usage, outcome
+}
+
+// videoUsage settles a created video at the seconds it asked for: the
+// provider bills them, and the operation it returns reports no usage
+// (ADR-1370).
+func videoUsage(settlement aiSettlement, status int, usage AIUsage, outcome AIUsageOutcome) (AIUsage, AIUsageOutcome) {
+	if settlement.media != aiMediaVideo || status < 200 || status > 299 {
+		return usage, outcome
+	}
+	return AIUsage{Model: usage.Model, Known: true, VideoSeconds: settlement.videoSeconds,
+		VideoResolution: settlement.videoResolution}, AIUsageOutcomeKnown
 }
 
 // estimatedAIUsage is what a billable call with unreadable usage settles
@@ -181,6 +195,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		timeToFirstByte = first.Sub(upstreamStarted)
 	}
 	usage, outcome = speechUsage(integration, settlement, status, usage, outcome)
+	usage, outcome = videoUsage(settlement, status, usage, outcome)
 	cost := aiCallCostMillicents(integration, usage)
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost

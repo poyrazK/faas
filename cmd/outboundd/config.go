@@ -154,7 +154,10 @@ type IntegrationConfig struct {
 	RetryBudgetPerMinute           int           `toml:"retry_budget_per_minute"`
 	AIProvider                     string        `toml:"ai_provider"`
 	AIDailyTokenLimit              int64         `toml:"ai_daily_token_limit"`
-	Enabled                        *bool         `toml:"enabled"`
+	// AIAllowUnmetered lets through writes the gateway cannot meter
+	// (ADR-1370).
+	AIAllowUnmetered bool  `toml:"ai_allow_unmetered"`
+	Enabled          *bool `toml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -283,6 +286,7 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 			limit := raw.AIDailyTokenLimit
 			policy.DailyAITokenLimit = &limit
 		}
+		policy.AIAllowUnmetered = raw.AIAllowUnmetered
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
 		if err := policy.Validate(); err != nil {
