@@ -776,12 +776,15 @@ export type { FinancialAppCostAllocation } from './models/FinancialAppCostAlloca
 export type { FinancialAppCostsResponse } from './models/FinancialAppCostsResponse.js';
 export type { FinancialAppMeterCosts } from './models/FinancialAppMeterCosts.js';
 export type { FinancialAttribution } from './models/FinancialAttribution.js';
+export type { FinancialBudgetAlert } from './models/FinancialBudgetAlert.js';
+export type { FinancialBudgetEvaluation } from './models/FinancialBudgetEvaluation.js';
 export type { FinancialBudgetHistoryResponse } from './models/FinancialBudgetHistoryResponse.js';
 export type { FinancialBudgetListResponse } from './models/FinancialBudgetListResponse.js';
 export type { FinancialBudgetPreviewRequest } from './models/FinancialBudgetPreviewRequest.js';
 export type { FinancialBudgetPreviewResponse } from './models/FinancialBudgetPreviewResponse.js';
 export type { FinancialBudgetResponse } from './models/FinancialBudgetResponse.js';
 export type { FinancialBudgetRevisionResponse } from './models/FinancialBudgetRevisionResponse.js';
+export type { FinancialBudgetRuntime } from './models/FinancialBudgetRuntime.js';
 export type { FinancialBudgetScope } from './models/FinancialBudgetScope.js';
 export type { FinancialBudgetSpec } from './models/FinancialBudgetSpec.js';
 export type { FinancialBudgetTarget } from './models/FinancialBudgetTarget.js';

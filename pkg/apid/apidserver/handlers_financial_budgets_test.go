@@ -22,6 +22,33 @@ func financialDraftSpec() financial.BudgetSpec {
 	return financial.BudgetSpec{Name: "Preview spending", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000000, NotifyMillicents: []int64{800000}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual"}
 }
 
+// adr: 566 — only the monitored notification response may activate.
+func TestFinancialBudgetNotificationActivation(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanHobby)
+	spec := financialDraftSpec()
+	spec.Enabled, spec.Action, spec.DrainSeconds = true, "notify", 0
+	p := decodeFinancialBudget(t, e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "activate-notifications"}), http.StatusCreated)
+	if p.Status != "active" || !p.NotificationReady || p.Runtime == nil || p.Runtime.Evaluation != nil {
+		t.Fatalf("active notifications: %+v", p)
+	}
+	for _, action := range []string{"reject_traffic", "stop_previews", "suspend_background", "suspend_workloads"} {
+		spec.Action = action
+		rec := e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "unsupported-" + action})
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "financial_budget_activation_unavailable") {
+			t.Fatalf("stopping action activated: %s: %d %s", action, rec.Code, rec.Body)
+		}
+	}
+	spec.Action, spec.Mode = "suspend_workloads", "strict"
+	if rec := e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "strict-pending"}); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("strict policy activated: %d %s", rec.Code, rec.Body)
+	}
+	spec.Action, spec.Mode, spec.Enabled = "notify", "monitored", false
+	p = decodeFinancialBudget(t, e.Do(t, "PUT", "/v1/billing/budgets/"+p.ID, api.UpdateFinancialBudgetRequest{ExpectedRevision: p.Revision, Spec: spec}, map[string]string{"Idempotency-Key": "disable-notifications"}), http.StatusOK)
+	if p.Status != "draft" || p.NotificationReady {
+		t.Fatalf("disabled policy remained active: %+v", p)
+	}
+}
+
 func decodeFinancialBudget(t *testing.T, rec *httptest.ResponseRecorder, status int) api.FinancialBudgetResponse {
 	t.Helper()
 	if rec.Code != status {

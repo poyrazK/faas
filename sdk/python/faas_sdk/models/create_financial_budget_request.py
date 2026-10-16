@@ -15,7 +15,7 @@ T = TypeVar("T", bound="CreateFinancialBudgetRequest")
 
 @_attrs_define
 class CreateFinancialBudgetRequest:
-    """New budget intent; this deployment accepts disabled drafts only."""
+    """New budget intent; enabled policies must use monitored notify. Stopping and strict policies remain disabled drafts."""
 
     spec: FinancialBudgetSpec
     """Customer budget intent; activation and enforcement are separately acknowledged."""

@@ -27389,6 +27389,57 @@ CREATE TABLE public.feature_flag_versions (
 
 
 --
+-- Name: financial_budget_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_alerts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    threshold_millicents bigint NOT NULL,
+    payload jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    delivered_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_alerts_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT financial_budget_alerts_check CHECK ((next_attempt_at >= period_start)),
+    CONSTRAINT financial_budget_alerts_check1 CHECK (((state = 'sending'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT financial_budget_alerts_check2 CHECK (((state = 'delivered'::text) = (delivered_at IS NOT NULL))),
+    CONSTRAINT financial_budget_alerts_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'mail_delivery_failed'::text]))),
+    CONSTRAINT financial_budget_alerts_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_budget_alerts_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_alerts_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_alerts_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text]))),
+    CONSTRAINT financial_budget_alerts_threshold_millicents_check CHECK (((threshold_millicents >= 0) AND (threshold_millicents <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: financial_budget_evaluations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_evaluations (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    evidence_through_id bigint NOT NULL,
+    observation jsonb NOT NULL,
+    CONSTRAINT financial_budget_evaluations_check CHECK ((evaluated_at >= period_start)),
+    CONSTRAINT financial_budget_evaluations_evidence_through_id_check CHECK ((evidence_through_id >= 0)),
+    CONSTRAINT financial_budget_evaluations_observation_check CHECK ((jsonb_typeof(observation) = 'object'::text)),
+    CONSTRAINT financial_budget_evaluations_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_evaluations_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
 -- Name: financial_budget_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -41535,6 +41586,30 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_perio_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alerts
+    ADD CONSTRAINT financial_budget_alerts_account_id_policy_id_revision_perio_key UNIQUE (account_id, policy_id, revision, period_start, threshold_millicents);
+
+
+--
+-- Name: financial_budget_alerts financial_budget_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alerts
+    ADD CONSTRAINT financial_budget_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_budget_evaluations financial_budget_evaluations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_evaluations
+    ADD CONSTRAINT financial_budget_evaluations_pkey PRIMARY KEY (account_id, policy_id);
+
+
+--
 -- Name: financial_budget_policies financial_budget_policies_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49576,6 +49651,13 @@ CREATE INDEX executions_queue_account_idx ON public.executions USING btree (acco
 --
 
 CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING btree (account_id, project_id, environment_id, version DESC);
+
+
+--
+-- Name: financial_budget_alert_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_alert_due_idx ON public.financial_budget_alerts USING btree (next_attempt_at, id) WHERE (state <> 'delivered'::text);
 
 
 --
@@ -62791,6 +62873,22 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 ALTER TABLE ONLY public.feature_flag_versions
     ADD CONSTRAINT feature_flag_versions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alerts
+    ADD CONSTRAINT financial_budget_alerts_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_evaluations financial_budget_evaluations_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_evaluations
+    ADD CONSTRAINT financial_budget_evaluations_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
 
 
 --

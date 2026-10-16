@@ -47,9 +47,9 @@ a month, the month keeps the largest allowance any of its plans granted.
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget
-drafts. Budget enforcement is unavailable: drafts do not stop workloads or
-send spending notifications. Coverage and unavailable bill components are
-reported explicitly.
+policies. Enabled monitored notification policies send spending alerts; disabled
+drafts do not. Workload stopping and strict budget enforcement remain unavailable.
+Coverage and unavailable bill components are reported explicitly.
 
 ```bash
 gregale billing costs --month 2026-10 --json
@@ -168,8 +168,8 @@ account allowance once; gross usage measures cost before that allowance.
 Strict resource scopes require gross compute, and a broad strict policy must
 stop every covered workload.
 
-Enforcement currently reports `enforcement_ready: false`. Policy activation,
-durable decisions, independent holds, stopping acknowledgements, and strict
+Enforcement currently reports `enforcement_ready: false`. Notification-only
+activation is supported; independent holds, stopping acknowledgements and strict
 compute reservations are still under implementation. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
@@ -177,14 +177,14 @@ compute controls.
 
 ## Budget policy drafts and audit
 
-The console's Usage page can preview responses and save disabled budget drafts.
-It uses live account-owned project, environment, app and job lists. The editor
-parses EUR text to exact millicents and shows affected and continuing workloads;
-a partial cost observation remains labelled partial. Saved drafts do not stop
-usage or send threshold notifications.
+The console's Usage page creates account or app compute notification policies,
+shows monitoring health and threshold delivery state, and enables or disables
+notification policies at their current revision. Other scopes and existing
+policy specifications remain accessible through the API and CLI. EUR text is
+parsed to exact millicents. Disabled drafts do not stop usage or send alerts.
 
 ```bash
-# budget-draft.json contains the spec above with enabled set to false.
+# Use enabled=false for drafts. Only mode=monitored, action=notify can activate.
 gregale billing budgets create --file budget-draft.json --key previews-october --json
 gregale billing budgets list --json
 gregale billing budgets get --json POLICY_ID
@@ -209,11 +209,12 @@ deletion retains that history, accessible through
 `next_revision` as the next cursor. A final full page can be followed by an empty
 page. At most 128 nondeleted policies are allowed per account.
 
-Activation currently returns 422 `financial_budget_activation_unavailable`
-without writing policy intent. Save `enabled=false` to retain a draft. A policy
-response separately reports `status`, `enforcement_ready` and readiness reasons.
-An internal enabled intent whose integrations are unavailable reports
-`unavailable`, never active protection. Cost reads, policy reads, updates and
+Only `mode=monitored` with `action=notify` accepts `enabled=true`. Other enabled
+responses return 422 `financial_budget_activation_unavailable` without changing
+policy intent. Save `enabled=false` to retain those drafts. A notification policy
+reports `status=active`, `notification_ready=true` and `enforcement_ready=false`.
+It never claims that workloads stopped or that spending is capped. Unsupported
+legacy enabled intent reports `unavailable`. Cost reads, policy reads, updates and
 deletion remain reachable while an account is suspended for billing recovery;
 they do not change payment/security/deletion status or resume its workloads.
 
@@ -221,6 +222,74 @@ The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
 intent history; target stopping acknowledgements and action history are still
 under implementation.
+
+## Active spending notifications
+
+For example, save this specification to `budget.json` and run
+`gregale billing budgets create --file budget.json --key monthly-compute --json`:
+
+```json
+{
+  "name": "Monthly compute",
+  "scope": {"kind": "account"},
+  "currency": "EUR",
+  "meters": ["compute"],
+  "basis": "net_usage",
+  "limit_millicents": 1000000,
+  "notify_millicents": [800000],
+  "mode": "monitored",
+  "action": "notify",
+  "drain_seconds": 0,
+  "resume_rule": "next_period",
+  "enabled": true
+}
+```
+
+This sends spending alerts to the account email at EUR 8 and EUR 10 of known
+recorded compute usage. The limit is always a notification threshold too, with
+identical amounts deduplicated. All existing account/project/environment/app/job
+scopes and the supported compute/interface-egress meters are accepted by the
+API and CLI. This does not include subscription, tax, managed-resource or other
+missing bill components.
+
+`meterd` evaluates once per sampling interval, independently of provider billing
+and email delivery. The evaluation and its threshold events commit together,
+guarded by the policy revision. Events are unique per policy revision, threshold
+amount and UTC usage month. Usage replay and downward corrections followed by a
+recrossing do not resend an event. Editing or re-enabling creates a new revision
+and evaluates the existing month's spending again; it does not reset spending.
+Deleted or superseded policy revisions cannot acquire new delivery claims. An
+alert already claimed for delivery when the policy changes may still arrive.
+
+A fresh **known subtotal** can cross a threshold even with partial coverage;
+the email and runtime explicitly label it partial. Stale evidence cannot create
+new events. Failed evaluations omit `known_millicents`; they never substitute
+zero. Missing scope attribution remains a coverage gap. An amount below the
+threshold with partial or unavailable evidence does not establish that total
+spending is below the budget.
+
+Policy reads include `runtime.evaluation` and the current revision/month's
+`runtime.alerts`. They expose evidence and evaluation timestamps, coverage,
+known usage, threshold events, attempts, retry time and delivery state. No
+evaluation means the revision has not yet been evaluated in the current month.
+API reads mark old monitor observations stale even if the worker has stopped.
+`gregale billing budgets get ID` prints this health; `--json` returns the details.
+
+An independent delivery worker claims durable events with fenced leases. Failed
+attempts retry with capped exponential backoff; a process restart recovers expired
+claims. The existing configured mail pipeline, suppression rules and transport
+apply. `delivered` means the pipeline returned success, not confirmed inbox
+receipt. Log transport is for operator-selected development/diagnostic delivery.
+Every attempt uses the same message ID. Resend deduplicates within its provider
+window; Postmark does not support idempotency keys, so delivery is **at least
+once**, including the unavoidable send-success/commit-failure boundary.
+
+The workers are visible separately as `financial_budget_evaluation` and
+`financial_budget_delivery` in meterd health. Email failure cannot block sampling.
+Deploy the additive monitoring migration before activating policies, run matching
+`apid` and `meterd` versions, and verify a threshold and one retry with an isolated
+account before promoting the capability. This release does not add scheduler,
+gateway or VM lifecycle enforcement.
 
 ## FOCUS invoice export
 

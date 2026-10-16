@@ -3903,6 +3903,32 @@ type FeatureFlagVersion struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type FinancialBudgetAlert struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PolicyID            pgtype.UUID
+	Revision            int64
+	PeriodStart         pgtype.Timestamptz
+	ThresholdMillicents int64
+	Payload             []byte
+	State               string
+	Attempts            int32
+	NextAttemptAt       pgtype.Timestamptz
+	LeaseToken          pgtype.UUID
+	DeliveredAt         pgtype.Timestamptz
+	LastError           string
+}
+
+type FinancialBudgetEvaluation struct {
+	AccountID         pgtype.UUID
+	PolicyID          pgtype.UUID
+	Revision          int64
+	PeriodStart       pgtype.Timestamptz
+	EvaluatedAt       pgtype.Timestamptz
+	EvidenceThroughID int64
+	Observation       []byte
+}
+
 type FinancialBudgetPolicy struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

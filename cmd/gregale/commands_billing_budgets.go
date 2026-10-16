@@ -7,14 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"text/tabwriter"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/financial"
 )
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nBudget drafts do not enforce spending limits. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies for spending alerts. Stopping and strict policies remain drafts. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
@@ -122,6 +124,12 @@ func printBillingBudgetResult(out any) error {
 		if _, err := fmt.Fprintf(osStdout, "%s\nID: %s\nRevision: %d\nStatus: %s\nLimit: %s (%s)\n", value.Spec.Name, value.ID, value.Revision, value.Status, financialMoney(value.Spec.LimitMillicents), value.Spec.Basis); err != nil {
 			return err
 		}
+		if value.NotificationReady {
+			if _, err := fmt.Fprintln(osStdout, "Spending notifications are active; workloads continue running."); err != nil {
+				return err
+			}
+			return printBillingBudgetRuntime(value.Runtime)
+		}
 		if !value.EnforcementReady {
 			_, err := fmt.Fprintln(osStdout, "Enforcement is unavailable; this policy does not protect spending.")
 			return err
@@ -152,6 +160,32 @@ func printBillingBudgetResult(out any) error {
 		}
 		if value.NextRevision != 0 {
 			_, err := fmt.Fprintf(osStdout, "Continue with --after-revision %d\n", value.NextRevision)
+			return err
+		}
+	}
+	return nil
+}
+
+func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
+	if runtime == nil || runtime.Evaluation == nil {
+		_, err := fmt.Fprintln(osStdout, "Awaiting first evaluation.")
+		return err
+	}
+	e := runtime.Evaluation
+	amount := "unavailable"
+	if e.KnownMillicents != nil {
+		amount = financialMoney(*e.KnownMillicents)
+	}
+	if _, err := fmt.Fprintf(osStdout, "Known spending: %s\nLast evaluation: %s\nCoverage complete: %t; fresh: %t\n", amount, e.EvaluatedAt.Format(time.RFC3339), e.CoverageComplete, e.Fresh); err != nil {
+		return err
+	}
+	for _, reason := range e.Reasons {
+		if _, err := fmt.Fprintf(osStdout, "Coverage: %s\n", reason); err != nil {
+			return err
+		}
+	}
+	for _, a := range runtime.Alerts {
+		if _, err := fmt.Fprintf(osStdout, "Alert %s: %s at %s (%d attempts)\n", a.ID, a.State, financialMoney(a.ThresholdMillicents), a.Attempts); err != nil {
 			return err
 		}
 	}

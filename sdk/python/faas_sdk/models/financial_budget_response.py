@@ -15,6 +15,7 @@ from ..models.financial_budget_response_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.financial_budget_runtime import FinancialBudgetRuntime
     from ..models.financial_budget_spec import FinancialBudgetSpec
 
 
@@ -23,7 +24,10 @@ T = TypeVar("T", bound="FinancialBudgetResponse")
 
 @_attrs_define
 class FinancialBudgetResponse:
-    """Saved policy intent; draft and unavailable policies do not protect workloads."""
+    """Saved policy intent with current-revision UTC-month monitoring and alert delivery state. Active notification
+    policies do not stop workloads.
+
+    """
 
     id: UUID
     account_id: UUID
@@ -37,6 +41,12 @@ class FinancialBudgetResponse:
     """False until runtime integrations and acceptance are complete."""
     reasons: list[str]
     deleted_at: datetime.datetime | Unset = UNSET
+    notification_ready: bool | Unset = UNSET
+    """True for an enabled monitored notification policy; inspect runtime for evaluation freshness and delivery
+    status."""
+    runtime: FinancialBudgetRuntime | Unset = UNSET
+    """Current policy revision and UTC month only; a missing evaluation means monitoring has not evaluated that
+    revision in this period."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +72,12 @@ class FinancialBudgetResponse:
         if not isinstance(self.deleted_at, Unset):
             deleted_at = self.deleted_at.isoformat()
 
+        notification_ready = self.notification_ready
+
+        runtime: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.runtime, Unset):
+            runtime = self.runtime.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -79,11 +95,16 @@ class FinancialBudgetResponse:
         )
         if deleted_at is not UNSET:
             field_dict["deleted_at"] = deleted_at
+        if notification_ready is not UNSET:
+            field_dict["notification_ready"] = notification_ready
+        if runtime is not UNSET:
+            field_dict["runtime"] = runtime
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.financial_budget_runtime import FinancialBudgetRuntime
         from ..models.financial_budget_spec import FinancialBudgetSpec
 
         d = dict(src_dict)
@@ -112,6 +133,15 @@ class FinancialBudgetResponse:
         else:
             deleted_at = datetime.datetime.fromisoformat(_deleted_at)
 
+        notification_ready = d.pop("notification_ready", UNSET)
+
+        _runtime = d.pop("runtime", UNSET)
+        runtime: FinancialBudgetRuntime | Unset
+        if isinstance(_runtime, Unset):
+            runtime = UNSET
+        else:
+            runtime = FinancialBudgetRuntime.from_dict(_runtime)
+
         financial_budget_response = cls(
             id=id,
             account_id=account_id,
@@ -123,6 +153,8 @@ class FinancialBudgetResponse:
             enforcement_ready=enforcement_ready,
             reasons=reasons,
             deleted_at=deleted_at,
+            notification_ready=notification_ready,
+            runtime=runtime,
         )
 
         financial_budget_response.additional_properties = d

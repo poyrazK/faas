@@ -3,7 +3,6 @@ package billing
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"time"
 
@@ -32,32 +31,25 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 		return api.FinancialBudgetPreviewResponse{}, err
 	}
 	out := api.FinancialBudgetPreviewResponse{Spec: spec, PeriodStart: start, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, CoverageComplete: true, Fresh: true, Reasons: []string{}, Targets: []api.FinancialBudgetTarget{}, ContinuingTargets: []api.FinancialBudgetTarget{}}
-	costs := []financial.ContractCosts{}
-	for _, meter := range report.Meters {
-		if !slices.Contains(spec.Meters, meter.Meter) {
-			continue
-		}
-		costs = append(costs, meter.Accrued)
-		out.CoverageComplete = out.CoverageComplete && meter.Coverage.Complete
-		out.Fresh = out.Fresh && meter.Coverage.Fresh
-		for _, reason := range meter.Coverage.Reasons {
-			out.Reasons = append(out.Reasons, meter.Meter+":"+reason)
-		}
-		if !financialBudgetAttributionComplete(spec.Scope, meter.Accrued) {
-			out.CoverageComplete = false
-			out.Reasons = append(out.Reasons, meter.Meter+":missing_scope_attribution")
-		}
-	}
-	out.KnownMillicents, err = financial.BudgetAmount(spec, costs)
+	observation, err := EvaluateFinancialBudget(report, spec, now)
 	if err != nil {
 		return out, err
 	}
+	out.KnownMillicents = *observation.KnownMillicents
+	out.CoverageComplete, out.Fresh, out.Reasons = observation.CoverageComplete, observation.Fresh, observation.Reasons
 	out.KnownLimitReached = out.KnownMillicents >= spec.LimitMillicents
 	// Promotion is pending the durable decisions, owner integrations and
 	// native lifecycle acceptance in ADR-566. A preview never activates intent.
 	out.EnforcementReady = false
-	out.Reasons = append(out.Reasons, "enforcement_integration_pending")
+	if financial.NotificationOnly(spec) {
+		out.Reasons = append(out.Reasons, "notification_only_workloads_continue")
+	} else {
+		out.Reasons = append(out.Reasons, "enforcement_integration_pending")
+	}
 	out.Guarantee = "monitored_after_retained_evidence; delayed_sources_and_drain_can_exceed_limit"
+	if financial.NotificationOnly(spec) {
+		out.Guarantee = "notification_only_after_retained_evidence;workloads_continue"
+	}
 	if spec.Mode == "strict" {
 		out.Guarantee = "strict_compute_pending_reservations_and_local_deadline_acceptance"
 	}

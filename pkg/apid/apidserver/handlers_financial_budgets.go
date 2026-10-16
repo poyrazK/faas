@@ -7,25 +7,23 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/financialbudgets"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Activation is unavailable until ADR-566's component-owner acceptance gates
-// pass. Draft management must never promise that a saved policy stops usage.
-func financialBudgetResponse(p state.FinancialBudget) api.FinancialBudgetResponse {
-	status := "draft"
-	if p.Spec.Enabled {
-		status = "unavailable"
+func (s *server) writeFinancialBudget(w http.ResponseWriter, r *http.Request, status int, p state.FinancialBudget) {
+	out, err := financialbudgets.Response(r.Context(), s.store, p, time.Now().UTC())
+	if err != nil {
+		api.WriteProblem(w, financialBudgetProblem(err))
+		return
 	}
-	if p.DeletedAt != nil {
-		status = "deleted"
-	}
-	return api.FinancialBudgetResponse{ID: p.ID, AccountID: p.AccountID, Revision: p.Revision, Spec: p.Spec, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, DeletedAt: p.DeletedAt, Status: status, EnforcementReady: false, Reasons: []string{"enforcement_integration_pending"}}
+	writeFinancialBudgetJSON(w, status, out)
 }
 
 func (s *server) financialBudgetStore(w http.ResponseWriter, r *http.Request, resource bool) (state.FinancialBudgetStore, bool) {
@@ -56,7 +54,12 @@ func (s *server) listFinancialBudgets(w http.ResponseWriter, r *http.Request, ac
 	}
 	out := api.FinancialBudgetListResponse{Budgets: []api.FinancialBudgetResponse{}}
 	for _, row := range rows {
-		out.Budgets = append(out.Budgets, financialBudgetResponse(row))
+		response, err := financialbudgets.Response(r.Context(), s.store, row, time.Now().UTC())
+		if err != nil {
+			api.WriteProblem(w, financialBudgetProblem(err))
+			return
+		}
+		out.Budgets = append(out.Budgets, response)
 	}
 	writeFinancialBudgetJSON(w, http.StatusOK, out)
 }
@@ -71,7 +74,7 @@ func (s *server) getFinancialBudget(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, financialBudgetProblem(err))
 		return
 	}
-	writeFinancialBudgetJSON(w, http.StatusOK, financialBudgetResponse(row))
+	s.writeFinancialBudget(w, r, http.StatusOK, row)
 }
 
 func (s *server) createFinancialBudget(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -95,7 +98,7 @@ func (s *server) createFinancialBudget(w http.ResponseWriter, r *http.Request, a
 	if errors.Is(err, state.ErrConflict) {
 		old, readErr := store.GetFinancialBudget(r.Context(), acct.ID, id)
 		if readErr == nil && old.DeletedAt == nil && old.Revision == 1 && financialBudgetSpecsEqual(old.Spec, req.Spec) {
-			writeFinancialBudgetJSON(w, http.StatusCreated, financialBudgetResponse(old))
+			s.writeFinancialBudget(w, r, http.StatusCreated, old)
 			return
 		}
 	}
@@ -103,7 +106,7 @@ func (s *server) createFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, financialBudgetProblem(err))
 		return
 	}
-	writeFinancialBudgetJSON(w, http.StatusCreated, financialBudgetResponse(row))
+	s.writeFinancialBudget(w, r, http.StatusCreated, row)
 }
 
 func (s *server) updateFinancialBudget(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -128,7 +131,7 @@ func (s *server) updateFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, financialBudgetProblem(err))
 		return
 	}
-	writeFinancialBudgetJSON(w, http.StatusOK, financialBudgetResponse(row))
+	s.writeFinancialBudget(w, r, http.StatusOK, row)
 }
 
 func (s *server) deleteFinancialBudget(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -146,7 +149,7 @@ func (s *server) deleteFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, financialBudgetProblem(err))
 		return
 	}
-	writeFinancialBudgetJSON(w, http.StatusOK, financialBudgetResponse(row))
+	s.writeFinancialBudget(w, r, http.StatusOK, row)
 }
 
 func (s *server) listFinancialBudgetRevisions(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -184,7 +187,11 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 		return false
 	}
 	if spec.Enabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Save enabled=false to retain a draft. Activation requires accepted gateway, scheduler and metering integrations; this deployment cannot enforce the selected response."))
+		_, monitoring := store.(state.FinancialBudgetMonitorStore)
+		if monitoring && financial.NotificationOnly(spec) {
+			return true
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Only monitored notify policies can be activated. Save enabled=false for stopping or strict policies; their runtime integrations are not available."))
 		return false
 	}
 	return true

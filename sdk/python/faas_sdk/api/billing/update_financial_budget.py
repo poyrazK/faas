@@ -104,12 +104,13 @@ def sync_detailed(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Only monitored notify
+    policies can activate; stopping and strict policies must remain disabled.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):
@@ -145,12 +146,13 @@ def sync(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Only monitored notify
+    policies can activate; stopping and strict policies must remain disabled.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):
@@ -181,12 +183,13 @@ async def asyncio_detailed(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Only monitored notify
+    policies can activate; stopping and strict policies must remain disabled.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):
@@ -220,12 +223,13 @@ async def asyncio(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Only monitored notify
+    policies can activate; stopping and strict policies must remain disabled.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):

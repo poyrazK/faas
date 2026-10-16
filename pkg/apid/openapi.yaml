@@ -43957,13 +43957,13 @@ paths:
     post:
       tags: [billing]
       operationId: createFinancialBudget
-      summary: Save an account-owned budget draft with atomic revision audit.
+      summary: Save a budget policy with atomic revision audit; monitored notifications can activate.
       description: |
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
-        identity cannot overwrite a changed or deleted policy. Set enabled=false:
-        activation currently returns 422 financial_budget_activation_unavailable.
-        Saving a draft creates no holds, decisions, notifications or workload changes.
+        identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+        Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422 financial_budget_activation_unavailable.
+        Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -44018,12 +44018,12 @@ paths:
     put:
       tags: [billing]
       operationId: updateFinancialBudget
-      summary: Replace a budget draft at its expected revision.
+      summary: Replace a budget policy at its expected revision.
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
-        must match the current policy; stale edits return 409. Set enabled=false:
-        activation remains unavailable. Scope ownership and action eligibility are
-        revalidated. Payment, security and user holds are independent of this intent.
+        must match the current policy; stale edits return 409. Only monitored notify
+        policies can activate; stopping and strict policies must remain disabled.
+        Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -61379,7 +61379,7 @@ components:
         completed_at: { type: string, format: date-time }
     FinancialBudgetResponse:
       type: object
-      description: Saved policy intent; draft and unavailable policies do not protect workloads.
+      description: Saved policy intent with current-revision UTC-month monitoring and alert delivery state. Active notification policies do not stop workloads.
       required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
       properties:
         id: { type: string, format: uuid }
@@ -61389,9 +61389,46 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at: { type: string, format: date-time }
-        status: { type: string, enum: [draft, unavailable, deleted] }
+        status: { type: string, enum: [draft, unavailable, active, deleted] }
         enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
+        notification_ready: { type: boolean, description: True for an enabled monitored notification policy; inspect runtime for evaluation freshness and delivery status. }
+        runtime: { $ref: '#/components/schemas/FinancialBudgetRuntime' }
         reasons: { type: array, items: { type: string } }
+    FinancialBudgetEvaluation:
+      type: object
+      description: Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial known costs can trigger labelled notifications; stale observations cannot create new alerts.
+      required: [period_start, period_end, as_of, evaluated_at, evidence_through_id, coverage_complete, fresh, reasons]
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        evaluated_at: { type: string, format: date-time }
+        evidence_through_id: { type: integer, format: int64, minimum: 0 }
+        known_millicents: { type: integer, format: int64, minimum: 0 }
+        coverage_complete: { type: boolean }
+        fresh: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+    FinancialBudgetAlert:
+      type: object
+      description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
+      required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
+      properties:
+        id: { type: string, format: uuid }
+        policy_revision: { type: integer, format: int64, minimum: 1 }
+        threshold_millicents: { type: integer, format: int64, minimum: 0 }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        state: { type: string, enum: [pending, sending, retrying, delivered] }
+        attempts: { type: integer, minimum: 0, maximum: 2147483647 }
+        next_attempt_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        last_error: { type: string, enum: [mail_delivery_failed] }
+    FinancialBudgetRuntime:
+      type: object
+      description: Current policy revision and UTC month only; a missing evaluation means monitoring has not evaluated that revision in this period.
+      required: [alerts]
+      properties:
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
     FinancialBudgetListResponse:
       type: object
       description: Nondeleted account-owned policy intents with separately reported readiness.
@@ -61400,7 +61437,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; this deployment accepts disabled drafts only.
+      description: New budget intent; enabled policies must use monitored notify. Stopping and strict policies remain disabled drafts.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }

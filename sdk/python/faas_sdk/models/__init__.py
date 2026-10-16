@@ -1555,6 +1555,10 @@ from .financial_app_costs_response import FinancialAppCostsResponse
 from .financial_app_costs_response_currency import FinancialAppCostsResponseCurrency
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
+from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
+from .financial_budget_alert_state import FinancialBudgetAlertState
+from .financial_budget_evaluation import FinancialBudgetEvaluation
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
 from .financial_budget_preview_request import FinancialBudgetPreviewRequest
@@ -1563,6 +1567,7 @@ from .financial_budget_response import FinancialBudgetResponse
 from .financial_budget_response_status import FinancialBudgetResponseStatus
 from .financial_budget_revision_response import FinancialBudgetRevisionResponse
 from .financial_budget_revision_response_mutation import FinancialBudgetRevisionResponseMutation
+from .financial_budget_runtime import FinancialBudgetRuntime
 from .financial_budget_scope import FinancialBudgetScope
 from .financial_budget_scope_kind import FinancialBudgetScopeKind
 from .financial_budget_spec import FinancialBudgetSpec
@@ -6282,6 +6287,10 @@ __all__ = (
     "FinancialAppCostsResponseCurrency",
     "FinancialAppMeterCosts",
     "FinancialAttribution",
+    "FinancialBudgetAlert",
+    "FinancialBudgetAlertLastError",
+    "FinancialBudgetAlertState",
+    "FinancialBudgetEvaluation",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
     "FinancialBudgetPreviewRequest",
@@ -6290,6 +6299,7 @@ __all__ = (
     "FinancialBudgetResponseStatus",
     "FinancialBudgetRevisionResponse",
     "FinancialBudgetRevisionResponseMutation",
+    "FinancialBudgetRuntime",
     "FinancialBudgetScope",
     "FinancialBudgetScopeKind",
     "FinancialBudgetSpec",

@@ -9,11 +9,17 @@
 ## Preview release scope
 
 The first release includes retained compute/interface-egress evidence, cost and
-forecast reads, and disabled budget drafts with previews and revision history.
-Activation is rejected with `financial_budget_activation_unavailable`, and
-previews always report `enforcement_ready: false`. Runtime enforcement, durable
-notifications, holds, strict reservations, and lifecycle changes described below
-remain future work. See [release scope](../financial-controls-implementation.md).
+forecast reads, budget drafts and active monitored notification policies.
+Only `mode=monitored`, `action=notify` can activate; other enabled responses are
+rejected with `financial_budget_activation_unavailable`. Notifications use
+atomic retained observations/outbox events, fenced claims, retries and stable
+mail IDs. Events deduplicate per policy revision, UTC month and threshold. A
+new revision re-evaluates existing spending. Fresh partial subtotals may warn
+with explicit coverage; stale observations cannot generate events. Delivery
+is at least once because external mail acceptance and local settlement cannot
+commit atomically. Preview/runtime fields never claim workload stopping from
+notification readiness. Holds, strict reservations and the lifecycle changes
+described below remain future work. See [release scope](../financial-controls-implementation.md).
 
 ## Accounting contract
 

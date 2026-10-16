@@ -5,6 +5,23 @@ import { ApiError } from '../src/generated/core/ApiError.js';
 import { OpenAPI } from '../src/generated/core/OpenAPI.js';
 import type { FinancialBudgetSpec } from '../src/generated/models/FinancialBudgetSpec.js';
 
+test('active budget reads retain notification readiness, unknown cost and delivery retries', async () => {
+  const originalFetch = globalThis.fetch;
+  const id = '6dc4f678-5766-4a06-a061-845c2b133fdd';
+  const spec: FinancialBudgetSpec = { name: 'Compute', scope: { kind: 'account' }, currency: 'EUR', meters: ['compute'], basis: 'net_usage', limit_millicents: 1000000, notify_millicents: [800000], mode: 'monitored', action: 'notify', drain_seconds: 0, resume_rule: 'next_period', enabled: true };
+  const evaluation = { period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', as_of: '2026-10-16T10:00:00Z', evaluated_at: '2026-10-16T10:01:00Z', evidence_through_id: 0, coverage_complete: false, fresh: false, reasons: ['cost_evaluation_unavailable'] };
+  try {
+    globalThis.fetch = async () => Response.json({ id, account_id: id, revision: 1, spec, created_at: evaluation.period_start, updated_at: evaluation.period_start, status: 'active', enforcement_ready: false, notification_ready: true, reasons: ['notification_only_workloads_continue'], runtime: { evaluation, alerts: [{ id, policy_revision: 1, threshold_millicents: 800000, evaluation: { ...evaluation, known_millicents: 800000 }, state: 'retrying', attempts: 2, next_attempt_at: evaluation.evaluated_at, last_error: 'mail_delivery_failed' }] } });
+    const result = await BillingService.getFinancialBudget({ id });
+    assert.equal(result.status, 'active');
+    assert.equal(result.notification_ready, true);
+    assert.equal(result.enforcement_ready, false);
+    assert.equal(result.runtime?.evaluation?.known_millicents, undefined);
+    assert.equal(result.runtime?.alerts[0]?.state, 'retrying');
+    assert.equal(result.runtime?.alerts[0]?.evaluation.known_millicents, 800000);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('financial reads preserve month, authentication, exact money and source gaps', async () => {
   const originalFetch = globalThis.fetch;
   const originalBase = OpenAPI.BASE;

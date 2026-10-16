@@ -1,6 +1,10 @@
 package meter
 
-import "time"
+import (
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // StaleAfterMultiplier is the multiplier applied to each tick's interval
 // when deciding whether /healthz should report stale. Spec §14 M7:
@@ -53,6 +57,10 @@ func (l *Loop) Health(now time.Time) HealthStatus {
 	}
 	if l.dunning != nil {
 		intervals["dunning"] = l.cfg.DunningInterval
+	}
+	if l.financialBudgets {
+		intervals["financial_budget_evaluation"] = l.cfg.SampleInterval
+		intervals["financial_budget_delivery"] = api.FinancialBudgetDeliveryInterval
 	}
 	if l.probe == nil {
 		delete(intervals, "upstream_probe")

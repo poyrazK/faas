@@ -10,6 +10,71 @@ from faas_sdk.models.financial_forecast_response import FinancialForecastRespons
 from faas_sdk.models.problem import Problem
 
 
+def test_active_budget_runtime_preserves_unknown_cost_and_retry_state() -> None:
+    from faas_sdk.models.financial_budget_response import FinancialBudgetResponse
+    from faas_sdk.types import UNSET
+
+    evaluation = {
+        "period_start": "2026-10-01T00:00:00Z",
+        "period_end": "2026-11-01T00:00:00Z",
+        "as_of": "2026-10-16T10:00:00Z",
+        "evaluated_at": "2026-10-16T10:01:00Z",
+        "evidence_through_id": 0,
+        "coverage_complete": False,
+        "fresh": False,
+        "reasons": ["cost_evaluation_unavailable"],
+    }
+    policy = FinancialBudgetResponse.from_dict(
+        {
+            "id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+            "account_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+            "revision": 1,
+            "created_at": evaluation["period_start"],
+            "updated_at": evaluation["period_start"],
+            "status": "active",
+            "enforcement_ready": False,
+            "notification_ready": True,
+            "reasons": ["notification_only_workloads_continue"],
+            "spec": {
+                "name": "Compute",
+                "scope": {"kind": "account"},
+                "currency": "EUR",
+                "meters": ["compute"],
+                "basis": "net_usage",
+                "limit_millicents": 1000000,
+                "notify_millicents": [800000],
+                "mode": "monitored",
+                "action": "notify",
+                "drain_seconds": 0,
+                "resume_rule": "next_period",
+                "enabled": True,
+            },
+            "runtime": {
+                "evaluation": evaluation,
+                "alerts": [
+                    {
+                        "id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+                        "policy_revision": 1,
+                        "threshold_millicents": 800000,
+                        "evaluation": {**evaluation, "known_millicents": 800000},
+                        "state": "retrying",
+                        "attempts": 2,
+                        "next_attempt_at": evaluation["evaluated_at"],
+                        "last_error": "mail_delivery_failed",
+                    }
+                ],
+            },
+        }
+    )
+    assert policy.status == "active"
+    assert policy.notification_ready is True
+    assert policy.enforcement_ready is False
+    assert policy.runtime.evaluation.known_millicents is UNSET
+    assert policy.runtime.alerts[0].state == "retrying"
+    assert policy.runtime.alerts[0].evaluation.known_millicents == 800000
+    assert "known_millicents" not in policy.to_dict()["runtime"]["evaluation"]
+
+
 @pytest.mark.parametrize("endpoint", [get_financial_costs, get_financial_forecast])
 def test_financial_auth_month_money_and_gaps(endpoint) -> None:
     period = {
