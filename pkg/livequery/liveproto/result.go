@@ -21,10 +21,19 @@ type Result struct {
 	Closed   bool
 	Err      *Error // the last live.error
 
-	ready   bool
-	rows    map[string][]*string
-	order   []string
-	pending *Rows
+	ready     bool
+	rows      map[string][]*string
+	order     []string
+	pending   *Rows
+	resyncing bool
+}
+
+// Resubscribe records that the client subscribed again (after a reconnect
+// or a refused frame): the next live.rows may start a new version sequence,
+// since the server may no longer know the versions it sent before.
+func (r *Result) Resubscribe() {
+	r.resyncing = true
+	r.pending = nil
 }
 
 // Ready reports whether the first complete result has arrived.
@@ -78,7 +87,7 @@ func (r *Result) applyRows(f *Rows) error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrProtocol, err)
 	}
-	if r.ready && p.Version <= r.Version {
+	if r.ready && !r.resyncing && p.Version <= r.Version {
 		return fmt.Errorf("%w: live.rows version %d does not advance %d", ErrProtocol, p.Version, r.Version)
 	}
 	rows := make(map[string][]*string, len(p.Rows))
@@ -97,7 +106,7 @@ func (r *Result) applyRows(f *Rows) error {
 	}
 	r.Database, r.Columns, r.Ordered = p.Database, p.Columns, p.Ordered
 	r.Version, r.Snapshot, r.Expires = p.Version, snap, p.Expires
-	r.rows, r.order, r.ready, r.Stale = rows, order, true, false
+	r.rows, r.order, r.ready, r.Stale, r.resyncing = rows, order, true, false, false
 	return nil
 }
 
@@ -168,7 +177,8 @@ func (r *Result) applyChanges(f *Changes) error {
 	case r.Ordered:
 		order = slices.DeleteFunc(slices.Clone(order), func(id string) bool { _, ok := rows[id]; return !ok })
 	}
-	r.rows, r.order, r.Version, r.Snapshot = rows, order, f.Version, snap
+	// The server resumed the sequence the client held.
+	r.rows, r.order, r.Version, r.Snapshot, r.resyncing = rows, order, f.Version, snap, false
 	return nil
 }
 

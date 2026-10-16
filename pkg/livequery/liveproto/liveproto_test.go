@@ -15,6 +15,8 @@ import (
 type session struct {
 	Name  string `json:"name"`
 	Steps []struct {
+		// Action "resubscribe" stands for the client subscribing again.
+		Action string          `json:"action"`
 		Frame  json.RawMessage `json:"frame"`
 		Error  bool            `json:"error"`
 		Expect *struct {
@@ -44,6 +46,10 @@ func TestSessions(t *testing.T) {
 		t.Run(s.Name, func(t *testing.T) {
 			var r Result
 			for i, step := range s.Steps {
+				if step.Action == "resubscribe" {
+					r.Resubscribe()
+					continue
+				}
 				frame, err := ParseServerFrame(step.Frame)
 				if err == nil {
 					err = r.Apply(frame)

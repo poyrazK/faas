@@ -123,6 +123,37 @@
     ]
   },
   {
+    "name": "after resubscribing, a full result may start a new version sequence",
+    "steps": [
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 7, "snapshot": "60:60:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "a", "values": ["1"]}], "complete": true},
+        "expect": {"ready": true, "version": 7}
+      },
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 2, "snapshot": "61:61:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [], "complete": true},
+        "error": true
+      },
+      {"action": "resubscribe"},
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 7, "version": 8, "snapshot": "62:62:", "xids": ["61"],
+          "changes": [{"op": "upsert", "id": "a", "values": ["2"]}]},
+        "expect": {"ready": true, "version": 8, "rows": [{"id": "a", "values": ["2"]}]}
+      },
+      {"action": "resubscribe"},
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 1, "snapshot": "70:70:", "expires": 1800000120,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "b", "values": ["3"]}], "complete": true},
+        "expect": {"ready": true, "version": 1, "rows": [{"id": "b", "values": ["3"]}], "expires": 1800000120}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 1, "version": 2, "snapshot": "71:71:", "xids": ["70"], "changes": [{"op": "remove", "id": "b"}]},
+        "expect": {"ready": true, "version": 2, "rows": []}
+      }
+    ]
+  },
+  {
     "name": "frames that break the contract are refused",
     "steps": [
       {
