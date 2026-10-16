@@ -1,4 +1,4 @@
-# ADR-1364: MCP consumer-aware activity watch
+# ADR-1475: MCP consumer-aware activity watch
 
 Status: Accepted
 

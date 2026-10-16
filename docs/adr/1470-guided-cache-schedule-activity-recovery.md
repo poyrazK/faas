@@ -1,4 +1,4 @@
-# ADR-1359: Guided MCP cache schedule activity recovery
+# ADR-1470: Guided MCP cache schedule activity recovery
 
 Status: Accepted
 

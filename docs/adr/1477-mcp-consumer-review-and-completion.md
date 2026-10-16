@@ -1,4 +1,4 @@
-# ADR-1366: MCP consumer review and completion
+# ADR-1477: MCP consumer review and completion
 
 Status: Accepted
 

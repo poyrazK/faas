@@ -1,11 +1,11 @@
-# ADR-1350: Revisioned restoration of environment cache inheritance
+# ADR-1461: Revisioned restoration of environment cache inheritance
 
 Status: Accepted
 
 ## Context
 
-ADR-1348 distinguishes missing inherited policies from explicit overrides,
-including empty cache-disabled overrides. ADR-1349 acknowledges positive
+ADR-1459 distinguishes missing inherited policies from explicit overrides,
+including empty cache-disabled overrides. ADR-1460 acknowledges positive
 policy revisions in current gateway sessions. Users need a scoped way to
 restore live app cache inheritance with the same review and recovery guarantees.
 Deleting the override would reset its revision and lose propagation evidence.

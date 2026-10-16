@@ -1,4 +1,4 @@
-# ADR-1355: Cache schedule discovery and atomic replacement
+# ADR-1466: Cache schedule discovery and atomic replacement
 
 Status: Accepted
 

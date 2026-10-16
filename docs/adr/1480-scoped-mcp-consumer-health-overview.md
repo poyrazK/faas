@@ -1,4 +1,4 @@
-# ADR-1369: Scoped MCP consumer health overview
+# ADR-1480: Scoped MCP consumer health overview
 
 Status: Accepted
 

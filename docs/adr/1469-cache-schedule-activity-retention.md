@@ -1,4 +1,4 @@
-# ADR-1358: Cache schedule activity retention and explicit cursor recovery
+# ADR-1469: Cache schedule activity retention and explicit cursor recovery
 
 Status: Accepted
 

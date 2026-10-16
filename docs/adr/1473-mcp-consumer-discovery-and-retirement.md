@@ -1,4 +1,4 @@
-# ADR-1362: MCP consumer discovery and retirement
+# ADR-1473: MCP consumer discovery and retirement
 
 Status: Accepted
 

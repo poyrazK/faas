@@ -1,10 +1,10 @@
-# ADR-1348: Environment-owned cache policies
+# ADR-1459: Environment-owned cache policies
 
 Status: Accepted
 
 ## Context
 
-ADR-1347 introduced guarded MCP updates to shared app cache rules. Named
+ADR-1458 introduced guarded MCP updates to shared app cache rules. Named
 project environments inherited those rules, so an environment-scoped remote
 grant could not safely authorize an isolated cache change. The native named
 policy overlay previously owned only headers and CORS.

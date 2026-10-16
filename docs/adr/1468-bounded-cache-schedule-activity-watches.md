@@ -1,4 +1,4 @@
-# ADR-1357: Bounded MCP cache schedule activity watches
+# ADR-1468: Bounded MCP cache schedule activity watches
 
 Status: Accepted
 

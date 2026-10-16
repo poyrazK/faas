@@ -1,4 +1,4 @@
-# ADR-1360: Schedule workflow compatibility preflight
+# ADR-1471: Schedule workflow compatibility preflight
 
 Status: Accepted
 

@@ -2700,7 +2700,7 @@ is a read-only review: it does not acknowledge, retire, process events, create a
 consumer, choose a baseline or grant new permission. Consumer retirement remains
 a separate explicit operation. Snapshot fields and API content are untrusted
 data. Prompt inspection does not add samples to the get-tool lag metrics.
-Design: [ADR-1366](adr/1366-mcp-consumer-review-and-completion.md).
+Design: [ADR-1477](adr/1477-mcp-consumer-review-and-completion.md).
 
 The pinned Codex app-server API supports resource reads; prompt retrieval is
 verified through the standard MCP SDK in-memory and over OAuth HTTP for both
@@ -2717,7 +2717,7 @@ drafts. Use the consumer watch or recovery tool to obtain a current processing
 page and explicit acknowledgment arguments. Reading or subscribing never creates
 a consumer, advances progress, processes events or retires state. Resource reads
 and polls do not add samples to get-tool consumer lag metrics.
-Design: [ADR-1368](adr/1368-mcp-consumer-resources-and-notifications.md).
+Design: [ADR-1479](adr/1479-mcp-consumer-resources-and-notifications.md).
 
 ### Subscribe to scoped resource changes
 
@@ -2819,7 +2819,7 @@ capacity is full. A full ordinary-request pool does not block activity watches.
 All HTTP requests and SDK sessions for the same grant share these limits;
 separate grants have independent capacity. These bridge limits do not change
 Gregale plan quotas. Bounds live in `pkg/api/limits.go`. Design:
-[ADR-1365](adr/1365-isolated-mcp-activity-watch-admission.md).
+[ADR-1476](adr/1476-isolated-mcp-activity-watch-admission.md).
 
 Short requests include ordinary tools, resource reads, prompt retrieval and
 argument completion. Subscription baseline reads, polls and notification-recipient
@@ -4317,7 +4317,7 @@ schedules, precise deadline guarantee or cancellation of in-progress actions.
 Roll out migration `20261016153051002`, then updated apid (including its normal
 background workers). Policy convergence and purge completion also require the
 previously documented gateway observer/purge migrations and upgraded gateways.
-Design: [ADR-1354](adr/1354-environment-cache-schedules.md).
+Design: [ADR-1465](adr/1465-environment-cache-schedules.md).
 
 ### Discover and reschedule cache actions
 
@@ -4348,7 +4348,7 @@ cancelled original is idempotent and leaves the successor scheduled. Acceptance,
 action execution and gateway convergence remain distinct.
 
 Roll out migration `20261016153051010` before updated apid. Prior schedule/gateway
-requirements remain applicable. Design: [ADR-1355](adr/1355-cache-schedule-discovery-and-replacement.md).
+requirements remain applicable. Design: [ADR-1466](adr/1466-cache-schedule-discovery-and-replacement.md).
 
 ### Durable cache schedule activity
 
@@ -4380,7 +4380,7 @@ migration `20261016153051018`, upgrade **all apid writers/workers**, and establi
 an initial schedule-list baseline before relying on activity catch-up. Mixed old
 writers cannot publish events; do not enable consumers until rollout completes.
 Go, Node and Python clients expose the same bounded read endpoint.
-Design: [ADR-1356](adr/1356-durable-cache-schedule-activity.md).
+Design: [ADR-1467](adr/1467-durable-cache-schedule-activity.md).
 
 ### Bounded schedule activity watches
 
@@ -4441,7 +4441,7 @@ Changes during baseline discovery remain after the saved checkpoint and are
 therefore replayed. Removed historical outcomes remain unavailable. Current MCP
 read consent and immutable target identities are checked before recovery metadata
 is returned. Execution and gateway convergence remain separate.
-Design: [ADR-1358](adr/1358-cache-schedule-activity-retention.md).
+Design: [ADR-1469](adr/1469-cache-schedule-activity-retention.md).
 
 ### Guided schedule activity recovery
 
@@ -4487,7 +4487,7 @@ The native helper is
 `GET /v1/apps/{slug}/cache/schedules/activity/checkpoint?environment=NAME`, exposed
 by Go, Node and Python clients. Roll out updated apid readers before the MCP
 helper, and ensure all writers already publish durable activity. No new migration is added; the durable feed and retention migrations
-remain prerequisites. Design: [ADR-1359](adr/1359-guided-cache-schedule-activity-recovery.md).
+remain prerequisites. Design: [ADR-1470](adr/1470-guided-cache-schedule-activity-recovery.md).
 
 ### Schedule activity compatibility preflight
 
@@ -4528,7 +4528,7 @@ about responding replicas; they do not establish migration health, maintenance
 health, fleet-wide compatibility or native execution qualification. Every tool
 still validates authorization and response identity. Tool discovery remains
 static and makes no API requests. Design:
-[ADR-1360](adr/1360-schedule-workflow-compatibility-preflight.md).
+[ADR-1471](adr/1471-schedule-workflow-compatibility-preflight.md).
 
 ### Durable named activity consumers
 
@@ -4604,7 +4604,7 @@ Acknowledgment is a bridge-local metadata mutation available with read consent,
 including when platform writes are disabled. It advertises `readOnlyHint: false`,
 `destructiveHint: false`, and `idempotentHint: true`; it gets mutation drain grace
 and sends no native mutation requests. No plan or platform write approval is
-created. Design: [ADR-1361](adr/1361-durable-mcp-activity-consumers.md).
+created. Design: [ADR-1472](adr/1472-durable-mcp-activity-consumers.md).
 
 ### Final validation of consumer reads
 
@@ -4638,7 +4638,7 @@ reads remain quiet. These read guards do not retroactively reject committed ACK
 or retirement receipts on later progress changes. Observations and ACK drafts
 remain point-in-time data rather than processing or retention leases; ACK still
 validates current consent, generation/revision and cursor retention separately.
-Design: [ADR-1370](adr/1370-final-consumer-read-validation.md).
+Design: [ADR-1481](adr/1481-final-consumer-read-validation.md).
 
 ### Recover a baseline for a named consumer
 
@@ -4696,7 +4696,7 @@ replayed from the original checkpoint. Consumer guards are point-in-time checks,
 not leases; a delivered ACK draft can still become stale or expire. Keep
 processing idempotent and never infer downstream completion from an ACK receipt.
 Recovery uses ordinary short-request admission, not activity-watch capacity.
-Design: [ADR-1367](adr/1367-consumer-aware-baseline-recovery.md).
+Design: [ADR-1478](adr/1478-consumer-aware-baseline-recovery.md).
 
 ### Watch activity using saved consumer progress
 
@@ -4755,7 +4755,7 @@ not undo external side effects. Use downstream idempotency when needed. A draft
 acknowledgment may become stale or expire after delivery; the ACK tool revalidates
 it. Lag metrics remain sampled by exact consumer gets; watches do not add lag
 samples. Design:
-[ADR-1364](adr/1364-mcp-consumer-aware-activity-watch.md).
+[ADR-1475](adr/1475-mcp-consumer-aware-activity-watch.md).
 
 ### Consumer lag diagnostics
 
@@ -4790,7 +4790,7 @@ responses do not include lag; request an exact consumer get to observe it.
 
 No native endpoint, migration, event scan, journal format change or background
 poller is added. Design:
-[ADR-1363](adr/1363-mcp-consumer-lag-observability.md).
+[ADR-1474](adr/1474-mcp-consumer-lag-observability.md).
 
 ### Review consumer health across an environment
 
@@ -4854,7 +4854,7 @@ Use individual watch/recovery tools to obtain current processing pages, then
 explicitly acknowledge only after processing. Removed history remains unavailable
 and point-in-time health observations are not retention leases or proof of
 downstream completion. Design:
-[ADR-1369](adr/1369-scoped-mcp-consumer-health-overview.md).
+[ADR-1480](adr/1480-scoped-mcp-consumer-health-overview.md).
 
 ### Consumer discovery and retirement
 
@@ -4901,7 +4901,7 @@ to v2; upgraded bridges read both versions and preserve v2 afterward. Older
 generation-unaware bridges fail to open v2 journals, preventing unsafe downgrade
 writes. Keep an upgraded bridge for journals where retirement has been used.
 No native migration is added. Design:
-[ADR-1362](adr/1362-mcp-consumer-discovery-and-retirement.md).
+[ADR-1473](adr/1473-mcp-consumer-discovery-and-retirement.md).
 
 `TestCodexActivityConsumerAcceptance` drives the pinned real Codex client through
 the complete lifecycle using loopback fixtures and an actual encrypted journal

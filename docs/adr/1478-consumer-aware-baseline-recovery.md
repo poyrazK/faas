@@ -1,4 +1,4 @@
-# ADR-1367: Consumer-aware baseline recovery
+# ADR-1478: Consumer-aware baseline recovery
 
 Status: Accepted
 

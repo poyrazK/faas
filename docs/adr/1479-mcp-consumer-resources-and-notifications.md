@@ -1,4 +1,4 @@
-# ADR-1368: MCP consumer resources and change notifications
+# ADR-1479: MCP consumer resources and change notifications
 
 Status: Accepted
 

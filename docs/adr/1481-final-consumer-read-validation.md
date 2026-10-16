@@ -1,4 +1,4 @@
-# ADR-1370: Final consumer read validation
+# ADR-1481: Final consumer read validation
 
 Status: Accepted
 

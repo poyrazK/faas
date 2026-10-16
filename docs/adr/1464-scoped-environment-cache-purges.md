@@ -1,4 +1,4 @@
-# ADR-1353: Scoped environment cache purges with replay generations
+# ADR-1464: Scoped environment cache purges with replay generations
 
 Status: Accepted
 

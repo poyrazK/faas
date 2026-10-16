@@ -1,8 +1,8 @@
-# ADR-1346: Policy-aware scoped route advice
+# ADR-1457: Policy-aware scoped route advice
 
 ## Status
 
-Accepted. Extends ADR-1345, ADR-976 and ADR-1191.
+Accepted. Extends ADR-1456, ADR-976 and ADR-1191.
 
 ## Decision
 

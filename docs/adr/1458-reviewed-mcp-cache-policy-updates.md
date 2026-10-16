@@ -1,4 +1,4 @@
-# ADR-1347: Reviewed MCP cache-policy updates
+# ADR-1458: Reviewed MCP cache-policy updates
 
 Status: Accepted
 

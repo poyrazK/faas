@@ -22,8 +22,8 @@ func TestCacheScheduleActivityWatchTimeoutAndReconnect(t *testing.T) {
 		t.Fatal(out)
 	}
 	cs.Close()
-	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
-	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
+	seedSchedule(t, f, time.Now().Add(time.Hour))
+	seedSchedule(t, f, time.Now().Add(time.Hour))
 	cs, ctx = connectConfiguredTestServer(t, b, opts, "2026-07-28")
 	out = callTool(t, ctx, cs, "gregale_watch_environment_cache_schedule_activity", args, false)
 	page := decodeActivity(t, out)
@@ -120,7 +120,7 @@ func TestCacheScheduleActivityWatchCancellationKeepsCheckpoint(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("native read not cancelled")
 	}
-	seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
+	seedSchedule(t, f, time.Now().Add(time.Hour))
 	out := callTool(t, ctx, cs, "gregale_watch_environment_cache_schedule_activity", args, false)
 	if page := decodeActivity(t, out); len(page.Entries) != 1 || page.Entries[0].Sequence != 1 {
 		t.Fatal(out)

@@ -1,4 +1,4 @@
-# ADR-1365: Isolated MCP activity watch admission
+# ADR-1476: Isolated MCP activity watch admission
 
 Status: Accepted
 
@@ -50,7 +50,7 @@ guidance. A connection can reserve up to twelve handlers across the three pools;
 idle subscription streams have their existing independent bounds. There is no
 new process-wide or fleet-wide quota.
 
-This supersedes ADR-1364's use of short-request admission for consumer watches.
+This supersedes ADR-1475's use of short-request admission for consumer watches.
 No tool catalog, native API, journal format, database migration or model turn is
 required. Portable in-memory and Streamable HTTP tests verify mixed-watch pool
 sharing across SDK sessions, rejection before native I/O, successful ACK/get/list

@@ -1,4 +1,4 @@
-# ADR-1345: Environment-scoped route awake and cacheability diagnostics
+# ADR-1456: Environment-scoped route awake and cacheability diagnostics
 
 ## Status
 

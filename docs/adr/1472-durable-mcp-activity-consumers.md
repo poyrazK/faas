@@ -1,4 +1,4 @@
-# ADR-1361: Durable MCP activity consumers
+# ADR-1472: Durable MCP activity consumers
 
 Status: Accepted
 

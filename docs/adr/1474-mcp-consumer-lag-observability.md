@@ -1,4 +1,4 @@
-# ADR-1363: MCP consumer lag observability
+# ADR-1474: MCP consumer lag observability
 
 Status: Accepted
 

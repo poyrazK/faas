@@ -1,10 +1,10 @@
-# ADR-1349: Gateway convergence for environment cache policies
+# ADR-1460: Gateway convergence for environment cache policies
 
 Status: Accepted
 
 ## Context
 
-ADR-1348 saves isolated environment cache policy and transactional receipts.
+ADR-1459 saves isolated environment cache policy and transactional receipts.
 Gateways normally refresh desired rules through their 30-second policy cache.
 A successful write does not prove that a serving gateway loaded the change.
 Agents need a read-only way to verify an exact revision after apply.
