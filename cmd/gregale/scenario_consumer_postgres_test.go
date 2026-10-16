@@ -240,6 +240,7 @@ type consumerAcceptanceDelivery struct {
 	lostConsumerID                 string
 	puts, keys, cancels            int
 	requests                       int
+	mutations                      int
 }
 
 func (d *consumerAcceptanceDelivery) releaseCreation() { d.releaseOnce.Do(func() { close(d.release) }) }
@@ -247,6 +248,9 @@ func (d *consumerAcceptanceDelivery) releaseCreation() { d.releaseOnce.Do(func()
 func (d *consumerAcceptanceDelivery) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	d.requests++
+	if r.Method != "GET" && r.Method != "HEAD" {
+		d.mutations++
+	}
 	unavailable := d.unavailable
 	d.mu.Unlock()
 	if unavailable {

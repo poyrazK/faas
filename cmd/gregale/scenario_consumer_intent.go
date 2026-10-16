@@ -36,7 +36,11 @@ func verifiedTestConsumerReceipt(receipt api.ScenarioTestConsumerReceipt, run, n
 	return c, nil
 }
 
-func readTestCampaignConsumer(ctx context.Context, client testCampaignFaultClient, run, name string, c testCampaignFaultConsumer) (api.APIConsumerResponse, error) {
+type testCampaignConsumerReader interface {
+	GetAPIConsumer(context.Context, string, string) (api.APIConsumerResponse, error)
+}
+
+func readTestCampaignConsumer(ctx context.Context, client testCampaignConsumerReader, run, name string, c testCampaignFaultConsumer) (api.APIConsumerResponse, error) {
 	if c.CreationIntentSHA256 == "" {
 		return testCampaignRecoveryRead(ctx, func(request context.Context) (api.APIConsumerResponse, error) {
 			return client.GetAPIConsumer(request, c.AppSlug, c.ID)

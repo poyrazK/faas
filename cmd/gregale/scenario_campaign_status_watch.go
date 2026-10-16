@@ -100,7 +100,7 @@ func inspectTestCampaignStatusWatcher(paths testCampaignWatchPaths, plan testCam
 		}
 	}
 	status := &testCampaignStatusWatcher{State: "not_started", SnapshotStable: true, Owner: testCampaignProcessStatus{Status: "unverifiable"}, Blockers: []testCampaignStatusIssue{}, Notes: []string{
-		"Saved cleanup observations are historical; status makes no API calls and does not prove current resource absence.",
+		"Saved cleanup observations are historical. Default status makes no API calls; opt-in live verification is reported separately.",
 		"Cleanup never certifies test execution. Use the verified batch evidence and policy verdict separately.",
 		"Resume readiness is advisory. cleanup-watch rechecks ownership, exclusion and evidence before acting.",
 	}}

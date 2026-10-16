@@ -465,7 +465,7 @@ gregale test policy status \
 ```
 
 Include the original `--handoff` index for a portable import. Exports must remain
-outside campaign and recovery directories. Status does not call the API, acquire
+outside campaign and recovery directories. Default status does not call the API, acquire
 or recover locks, create a watcher guard, or rewrite receipts and journals.
 Linux guard inspection reads the kernel lock table without taking a lock.
 
@@ -499,3 +499,40 @@ Recovery acceptance requires watcher status tests and also checks the public
 command during real API/database outages, with a stopped guard owner, after
 watcher death and after cleanup completion. The fixture verifies zero additional
 API requests, unchanged campaign files and no invented test execution evidence.
+
+### Opt-in live resource verification
+
+Add `--verify-live` to `test policy status` with `--directory` and the original
+plan, policy, manifest and handoff inputs. Default status remains offline. Live
+status issues only authenticated GETs for the full verified journal inventory:
+consumers, registrations and isolated developer sessions. Session lookup does not
+renew a lease. No cleanup, key provisioning, lock recovery or observation-file
+persistence occurs; only explicitly requested status exports are written.
+
+The `live_verification` JSON object and HTML table show each resource's current
+observed state, check time, successful verification time, previous saved state,
+change classification and sanitized failure diagnostics. Only successfully
+verified reads receive `verified_at`. Unreachable, unauthorized, unsupported or
+identity-mismatched resources stay `unverified`; cached absence never supplies a
+live result. Resources unvisited after the deadline retain their inventory rows
+without a verification timestamp. Confirmed session deletion compares as absence,
+rather than reporting false drift against a later absent session.
+
+Reads share a 30-second operation budget and the recovery read policy: five-second
+requests, at most three attempts, bounded backoff and Retry-After handling. The
+report retains independent results when one resource cannot be verified. A
+watcher receipt, when present, must match the configured API destination and
+bound inputs before any network request. Changed local evidence during the
+checks invalidates live verification and resume readiness.
+
+`all_verified` means every inventory resource was verified; `resources_clean`
+means those observations found absent sessions/registrations and absent, revoked
+or durably cancelled consumers. A pending creation intent is not clean. These
+are per-resource point-in-time reads, not an atomic server snapshot or an
+execution/cleanup gate. They cannot certify missing test receipts, coverage or
+policy success. Exit 0 means the informational report was produced; inspect the
+live result rather than treating the exit code as cleanup proof.
+
+Acceptance checks default status makes zero API requests, opted-in status makes
+GETs without mutations, API/database outages retain uncertainty, completed
+cleanup verifies live timestamps, and campaign/receipt bytes remain unchanged.

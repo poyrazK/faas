@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -93,6 +94,7 @@ func cmdTestCampaignStatus(args []string) int {
 	policyPath := fs.String("policy", "", "policy used by the plan")
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "manifest used by the plan")
 	directory := fs.String("directory", "", "optional campaign checkpoint directory")
+	verifyLive := fs.Bool("verify-live", false, "opt in to bounded read-only API verification of journaled resources; requires --directory")
 	side := fs.String("side", "", "optional baseline/current scope; defaults to checkpoint side or all planned sides")
 	bundle := fs.String("recovery-bundle", "", "optional reconciliation bundle bound to this campaign")
 	from := fs.String("from", "", "original current report used to plan")
@@ -106,8 +108,8 @@ func cmdTestCampaignStatus(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *policyPath == "" ||
-		(*side != "" && *side != "baseline" && *side != "current") || (*bundle != "" && *directory == "") {
-		return printErr("Invalid status options", errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle needs --directory"))
+		(*side != "" && *side != "baseline" && *side != "current") || ((*bundle != "" || *verifyLive) && *directory == "") {
+		return printErr("Invalid status options", errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle or --verify-live needs --directory"))
 	}
 	resolver, handoffErr := loadTestCampaignBundleResolver(*handoff)
 	if handoffErr != nil {
@@ -206,6 +208,7 @@ func cmdTestCampaignStatus(args []string) int {
 	if *directory != "" {
 		snapshot := inspectTestCampaignStatusWatcher(testCampaignWatchPaths{Plan: *planPath, Policy: *policyPath, Manifest: *manifestPath, Directory: *directory, Handoff: *handoff}, plan, checkpoint, manifest.Scenarios, resolver)
 		watcherSnapshot = &snapshot
+		report.Watcher = snapshot.Watcher
 		inputs = append(inputs, snapshot.Paths...)
 	}
 	for _, parent := range report.Lineage {
@@ -230,6 +233,11 @@ func cmdTestCampaignStatus(args []string) int {
 	if err := protectTestCampaignStatusOutputs([]string{*jsonPath, *htmlPath}, inputs, directories); err != nil {
 		return printErr("Invalid status output", err)
 	}
+	if *verifyLive {
+		ctx, cancel := context.WithTimeout(context.Background(), testCampaignStatusLiveBudget)
+		applyTestCampaignStatusLive(ctx, &report, testCampaignWatchPaths{Plan: *planPath, Policy: *policyPath, Manifest: *manifestPath, Directory: *directory, Handoff: *handoff}, plan, checkpoint, manifest.Scenarios, resolver)
+		cancel()
+	}
 	if *directory != "" && (testCampaignStatusFileStamp(filepath.Join(*directory, "checkpoint.json")) != checkpointStamp ||
 		testCampaignStatusFileStamp(filepath.Join(*directory, testCampaignRecoverySealName)) != sealStamp) {
 		report.SnapshotStable = false
@@ -237,6 +245,9 @@ func cmdTestCampaignStatus(args []string) int {
 	}
 	if watcherSnapshot != nil {
 		applyTestCampaignStatusWatcherSnapshot(&report, *watcherSnapshot)
+	}
+	if !report.SnapshotStable {
+		invalidateTestCampaignStatusLive(&report)
 	}
 	if *htmlPath != "" {
 		body, err := renderTestCampaignStatusHTML(report)
@@ -285,6 +296,13 @@ th{background:#eef3f7}code{overflow-wrap:anywhere;font-size:.85em}.scroll{overfl
 <p class="muted">Read-only snapshot at {{.ObservedAt}} · side {{.Side}} · stable snapshot: {{.SnapshotStable}}</p>
 <p>Policy accepted: <strong>{{.PolicyPassed}}</strong> · violations: {{.PolicyViolations}} · lock present: {{.LockPresent}} · halted: {{.Halted}} · sealed: {{.Sealed}}</p>
 <p><code>{{.PlanSHA256}}</code></p>
+{{with .LiveVerification}}<section><h2>Live resource verification</h2>
+<p>State: <strong>{{.State}}</strong> · all resources verified: {{.AllVerified}} · observed clean: {{.ResourcesClean}} · stable local evidence: {{.SnapshotStable}}</p>
+<p>{{.StartedAt}} — {{.FinishedAt}}</p>
+{{with .Issue}}<p>{{.Resource}} / {{.Operation}}: {{.Reason}}</p>{{end}}
+<div class="scroll"><table><thead><tr><th>Run / resource</th><th>Current state / checked</th><th>Verified at</th><th>Saved state / change</th><th>Diagnostic</th></tr></thead><tbody>
+{{range .Resources}}<tr><td>{{.RunID}}<br>{{.Kind}} {{.Name}}</td><td>{{.State}}<br>{{with .CheckedAt}}{{.}}{{end}}</td><td>{{with .VerifiedAt}}{{.}}{{else}}Unverified{{end}}</td><td>{{.PreviousState}} / {{.Drift}}</td><td>{{with .Issue}}{{.Reason}} · {{.Attempts}} attempts · retryable {{.Retryable}}{{end}}</td></tr>{{else}}<tr><td colspan="5">No verified resource inventory is available.</td></tr>{{end}}
+</tbody></table></div><ul>{{range .Notes}}<li>{{.}}</li>{{end}}</ul></section>{{end}}
 {{with .Watcher}}<section><h2>Cleanup watcher</h2>
 <p>State: <strong>{{.State}}</strong> · owner: {{.Owner.Status}} (PID {{.Owner.PID}}) · kernel guard: {{.Guard}}{{if .GuardPID}} (PID {{.GuardPID}}){{end}}</p>
 <p>Local evidence verified: {{.EvidenceVerified}} · resume binding verified: {{.BindingVerified}} · ready to resume: {{.ResumeReady}} · stable snapshot: {{.SnapshotStable}}</p>

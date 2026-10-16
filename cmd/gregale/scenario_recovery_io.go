@@ -163,7 +163,11 @@ func testCampaignRecoveryIssueFor(resource, operation string, err error) *testCa
 	return issue
 }
 
-func readTestCampaignRecoveryRegistration(ctx context.Context, c testCampaignFaultClient, run string) (api.ScenarioTestRegistration, error) {
+type testCampaignRegistrationReader interface {
+	GetScenarioTestRegistration(context.Context, string) (api.ScenarioTestRegistration, error)
+}
+
+func readTestCampaignRecoveryRegistration(ctx context.Context, c testCampaignRegistrationReader, run string) (api.ScenarioTestRegistration, error) {
 	return testCampaignRecoveryRead(ctx, func(request context.Context) (api.ScenarioTestRegistration, error) {
 		return c.GetScenarioTestRegistration(request, run)
 	})

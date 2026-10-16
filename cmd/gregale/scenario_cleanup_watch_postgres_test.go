@@ -126,7 +126,7 @@ func (p *cleanupWatchAcceptanceProcess) wait(t *testing.T, code int) {
 	p.once.Do(func() {
 		select {
 		case p.err = <-p.done:
-		case <-time.After(15 * time.Second):
+		case <-time.After(45 * time.Second):
 			t.Fatal("acceptance process did not exit")
 		}
 	})
@@ -539,6 +539,62 @@ func testCleanupWatchPublicStatus(t *testing.T, d *consumerAcceptanceDelivery, e
 	d.mu.Unlock()
 	if after != requests {
 		t.Fatal("offline status made API requests", after-requests)
+	}
+	assertCampaignFaultFrozen(t, before, []string{root})
+	testCleanupWatchPublicLiveStatus(t, d, env, args, root, want)
+}
+
+func testCleanupWatchPublicLiveStatus(t *testing.T, d *consumerAcceptanceDelivery, env, args []string, root, want string) {
+	t.Helper()
+	before := campaignFaultFrozenBytes(t, []string{root})
+	d.mu.Lock()
+	requests, mutations := d.requests, d.mutations
+	d.mu.Unlock()
+	output := filepath.Join(t.TempDir(), "live-status.json")
+	html := filepath.Join(t.TempDir(), "live-status.html")
+	liveArgs := append([]string{}, args[:len(args)-4]...)
+	liveArgs = append(liveArgs, "--verify-live", "--json", output, "--html", html)
+	child := startCleanupWatchAcceptanceProcess(t, "status", liveArgs, env...)
+	child.wait(t, 0)
+	var report testCampaignStatusReport
+	if err := readTestCampaignJSON(output, &report); err != nil {
+		t.Fatal(err)
+	}
+	live := report.LiveVerification
+	if live == nil || len(live.Resources) != 9 || !live.SnapshotStable || !report.SnapshotStable {
+		t.Fatalf("live status inventory mismatch: %+v", live)
+	}
+	if want == "cleanup_recorded_complete" {
+		if !live.AllVerified || !live.ResourcesClean || live.State != "verified_clean" {
+			t.Fatal("live cleanup was not verified")
+		}
+		for _, resource := range live.Resources {
+			if resource.VerifiedAt == nil || resource.CheckedAt == nil || resource.Drift != "unchanged" {
+				t.Fatal("missing live timestamp or false post-cleanup drift", resource)
+			}
+		}
+	} else {
+		if live.AllVerified || live.ResourcesClean || live.State != "unverified" {
+			t.Fatal("outage certified live cleanup")
+		}
+		for _, resource := range live.Resources {
+			if resource.State != "unverified" || resource.VerifiedAt != nil || resource.Drift != "unverified" || resource.Issue == nil {
+				t.Fatal("unreachable resource retained live proof")
+			}
+		}
+	}
+	d.mu.Lock()
+	after, changed := d.requests, d.mutations
+	d.mu.Unlock()
+	if after <= requests || changed != mutations {
+		t.Fatal("live status made no reads or attempted mutations", after-requests, changed-mutations)
+	}
+	if report.Counts["completed"] != 0 || report.Counts["recovered"] != 0 || !report.ReadOnly {
+		t.Fatal("live cleanup forged execution")
+	}
+	body, err := os.ReadFile(html)
+	if err != nil || !bytes.Contains(body, []byte("Live resource verification")) {
+		t.Fatal("HTML lost live state")
 	}
 	assertCampaignFaultFrozen(t, before, []string{root})
 }

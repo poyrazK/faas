@@ -68,6 +68,7 @@ type testCampaignStatusLineage struct {
 }
 
 type testCampaignStatusReport struct {
+	LiveVerification   *testCampaignStatusLiveReport   `json:"live_verification,omitempty"`
 	Watcher            *testCampaignStatusWatcher      `json:"cleanup_watcher,omitempty"`
 	SchemaVersion      int                             `json:"schema_version"`
 	Informational      bool                            `json:"informational"`

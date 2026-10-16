@@ -309,9 +309,18 @@ receipt is created after original runner recovery, so interruption before that
 durability boundary still requires explicit operator recovery.
 
 Campaign status exposes an additive watcher assessment in JSON and offline HTML.
-It reads owner identities, the kernel lock table, bound inventory and referenced
-observations without acquiring exclusion or calling the API. Local historical
+Its default mode reads owner identities, the kernel lock table, bound inventory
+and referenced observations without acquiring exclusion or calling the API. Local historical
 cleanup evidence is separate from authenticated-profile resume binding and from
 verified test execution. Readiness is advisory and never authorizes a mutation;
 changed snapshots remove it. Primary status validation, immutable evidence,
 coverage and policy verdict semantics remain unchanged.
+
+Explicit `status --verify-live` uses narrow read-only interfaces to verify the
+full journal inventory within a 30-second operation budget. Per-resource check
+and verification timestamps distinguish current reads from saved observations;
+unreachable or changed identities remain unverified. Live status never calls
+cleanup persistence or mutations, and never adopts cached absence as current
+proof. Changed local evidence invalidates the result. Aggregate clean state is
+point-in-time resource evidence only and cannot alter execution counts or policy
+semantics. Offline status remains the default.
