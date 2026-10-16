@@ -547,3 +547,6 @@ export { validateEventDeadlineCheckpoint, acknowledgeEventDeadlineAlerts,
   type EventDeadlineAcknowledgement } from './event-deadline-checkpoint.js';
 export { EVENT_DEADLINE_REASONS, type EventDeadlineReason, type EventDeadlineTarget,
   type EventDeadlinePolicyOptions, type EventDeadlinePolicy, type EventDeadlineRule } from './event-deadline-policy.js';
+
+export { EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, type EventDeadlineRatioOptions,
+  type EventDeadlineRatioSample } from './event-deadline-ratio.js';

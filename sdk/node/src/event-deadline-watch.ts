@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { EventsService } from './generated/services/EventsService.js';
 import type { EventSubscriptionDeadlineWindow } from './generated/models/EventSubscriptionDeadlineWindow.js';
+import { deadlineBoundaries, deadlineRatioValue } from './event-deadline-ratio.js';
 import { count, deadlineEvidence, deadlinePolicy, deadlineTarget, duration, timestamp,
   type EventDeadlinePolicyOptions, type EventDeadlineTarget } from './event-deadline-policy.js';
 import { acknowledgeEventDeadlineAlerts, clone, DEADLINE_QUEUE_MAX, validateEventDeadlineCheckpoint,
@@ -50,7 +51,7 @@ export class EventDeadlineWatchCallbackError extends Error {
 interface Proof { first?: number; samples: number; lastObserved?: bigint; lastLocal?: number; mode?: string; resume: boolean }
 function confirmation(c: EventDeadlineCondition, p: Proof, now: number, policy: EventDeadlineCheckpoint['policy'],
   reason: string, blocked: boolean): EventDeadlineConfirmation {
-  const recovering = c.incidentId !== undefined && c.value !== undefined && c.value <= c.recoveryThreshold;
+  const recovering = c.incidentId !== undefined && deadlineBoundaries(c).recovered;
   const requiredMs = recovering ? policy.recoverySustainMs : policy.sustainMs;
   const elapsedMs = p.first === undefined ? 0 : Math.max(0, now - p.first);
   let phase: EventDeadlineConfirmation['phase'] = p.resume ? 'resume_pending' : c.state;
@@ -62,15 +63,16 @@ function alert(checkpoint: EventDeadlineCheckpoint, c: EventDeadlineCondition, t
   checkpoint.sequence++;
   if (transition === 'opened') c.incidentId = `${checkpoint.session}-${checkpoint.sequence}`;
   const out: EventDeadlineAlert = { sequence: checkpoint.sequence, incidentId: c.incidentId!, metric: c.metric,
-    transition, at, value: c.value!, threshold: c.threshold, recoveryThreshold: c.recoveryThreshold };
+    transition, at, value: c.value!, threshold: c.threshold, recoveryThreshold: c.recoveryThreshold,
+    ...(c.ratioSample === undefined ? {} : { ratioSample: { ...c.ratioSample } }) };
   checkpoint.pending.push(out);
   return out;
 }
 function reset(p: Proof): void { p.first = undefined; p.samples = 0; }
 function apply(checkpoint: EventDeadlineCheckpoint, c: EventDeadlineCondition, p: Proof, now: number, observed: string):
   { reason: string; blocked: boolean; alert?: EventDeadlineAlert } {
-  const active = c.incidentId !== undefined, value = c.value!;
-  const breached = value >= c.threshold, recovered = value <= c.recoveryThreshold;
+  const active = c.incidentId !== undefined;
+  const { breached, recovered } = deadlineBoundaries(c);
   const candidate = active ? (p.resume ? breached || recovered : recovered) : breached;
   if (!candidate) {
     reset(p);
@@ -115,7 +117,7 @@ export async function watchEventSubscriptionDeadlines(targetInput: EventDeadline
   // Capture callbacks/signal before yielding; option maps were normalized into independent rules.
   const onProgress = options.onProgress, pollAcknowledgements = options.pollAcknowledgements, signal = options.signal;
   let checkpoint: EventDeadlineCheckpoint = options.resume === undefined ? {
-    kind: 'gregale.node.event-deadline-watch', version: 1, target, policy, session: randomUUID(), sequence: 0,
+    kind: 'gregale.node.event-deadline-watch', version: policy.rules.some(r => r.minimumRecipients !== undefined) ? 2 : 1, target, policy, session: randomUUID(), sequence: 0,
     conditions: policy.rules.map(rule => ({ ...rule, state: 'unknown' })), pending: [], acknowledged: [],
   } : validateEventDeadlineCheckpoint(options.resume);
   if (JSON.stringify(checkpoint.target) !== JSON.stringify(target) || JSON.stringify(checkpoint.policy) !== JSON.stringify(policy)) {
@@ -163,6 +165,9 @@ export async function watchEventSubscriptionDeadlines(targetInput: EventDeadline
           loss = observed === p.lastObserved ? 'repeated_observation' : 'out_of_order_observation';
         }
         if (!loss && p.lastLocal !== undefined && local - p.lastLocal > maxAge) loss = 'sample_gap';
+        if (!loss && c.minimumRecipients !== undefined && evidence!.summary.deadline_recipients < c.minimumRecipients) {
+          loss = 'insufficient_deadline_recipients';
+        }
         // A gap resets proof but the current valid advancing observation becomes the new high-water mark.
         if ((!loss || loss === 'sample_gap') && observed !== undefined) { p.lastObserved = observed; p.lastLocal = local; }
         if (loss) {
@@ -170,10 +175,17 @@ export async function watchEventSubscriptionDeadlines(targetInput: EventDeadline
           result.confirmations.push(confirmation(c, p, local, policy, loss, false));
           continue;
         }
-        const v = evidence!, counts = c.cohort === 'upcoming' ? v.upcoming_waiting_reasons : v.expired_waiting_reasons;
-        const value = c.reason ? counts[c.reason] : c.cohort === 'upcoming' ? v.upcoming_recipients : v.summary.already_expired_count;
-        if (!count(value)) throw new Error('validated deadline count unavailable');
-        c.value = value; c.observedAt = v.summary.observed_at;
+        const v = evidence!;
+        if (c.minimumRecipients !== undefined) {
+          c.ratioSample = { expiredRecipients: v.summary.already_expired_count, deadlineRecipients: v.summary.deadline_recipients };
+          c.value = deadlineRatioValue(c.ratioSample);
+        } else {
+          const counts = c.cohort === 'upcoming' ? v.upcoming_waiting_reasons : v.expired_waiting_reasons;
+          const value = c.reason ? counts[c.reason] : c.cohort === 'upcoming' ? v.upcoming_recipients : v.summary.already_expired_count;
+          if (!count(value)) throw new Error('validated deadline count unavailable');
+          c.value = value;
+        }
+        c.observedAt = v.summary.observed_at;
         const update = apply(checkpoint, c, p, local, c.observedAt);
         if (update.alert) result.alerts.push(update.alert);
         result.confirmations.push(confirmation(c, p, local, policy, update.reason, update.blocked));

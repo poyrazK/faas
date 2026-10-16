@@ -1,3 +1,4 @@
+import { deadlineRatioRule, type EventDeadlineRatioOptions } from './event-deadline-ratio.js';
 import type { EventSubscriptionDeadlineWindow } from './generated/models/EventSubscriptionDeadlineWindow.js';
 
 export const EVENT_DEADLINE_REASONS = [
@@ -9,6 +10,7 @@ export type EventDeadlineReason = typeof EVENT_DEADLINE_REASONS[number];
 export interface EventDeadlineTarget { app: string; appId: string; subscriptionId: string }
 export interface EventDeadlinePolicyOptions {
   withinMs: number;
+  expiredRatio?: EventDeadlineRatioOptions;
   upcoming?: number;
   expired?: number;
   upcomingReasons?: Partial<Record<EventDeadlineReason, number>>;
@@ -26,6 +28,8 @@ export interface EventDeadlineRule {
   reason?: EventDeadlineReason;
   threshold: number;
   recoveryThreshold: number;
+  /** Present only on expired ratio rules; count rules retain their version-1 shape. */
+  minimumRecipients?: number;
 }
 export interface EventDeadlinePolicy {
   withinMs: number;
@@ -76,7 +80,8 @@ export function deadlinePolicy(options: EventDeadlinePolicyOptions): EventDeadli
     const keys = new Set([...Object.keys(warnings ?? {}), ...Object.keys(recoveries ?? {})]);
     for (const key of [...keys].sort() as EventDeadlineReason[]) add(cohort, warnings?.[key] ?? 0, recoveries?.[key], key);
   }
-  if (!rules.length) throw new TypeError('enable at least one deadline warning count');
+  if (options.expiredRatio !== undefined) rules.push(deadlineRatioRule(options.expiredRatio, options.withinMs));
+  if (!rules.length) throw new TypeError('enable at least one deadline count or expired ratio warning');
   return { withinMs: options.withinMs, sustainMs, recoverySustainMs, rules };
 }
 

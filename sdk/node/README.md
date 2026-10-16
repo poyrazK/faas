@@ -3445,3 +3445,10 @@ The Node deadline-only checkpoint format is distinct from Go/CLI delivery-health
 checkpoints. Applications own persistence and notifications: persist before sending,
 replay unacknowledged alerts after a crash, and deduplicate downstream. See
 [configuration, callbacks and recovery semantics](../../docs/event-deadline-node-watch.md).
+
+`expiredRatio: { warningBasisPoints: 1000, recoveryBasisPoints: 500,
+minimumRecipients: 100 }` enables >=10% expired backlog warnings and <=5% recovery
+with a qualifying cohort. Decisions use exact BigInt arithmetic; display values
+are approximate and alerts retain the source count sample. Ratio selections use
+version 2 Node checkpoints; existing count-only selections stay at version 1. See
+[ratio validation and compatibility](../../docs/event-deadline-node-watch.md#expired-backlog-ratios).

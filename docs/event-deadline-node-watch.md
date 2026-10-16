@@ -52,7 +52,7 @@ serialize offline acknowledgment changes with any running watcher.
 Provide both the application slug and its expected stable UUID. Every response
 must match that UUID and subscription UUID. IDs are canonicalized to lowercase.
 `withinMs` is required: whole milliseconds 100..86400000. At least one positive
-total or known-reason warning is required. Counts must be nonnegative safe integers,
+count or expired-ratio warning is required. Counts must be nonnegative safe integers,
 up to `Number.MAX_SAFE_INTEGER` (9007199254740991); zero disables warnings.
 Unknown reason labels are rejected even at zero. `EVENT_DEADLINE_REASONS` exposes
 all 14 accepted labels.
@@ -104,8 +104,9 @@ reported through progress, rather than a durable lifecycle notification.
 
 ## Checkpoints and notification delivery
 
-The checkpoint kind is `gregale.node.event-deadline-watch`, version 1. It is a
-**Node deadline-only format**, not a Go/CLI delivery-health checkpoint. Its policy,
+The checkpoint kind is `gregale.node.event-deadline-watch`. Count-only selections
+use version 1; selections containing an expired ratio use version 2 (see below).
+Both are **Node deadline-only formats**, not Go/CLI or Python checkpoints. Its policy,
 target, condition states, incident IDs, sequence and notification outbox are
 JSON-serializable. Timer/sample proof is deliberately excluded. Validate loaded
 JSON with `validateEventDeadlineCheckpoint` before use. Resume binds to the same
@@ -149,3 +150,103 @@ Counts describe rolling cohorts. Work can move to another reason, expire out of
 upcoming coverage, gain an override or leave retained history without successful
 business completion. A resolved count alert does not certify delivery success.
 See [count and triage semantics](event-subscription-deadline-window.md).
+
+## Expired backlog ratios
+
+Select an optional ratio rule using integer basis points:
+
+```ts
+const options = {
+  withinMs: 300_000,
+  expiredRatio: {
+    warningBasisPoints: 1000, // >=10%
+    recoveryBasisPoints: 500, // <=5%
+    minimumRecipients: 100,
+  },
+  sustainMs: 60_000,
+  recoverySustainMs: 120_000,
+};
+const result = await watchEventSubscriptionDeadlines(target, options);
+```
+
+The ratio is `summary.already_expired_count / summary.deadline_recipients` from
+one complete snapshot. The denominator includes **all** retained captured pending
+application recipients with effective deadlines; the upcoming horizon does not
+restrict it. This is a pending-backlog ratio, not the fraction of all accepted or
+completed events that expired.
+
+`warningBasisPoints` requires an integer 1..10000; 100 basis points = 1%.
+`recoveryBasisPoints` must be an integer >=0 and strictly below warning. Omission
+defaults to warning minus one basis point; explicit zero requires a zero numerator
+in a qualifying cohort. `minimumRecipients` is mandatory and must be a positive
+safe integer <=9007199254740991. `EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX` is 10000,
+representing 100%. Null, fractional, nonfinite and out-of-range option values are
+rejected. Options are copied into normalized rules before the first await.
+
+A ratio can be the only selected condition or accompany total/reason count rules.
+It shares the existing warning/recovery durations, freshness checks, complete
+partition validation and single deadline-window request. It is appended after
+existing count conditions; at most 31 conditions can be selected. No endpoint,
+generated API, migration or per-ratio request is added.
+
+A zero denominator or cohort below the minimum reports unknown with
+`insufficient_deadline_recipients`, resetting that condition's live proof. Other
+eligible count conditions continue independently. Node retains an active incident
+identity while its evidence is unknown, requiring fresh warning/recovery proof
+when a qualifying cohort returns. It does not emit a successful resolution for
+small or empty cohorts. This preserves the Node watch's existing lifecycle; it
+does not adopt Go's closing `confirmation_lost` notification behavior.
+
+### Exact decisions and historical samples
+
+Warning and recovery comparisons use `BigInt` cross-products:
+
+```
+expiredRecipients * 10000 >= warningBasisPoints * deadlineRecipients
+expiredRecipients * 10000 <= recoveryBasisPoints * deadlineRecipients
+```
+
+All source counts and policy settings must first be safe integers. Only these
+transient comparisons use BigInt. Ratio conditions and alerts retain a JSON-safe
+`ratioSample: { expiredRecipients, deadlineRecipients }`. Their `value` is an
+**approximate basis-point display value**, potentially fractional. Never compare
+or round that projection to reproduce alert decisions near a boundary; use the
+sample and integer policy. A projected value may round onto a boundary while the
+exact sample lies on one side.
+
+Checkpoint validation verifies sample counts, qualifying denominator and display
+projection, then checks opening/resolution boundaries with the same exact arithmetic.
+Missing, inconsistent, below-minimum or extra samples attached to count conditions
+are rejected. Samples on unknown conditions are historical; current complete raw
+counts remain available through `evidence` when response evidence is eligible.
+No stored sample becomes fresh timer proof on resume.
+
+### Version 1 and version 2 compatibility
+
+Version 1 remains the count-only format. Existing count-only checkpoints, condition
+order, metric identities, alerts and acknowledgment receipts remain readable and
+continue to serialize as version 1. Their values still require bounded integers;
+fractional count values and ratio metadata are rejected.
+
+Version 2 requires exactly one configured expired-ratio rule and permits up to 30
+existing count conditions alongside it. Its metric identity is
+`deadline_window.expired_ratio_basis_points.<withinMs>.minimum_recipients.<minimum>`.
+Policy, conditions and retained ratio alerts bind the minimum cohort and effective
+warning/recovery thresholds. Horizon and shared durations remain resume policy too.
+Omitted recovery and an explicit default produce the same canonical policy.
+
+A version-1 checkpoint cannot carry ratio rules or samples. Unsupported versions,
+ratio-to-count metric substitutions, duplicate ratio rules and inconsistent samples
+are rejected. Version 2 without a ratio rule is also rejected. Older Node SDKs
+reject version 2, so upgrade readers before handing them ratio checkpoints.
+Adding/removing a ratio changes watch selection and cannot resume the same
+checkpoint; use a separate checkpoint and manage pending notifications explicitly.
+Go/CLI and Python checkpoint formats remain separate.
+
+The bounded outbox, closing reservations, exact acknowledgments, callback error
+snapshots, cancellation and downstream deduplication rules above also apply to
+ratio alerts. Low cohorts can leave an incident unknown even when the backlog
+has drained; combine an absolute expired-count alert when zero remaining expired
+work must be tracked separately. New work can lower the ratio by increasing its
+denominator, and retention/overrides can change either count without business
+completion. Ratio resolution never certifies delivery success.

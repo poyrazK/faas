@@ -105,7 +105,8 @@ without this option keep their request behavior and checkpoint policy.
 
 Older clients reject the new metric; upgrade the resuming client before loading a
 checkpoint containing it. The CLI exposes these options as documented below;
-Node/Python watches currently expose count conditions only. No server endpoints,
+Node watches also support exact ratio conditions with version 2 Node checkpoints;
+Python watches currently expose count conditions only. No server endpoints,
 migrations or notification destinations are added. The existing complete
 window read supplies all count and ratio conditions, so no extra request is added
 per ratio. Existing read budgets and unknown-on-timeout behavior apply.
@@ -172,3 +173,10 @@ before notification and deduplicate replayed alerts as usual. Low cohorts and lo
 evidence retain the Go `confirmation_lost` lifecycle described above; they never
 produce a successful ratio recovery by themselves. The CLI adds no read or delivery
 action beyond the existing Go watch.
+
+## Node ratio watch
+
+Node's `expiredRatio` option selects the same backlog numerator/denominator and
+integer basis-point policies. It uses exact BigInt comparisons, JSON-safe source
+samples and its own version 2 checkpoint format. See
+[Node ratio configuration and compatibility](event-deadline-node-watch.md#expired-backlog-ratios).
