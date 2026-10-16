@@ -19,6 +19,9 @@ FILTER = (
     "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
+    "TestCampaignStatusWatcherStates",
+    "TestCampaignStatusWatcherSnapshotAndGuard",
+    "TestCampaignStatusWatcherCLIAndAliases",
     "TestCampaignCleanupWatchReceiptGuards",
     "TestCampaignCleanupWatchDurableResume",
     "TestCampaignCleanupWatchOwnership",

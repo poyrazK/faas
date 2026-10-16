@@ -201,10 +201,12 @@ func cmdTestCampaignStatus(args []string) int {
 			return printErr("Invalid status recovery bundle", err)
 		}
 	}
-	if *directory != "" && (testCampaignStatusFileStamp(filepath.Join(*directory, "checkpoint.json")) != checkpointStamp ||
-		testCampaignStatusFileStamp(filepath.Join(*directory, testCampaignRecoverySealName)) != sealStamp) {
-		report.SnapshotStable = false
-		report.Issues = append(report.Issues, testCampaignStatusIssue{Code: "snapshot_changed", Message: "Checkpoint or seal changed while this report was read.", Action: "Rerun status for a fresh snapshot before relying on the displayed progress."})
+
+	var watcherSnapshot *testCampaignStatusWatchSnapshot
+	if *directory != "" {
+		snapshot := inspectTestCampaignStatusWatcher(testCampaignWatchPaths{Plan: *planPath, Policy: *policyPath, Manifest: *manifestPath, Directory: *directory, Handoff: *handoff}, plan, checkpoint, manifest.Scenarios, resolver)
+		watcherSnapshot = &snapshot
+		inputs = append(inputs, snapshot.Paths...)
 	}
 	for _, parent := range report.Lineage {
 		directories = append(directories, parent.Directory)
@@ -227,6 +229,14 @@ func cmdTestCampaignStatus(args []string) int {
 	}
 	if err := protectTestCampaignStatusOutputs([]string{*jsonPath, *htmlPath}, inputs, directories); err != nil {
 		return printErr("Invalid status output", err)
+	}
+	if *directory != "" && (testCampaignStatusFileStamp(filepath.Join(*directory, "checkpoint.json")) != checkpointStamp ||
+		testCampaignStatusFileStamp(filepath.Join(*directory, testCampaignRecoverySealName)) != sealStamp) {
+		report.SnapshotStable = false
+		report.Issues = append(report.Issues, testCampaignStatusIssue{Code: "snapshot_changed", Message: "Checkpoint or seal changed while this report was read.", Action: "Rerun status for a fresh snapshot before relying on the displayed progress."})
+	}
+	if watcherSnapshot != nil {
+		applyTestCampaignStatusWatcherSnapshot(&report, *watcherSnapshot)
 	}
 	if *htmlPath != "" {
 		body, err := renderTestCampaignStatusHTML(report)
@@ -275,6 +285,19 @@ th{background:#eef3f7}code{overflow-wrap:anywhere;font-size:.85em}.scroll{overfl
 <p class="muted">Read-only snapshot at {{.ObservedAt}} · side {{.Side}} · stable snapshot: {{.SnapshotStable}}</p>
 <p>Policy accepted: <strong>{{.PolicyPassed}}</strong> · violations: {{.PolicyViolations}} · lock present: {{.LockPresent}} · halted: {{.Halted}} · sealed: {{.Sealed}}</p>
 <p><code>{{.PlanSHA256}}</code></p>
+{{with .Watcher}}<section><h2>Cleanup watcher</h2>
+<p>State: <strong>{{.State}}</strong> · owner: {{.Owner.Status}} (PID {{.Owner.PID}}) · kernel guard: {{.Guard}}{{if .GuardPID}} (PID {{.GuardPID}}){{end}}</p>
+<p>Local evidence verified: {{.EvidenceVerified}} · resume binding verified: {{.BindingVerified}} · ready to resume: {{.ResumeReady}} · stable snapshot: {{.SnapshotStable}}</p>
+<p>Cleanup attempts: {{.Attempts}} · previous owners: {{.PreviousOwners}} · recorded cleanup complete: {{.RecordedComplete}}</p>
+<p>{{.NextAction}}{{if .Command}}<br><code>{{.Command}}</code>{{end}}</p>
+{{range .Blockers}}<p><strong>{{.Code}}</strong>: {{.Message}}<br>{{.Action}}</p>{{end}}
+{{with .Progress}}<h3>Last saved cleanup observation</h3><p>{{if .RecordedAt}}{{.RecordedAt}} · {{end}}<code>{{.Name}}</code> · recorded complete: {{.RecordedComplete}}</p>
+{{with .Issue}}<p>{{.Resource}} / {{.Operation}}: {{.Reason}} · attempts {{.Attempts}} · retryable {{.Retryable}}</p>{{end}}
+<table><thead><tr><th>Run / workload</th><th>Resource</th><th>Last observed state</th></tr></thead><tbody>
+{{range .Faults}}{{$run := .RunID}}<tr><td>{{$run}}</td><td>Registration</td><td>{{.Registration}}</td></tr>{{range $name,$state := .Consumers}}<tr><td>{{$run}}</td><td>Consumer {{$name}}</td><td>{{$state}}</td></tr>{{end}}{{end}}
+{{range .Sessions}}<tr><td>{{.RunID}} / {{.Project}}</td><td>Session</td><td>{{.Status}}</td></tr>{{end}}
+</tbody></table>{{end}}
+<ul>{{range .Notes}}<li>{{.}}</li>{{end}}</ul></section>{{end}}
 <section><h2>Batch progress</h2>{{range $state,$count := .Counts}}<span class="count"><strong>{{$count}}</strong> {{$state}}</span>{{end}}
 <div class="scroll"><table><thead><tr><th>Batch</th><th>Context</th><th>Status / evidence</th><th>Verified runs / cleanup</th><th>Next action</th></tr></thead><tbody>
 {{range .Batches}}<tr><td>{{.ID}}<br>{{.Side}}, repeat {{.Repetitions}}</td><td>{{.Scenario}} / {{.Profile}}</td><td>{{.Status}}<br><small>{{.Evidence}}</small></td><td>{{.ExecutedRuns}} / {{.Cleanup}}</td><td>{{.Action}}</td></tr>{{else}}<tr><td colspan="5">No batches in this scope.</td></tr>{{end}}

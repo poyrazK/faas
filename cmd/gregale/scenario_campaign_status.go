@@ -68,6 +68,7 @@ type testCampaignStatusLineage struct {
 }
 
 type testCampaignStatusReport struct {
+	Watcher            *testCampaignStatusWatcher      `json:"cleanup_watcher,omitempty"`
 	SchemaVersion      int                             `json:"schema_version"`
 	Informational      bool                            `json:"informational"`
 	ReadOnly           bool                            `json:"read_only"`

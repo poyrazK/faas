@@ -307,3 +307,11 @@ A bounded chain of 32 identities allows recovery interrupted during takeover;
 unknown workers, changed evidence and missing receipts remain blocking. The first
 receipt is created after original runner recovery, so interruption before that
 durability boundary still requires explicit operator recovery.
+
+Campaign status exposes an additive watcher assessment in JSON and offline HTML.
+It reads owner identities, the kernel lock table, bound inventory and referenced
+observations without acquiring exclusion or calling the API. Local historical
+cleanup evidence is separate from authenticated-profile resume binding and from
+verified test execution. Readiness is advisory and never authorizes a mutation;
+changed snapshots remove it. Primary status validation, immutable evidence,
+coverage and policy verdict semantics remain unchanged.

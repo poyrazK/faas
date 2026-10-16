@@ -25,7 +25,7 @@ import (
 func TestScenarioCleanupWatchProcess(t *testing.T) {
 	// adr: 984 — acceptance process helpers remain inert outside an explicit child invocation.
 	switch os.Getenv("GREGALE_WATCH_ACCEPTANCE_ROLE") {
-	case "watcher", "cleanup":
+	case "watcher", "cleanup", "status":
 		var args []string
 		if err := json.NewDecoder(os.Stdin).Decode(&args); err != nil {
 			t.Fatal(err)
@@ -276,6 +276,20 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 	}
 	assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, true)
 	assertCleanupWatchOutage(t, work)
+	// Freeze the live watcher between attempts so status must remain purely
+	// observational while the kernel guard and stopped owner remain protected.
+	if err := watcher.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	var watchReceipt testCampaignWatchReceipt
+	if err := readTestCampaignJSON(filepath.Join(work, testCampaignWatchReceiptName), &watchReceipt); err != nil {
+		t.Fatal(err)
+	}
+	waitCleanupWatchCondition(t, func() bool { state, _ := probeTestCampaignProcess(watchReceipt.Owner); return state == "stopped" })
+	testCleanupWatchPublicStatus(t, d, env, root, manifest, work, "active")
+	if err := watcher.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
 	if mode == "concurrent" {
 		other := startCleanupWatchAcceptanceProcess(t, "watcher", args, env...)
 		other.wait(t, 1)
@@ -292,6 +306,7 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 		if _, err := os.Lstat(filepath.Join(work, "runner.lock")); !os.IsNotExist(err) {
 			t.Fatal("cleanup exclusion was not released before interruption")
 		}
+		testCleanupWatchPublicStatus(t, d, env, root, manifest, work, "ready_to_resume")
 		if mode == "missing-receipt" || strings.HasPrefix(mode, "changed-") {
 			testCleanupWatchRejectChangedEvidence(t, mode, args, env, root, work)
 			assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, true)
@@ -364,6 +379,7 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 	// The SQL oracle and the common portable fixture verify credentials, every
 	// generation's sessions/namespace, no provisioning replay and frozen bytes.
 	assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, false)
+	testCleanupWatchPublicStatus(t, d, env, root, manifest, work, "cleanup_recorded_complete")
 }
 
 func waitCleanupWatchCondition(t *testing.T, condition func() bool) {
@@ -476,4 +492,53 @@ func testCleanupWatchRejectChangedEvidence(t *testing.T, mode string, args, env 
 	if err := os.WriteFile(path, before, 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testCleanupWatchPublicStatus(t *testing.T, d *consumerAcceptanceDelivery, env []string, root, manifest, work, want string) {
+	t.Helper()
+	before := campaignFaultFrozenBytes(t, []string{root})
+	d.mu.Lock()
+	requests := d.requests
+	d.mu.Unlock()
+	output := filepath.Join(t.TempDir(), "watch-status.json")
+	html := filepath.Join(t.TempDir(), "watch-status.html")
+	args := []string{"status", "--plan", filepath.Join(root, "artifacts", "plan.json"), "--policy", filepath.Join(root, "artifacts", "policy.yaml"), "--manifest", manifest, "--directory", work, "--handoff", filepath.Join(root, "bundle-index.json"), "--json", output, "--html", html}
+	child := startCleanupWatchAcceptanceProcess(t, "status", args, env...)
+	child.wait(t, 0)
+	var report testCampaignStatusReport
+	if err := readTestCampaignJSON(output, &report); err != nil {
+		t.Fatal(err)
+	}
+	status := report.Watcher
+	if status == nil || status.State != want || !status.EvidenceVerified || status.Progress == nil || !status.SnapshotStable || !report.SnapshotStable || !report.ReadOnly {
+		t.Fatalf("public watcher status mismatch: %+v", status)
+	}
+	if want == "active" {
+		if status.Guard != "held" || status.Owner.Status != "stopped" || status.ResumeReady {
+			t.Fatal("status displaced or ignored a protected watcher")
+		}
+	} else if !status.ResumeReady || !status.BindingVerified {
+		t.Fatal("interrupted watcher lost verified resume guidance")
+	}
+	if want == "cleanup_recorded_complete" {
+		if !status.RecordedComplete || !status.Progress.RecordedComplete {
+			t.Fatal("recorded cleanup completion was lost")
+		}
+	} else if status.RecordedComplete || status.Progress.RecordedComplete {
+		t.Fatal("outage certified cleanup completion")
+	}
+	if report.Counts["completed"] != 0 || report.Counts["recovered"] != 0 {
+		t.Fatal("watcher status forged test execution")
+	}
+	body, err := os.ReadFile(html)
+	if err != nil || !bytes.Contains(body, []byte("Cleanup watcher")) {
+		t.Fatal("offline HTML lost watcher status")
+	}
+	d.mu.Lock()
+	after := d.requests
+	d.mu.Unlock()
+	if after != requests {
+		t.Fatal("offline status made API requests", after-requests)
+	}
+	assertCampaignFaultFrozen(t, before, []string{root})
 }

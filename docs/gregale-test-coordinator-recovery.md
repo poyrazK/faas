@@ -452,3 +452,50 @@ creation fencing, unchanged frozen bundle evidence, and no repeated fixture or
 key provisioning. Resource cleanup does not certify missing execution receipts.
 This is CLI/API/PostgreSQL recovery acceptance; it does not qualify VM lifecycle
 or native fault injection.
+
+### Watcher status in JSON and offline HTML
+
+Use the existing command with the same target inputs:
+
+```sh
+gregale test policy status \
+  --plan campaign-plan.json --policy campaign-policy.yaml \
+  --manifest gregale-test.yaml --directory /private/campaign \
+  --json /private/reports/status.json --html /private/reports/status.html
+```
+
+Include the original `--handoff` index for a portable import. Exports must remain
+outside campaign and recovery directories. Status does not call the API, acquire
+or recover locks, create a watcher guard, or rewrite receipts and journals.
+Linux guard inspection reads the kernel lock table without taking a lock.
+
+The additive `cleanup_watcher` JSON object and HTML panel show:
+
+- Receipt owner liveness and whether the kernel guard is held, including during
+  takeover before the replacement has updated the receipt.
+- Cumulative cleanup attempts, previous owner count, and the last bound cleanup
+  observation with consumer, registration and session states and retry diagnostics.
+- Local evidence verification, resume binding verification, blockers, and both
+  structured command arguments and a quoted command for the next action.
+- `active`, `ready_to_start`, `ready_to_resume`, `cleanup_recorded_complete`, or
+  `manual_inspection_required` states. A planned campaign with no watcher is
+  `not_started`; an original runner still requiring inspection is `waiting_for_run`.
+
+Saved cleanup observations and completion are historical. They do not prove live
+resource absence and never change verified execution counts, coverage or the
+policy verdict. The configured original API profile is needed to verify resume
+binding; without it, local evidence and recorded progress remain inspectable,
+but readiness stays unverified. No authentication request is made. Generated
+watcher commands use the current default grace and retry settings; explicit
+operator flags can adjust those within the supported bounds.
+
+Readiness is advisory: the actual watcher repeats every ownership, evidence and
+exclusion check before acting. Changes to receipts, progress, inventory or guard
+ownership during inspection mark the snapshot unstable and remove resume
+readiness. Invalid primary plan, policy, manifest or handoff inputs retain the
+status command's existing validation errors.
+
+Recovery acceptance requires watcher status tests and also checks the public
+command during real API/database outages, with a stopped guard owner, after
+watcher death and after cleanup completion. The fixture verifies zero additional
+API requests, unchanged campaign files and no invented test execution evidence.
