@@ -113,3 +113,11 @@ configuration mutation or production DDL. No migration is required.
 For complete upcoming counts and separate expired waiting-reason partitions, use
 [deadline-window monitoring](event-subscription-deadline-window.md). It adds optional
 sustained count alerts and matching relative-window/reason triage filters.
+
+## Investigate a supplied Go alert
+
+`InvestigateEventDeadlineAlert` selects the matching current upcoming/expired cohort
+and optional waiting reason from a Go/CLI deadline count or ratio alert. It performs
+one bounded page read and validates scope/cohort metadata. The original notification
+reference is separate from triage observation clocks; historical membership is not
+reconstructed. See [usage, pagination and limits](event-deadline-alert-investigation.md).

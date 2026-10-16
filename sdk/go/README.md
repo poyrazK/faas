@@ -1356,3 +1356,9 @@ expired / pending-with-deadlines ratio condition. Select integer basis-point war
 and recovery thresholds plus an explicit `MinimumRecipients`; insufficient cohorts
 remain unknown, never fabricated zero. The same full-count read and version 2
 checkpoint handling apply. See [ratio alerts and exact comparisons](../../docs/event-deadline-ratio-alerts.md).
+
+`InvestigateEventDeadlineAlert(ctx, app, alert, EventDeadlineInvestigationOptions{Limit: 25})`
+maps a Go/CLI count or ratio alert to one read-only page of current deadline triage.
+It preserves reason filters, scope checks and opaque pagination, returning a separate
+alert reference and current observation timestamps. It does not reconstruct historical
+membership or perform recovery actions. See [investigation usage and limits](../../docs/event-deadline-alert-investigation.md).

@@ -1,0 +1,123 @@
+# Investigate a Go deadline alert with current triage
+
+`InvestigateEventDeadlineAlert` maps a supplied Go delivery-health alert to one
+bounded page from the existing read-only deadline triage endpoint. It returns
+current retained pending delivery identities, effective deadlines, observed waiting
+reasons, scheduling metadata and continuation details. It does not fetch payloads,
+retry/replay/cancel work, acknowledge notifications, update checkpoints or send
+messages.
+
+```go
+// alert is an EventDeliveryHealthAlert loaded from a saved Go/CLI alert stream.
+result, err := client.InvestigateEventDeadlineAlert(ctx, "orders", alert,
+    faas.EventDeadlineInvestigationOptions{Limit: 25})
+if err != nil {
+    return err
+}
+fmt.Println(result.Membership) // current_at_triage_observation
+fmt.Println(result.Alert.AlertAt, result.Page.WindowAt, result.Page.ObservedAt)
+for _, row := range result.Page.Recipients {
+    fmt.Println(row.EventSource, row.EventID, row.AcceptedAt,
+        row.DeadlineAt, row.WaitingReason, row.Expired)
+}
+if result.Page.HasMore {
+    next, err := client.InvestigateEventDeadlineAlert(ctx, "orders", alert,
+        faas.EventDeadlineInvestigationOptions{
+            Limit: 25,
+            Cursor: result.Page.NextCursor,
+        })
+    // Handle err and next before continuing; there is no automatic page loop.
+    _, _ = next, err
+}
+```
+
+The helper is available on the root API client and standalone Go SDK, whose public
+surface aliases the options, alert reference and investigation result types. It
+supports Go/CLI `EventDeliveryHealthAlert` objects, not Node/Python checkpoint alerts.
+No new server route, API schema or database migration is required.
+
+## Selection from the metric
+
+| Alert metric | Current triage selection |
+| --- | --- |
+| `deadline_window.upcoming_recipients.<millis>` | `status=upcoming`, `within_millis=<millis>` |
+| Upcoming count with `.reason.<label>` | Same upcoming window plus `waiting_reason=<label>` |
+| `deadline_window.expired_recipients.<millis>` | `status=expired`, with no relative horizon |
+| Expired count with `.reason.<label>` | All expired rows plus `waiting_reason=<label>` |
+| `deadline_window.expired_ratio_basis_points.<millis>.minimum_recipients.<N>` | All expired rows, representing the ratio numerator |
+
+Metric parsing requires the same canonical horizon, known reason and valid minimum
+cohort syntax as the Go watch. Unsupported/malformed metrics, including modeled
+preview risk and earliest-deadline boolean metrics, are rejected before HTTP. Count
+thresholds do not limit the requested sample; the caller's page size does.
+
+Expired queries deliberately have no `within_millis`: the expired cohort covers
+all expired deadlines regardless of the alert horizon. Ratio investigations do not
+list the denominator, recompute the ratio or establish whether its minimum cohort
+still qualifies. Use a new complete deadline-window read for those aggregate facts.
+
+## Alert reference and scope
+
+The supplied app slug is authorized normally by the existing endpoint. The helper
+requires nonzero application/subscription UUIDs, a valid notification timestamp,
+bounded sequence and canonical Go incident identity. `opened`, `resolved` and
+`confirmation_lost` references are accepted with their appropriate opening/closing
+sequence relationship. The returned application/subscription must match the alert
+scope before any rows are exposed.
+
+The result retains a small `Alert` reference: metric, canonical application and
+subscription IDs, incident ID, sequence, transition and `AlertAt`. This validates
+selection/correlation metadata, not the original watch's timing or count proof.
+It is not a signed alert authenticity check. Every read independently enforces
+ownership, scope and MFA; supplying an alert grants no access.
+
+## Current observations, not historical membership
+
+`Membership="current_at_triage_observation"` and `ReadOnly=true` describe the result.
+`Alert.AlertAt` is the supplied alert notification time, **not** the original count
+snapshot timestamp. It is not used as a filter. The first triage page establishes
+a fresh `Page.WindowAt`; each page has its own `Page.ObservedAt` and current pending
+state/waiting reasons. No reconstructed list of the original incident's recipients
+is claimed, and even the first page may be empty after a valid opening alert.
+
+The relative upcoming interval is strictly after the traversal's window and strictly
+before that window plus its horizon. Expired filtering compares against the same
+fixed window. On a later upcoming page, `row.Expired` can therefore be true at the
+new observation, even though it matched the traversal's upcoming interval. The
+helper preserves this existing distinction rather than dropping such rows.
+
+Membership can change after completion, capture/backfill, expiry, replay, age
+overrides, reason changes or retention. A page cannot confirm whether an alert is
+still firing or successfully recovered. Returned identities include acceptance time
+for correlation; the helper does not deduplicate incarnations or authorize a later
+mutation against them.
+
+## Bounds, pagination and validation
+
+`Limit` defaults to 50 and accepts 1..100; zero selects the default. Each invocation
+makes at most one GET with the existing five-second read context budget, shortened
+by the caller's deadline/cancellation. Errors return no partial investigation.
+The HTTP transport may retain its normal retry policy within that context. A row
+bound does not bound database rows scanned or response field byte sizes.
+
+`Query` records the exact SDK query used. Continue with the same app, alert and
+limit plus `Page.NextCursor`; do not add manual filters. Cursors stay opaque and
+are bound by the server to authenticated scope, normalized filters, page size and
+first-page classification window. They expire 15 minutes after that window.
+They are not bound to an alert identity and do not grant access or reserve work.
+Invalid/expired cursors propagate their API error; the helper does not silently
+restart a traversal.
+
+The helper rejects missing read-only coverage, mismatched scope, invalid or
+regressing page clocks, excessive rows, contradictory cursor/has-more metadata,
+self-repeating cursors, unknown waiting reasons, malformed identities/timestamps,
+incorrect expiry flags, rows outside the chosen cohort/reason and unordered visible
+sort keys. It preserves server order rather than sorting or discarding invalid rows.
+The visible ordering check covers deadline and acceptance time; the server's
+internal outbox tie-breaker is not exposed for independent verification.
+
+Pagination remains live. Rows can appear, disappear, move, be skipped or recur when
+deadlines/routing change. `HasMore` reflects lookahead in that page's snapshot and
+does not guarantee a nonempty next page. An empty final page does not prove delivery
+success. No cursor decoding, payload reads or automatic multi-page accumulation
+are performed. See [triage coverage and retention semantics](event-subscription-deadline-triage.md).

@@ -609,3 +609,10 @@ func EventSubscriptionDeadlineWindowCountsComplete(v EventSubscriptionDeadlineWi
 
 // EventDeliveryDeadlineRatioBasisPointsMax represents 100% in deadline ratio options.
 const EventDeliveryDeadlineRatioBasisPointsMax = api.EventDeliveryDeadlineRatioBasisPointsMax
+
+// Read-only alert-to-current-triage correlation helpers.
+type (
+	EventDeadlineInvestigationOptions = api.EventDeadlineInvestigationOptions
+	EventDeadlineAlertReference       = api.EventDeadlineAlertReference
+	EventDeadlineInvestigation        = api.EventDeadlineInvestigation
+)
