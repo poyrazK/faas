@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION capture_queue_canary_invocation_revision() RETURNS trigger
+CREATE OR REPLACE FUNCTION capture_queue_canary_invocation_revision() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE affected_app uuid;
 BEGIN
@@ -11,8 +11,14 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER queue_canary_invocation_revision AFTER UPDATE OF state,attempts,replay_generation,received_at,completed_at,headers,queue_binding_id,deployment_scope,deadline_at,account_id,app_id
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='invocations'::regclass AND tgname='queue_canary_invocation_revision') THEN
+  CREATE TRIGGER queue_canary_invocation_revision AFTER UPDATE OF state,attempts,replay_generation,received_at,completed_at,headers,queue_binding_id,deployment_scope,deadline_at,account_id,app_id
 ON invocations FOR EACH ROW EXECUTE FUNCTION capture_queue_canary_invocation_revision();
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 -- +goose Down
 DROP TRIGGER queue_canary_invocation_revision ON invocations;
 DROP FUNCTION capture_queue_canary_invocation_revision();

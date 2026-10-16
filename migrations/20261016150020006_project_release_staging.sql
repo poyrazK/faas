@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_release_stages (
+CREATE TABLE IF NOT EXISTS project_release_stages (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id),
  project_id uuid NOT NULL REFERENCES projects(id),
@@ -11,6 +11,6 @@ CREATE TABLE project_release_stages (
  cancelled boolean NOT NULL DEFAULT false,
  FOREIGN KEY (project_id,environment_slug) REFERENCES project_environments(project_id,slug)
 );
-CREATE INDEX project_release_stages_scope ON project_release_stages(project_id,environment_slug,expires_at);
+CREATE INDEX IF NOT EXISTS project_release_stages_scope ON project_release_stages(project_id,environment_slug,expires_at);
 -- +goose Down
 DROP TABLE project_release_stages;

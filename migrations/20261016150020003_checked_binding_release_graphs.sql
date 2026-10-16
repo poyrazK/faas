@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION authorize_binding_release_graph(target_project uuid, target_environment text, next_release uuid, prior_release text, members jsonb, fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION authorize_binding_release_graph(target_project uuid, target_environment text, next_release uuid, prior_release text, members jsonb, fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE a apps%ROWTYPE; f jsonb; ready_count integer; latest text;
 BEGIN
  IF jsonb_typeof(members) <> 'object' OR (SELECT count(*) FROM jsonb_each(members)) = 0 THEN
@@ -58,7 +58,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION validate_checked_binding_release_graph() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION validate_checked_binding_release_graph() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE grant_value jsonb; actual_members jsonb; f jsonb;
 BEGIN
  grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
@@ -75,7 +75,13 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE CONSTRAINT TRIGGER checked_binding_release_graph_members AFTER INSERT ON project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_checked_binding_release_graph();
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_release_sets'::regclass AND tgname='checked_binding_release_graph_members') THEN
+  CREATE CONSTRAINT TRIGGER checked_binding_release_graph_members AFTER INSERT ON project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_checked_binding_release_graph();
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TRIGGER checked_binding_release_graph_members ON project_release_sets;

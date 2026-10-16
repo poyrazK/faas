@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE binding_verification_runs (
+CREATE TABLE IF NOT EXISTS binding_verification_runs (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id),
  app_id uuid NOT NULL REFERENCES apps(id),
@@ -10,8 +10,8 @@ CREATE TABLE binding_verification_runs (
  created_at timestamptz NOT NULL,
  expires_at timestamptz NOT NULL CHECK (expires_at>created_at AND expires_at<=created_at+interval '600 seconds')
 );
-CREATE INDEX binding_verification_runs_app_time_idx ON binding_verification_runs(app_id,created_at DESC);
-CREATE TABLE binding_verification_run_steps (
+CREATE INDEX IF NOT EXISTS binding_verification_runs_app_time_idx ON binding_verification_runs(app_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS binding_verification_run_steps (
  run_id uuid NOT NULL REFERENCES binding_verification_runs(id) ON DELETE CASCADE,
  step_index integer NOT NULL CHECK (step_index>=0 AND step_index<128),
  resource_id uuid NOT NULL,

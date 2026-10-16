@@ -14,7 +14,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TABLE queue_binding_canaries (
+CREATE TABLE IF NOT EXISTS queue_binding_canaries (
  id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id),
  app_id uuid NOT NULL REFERENCES apps(id),
@@ -31,8 +31,14 @@ CREATE TABLE queue_binding_canaries (
  CHECK((completed_deployment_id IS NULL AND completed_attempt IS NULL AND completed_generation IS NULL) OR
        (completed_deployment_id IS NOT NULL AND completed_attempt IS NOT NULL AND completed_generation IS NOT NULL))
 );
-CREATE INDEX queue_binding_canaries_lookup ON queue_binding_canaries(app_id,binding_id,deployment_id,published_at DESC);
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON queue_binding_canaries FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
+CREATE INDEX IF NOT EXISTS queue_binding_canaries_lookup ON queue_binding_canaries(app_id,binding_id,deployment_id,published_at DESC);
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='queue_binding_canaries'::regclass AND tgname='binding_promotion_revision') THEN
+  CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON queue_binding_canaries FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_binding_verification_runs (
+CREATE TABLE IF NOT EXISTS project_binding_verification_runs (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id),
  project_id uuid NOT NULL REFERENCES projects(id),
@@ -9,9 +9,9 @@ CREATE TABLE project_binding_verification_runs (
  created_at timestamptz NOT NULL,
  expires_at timestamptz NOT NULL CHECK(expires_at>created_at AND expires_at<=created_at+interval '600 seconds')
 );
-CREATE INDEX project_binding_verification_runs_project_time_idx ON project_binding_verification_runs(project_id,created_at DESC);
-ALTER TABLE binding_verification_runs ADD COLUMN graph_run_id uuid REFERENCES project_binding_verification_runs(id);
-CREATE INDEX binding_verification_runs_graph_idx ON binding_verification_runs(graph_run_id) WHERE graph_run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS project_binding_verification_runs_project_time_idx ON project_binding_verification_runs(project_id,created_at DESC);
+ALTER TABLE binding_verification_runs ADD COLUMN IF NOT EXISTS graph_run_id uuid REFERENCES project_binding_verification_runs(id);
+CREATE INDEX IF NOT EXISTS binding_verification_runs_graph_idx ON binding_verification_runs(graph_run_id) WHERE graph_run_id IS NOT NULL;
 -- +goose Down
 ALTER TABLE binding_verification_runs DROP COLUMN graph_run_id;
 DROP TABLE project_binding_verification_runs;

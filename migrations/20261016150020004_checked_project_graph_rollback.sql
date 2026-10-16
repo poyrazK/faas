@@ -1,15 +1,22 @@
 -- +goose Up
 ALTER TABLE project_release_sets
- ADD COLUMN rollback_source_release_id uuid REFERENCES project_release_sets(id),
- ADD COLUMN rollback_previous_release_id uuid REFERENCES project_release_sets(id),
- ADD CONSTRAINT project_release_rollback_pair CHECK (
+ ADD COLUMN IF NOT EXISTS rollback_source_release_id uuid REFERENCES project_release_sets(id),
+ ADD COLUMN IF NOT EXISTS rollback_previous_release_id uuid REFERENCES project_release_sets(id);
+
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_release_sets'::regclass AND conname='project_release_rollback_pair') THEN
+  ALTER TABLE project_release_sets ADD CONSTRAINT project_release_rollback_pair CHECK (
   (rollback_source_release_id IS NULL AND rollback_previous_release_id IS NULL) OR
   (rollback_source_release_id IS NOT NULL AND rollback_previous_release_id IS NOT NULL
    AND rollback_source_release_id <> rollback_previous_release_id
    AND rollback_source_release_id <> id AND rollback_previous_release_id <> id));
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION validate_checked_project_rollback() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION validate_checked_project_rollback() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE source project_release_sets%ROWTYPE; prior project_release_sets%ROWTYPE; grant_value jsonb; selected jsonb; historical jsonb;
 BEGIN
  IF TG_OP='UPDATE' THEN
@@ -37,8 +44,20 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE CONSTRAINT TRIGGER checked_project_rollback_commit AFTER INSERT ON project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_checked_project_rollback();
-CREATE TRIGGER checked_project_rollback_identity BEFORE UPDATE ON project_release_sets FOR EACH ROW EXECUTE FUNCTION validate_checked_project_rollback();
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_release_sets'::regclass AND tgname='checked_project_rollback_commit') THEN
+  CREATE CONSTRAINT TRIGGER checked_project_rollback_commit AFTER INSERT ON project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_checked_project_rollback();
+ END IF;
+END $replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_release_sets'::regclass AND tgname='checked_project_rollback_identity') THEN
+  CREATE TRIGGER checked_project_rollback_identity BEFORE UPDATE ON project_release_sets FOR EACH ROW EXECUTE FUNCTION validate_checked_project_rollback();
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TRIGGER checked_project_rollback_identity ON project_release_sets;

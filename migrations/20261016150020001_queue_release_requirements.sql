@@ -1,5 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
+-- A later migration widens the validator; replay must retain that definition.
+DO $replay$ BEGIN
+ IF to_regprocedure(format('%I.valid_queue_release_requirements(jsonb)', current_schema())) IS NULL THEN
 CREATE OR REPLACE FUNCTION valid_queue_release_requirements(requirements jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE entry record; count integer:=0;
@@ -12,8 +15,14 @@ BEGIN
  END LOOP;
  RETURN true;
 END $$;
-ALTER TABLE app_binding_release_policies ADD COLUMN queue_requirements jsonb NOT NULL DEFAULT '{}';
-ALTER TABLE app_binding_release_policies ADD CONSTRAINT queue_release_requirements CHECK(valid_queue_release_requirements(queue_requirements));
+ END IF;
+END $replay$;
+ALTER TABLE app_binding_release_policies ADD COLUMN IF NOT EXISTS queue_requirements jsonb NOT NULL DEFAULT '{}';
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app_binding_release_policies'::regclass AND conname='queue_release_requirements') THEN
+  ALTER TABLE app_binding_release_policies ADD CONSTRAINT queue_release_requirements CHECK(valid_queue_release_requirements(queue_requirements));
+ END IF;
+END $replay$;
 CREATE OR REPLACE FUNCTION authorize_binding_release_traffic(fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE f jsonb; observed text; d deployments%ROWTYPE; p app_binding_release_policies%ROWTYPE;
 BEGIN

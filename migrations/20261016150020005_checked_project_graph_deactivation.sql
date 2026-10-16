@@ -1,15 +1,22 @@
 -- +goose Up
-ALTER TABLE project_release_sets ADD COLUMN deactivation jsonb,
- ADD CONSTRAINT project_release_deactivation_receipt CHECK (deactivation IS NULL OR
+ALTER TABLE project_release_sets ADD COLUMN IF NOT EXISTS deactivation jsonb;
+
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_release_sets'::regclass AND conname='project_release_deactivation_receipt') THEN
+  ALTER TABLE project_release_sets ADD CONSTRAINT project_release_deactivation_receipt CHECK (deactivation IS NULL OR
  (NOT active AND jsonb_typeof(deactivation)='object'
  AND jsonb_typeof(deactivation->'id')='string' AND (deactivation->>'id')::uuid IS NOT NULL
  AND deactivation->>'release_id'=id::text
  AND jsonb_typeof(deactivation->'completed_at')='string' AND (deactivation->>'completed_at')::timestamptz IS NOT NULL
  AND jsonb_typeof(deactivation->'fallback_members')='array' AND jsonb_array_length(deactivation->'fallback_members') BETWEEN 1 AND 100
  AND deactivation ?& ARRAY['id','release_id','completed_at','fallback_members']));
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION authorize_binding_release_deactivation(target_project uuid,target_environment text,receipt_id uuid,prior_release text,members jsonb,fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION authorize_binding_release_deactivation(target_project uuid,target_environment text,receipt_id uuid,prior_release text,members jsonb,fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE g jsonb;
 BEGIN
  IF prior_release='' THEN RAISE EXCEPTION 'active graph required' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
@@ -25,7 +32,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_project_deactivation_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_project_deactivation_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE g jsonb;
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -40,10 +47,16 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER project_deactivation_receipt_identity BEFORE INSERT OR UPDATE ON project_release_sets FOR EACH ROW EXECUTE FUNCTION guard_project_deactivation_receipt();
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_release_sets'::regclass AND tgname='project_deactivation_receipt_identity') THEN
+  CREATE TRIGGER project_deactivation_receipt_identity BEFORE INSERT OR UPDATE ON project_release_sets FOR EACH ROW EXECUTE FUNCTION guard_project_deactivation_receipt();
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION validate_checked_project_deactivation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION validate_checked_project_deactivation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE g jsonb; receipt jsonb; selected jsonb; actual jsonb; a apps%ROWTYPE; expected text; f jsonb;
 BEGIN
  g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
@@ -80,7 +93,13 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE CONSTRAINT TRIGGER checked_project_deactivation_commit AFTER UPDATE ON project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_checked_project_deactivation();
+-- +goose StatementBegin
+DO $replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_release_sets'::regclass AND tgname='checked_project_deactivation_commit') THEN
+  CREATE CONSTRAINT TRIGGER checked_project_deactivation_commit AFTER UPDATE ON project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_checked_project_deactivation();
+ END IF;
+END $replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TRIGGER checked_project_deactivation_commit ON project_release_sets;
