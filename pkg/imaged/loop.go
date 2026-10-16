@@ -64,6 +64,8 @@ type Loop struct {
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
 	remoteDeleteFailures         prometheus.Counter
+	mcpRecoveryAttempts          *prometheus.CounterVec
+	mcpHoldDuration              prometheus.Histogram
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by the With*Channel helpers.
@@ -136,6 +138,9 @@ func NewLoop(cfg LoopConfig) *Loop {
 			Name: "imaged_snapshot_remote_delete_failures_total",
 			Help: "Remote snapshot artifact deletion failures; the snapshot row remains as a retryable durable tombstone.",
 		})
+		loop.mcpRecoveryAttempts = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "imaged_mcp_task_promotion_recovery_attempts_total", Help: "Durable MCP promotion recovery attempts by outcome."}, []string{"outcome"})
+		loop.mcpHoldDuration = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "imaged_mcp_task_promotion_hold_duration_seconds", Help: "Hold duration when MCP promotion recovery completes.", Buckets: []float64{5, 15, 30, 60, 300, 900, 3600, 86400}})
+		cfg.Handler.ops.Registry().MustRegister(loop.mcpRecoveryAttempts, loop.mcpHoldDuration)
 		cfg.Handler.ops.Registry().MustRegister(
 			loop.remoteDeleteBacklogCount,
 			loop.remoteDeleteBacklogOldestAge,
@@ -277,6 +282,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	l.recoverBuildHandoffs(ctx)
+	l.recoverMCPTaskPromotions(ctx)
 	l.reconcileStaleDeployments(ctx)
 	if l.handler != nil {
 		if err := l.handler.MaterializePendingJobs(ctx); err != nil {
@@ -288,6 +294,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
+	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecuritySignatures(ctx, l.now())
 
@@ -307,6 +314,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
+			l.recoverMCPTaskPromotions(ctx)
 		case <-jobMaterializationTicker.C:
 			if l.handler != nil {
 				if err := l.handler.MaterializePendingJobs(ctx); err != nil {
@@ -344,6 +352,7 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 	now := l.now().UTC()
 	cutoff := now.Add(-staleDeploymentThreshold)
 	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		ExcludeMCPTaskHolds: true,
 		Statuses: []state.DeploymentStatus{
 			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
 		},
@@ -357,6 +366,14 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 		return
 	}
 	for _, deployment := range rows {
+		hold, holdErr := l.store.MCPTaskPromotionHold(ctx, deployment.ID)
+		if holdErr != nil {
+			l.log.Warn("imaged: inspect MCP task hold before stale cancellation", "deployment", deployment.ID, "err", holdErr)
+			continue
+		}
+		if hold != nil {
+			continue
+		}
 		entered := pipelineStageEnteredAt(deployment)
 		if !entered.Before(cutoff) {
 			// A rollback re-entered the pipeline recently; created_at alone
@@ -409,6 +426,7 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 		return
 	}
 	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		ExcludeMCPTaskHolds: true,
 		Statuses: []state.DeploymentStatus{
 			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
 		},
@@ -525,6 +543,17 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 	// falsely reporting cleanup success, so every normal GC tick makes
 	// progress as soon as the remote deletion path recovers.
 	l.retryRemoteDeleteBacklog(ctx, now)
+
+	// Stale rows inside a kept deployment (every re-captured init snapshot
+	// supersedes the previous one) are outside the rollback window's reach.
+	// Their retention eviction used to run only in the one-shot startup FC
+	// sweep, so they accumulated until imaged restarted (production-us
+	// hunt #9: 381 stale snapshots, 215 GB of 275 GB, one app 103 of them).
+	if n, err := l.evictExpiredStaleSnapshots(ctx); err != nil {
+		l.log.Warn("imaged: gc stale retention", "err", err)
+	} else if n > 0 {
+		l.log.Info("imaged: gc evicted expired stale snapshots", "evicted", n)
+	}
 
 	rows, err := l.store.ListSnapshotsForGC(ctx)
 	if err != nil {
@@ -669,9 +698,10 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 	}
 }
 
-// runFCSweep is the F2 startup body. Returns true when the sweep ran
-// to completion (whether or not anything was marked stale — an
-// empty-stale-marker is still a successful run). Run() uses the return
+// runFCSweep is the F2 startup body: detect this host's Firecracker
+// version and evict stale rows past retention. It no longer marks rows
+// of other FC versions stale (ADR-1344 §6, see the body). Returns true
+// when FC detection succeeded. Run() uses the return
 // value to decide whether to drain fcCh; on failure the channel stays
 // open so the next tick retries the detect call (F-08). Errors are
 // logged, never returned — FC detection failure must not block imaged
@@ -680,7 +710,7 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 // ADR-127 §D1 (Layer 6) extends this body with an F3 step:
 // MarkAppProtocolSnapshotsStale, the app-protocol dimension of the
 // F2/F3 stale-mark split. F3 runs at the tail of runFCSweep — after
-// the F2 mark-stale + retention-eviction — and operates on the
+// the F2 retention-eviction — and operates on the
 // wire-protocol-capable close-set {http2, grpc} (ADR-126 §Decision
 // 6). F3 returns the F2 result on partial failure so F2's success
 // is preserved even if F3 hits a transient error.
@@ -706,29 +736,25 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 		l.runAppProtocolSweep(ctx)
 		return false
 	}
-	n, err := l.handler.MarkFCSnapshotsStale(ctx, ver)
+	// ADR-1344 §6: no fleet-wide FC stale-mark here. imaged runs on every
+	// compute node, so marking every snapshot whose fc_version differs from
+	// this host's binary meant the first node upgraded in a rolling
+	// Firecracker upgrade retired the warm snapshots of every node still on
+	// the old version, and the next old-version imaged restart did the
+	// reverse. Restore compatibility does not depend on the flag: schedd
+	// (snapshotRejection) and vmmd (PlanWake) both refuse a snapshot whose
+	// fc_version differs and cold-boot instead (ADR-005), and a new capture
+	// replaces a live row of another FC version (Handler, snapshot_written).
+	// MarkFCSnapshotsStale remains for an operator to run once the whole
+	// fleet is on one version.
+	evicted, err := l.evictExpiredStaleSnapshots(ctx)
 	if err != nil {
-		l.log.Warn("imaged: fc sweep mark", "err", err)
-		// F3 still runs.
-		l.runAppProtocolSweep(ctx)
-		return false
-	}
-	// Reclaim expired stale rows and their storage artifacts together. Deleting
-	// rows first loses the deployment and app keys needed to find the files.
-	expired, err := l.store.ListSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
-	if err != nil {
-		l.log.Warn("imaged: fc sweep list expired", "err", err)
+		l.log.Warn("imaged: fc sweep evict", "err", err)
 		// mark-stale succeeded; partial eviction still counts as progress.
 		// F3 still runs.
 		l.runAppProtocolSweep(ctx)
 		return true
 	}
-	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(expired)); err != nil {
-		l.log.Warn("imaged: fc sweep evict", "err", err)
-		l.runAppProtocolSweep(ctx)
-		return true
-	}
-	evicted := len(expired)
 	// F3 (Layer 6): app-protocol stale-mark sweep. ADR-127 §D1 —
 	// flips non-stale {http2, grpc} snapshots whose persisted base-image
 	// generation differs from this binary. Operates on the base-image
@@ -743,9 +769,27 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 			"marked_stale", apN)
 	}
 	l.log.Info("imaged: fc sweep done",
-		"fc_version", ver, "marked_stale", n, "evicted", evicted,
+		"fc_version", ver, "evicted", evicted,
 		"app_protocol_marked_stale", apN)
 	return true
+}
+
+// evictExpiredStaleSnapshots reclaims rows that have been stale for longer
+// than api.SnapshotStaleRetention together with their storage artifacts.
+// Deleting rows first loses the deployment and app keys needed to find the
+// files.
+func (l *Loop) evictExpiredStaleSnapshots(ctx context.Context) (int, error) {
+	expired, err := l.store.ListSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
+	if err != nil {
+		return 0, fmt.Errorf("list expired stale snapshots: %w", err)
+	}
+	if len(expired) == 0 {
+		return 0, nil
+	}
+	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(expired)); err != nil {
+		return 0, fmt.Errorf("evict expired stale snapshots: %w", err)
+	}
+	return len(expired), nil
 }
 
 func snapshotTargets(rows []state.SnapshotForGC) []deleteTarget {

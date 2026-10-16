@@ -20,7 +20,6 @@
 #   - host.hmac.key (apid reads it via LoadCredential)
 #   - host.age + host.age.previous (apid + githubd on fsn-1)
 #   - archive-creds.json + apid log-archive drop-in (issue #562)
-#   - trusted-publishers/ (apid writes per-publisher PEMs)
 #   - /etc/faas/tls/ca/ + per-daemon leaves (Tier 1)
 # imaged's tripwires (sign.key, sign-pub.pem, imaged's ReadWritePaths=,
 # /srv/fc/snap, /srv/fc/sigs) are now in compute_only_service.
@@ -191,6 +190,24 @@
     mode: "0644"
   notify: restart faas-apid
 
+- name: control_plane_service — set developer live patch gate (ADR-740)
+  ansible.builtin.template:
+    src: 99-faas-dev-patch.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-dev-patch.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
+- name: control_plane_service — set image runs gate (ADR-1161)
+  ansible.builtin.template:
+    src: 99-faas-image-runs.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-image-runs.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
 - name: control_plane_service — stop development relay when disabled
   ansible.builtin.systemd_service:
     name: faas-bridged.service
@@ -288,6 +305,9 @@
   loop:
     - faas-apid
     - faas-meterd
+
+- name: control_plane_service — converge cluster workload trust (ADR-1141)
+  ansible.builtin.include_tasks: workload_trust.yml
 
 - name: control_plane_service — set public status launch boundary
   notify: restart faas-apid
@@ -722,25 +742,6 @@
     state: absent
   register: faas_log_archive_dropin_removed
   when: not faas_archive_creds_stat.stat.exists
-
-# Issue #472 / ADR-058 — per-app cosign trusted-publisher directory.
-# imaged reads /etc/faas/secrets/trusted-publishers/ at startup and
-# on every pg_notify('trusted_signer_changed'). The dir is created
-# by this task (mode 0755 root:root) so imaged's first read never
-# ENOENTs; per-file perms are 0444 root:root (enforced by the Go
-# loader at read time — see pkg/cosign/keys.go). Operator onboards
-# publishers via `gregale trusted-publishers add <slug> <name> <pub>`,
-# which PUTs base64(DER) to apid; apid writes the mirror .pem here.
-# Missing dir on a deploy attempt is fail-closed at the apid
-# pre-flight gate (handlers.go::createDeployment), so a never-
-# populated install is non-fatal at startup.
-- name: control_plane_service — ensure trusted-publishers dir exists with mode 0755 root:root (issue # 472)
-  ansible.builtin.file:
-    path: /etc/faas/secrets/trusted-publishers
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
 
 # PR-C+D cert directory migration: pre-PR-C deployments kept the
 # egress server leaf at /etc/faas/tls/gatewayd/egress.{crt,key}.

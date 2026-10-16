@@ -123,6 +123,17 @@ func cmdPS(args []string) int {
 	if jsonOutput {
 		// NDJSON: empty slice renders as zero lines (no header), which
 		// `jq -c '.'` handles gracefully.
+		if *history {
+			rows := make([]psArchivePreviewRow, 0, len(ins))
+			for _, instance := range ins {
+				rows = append(rows, psArchivePreviewRow{
+					InstanceResponse:      instance,
+					ArchivePreviewCommand: psArchivePreviewCommand(slug, instance.ID),
+					ArchiveAvailability:   "not_checked",
+				})
+			}
+			return jsonOut(writeNDJSON(rows))
+		}
 		return jsonOut(writeNDJSON(ins))
 	}
 	if len(ins) == 0 {
@@ -135,7 +146,28 @@ func cmdPS(args []string) int {
 			i.ID, humanizeInstanceState(i.State), i.RAMMB,
 			i.StartedAt, i.LastRequestAt, i.WakeID)
 	}
+	if *history {
+		_, _ = fmt.Fprintln(osStdout, "Archive query previews (POSIX shells; archive availability and retention not checked):")
+		for _, instance := range ins {
+			if command := psArchivePreviewCommand(slug, instance.ID); command != "" {
+				_, _ = fmt.Fprintf(osStdout, "  Instance %s:\n    %s\n", oneLine(instance.ID), command)
+			}
+		}
+	}
 	return 0
+}
+
+type psArchivePreviewRow struct {
+	api.InstanceResponse
+	ArchivePreviewCommand string `json:"archive_preview_command,omitempty"`
+	ArchiveAvailability   string `json:"archive_availability"`
+}
+
+func psArchivePreviewCommand(slug, instance string) string {
+	if !api.ValidAppSlug(slug) || !archiveLogInstancePattern.MatchString(instance) {
+		return ""
+	}
+	return savedNameSuggestionCommand([]string{"logs", "--app", slug, "--archive", "--instance", instance, "--date", "yesterday", "--dry-run"})
 }
 
 // humanizeInstanceState maps the wire-level state string to a
@@ -206,7 +238,9 @@ func cmdStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
 	if page.WakeP95MS == nil {
-		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+		// The status query reports a p95 only from 20 platform wakes in 30
+		// minutes, and omits it when Prometheus is unreachable (H10-46).
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
 	}
@@ -351,15 +385,21 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 }
 
 type envPushReceipt struct {
-	AppSlug          string   `json:"app_slug"`
-	Scope            string   `json:"scope"`
-	Result           string   `json:"result"`
-	UpdatedKeys      []string `json:"updated_keys"`
-	UpdatedKeyCount  int      `json:"updated_key_count"`
-	ApplyMode        string   `json:"apply_mode"`
-	RestartRequested bool     `json:"restart_requested"`
-	WakeID           string   `json:"wake_id,omitempty"`
-	FailedKey        string   `json:"failed_key,omitempty"`
+	AppSlug                  string           `json:"app_slug"`
+	Scope                    string           `json:"scope"`
+	Result                   string           `json:"result"`
+	UpdatedKeys              []string         `json:"updated_keys"`
+	UpdatedKeyCount          int              `json:"updated_key_count"`
+	ApplyMode                string           `json:"apply_mode"`
+	RestartRequested         bool             `json:"restart_requested"`
+	WakeID                   string           `json:"wake_id,omitempty"`
+	FailedKey                string           `json:"failed_key,omitempty"`
+	WaitForAckRequested      bool             `json:"wait_for_ack_requested,omitempty"`
+	AcknowledgementStatus    string           `json:"acknowledgement_status,omitempty"`
+	AcknowledgedKeys         []string         `json:"acknowledged_keys,omitempty"`
+	InstanceID               string           `json:"instance_id,omitempty"`
+	ObservedDeliveryVersions map[string]int64 `json:"observed_delivery_versions,omitempty"`
+	Warnings                 []string         `json:"warnings,omitempty"`
 }
 
 func envPushFailure(receipt envPushReceipt, message string, err error) int {
@@ -367,6 +407,9 @@ func envPushFailure(receipt envPushReceipt, message string, err error) int {
 		if code := jsonOut(writeJSON(receipt)); code != 0 {
 			return code
 		}
+	}
+	if len(receipt.UpdatedKeys) > 0 {
+		return printConfigurationPartialError(message, err, receipt.AppSlug, receipt.Scope, "Environment values saved for the confirmed keys.", receipt.UpdatedKeys, receipt.WakeID)
 	}
 	return printErr(message, err)
 }
@@ -378,6 +421,8 @@ func envPush(args []string) int {
 	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
+	waitForAck := fs.Bool("wait-for-ack", false, "wait for application acknowledgements for uploaded keys")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after uploading")
 	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next cold wake)")
 	// --secret-scan mirrors the deploy-side flag. Default ON because the
 	// failure mode (a Stripe key pasted into a `gregale env push`
@@ -392,12 +437,22 @@ func envPush(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	timeoutSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" {
+			timeoutSpecified = true
+		}
+	})
+	if *timeout <= 0 || (timeoutSpecified && !*waitForAck) {
+		return printErr("Invalid env wait options", errors.New("--timeout must be positive and requires --wait-for-ack when supplied"))
+	}
 	secretScanMode, secretScanErr := parseSecretScanFlag(*secretScan)
 	if secretScanErr != nil {
 		PrintFail(os.Stderr, "%s", secretScanErr)
 		return 1
 	}
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
+	appSource := targetValueSource(*app, resolvedApp)
 	if resolveErr == nil {
 		*app = resolvedApp
 	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
@@ -411,6 +466,7 @@ func envPush(args []string) int {
 	if scopeErr != nil {
 		return printErr("Could not read local project context", scopeErr)
 	}
+	scopeSource := targetValueSource(*scope, resolvedScope)
 	*scope = resolvedScope
 	if *fromStdin && *in != ".env" {
 		// fs.Changed isn't available pre-Go-1.21 in some toolchains;
@@ -429,8 +485,7 @@ func envPush(args []string) int {
 		// or process substitution. Same line cap (64 KB) — Scale's
 		// SecretValueMaxBytes (32 KB) plus the key name fits, anything
 		// larger truncates and the apid byte cap rejects.
-		scanner := bufio.NewScanner(osStdin)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++
@@ -445,7 +500,7 @@ func envPush(args []string) int {
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			return printErr("Read stdin", err)
+			return printErr("Read stdin", keyValueScanErr(err))
 		}
 	} else {
 		f, err := openCustomerFile(*in)
@@ -456,8 +511,7 @@ func envPush(args []string) int {
 		// Reuse parseSecretsPair from commands3.go (single '=' split, same
 		// edge cases). Skip blanks + comments ourselves so the parser sees
 		// only candidate lines.
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(f))
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++
@@ -472,7 +526,7 @@ func envPush(args []string) int {
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
 		if err := scanner.Err(); err != nil {
-			return printErr("Read .env", err)
+			return printErr("Read .env", keyValueScanErr(err))
 		}
 	}
 	if len(pairs) == 0 {
@@ -488,7 +542,7 @@ func envPush(args []string) int {
 		if *fromStdin {
 			origin = "<stdin>"
 		}
-		return previewEnvPush(*app, *scope, previewPairs, origin, secretScanMode, *restart)
+		return previewEnvPush(*app, *scope, previewPairs, origin, secretScanMode, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
 	}
 	// Secret-scan pass: scan the parsed pairs (in-memory; no file I/O
 	// because the values are already in hand) for known credential
@@ -559,6 +613,7 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	printMutationTarget(*app, *scope, appSource, scopeSource)
 	receipt := envPushReceipt{
 		AppSlug: *app, Scope: scopeOrDefault(*scope), Result: "applied",
 		UpdatedKeys: []string{}, ApplyMode: "next_cold_wake",
@@ -574,6 +629,9 @@ func envPush(args []string) int {
 			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
 		}
 	}
+	if *waitForAck {
+		return finishEnvPushWait(context.Background(), client, receipt, *restart, *timeout)
+	}
 	if *restart {
 		// Runtime configuration must not use the ordinary snapshot restart:
 		// capturing process memory would preserve the previous environment.
@@ -588,6 +646,7 @@ func envPush(args []string) int {
 			return jsonOut(writeJSON(receipt))
 		}
 		PrintOK(osStdout, "Restart requested after env update (wake_id=%s)", out.WakeID)
+		printSecretUpdateNextSteps(*app, *scope, out.WakeID, receipt.UpdatedKeys...)
 		return 0
 	}
 	// Default semantics are deliberately lazy: the API keeps live
@@ -598,6 +657,7 @@ func envPush(args []string) int {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
+	printSecretUpdateNextSteps(*app, *scope, "", receipt.UpdatedKeys...)
 	return 0
 }
 
@@ -968,6 +1028,7 @@ func cmdAppScale(slug string, args []string) int {
 		}
 		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
 	}
+	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Scale failed", err)
@@ -975,7 +1036,7 @@ func cmdAppScale(slug string, args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
 	}
-	PrintOK(osStdout, "Updated")
+	printAppSettingsReceipt(slug, *environment, req)
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure (mid-rotation token, transient
 		// API blip). The cost echo is a transparency affordance;
@@ -1056,6 +1117,10 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppRestart(slug, args[2:])
 		case subExec:
 			return cmdAppExec(slug, args[2:])
+		case "cp":
+			return cmdAppCopy(slug, args[2:])
+		case "port-forward":
+			return cmdAppPortForward(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subEgressAllowlist:
@@ -2148,4 +2213,41 @@ func isLongPollTimeout(err error) bool {
 		return ae.Problem.Code == "long_poll_timeout"
 	}
 	return false
+}
+
+// openCustomerDirectoryForSync opens only a directory whose final component
+// retains its identity across the open. Recovery journals use the descriptor
+// solely for directory fsync after creating a durable file entry.
+func openCustomerDirectoryForSync(path string) (*os.File, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve recovery directory: %w", err)
+	}
+	before, err := os.Lstat(absolute)
+	if err != nil {
+		return nil, err
+	}
+	if !before.IsDir() {
+		return nil, fmt.Errorf("refusing non-directory %q", path)
+	}
+	//nolint:forbidigo // Guarded directory fsync boundary: Lstat before/after and descriptor identity checks; no customer bytes are read.
+	directory, err := os.Open(absolute)
+	if err != nil {
+		return nil, err
+	}
+	after, err := os.Lstat(absolute)
+	if err != nil {
+		_ = directory.Close()
+		return nil, err
+	}
+	opened, err := directory.Stat()
+	if err != nil {
+		_ = directory.Close()
+		return nil, err
+	}
+	if !after.IsDir() || !opened.IsDir() || !os.SameFile(before, after) || !os.SameFile(after, opened) {
+		_ = directory.Close()
+		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
+	}
+	return directory, nil
 }

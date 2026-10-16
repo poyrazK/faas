@@ -291,9 +291,24 @@
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_command\\s*="
-    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
+    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet && touch /var/lib/pgsql/archive/.offhost-last-success || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
     create: false
   register: pg_archive_cmd
+  failed_when: false
+  notify: reload postgresql
+
+# ADR-1344 §3: bound the data-loss window. Without archive_timeout a quiet
+# server can hold committed WAL in the current segment indefinitely, so the
+# off-host copy (and a restore from it) can be arbitrarily far behind.
+# Forcing a segment switch every 60 s caps the RPO of an off-host restore at
+# about a minute. Reload-only (PGC_SIGHUP).
+- name: postgres — set archive_timeout = 60s (reload-only) — ADR-1344
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?archive_timeout\\s*="
+    line: "archive_timeout = 60s"
+    create: false
+  register: pg_archive_timeout
   failed_when: false
   notify: reload postgresql
 
@@ -343,6 +358,24 @@
     line: "max_wal_senders = 3"
     create: false
   register: pg_wal_senders
+  failed_when: false
+  notify: reload postgresql
+
+# JIT off. PostgreSQL's default (jit=on, jit_above_cost 100000) LLVM-compiles
+# any statement the planner costs above 100k, with inlining and optimization
+# above 500k. The planner's cost is a poor proxy for runtime on our OLTP
+# reads, and on the 2-vCPU control plane the compile dominates: the wake
+# timeline's boot lookup (100 wake ids) ran past a 20 s statement timeout
+# with JIT and took 1.0 s without it (production-us hunt #9, H9-159); the
+# ADR-422 capacity snapshot was 6-8 s vs 10 ms and is already pinned off per
+# function (migration 20261004191632612). Reload-only.
+- name: postgres — disable JIT (reload-only)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?jit\\s*="
+    line: "jit = off"
+    create: false
+  register: pg_jit
   failed_when: false
   notify: reload postgresql
 

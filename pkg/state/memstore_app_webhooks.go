@@ -346,6 +346,7 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	delete(m.realtimeChannelWebhookFilters, id)
 	delete(m.appWebhookReceiverCooldowns, id)
 	delete(m.appWebhookRecoveryProbes, id)
 	return nil
@@ -849,6 +850,7 @@ func (m *MemStore) PruneAppWebhookDeliveries(_ context.Context, cutoff time.Time
 	for _, d := range candidates {
 		delete(m.appWebhookDeliveries, d.ID)
 		delete(m.appWebhookDeliveryAttempts, d.ID)
+		delete(m.appWebhookDeliverySources, d.ID)
 		delete(m.appWebhookReplayGenerations, d.ID)
 		delete(m.deadLetterPurged, unifiedDeadLetterEventID("webhook_delivery", d.ID))
 	}

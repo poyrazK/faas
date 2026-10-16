@@ -623,6 +623,10 @@ type PublicAuthUnsealer interface {
 // last_request_at touches (spec §4.1) and to stamp x-faas-instance on
 // the request before proxying.
 type Target struct {
+	// frozenRefusal marks a target whose forward vmmd refused because the
+	// guest is frozen (ADR-1151). Set only on the failed copy handed to the
+	// stale-target callback; never cached.
+	frozenRefusal bool
 	// AppID is authoritative admission/cache identity. Lifecycle telemetry
 	// must not depend on an optional request header, especially for cron and
 	// other synthetic invocations.
@@ -1233,6 +1237,9 @@ type Handler struct {
 	// / InvalidateAll) and is wired by the db.Notify handler in
 	// commit 14.
 	responseCache *ResponseCache
+	// contentObserver compares anonymous GET responses on routes without a
+	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
 	// one background wake + origin fetch repopulates the entry.
@@ -1277,6 +1284,8 @@ type Handler struct {
 	geoReader CountryReader
 	// asnReader resolves the asn match field (ADR-966); nil = absent.
 	asnReader ASNReader
+	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
+	botVerifier *BotVerifier
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -1415,6 +1424,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// ratelimit.go::bucket.pinned).
 		routeConsumerLimiter: NewLimiterWithLRU(EdgeRuleConsumerCacheCap),
 		accountLimiter:       NewLimiter(),
+		contentObserver:      newContentObserver(api.RouteContentObserverMaxURLs),
 		gate:                 NewWakeGate(api.WakeQueueCap, time.Duration(api.WakeQueueTTLSeconds)*time.Second),
 		admissionQueue: newWakeAdmissionQueue(
 			api.GatewayWakeAdmissionParallelism,
@@ -2088,8 +2098,11 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 			"reason": "missing_or_malformed_bearer",
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
+		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`"))
+			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2118,7 +2131,8 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "the presented API key is not valid for this app"))
+			"Unauthorized", "the presented API key is not valid for this app").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2352,7 +2366,7 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeR
 		h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
 		h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
 	}
-	owned := h.edgeRules.MatchRoute(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), host, r.URL.Path, r.Method)
+	owned := h.edgeRules.MatchRoute(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID), host, r.URL.Path, r.Method)
 	if owned == nil || owned.AccountID != hostApp.AccountID {
 		return nil, true
 	}
@@ -2640,6 +2654,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		// cases to a single "don't stamp" path so
 		// the hot path is a single non-nil test.
 		if app.CORSDefaultEnabled != nil && *app.CORSDefaultEnabled && len(app.CORSDefaultOrigins) > 0 {
+			rec.installHeaderOps(corsVaryOps)
 			origin := r.Header.Get("Origin")
 			allowedOrigin := matchOrigin(app.CORSDefaultOrigins, origin)
 			if origin != "" && allowedOrigin != "" && rec != nil {
@@ -2664,6 +2679,9 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		}
 		return false
 	}
+	// From here the response depends on the request's Origin whatever it
+	// is, including when the request has none.
+	rec.installHeaderOps(corsVaryOps)
 	if requestedMethod != "" {
 		allowed := false
 		for _, method := range rule.AllowMethods {
@@ -2776,6 +2794,16 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 	}
 	return origin[:idx], origin[idx+3:], true
 }
+
+// corsVaryOps marks a response whose CORS headers depend on the request's
+// Origin. The gateway stamps Access-Control-Allow-Origin only for an allowed
+// origin and omits it when the request has none, so without Vary: Origin a
+// browser or shared cache that stored one answer (for example a direct page
+// load of a Cache-Control: public resource) replays it to a cross-origin
+// fetch from an allowed origin, which the browser then blocks (production-us
+// hunt #9, H9-130). The platform response cache is unaffected: it captures
+// the response before these ops run and re-applies CORS on every hit.
+var corsVaryOps = []EdgeRuleHeaderOp{{Action: "vary", Name: "Vary", Value: "Origin"}}
 
 // corsDefaultOps is the per-app default CORS header op set (CORS
 // improvements D1). Mirrors the shape of corsResponseOps above
@@ -4416,7 +4444,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if !allowed {
-		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
@@ -4430,6 +4457,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			// The central counter decided; the local bucket has no view.
 			bucket = rateLimitBucket{limit: rule.Burst, ok: rule.Burst > 0}
 		}
+		w.Header().Set("Retry-After", strconv.Itoa(routeThrottleRetryAfter(rule.RequestsPerSecond)))
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
@@ -4567,18 +4595,36 @@ func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	return ip, true
 }
 
+// clientIPAliasHeaders are the client-address headers web frameworks read
+// instead of, or before, X-Forwarded-For (Go chi's RealIP checks
+// True-Client-IP first, then X-Real-IP). The gateway forwarded client-supplied
+// values unchanged, so a workload behind it could be handed a forged client
+// address (hunt #9 H9-67, production-us rc.252).
+var clientIPAliasHeaders = []string{"True-Client-IP", "X-Real-IP", "X-Client-IP", "X-Cluster-Client-IP", "Fastly-Client-IP"}
+
 // stampTrustedClientIP replaces the customer-controlled value of
 // x-faas-client-ip with the one address established by the public listener's
 // single trusted X-Forwarded-For hop. Invalid or ambiguous forwarding chains
 // fail closed by removing the header entirely; the existing IP allowlist and
 // geo paths retain their own deny/unknown handling.
+//
+// The client-address aliases get the same treatment: True-Client-IP and
+// X-Real-IP carry the trusted address, the others and the client's RFC 7239
+// Forwarded header are dropped (Forwarded is not rebuilt, so its proto and
+// host cannot drift from X-Forwarded-*).
 func stampTrustedClientIP(r *http.Request) {
 	if r == nil {
 		return
 	}
 	r.Header.Del(wire.ClientIPHeader)
+	r.Header.Del("Forwarded")
+	for _, name := range clientIPAliasHeaders {
+		r.Header.Del(name)
+	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		r.Header.Set(wire.ClientIPHeader, ip.String())
+		r.Header.Set("True-Client-IP", ip.String())
+		r.Header.Set("X-Real-IP", ip.String())
 	}
 }
 
@@ -4597,11 +4643,29 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			return
 		}
 		hdr.Set(op.Name, op.Value)
+	case "vary":
+		// Platform-only (customer header ops validate to add/set/remove):
+		// add one field name to the list unless it is already covered.
+		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
 			hdr.Add(op.Name, op.Value)
 		}
 	}
+}
+
+// addVaryField appends field to the response's Vary list unless the list
+// already names it or is "*".
+func addVaryField(hdr http.Header, field string) {
+	for _, value := range hdr.Values("Vary") {
+		for _, existing := range strings.Split(value, ",") {
+			existing = strings.TrimSpace(existing)
+			if existing == "*" || strings.EqualFold(existing, field) {
+				return
+			}
+		}
+	}
+	hdr.Add("Vary", field)
 }
 
 // bearerTokenFromHeader is the per-deployment authz branch's
@@ -5642,6 +5706,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
+	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
 	// ADR-965: response-counted throttles charge once the status is known.
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
@@ -5680,7 +5745,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) {
+			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -5781,7 +5846,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	r = r.WithContext(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID))
 	if app.AccountAbuseHeld {
 		api.WriteProblem(w, api.ErrAccountAbuseHold())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
@@ -5818,6 +5883,16 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	workloadAdmissionScope := app.Scope
+	if app.PinnedDeploymentScope != "" {
+		workloadAdmissionScope = app.PinnedDeploymentScope
+	}
+	// Authenticated candidate verification has its own exact-attempt guard.
+	// Ordinary requests are fenced before any edge/cache response can serve.
+	if !deploymentSmoke && !h.workloadAdmissionOpen(w, r, app.ID, workloadAdmissionScope) {
+		return
+	}
+
 	// ADR-847: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
@@ -5926,7 +6001,8 @@ haveApp:
 	// Consumer-attributed traffic always carries a bounded billing route so
 	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
+	routeCarrier := ObservedRouteCarrierFrom(r.Context())
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5934,6 +6010,7 @@ haveApp:
 			}
 		}
 		preLabel := observedRouteLabel(r.Method, path)
+		routeCarrier.set(preLabel)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
@@ -6488,6 +6565,13 @@ haveApp:
 		// stash, the gate-failure path would have to
 		// re-run the matcher (the rule was already
 		// resolved above, no point doing it twice).
+	} else if !deploymentSmoke && rule == nil && sidecarName == "" && h.contentObserver != nil && contentObservable(r) {
+		// No cache rule: observe whether this anonymous GET response repeats
+		// (ADR-1188). The tee only hashes; observe() records the outcome once
+		// the origin response is complete.
+		tee := newContentTee(w, h.contentObserver, app.ID, r)
+		w = tee
+		r = r.WithContext(withContentTee(r.Context(), tee))
 	}
 
 	// Resolve a selector when sidecarName != "". Existing sidecar selectors
@@ -6688,6 +6772,9 @@ haveApp:
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"
 	}
+	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
+		return
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -6795,6 +6882,9 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		// A thaw prefers the frozen instance this session is pinned to
+		// (ADR-1151): its in-memory state is why the app keeps affinity.
+		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
 		var cancelWakePage context.CancelFunc
 		showWakePage := acceptsWakePage(r)
 		if showWakePage {
@@ -6869,6 +6959,7 @@ haveApp:
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
 			h.logFleetCapacityRefusal(app.ID, err)
+			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -6886,11 +6977,14 @@ haveApp:
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 		if burstErr != nil {
+			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
+				burstErr = fmt.Errorf("%w: %w", ErrWakeQueueWaitTimeout, burstErr)
+			}
 			// A burst that cannot become routable within its admission policy is
 			// a controlled timeout, not an upstream 502. Client disconnects
 			// remain silent; genuine admission failures use the normal
@@ -7198,25 +7292,38 @@ haveApp:
 	// from a non-retry failure would make the two paths diverge in exactly the
 	// situation an operator is trying to read.
 	retireStaleTarget := func(failed Target) {
-		h.recordCircuitFailure(app.ID, failed.InstanceID)
-		// Evict synchronously with the transport failure so a
-		// concurrent request cannot pick this known-dead target.
-		// RecoverStaleTarget detaches and bounds lifecycle work in
-		// the production backend; it does not inherit the client
-		// cancellation even though the request context is passed in.
-		if evictor, ok := h.backend.(interface {
-			EvictInstance(appID, instanceID string)
-		}); ok {
-			evictor.EvictInstance(app.ID, failed.InstanceID)
-			h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
-				"instance_id", failed.InstanceID, "node_id", failed.NodeID)
+		frozen := failed.frozenRefusal
+		// A frozen guest (ADR-1151) is idle, not dead: withdraw its route
+		// without the stale-target quarantine or a circuit failure, so the
+		// recovery admission below can thaw it under the same instance ID.
+		if withdrawer, ok := h.backend.(interface {
+			WithdrawInstance(appID, instanceID string)
+		}); frozen && ok {
+			withdrawer.WithdrawInstance(app.ID, failed.InstanceID)
+		} else {
+			h.recordCircuitFailure(app.ID, failed.InstanceID)
+			// Evict synchronously with the transport failure so a
+			// concurrent request cannot pick this known-dead target.
+			// RecoverStaleTarget detaches and bounds lifecycle work in
+			// the production backend; it does not inherit the client
+			// cancellation even though the request context is passed in.
+			if evictor, ok := h.backend.(interface {
+				EvictInstance(appID, instanceID string)
+			}); ok {
+				evictor.EvictInstance(app.ID, failed.InstanceID)
+				h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
+					"instance_id", failed.InstanceID, "node_id", failed.NodeID)
+			}
 		}
 		if recovery, ok := h.backend.(staleTargetRecovery); ok {
 			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
 		}
 	}
-	staleSignal := &staleTargetSignal{
-		onStale: func() { retireStaleTarget(target) },
+	staleSignal := &staleTargetSignal{}
+	staleSignal.onStale = func() {
+		failed := target
+		failed.frozenRefusal = staleSignal.frozen.Load()
+		retireStaleTarget(failed)
 	}
 	//nolint:contextcheck // withStaleTargetSignal intentionally inherits r.Context.
 	r = r.WithContext(withStaleTargetSignal(r.Context(), staleSignal))
@@ -7339,6 +7446,7 @@ haveApp:
 
 	// Include admission, queueing, and restore from the ingress timestamp.
 	// Starting here measures only the proxy after the guest is already ready.
+	defer h.startMCPStream(r, app, isStreaming)()
 	wakeStart := start
 	// Issue #676 / ADR-080: detect inbound Connection: Upgrade +
 	// Upgrade: <token> requests BEFORE the plain-HTTP forwarder
@@ -7615,6 +7723,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// bug so this is now request-received → handler-return, not
 	// "now() — now()").
 	elapsed := time.Since(startTime(r))
+	h.observeMCPRequest(r, status, appID, elapsed)
 	if h.metrics != nil {
 		// Use placeholder labels for the unknown-host path so 404s show up on
 		// the dashboard under a sentinel app_id (e.g. "-" or "").
@@ -7623,6 +7732,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
+		if platformFailureUnbillable(r, status) {
+			h.metrics.ObservePlatformError(appID, plan)
+		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -7802,6 +7914,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentTag:                        target.DeploymentTag,
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
+				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {
@@ -8779,7 +8892,7 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
 		if limits, ok := api.LimitsFor(app.Plan); ok {
-			idleSeconds = limits.IdleTimeoutS
+			idleSeconds = limits.DefaultIdleTimeoutS(string(app.Type))
 		}
 	}
 	if idleSeconds <= 0 || target.InstanceID == "" {
@@ -9050,10 +9163,48 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				writeFleetCapacityRefusal(w)
 				return
 			}
+			if public, ok := publicWakeFailure(prob); ok {
+				w.Header().Set("Cache-Control", "no-store")
+				api.WriteProblem(w, public)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
+	}
+}
+
+// publicWakeFailure is what an app's visitor sees when its instance could
+// not be started. The wake error's detail is written for the app owner and
+// operators: platform wake/instance ids, component names ("cold boot: vmm:
+// readiness"), and for a crashed workload its last output lines, which
+// routinely include connection strings and other secrets. A public caller gets
+// the stable code and a generic detail; logWakeFailure keeps the original
+// (production-us hunt #9: a crashing app answered every visitor with
+// "500 vmmd operation failed" and the internal wake detail). 503 rather than
+// 502: Cloudflare replaces 502 bodies.
+func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
+	switch p.Code {
+	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
+			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true
+	case "internal", api.CodeInternal:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App temporarily unavailable",
+			"the platform could not start this app; retry shortly"), true
+	}
+	return nil, false
+}
+
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+func (h *Handler) logWakeFailure(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) {
+		return
+	}
+	if _, hidden := publicWakeFailure(prob); hidden {
+		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
 }
 

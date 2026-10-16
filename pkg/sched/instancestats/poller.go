@@ -22,6 +22,11 @@ import (
 // touching the Reader API.
 const DefaultStatsInterval = 200 * time.Millisecond
 
+// statsCallTimeout bounds one node's Stats read, so a slow or dead vmmd
+// costs a sweep at most this long instead of the gRPC client's one-minute
+// default.
+const statsCallTimeout = 2 * time.Second
+
 // DefaultFreshness is the staleness budget used by Reader's signal
 // accessors. Rows remain available through snapshot accessors for
 // diagnostics, but stale rows cannot drive reactive scaling.
@@ -74,15 +79,18 @@ type EgressAbuseHandler func(ctx context.Context, row InstanceStat, reason sched
 // state lives in the Reader; the poller itself is stateless across
 // ticks so process restart has no plumbing consequence.
 type Poller struct {
-	Interval  time.Duration
-	Store     state.Store
-	Dialer    Dialer
-	TLS       *tls.Config
-	Reader    *Reader
-	Metrics   *wire.OpsMetrics
-	Log       *slog.Logger
-	Now       func() time.Time
-	Freshness time.Duration
+	// rssHistory is each instance's recent resident memory for the ADR-909
+	// charge; only the tick goroutine touches it.
+	rssHistory *rssHistory
+	Interval   time.Duration
+	Store      state.Store
+	Dialer     Dialer
+	TLS        *tls.Config
+	Reader     *Reader
+	Metrics    *wire.OpsMetrics
+	Log        *slog.Logger
+	Now        func() time.Time
+	Freshness  time.Duration
 	// Telemetry is the notification/stream-backed node observer cache. When
 	// set, Tick only projects its local snapshot and never dials vmmd.
 	Telemetry *sched.NodeTelemetryCache
@@ -99,6 +107,12 @@ type Poller struct {
 	// intentionally separate from Telemetry: the local ReportCapacity stream
 	// remains the authoritative source for metering and node diagnostics.
 	FleetStats StatsRouter
+	// Router serves the per-node sweep from cached vmmd clients when set.
+	// Without it every tick dials each vmmd afresh: on the control-plane
+	// schedd, which has no owner node and so no telemetry stream, that was a
+	// new mTLS connection to every node five times a second, each logging
+	// "unary gRPC call without deadline" (hunt #10, H10-84).
+	Router StatsRouter
 	// DiskPressureHandler turns a full guest writable filesystem into an
 	// explicit lifecycle action. Nil keeps the poller observation-only.
 	DiskPressureHandler DiskPressureHandler
@@ -117,6 +131,8 @@ type Poller struct {
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
+// It takes effect only with WithOwnerNodeID: the stream exists only on the
+// multi-node path.
 func (p *Poller) WithTelemetry(cache *sched.NodeTelemetryCache) *Poller {
 	if p != nil {
 		p.Telemetry = cache
@@ -136,6 +152,15 @@ func (p *Poller) WithNodeRegistry(reg *sched.NodeRegistry) *Poller {
 func (p *Poller) WithOwnerNodeID(nodeID string) *Poller {
 	if p != nil {
 		p.OwnerNodeID = nodeID
+	}
+	return p
+}
+
+// WithStatsRouter serves the per-node sweep from router's cached clients
+// instead of a fresh Dialer connection per node and tick.
+func (p *Poller) WithStatsRouter(router StatsRouter) *Poller {
+	if p != nil {
+		p.Router = router
 	}
 	return p
 }
@@ -277,6 +302,8 @@ func (p *Poller) Tick(ctx context.Context) error {
 	if p.FleetStats != nil {
 		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
+		p.publishMemoryShadow(instances, rows, started)
+		p.publishQuietPaused(rows, started)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -285,10 +312,13 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// Production uses the persistent vmmd→schedd capacity stream. The stream
 	// updates one complete batch per node; this local projection can continue at
 	// the existing 200 ms cadence without opening any per-node connections.
-	if p.Telemetry != nil {
+	// vmmd publishes that stream only when it has a node name, so a single-box
+	// schedd (no owner node) reads vmmd Stats directly. Projecting its empty
+	// cache would hide every in-flight request from the idle reaper.
+	if p.Telemetry != nil && p.OwnerNodeID != "" {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
-		if p.Metrics != nil && p.OwnerNodeID != "" && len(rows) < len(instances) {
+		if p.Metrics != nil && len(rows) < len(instances) {
 			reported := make(map[string]struct{}, len(rows))
 			for _, row := range rows {
 				reported[row.InstanceID] = struct{}{}
@@ -304,6 +334,8 @@ func (p *Poller) Tick(ctx context.Context) error {
 			}
 		}
 		p.Reader.Replace(rows)
+		p.publishMemoryShadow(instances, rows, started)
+		p.publishQuietPaused(rows, started)
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		if p.Metrics != nil {
@@ -321,6 +353,8 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
+	p.publishMemoryShadow(instances, rows, started)
+	p.publishQuietPaused(rows, started)
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
@@ -476,6 +510,8 @@ func (p *Poller) decodeTelemetrySnapshot(
 			NodeID:           cached.NodeID,
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
+			QuietPaused:      in.QuietPaused,
+			Frozen:           in.Frozen,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			// Preserve the vmmd report timestamp. Using the local
@@ -553,24 +589,34 @@ func (p *Poller) decodeTelemetrySnapshot(
 	return rows, rolled
 }
 
-// tickNode dials one node fresh, calls Stats, and decodes the
-// result into InstanceStat rows + wire rollup rows. On dial
-// failure it logs, increments the per-node error counter, and
-// returns empty slices — the caller continues to the next node.
+// tickNode reads one node's Stats, through Router's cached client when
+// set and otherwise over a fresh Dialer connection, and decodes the
+// result into InstanceStat rows + wire rollup rows. On failure it logs,
+// increments the per-node error counter, and returns empty slices — the
+// caller continues to the next node.
 func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow) {
-	if p.Dialer == nil {
+	if p.Router == nil && p.Dialer == nil {
 		return nil, nil
 	}
-	vmm, err := p.Dialer.Dial(ctx, node.TargetURL, p.TLS)
-	if err != nil {
-		p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
-		if p.Metrics != nil {
-			p.Metrics.InstanceStatsPartialError(node.ID)
+	callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
+	defer cancel()
+	var snap *sched.StatsSnapshot
+	var err error
+	if p.Router != nil {
+		snap, err = p.Router.Stats(callCtx, node.ID)
+	} else {
+		var vmm sched.VMM
+		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, p.TLS)
+		if err != nil {
+			p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
+			if p.Metrics != nil {
+				p.Metrics.InstanceStatsPartialError(node.ID)
+			}
+			return nil, nil
 		}
-		return nil, nil
+		defer func() { _ = vmm.Close() }()
+		snap, err = vmm.Stats(callCtx)
 	}
-	defer func() { _ = vmm.Close() }()
-	snap, err := vmm.Stats(ctx)
 	if err != nil {
 		p.Log.Warn("instance stats vmm.Stats failed", "node_id", node.ID, "err", err)
 		if p.Metrics != nil {
@@ -648,7 +694,7 @@ func (p *Poller) tickFleet(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
 			defer cancel()
 			snap, err := p.FleetStats.Stats(callCtx, node.ID)
 			if err != nil {
@@ -712,6 +758,8 @@ func (p *Poller) decodeStatsSnapshot(
 			NodeID:           node.ID,
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
+			QuietPaused:      in.QuietPaused,
+			Frozen:           in.Frozen,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			SampledAt:        now,

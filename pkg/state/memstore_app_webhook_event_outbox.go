@@ -51,16 +51,20 @@ func (m *MemStore) relayAppWebhookOutboxEventLocked(event appWebhookOutboxEvent)
 	now := time.Now().UTC()
 	for _, webhookID := range event.RecipientWebhookIDs {
 		hook, ok := m.appWebhooks[webhookID]
-		if !ok || hook.AccountID != event.AccountID || hook.AppID != event.AppID {
+		if !ok || !sameMemUUID(hook.AccountID, event.AccountID) || !sameMemUUID(hook.AppID, event.AppID) {
 			continue
 		}
 		id := newID()
 		m.appWebhookDeliveries[id] = AppWebhookDelivery{
-			ID: id, WebhookID: webhookID, AppID: event.AppID, AccountID: event.AccountID,
+			ID: id, WebhookID: webhookID, AppID: hook.AppID, AccountID: hook.AccountID,
 			Event: event.Event, Payload: append([]byte(nil), event.Payload...),
 			Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
 		}
 		m.trackRecoveryNotificationDeliveryLocked(event, webhookID, id)
+		if m.appWebhookDeliverySources == nil {
+			m.appWebhookDeliverySources = map[string]string{}
+		}
+		m.appWebhookDeliverySources[id] = event.ID
 	}
 	delete(m.appWebhookEventOutbox, event.ID)
 }

@@ -876,11 +876,10 @@ const (
 	// NotifyTrustedSignerChanged {"app_id":uuid, "signer":"...",
 	//                              "kind":"upserted|deleted"}
 	//   apid → imaged (issue #472 / ADR-054): a row was written or
-	//   removed from app_trusted_signers. imaged refreshes its
-	//   in-memory cache of /etc/faas/secrets/trusted-publishers/ so
-	//   a freshly-onboarded publisher takes effect on the NEXT
-	//   deploy without an imaged restart. The pg_notify payload is
-	//   informational — the on-disk dir is the source of truth.
+	//   removed from app_trusted_signers. imaged reads that table on
+	//   every verify, so the notify only triggers revalidation of live
+	//   signed images (ADR-058 amendment). The payload is informational
+	//   — the table is the source of truth.
 	NotifyTrustedSignerChanged = "trusted_signer_changed"
 	// NotifyAuditEvent {"outbox_id":N, "kind":"app.signature_missing|...",
 	//                    "app_id":uuid, "deployment_id":uuid,
@@ -1119,6 +1118,38 @@ func SubscribeWithReconnect(
 	channels []string,
 	log *slog.Logger,
 ) (<-chan Notification, error) {
+	return subscribeWithReconnect(ctx, pool, channels, log, false)
+}
+
+// ResyncChannel names the synthetic notification SubscribeWithResync
+// delivers when notifications may have been missed. Postgres never sends on
+// it, and plain SubscribeWithReconnect subscribers never receive it.
+const ResyncChannel = "_gregale_resync"
+
+// SubscribeWithResync is SubscribeWithReconnect for consumers whose state is
+// driven only by notifications, with no table poll of their own (ADR-1344 §5
+// rule 3). pg_notify is not durable: anything sent while the LISTEN
+// connection is down, or dropped because the subscriber's buffer was full, is
+// gone. Besides the subscribed channels, the returned channel therefore
+// carries Notification{Channel: ResyncChannel} after the connection is
+// re-established and after a dropped delivery. On receipt the consumer
+// reloads its state from the source of truth.
+func SubscribeWithResync(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	channels []string,
+	log *slog.Logger,
+) (<-chan Notification, error) {
+	return subscribeWithReconnect(ctx, pool, channels, log, true)
+}
+
+func subscribeWithReconnect(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	channels []string,
+	log *slog.Logger,
+	resync bool,
+) (<-chan Notification, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("db: SubscribeWithReconnect: nil pool")
 	}
@@ -1130,7 +1161,7 @@ func SubscribeWithReconnect(
 	// return, channel closes only on ctx cancel); FAAS_DB_NOTIFY_HUB=0
 	// falls through to the legacy connection-per-subscriber path.
 	if notifyHubEnabled() {
-		return hubFor(pool, log).subscribe(ctx, channels)
+		return hubFor(pool, log).subscribe(ctx, channels, resync)
 	}
 	// Bound the INITIAL acquire only. On this path every subscriber parks
 	// its own connection, so a daemon whose pool is sized for the hub runs
@@ -1209,6 +1240,14 @@ func SubscribeWithReconnect(
 						backoff *= 2
 						if backoff > maxBackoff {
 							backoff = maxBackoff
+						}
+					}
+					if resync {
+						// Anything sent while the connection was down is lost.
+						select {
+						case out <- Notification{Channel: ResyncChannel}:
+						case <-ctx.Done():
+							return
 						}
 					}
 					continue

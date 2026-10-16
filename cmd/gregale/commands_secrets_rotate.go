@@ -44,7 +44,8 @@ import (
 // so the customer knows which (scope, key) pair they're rotating.
 func secretsRotate(args []string) int {
 	fs := newFlagSet("secrets rotate", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
+	dryRun := fs.Bool("dry-run", false, "validate input and preview the operation without API requests or changes")
+	app := fs.String("app", "", "app slug (defaults to linked project app)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE from stdin (one pair)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (defaults to linked project environment)")
 	restart := fs.Bool("restart", false, "restart app with the rotated secret")
@@ -58,11 +59,13 @@ func secretsRotate(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
-	if *app == "" {
-		PrintUsage(os.Stderr,
-			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
-		return 1
+	resolvedApp, appErr := resolveSecretApp(*app)
+	if appErr != nil {
+		return printErr("Could not resolve app", appErr)
 	}
+	appSource := targetValueSource(*app, resolvedApp)
+	*app = resolvedApp
+
 	if *timeout <= 0 {
 		fmt.Fprintln(os.Stderr, "secret rotate: --timeout must be greater than zero")
 		return 1
@@ -81,6 +84,7 @@ func secretsRotate(args []string) int {
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
+	scopeSource := targetValueSource(*scope, resolvedScope)
 	*scope = resolvedScope
 
 	var pair secretsPair
@@ -89,8 +93,7 @@ func secretsRotate(args []string) int {
 			fmt.Fprintln(os.Stderr, "secret rotate: --from-stdin takes no positional pair")
 			return 1
 		}
-		scanner := bufio.NewScanner(osStdin)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		// Read the first non-empty, non-comment line; ignore
 		// everything after (rotation is single-key by design).
 		for scanner.Scan() {
@@ -107,7 +110,7 @@ func secretsRotate(args []string) int {
 			break
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintln(os.Stderr, "read stdin:", err)
+			fmt.Fprintln(os.Stderr, "read stdin:", keyValueScanErr(err))
 			return 1
 		}
 		if pair.Key == "" {
@@ -129,11 +132,16 @@ func secretsRotate(args []string) int {
 		pair = p
 	}
 
+	if *dryRun {
+		return previewSecrets("rotate", *app, *scope, appSource, scopeSource, []string{pair.Key}, "", *restart, *waitForAck, *timeout)
+	}
+
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 
+	printMutationTarget(*app, *scope, appSource, scopeSource)
 	resp, err := client.RotateSecretWithScope(context.Background(), *app, pair.Key, pair.Value, *scope)
 	if err != nil {
 		return printErr("Rotate "+pair.Key+" failed", err)
@@ -162,37 +170,45 @@ func secretsRotate(args []string) int {
 			resp.Key, resp.RotatedAt, shortKid)
 	}
 	if *restart {
-		out, err := client.RestartAppFresh(context.Background(), *app)
+		wakeID, parked, err := restartAfterSecretChange(context.Background(), client, *app)
 		if err != nil {
-			return printErr("Restart failed", err)
+			return printConfigurationPartialError("Restart failed", err, *app, *scope, "Secret rotation was saved; restart was not confirmed.", []string{pair.Key}, "")
 		}
-		receipt.WakeID = out.WakeID
+		if parked {
+			if jsonOutput {
+				return writeReceipt()
+			}
+			PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			return 0
+		}
+		receipt.WakeID = wakeID
 		if !*waitForAck {
 			if jsonOutput {
 				return writeReceipt()
 			}
-			PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+			PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", wakeID)
+			printSecretUpdateNextSteps(*app, *scope, wakeID, pair.Key)
 			return 0
 		}
-		if strings.TrimSpace(out.WakeID) == "" {
-			return printErr("Restart failed", errors.New("server accepted the restart without returning a wake_id"))
+		if strings.TrimSpace(wakeID) == "" {
+			return printConfigurationPartialError("Restart failed", errors.New("server accepted the restart without returning a wake_id"), *app, *scope, "Secret rotation was saved; no restart identifier was confirmed.", []string{pair.Key}, "")
 		}
 		waitCtx, cancel := context.WithTimeout(context.Background(), *timeout)
 		defer cancel()
-		instance, err := waitForAppWake(waitCtx, client, *app, out.WakeID, *timeout, 250*time.Millisecond)
+		instance, err := waitForAppWake(waitCtx, client, *app, wakeID, *timeout, 250*time.Millisecond)
 		if err != nil {
-			return printErr("Waiting for restarted app failed", err)
+			return printConfigurationPartialError("Waiting for restarted app failed", err, *app, *scope, "Secret rotation was saved and a restart was accepted; its completion was not confirmed.", []string{pair.Key}, wakeID)
 		}
 		count, err := waitForSecretApplicationAckAfterRestart(waitCtx, client, *app, pair.Key, *scope, instance.ID)
 		if err != nil {
-			return printErr("Waiting for application acknowledgement failed", err)
+			return printConfigurationPartialError("Waiting for application acknowledgement failed", err, *app, *scope, "Secret rotation was saved; application acknowledgement is incomplete.", []string{pair.Key}, receipt.WakeID)
 		}
 		receipt.InstanceID = instance.ID
 		receipt.AcknowledgedRuntimes = &count
 		if jsonOutput {
 			return writeReceipt()
 		}
-		PrintOK(osStdout, "Restart completed (wake_id=%s, instance_id=%s)", out.WakeID, instance.ID)
+		PrintOK(osStdout, "Restart completed (wake_id=%s, instance_id=%s)", wakeID, instance.ID)
 		PrintOK(osStdout, "All %d active authorized runtime(s) confirmed they applied %s", count, pair.Key)
 		return 0
 	}
@@ -201,7 +217,7 @@ func secretsRotate(args []string) int {
 		defer cancel()
 		count, err := waitForSecretApplicationAck(waitCtx, client, *app, pair.Key, *scope)
 		if err != nil {
-			return printErr("Waiting for application acknowledgement failed", err)
+			return printConfigurationPartialError("Waiting for application acknowledgement failed", err, *app, *scope, "Secret rotation was saved; application acknowledgement is incomplete.", []string{pair.Key}, receipt.WakeID)
 		}
 		receipt.AcknowledgedRuntimes = &count
 		if count == 0 {
@@ -223,6 +239,7 @@ func secretsRotate(args []string) int {
 		return writeReceipt()
 	}
 	PrintWarn(osStdout, "The rotated secret applies on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
+	printSecretUpdateNextSteps(*app, *scope, "", pair.Key)
 	return 0
 }
 

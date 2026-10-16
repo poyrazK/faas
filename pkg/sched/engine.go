@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -581,6 +582,11 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// deadNodeSettle holds the dead-node sweep back after this schedd saw
+	// the store unavailable, until it has read the store without
+	// interruption for the staleness window, so a store outage cannot fail
+	// every running instance at once (ADR-1344 §5 rule 4).
+	deadNodeSettle storeSettle
 	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
 	// single per-tick decision policy the migrator + deadnode
 	// reconciler consult before any per-instance work. Task #61
@@ -590,6 +596,9 @@ type Engine struct {
 	// fall back to their legacy in-method decisions when the
 	// arbiter isn't wired (unit-test fixtures; bootstrap window).
 	recoveryArbiter *Arbiter
+	// lostVMs holds the VMs RecreateInstance parked while their node looked
+	// dead; DestroyLostVMs reclaims them when the node answers (H9-171).
+	lostVMs lostVMSet
 	// pressureAggregator (Tier A9 / ADR-087) is the in-process
 	// sliding-window per-app counter of WakeResult{AtCapacity: true}
 	// returns. The engine increments it at every AtCapacity return
@@ -630,6 +639,13 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
+	// instances in place instead of parking them. Thaw and frozen parks run
+	// either way.
+	frozenTier atomic.Bool
+	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
+	// from functions to request-mode apps.
+	frozenTierApps atomic.Bool
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
@@ -808,6 +824,14 @@ type Engine struct {
 	// context.DeadlineExceeded surfaced — in 0.2s, and the spec numbers
 	// themselves are pinned directly by TestBootTimeout_SpecBudgets.
 	bootBudget func(state.State) time.Duration
+
+	// workerBoots counts consecutive failed worker instances per deployment
+	// so worker.singleton backs off instead of re-admitting at once
+	// (worker_boot_backoff.go). The zero value is ready to use.
+	workerBoots workerBootFailures
+	// workerRetryAfter schedules a delayed worker reconcile. nil uses
+	// time.AfterFunc; tests record the delay instead of waiting for it.
+	workerRetryAfter func(time.Duration, func())
 }
 
 // budgetFor returns the vmmd call budget for a row in state s: the
@@ -1175,6 +1199,18 @@ func (e *Engine) WithDeadNodeReconcilerStalenessSeconds(seconds int) *Engine {
 		panic(fmt.Sprintf("sched: WithDeadNodeReconcilerStalenessSeconds: seconds must be > 0, got %d", seconds))
 	}
 	e.deadNodeReconcilerStalenessSeconds = seconds
+	return e
+}
+
+// WithStoreOutageAtStartup holds the dead-node sweep for a full staleness
+// window of store access when this process saw the store unavailable before
+// the engine existed (ADR-1344 §5 rule 4): it waited for the database at
+// boot, or waited for its lease through store errors. Every heartbeat is
+// then old because nobody could write one.
+func (e *Engine) WithStoreOutageAtStartup(outage bool) *Engine {
+	if outage {
+		e.deadNodeSettle.hold()
+	}
 	return e
 }
 
@@ -1725,8 +1761,15 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// e2e) keep byte-identical behaviour.
 	ctx = WithScope(ctx, scope)
 	scope = ScopeFrom(ctx)
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, scope); trigger != TriggerDeploymentSmoke && err != nil {
+		return WakeResult{}, err
+	}
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
+	if err := e.checkApplicationStandardAdmissionByID(ctx, appID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
 		release()
 		return WakeResult{}, err
@@ -1950,6 +1993,9 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
 		// Deleted or otherwise non-live apps cannot be restarted.
 		return CoordOutcome{}, nil
+	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return CoordOutcome{}, err
 	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
@@ -2212,6 +2258,9 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	}
 	var loadedApp *state.App
 	if err == nil {
+		if checkErr := e.checkApplicationStandardAdmission(ctx, app); checkErr != nil {
+			return CoordOutcome{}, checkErr
+		}
 		loadedApp = &app
 	}
 	selected, err := e.resolveWakeEnvironmentForDeployment(ctx, appID, loadedApp, deploymentID)
@@ -2302,7 +2351,10 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	if len(results) == 0 || results[0].AtCapacity {
 		rollbackWake()
 		out.Err = ErrAtCapacity
-		return out, ErrAtCapacity
+		if refusesRequestWake(selected.app, instanceModeForApp(selected.app)) {
+			out.Err = ErrNoRequestListener
+		}
+		return out, out.Err
 	}
 	if lifecycleChanged {
 		latestApp, readErr := e.store.AppByID(leaderCtx, appID)
@@ -2428,6 +2480,9 @@ func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 
 func (e *Engine) admitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	ctx = WithScope(ctx, scope)
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, ScopeFrom(ctx)); trigger != TriggerDeploymentSmoke && err != nil {
+		return WakeResult{}, err
+	}
 	if trigger == TriggerDeploymentSmoke && deploymentID == "" {
 		return WakeResult{}, errors.New("sched: deployment smoke requires deployment_id")
 	}
@@ -2857,6 +2912,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// the vmmd resume, ledger promotion, and durable WARM -> RUNNING CAS all
 	// succeed; stale candidates are cleaned up and the normal path then remains
 	// the safe fallback.
+	// ADR-1151: a frozen VM of this deployment thaws in place before a warm
+	// VM or a new instance is used; frozen VMs are otherwise only parked.
+	if thawed, handled, thawErr := e.promoteFrozenInstanceLocked(ctx, app, acct, limits, dep, mode); handled || thawErr != nil {
+		release()
+		return thawed, thawErr
+	}
 	if promoted, handled, promoteErr := e.promoteWarmInstanceLocked(ctx, app, acct, limits, dep, mode); handled || promoteErr != nil {
 		release()
 		return promoted, promoteErr
@@ -2873,8 +2934,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// reused — no new wakeOutcome, no new metric row. The check
 	// fires BEFORE admitGate so the cooldown / reject / min-floor
 	// branches are unreachable for worker-class apps.
-	if !bypassGates && (app.WorkloadClass == state.WorkloadClassWorker ||
-		mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeJob)) {
+	if !bypassGates && refusesRequestWake(app, mode) {
 		release()
 		e.IncAtCapacity(appID, "wake")
 		return WakeResult{AtCapacity: true}, nil
@@ -2940,6 +3000,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	)
 	if bypassGates {
 		concurrency = e.ledger.Concurrency(app.ID)
+		// ADR-1162: explicit-deployment admissions (min-instance floors,
+		// service replicas, workers, per-deployment wakes) skip the request
+		// gates but not the account spend cap; otherwise always-on capacity
+		// keeps running past the cap. Deployment smoke verifies a release and
+		// mirror instances are never metered, so both stay exempt.
+		if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+			if reached, observed, capped := e.admitSpendCap(ctx, &app); reached {
+				outcome, obsCents, capCents = wakeOverageCapReached, observed, capped
+			}
+		}
 	} else {
 		// A peer scheduler or a recovery path can move an instance to a
 		// non-resident state without touching this process's in-memory ledger.
@@ -3244,9 +3314,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
 			return WakeResult{}, capErr
 		}
-		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
+		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
 	var provisionalCPUBoostUntil time.Time
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		release()
+		return WakeResult{}, err
+	}
 	if startupCPU > configuredCPU {
 		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
 		if startupDeadline <= 0 {
@@ -3547,6 +3622,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
+		QuietPauseAfterMS:        quietPauseAfterMS(app, mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -3580,8 +3656,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// CreateSnapshot guarantees non-empty; an empty value here
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
-		snapKey:      snap.StorageKey,
-		snapMemBytes: snap.MemBytes,
+		snapKey:          snap.StorageKey,
+		snapCaptureToken: snap.ApplicationStandardCaptureToken,
+		snapMemBytes:     snap.MemBytes,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -3817,14 +3894,15 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// span is the parent linkage in the trace tree.
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_from_snapshot", bootInput.snapID, bootInput)
 		rpcStartedAt = time.Now()
-		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
-			DeploymentID:      bootInput.depID,
-			FCVersion:         bootInput.snapVer,
-			StorageKey:        bootInput.snapKey,
-			VMStatePath:       vmstatePath,
-			VMStateStorageKey: vmstateStorageKey,
-			MemBytes:          bootInput.snapMemBytes,
-		})
+		out, err = e.createRuntimeWithStandards(bootCtx, bootInput.nodeID, bootInput.insID, string(bootInput.initState), bootInput.spec, &SnapshotRef{
+			DeploymentID:                    bootInput.depID,
+			FCVersion:                       bootInput.snapVer,
+			StorageKey:                      bootInput.snapKey,
+			ApplicationStandardCaptureToken: bootInput.snapCaptureToken,
+			VMStatePath:                     vmstatePath,
+			VMStateStorageKey:               vmstateStorageKey,
+			MemBytes:                        bootInput.snapMemBytes,
+		}, false)
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
 	} else {
@@ -3835,7 +3913,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Issue #555 PR-3: vmmd.create_cold_boot child span.
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_cold_boot", "", bootInput)
 		rpcStartedAt = time.Now()
-		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec)
+		out, err = e.createRuntimeWithStandards(bootCtx, bootInput.nodeID, bootInput.insID, string(bootInput.initState), bootInput.spec, nil, false)
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
 	}
@@ -3939,9 +4017,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
 	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
-		if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
-			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
-		}
+		// A catalog-bound fallback still validates its selected capture through
+		// receipt acknowledgment and publication. Invalidate after that attempt
+		// so our own cache retirement cannot reject a verified cold runtime.
+		defer func() {
+			if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
+				e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
+			}
+		}()
 		e.log.Info("wake: restore fell back to cold boot", "app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID)
 	}
 
@@ -3964,7 +4047,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if bootInput.haveSnap && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		confirmedInputs = bootInput.snapshotInputs
 	}
-	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+	fresh, publishErr := e.publishOwnedRuntimeWithStandards(ctx, out, state.RuntimeInstancePublication{
 		AccountID: bootInput.accountID, AppID: bootInput.appID, InstanceID: bootInput.insID,
 		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
@@ -4035,7 +4118,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.ops.WakeFailure("", bootInput.appID, "record_runtime_failed").Inc()
 		}
 		e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
-		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", publishErr)
+		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", applicationStandardRuntimeProblem(publishErr))
 	}
 
 	// ADR-051 Phase 4 / PR-D: persist the workload class the
@@ -4248,7 +4331,8 @@ type bootInput struct {
 	// (issue #96, ADR-025 axis 2). Read from the snap row under
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
-	snapKey string
+	snapKey          string
+	snapCaptureToken string
 	// snapMemBytes is the snap row's guest memory length; vmmd matches it
 	// against the requested guest memory before restoring a companion.
 	snapMemBytes int64
@@ -4412,7 +4496,7 @@ func (e *Engine) cleanupFailedMirrorAdmission(ctx context.Context, input bootInp
 }
 
 // applyLiveCapacityMB returns the chooser's per-node used_mb input:
-// max(live report, ledger) when the report is fresh, 0 (sentinel)
+// max(live report, ledger.AdmissionUsedMB) when the report is fresh, 0 (sentinel)
 // when stale or absent. The ledger floor closes the stale-low /
 // hostile-report gap — a vmmd that under-reports its cgroup
 // memory.current cannot shrink the live accounting and force schedd
@@ -4440,7 +4524,7 @@ func (e *Engine) applyLiveCapacityMB(_ context.Context, nodeID string) int64 {
 		return 0
 	}
 	used := int64(live.UsedMB)
-	if ledger := int64(e.ledger.ResidentRAMForNode(nodeID)); ledger > used {
+	if ledger := int64(e.ledger.AdmissionUsedMB(nodeID)); ledger > used {
 		used = ledger
 	}
 	if used < 0 {
@@ -4636,7 +4720,10 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		// uses this to enforce compute_nodes.vcpu_budget per node;
 		// absent or zero is treated as 0 by the chooser (the
 		// per-node budget is the gate, not the absolute number).
-		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
+		usedVCPU[n.ID] = int64(e.ledger.EffectiveVCPUForNode(n.ID, n.VCPUBudget))
+		// ADR-1151: under quiet pause admission both CPU gates count only
+		// active instances, as Admit does; without it these are bookings.
+		usedCPUMillicores[n.ID] = e.ledger.EffectiveCPUMillicoresForNode(n.ID, usedCPUMillicores[n.ID], cpuBudgetMillicores(n))
 	}
 	return placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
@@ -4949,6 +5036,19 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		e.observePressure("cooldown")
 		return nil
 	}
+	// ADR-087's cheap path reassigns parked-only apps, and peer-to-peer
+	// live migration is not implemented (see the hook note below), so an
+	// app with resident instances stays pinned. Re-homing it anyway left
+	// those instances outside the new owner's admission ledger: on
+	// production-us the new owner admitted max_concurrency more on the
+	// peer, cold-booting them, while the old owner's instance still ran
+	// (hunt #9, H9-101: 3 running against max_concurrency 2).
+	if live, err := e.appHasResidentInstances(ctx, app.ID); err != nil {
+		return fmt.Errorf("sched: pressure rebalance: list instances: %w", err)
+	} else if live {
+		e.observePressure("no_eligibility")
+		return nil
+	}
 	// Peer selection — name-ASC sort, deterministic.
 	// Tier A10 / ADR-088: per-app overflow_node preference. If
 	// the customer pinned a spill target, try it first; on
@@ -5082,6 +5182,21 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // observePressure is the per-outcome pressure-rebalancer metric
 // helper. Centralising the nil-safety keeps the call sites
 // single-line.
+// appHasResidentInstances reports whether any instance of appID still holds
+// resident RAM (state.CountsForRAM), wherever it runs.
+func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return false, err
+	}
+	for _, ins := range instances {
+		if state.State(ins.State).CountsForRAM() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *Engine) observePressure(outcome string) {
 	if e.ops != nil {
 		e.ops.PressureReassignments(outcome).Inc()
@@ -5286,6 +5401,9 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
+	}
 	var dep state.Deployment
 	if ins.DeploymentID != "" {
 		dep, err = e.store.DeploymentByID(ctx, ins.DeploymentID)
@@ -5307,6 +5425,9 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: workload settings: %w", err)
+	}
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
@@ -5415,6 +5536,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
+		QuietPauseAfterMS:        quietPauseAfterMS(app, ins.Mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -5808,6 +5930,13 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // schedd itself declares a node dead. Failing sooner than schedd's own
 // verdict would terminate instances on a node that is merely slow.
 //
+// After this schedd saw the store unavailable, the sweep also waits until it
+// has read the store without interruption for the same window (ADR-1344 §5
+// rule 4). After a store outage longer than 120 s every node's heartbeat is
+// old because nobody could write one; failing rows then would terminate
+// every running instance in the fleet, and vmmd would destroy the healthy
+// VMs behind them.
+//
 // Per-row safety comes from the conditional UPDATE in
 // FailRunningInstanceOnDeadNode: it rechecks state, owner, node liveness,
 // and whether the recovery controller owns the lifecycle. If the node
@@ -5830,14 +5959,23 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 	if e.deadNodeReconcilerStalenessSeconds > 0 {
 		staleness = time.Duration(e.deadNodeReconcilerStalenessSeconds) * time.Second
 	}
-	threshold := time.Now().UTC().Add(-staleness)
+	now := time.Now().UTC()
+	threshold := now.Add(-staleness)
 	maxPerTick := api.DeadNodeReconcilerTickLimit
 
 	rows, err := e.store.ListRunningInstancesOnDeadNodes(ctx, threshold, maxPerTick)
+	e.deadNodeSettle.observe(err, now)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile dead-node instances: list: %w", err)
 	}
 	if len(rows) == 0 {
+		return 0, nil
+	}
+	if ok, firstWait := e.deadNodeSettle.settled(now, staleness); !ok {
+		if firstWait {
+			e.log.Info("sched: reconcile dead-node instances: waiting for a full staleness window of store access",
+				"candidates", len(rows), "staleness", staleness.String())
+		}
 		return 0, nil
 	}
 	if len(rows) == maxPerTick {
@@ -6064,7 +6202,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
 			return capErr
 		}
-		return fmt.Errorf("sched: prime: create instance: %w", err)
+		return fmt.Errorf("sched: prime: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
 	primeCompleted := false
 	defer func() {
@@ -6073,6 +6211,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 	}()
 	var provisionalPrimeCPUBoostUntil time.Time
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		return err
+	}
 	if primeStartupCPU > primeConfiguredCPU {
 		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
 		if startupDeadline <= 0 {
@@ -6159,7 +6301,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
 	bootStartedAt := time.Now().UTC()
-	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
+	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
@@ -6190,7 +6332,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			TargetReleaseID: upgradeTarget.ID, BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, StartedAt: bootStartedAt,
 		}
 	}
-	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, publication)
+	primed, err := e.publishOwnedRuntimeWithStandards(ctx, out, publication)
 	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
@@ -6199,7 +6341,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
-		return fmt.Errorf("sched: prime: record runtime: %w", err)
+		return fmt.Errorf("sched: prime: record runtime: %w", applicationStandardRuntimeProblem(err))
 	}
 	e.recordCommittedInstanceTransition(ctx, primed, state.StateColdBooting, state.StateRunning, appID, "state_transition", "")
 	e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryDelivered, "")
@@ -6371,6 +6513,11 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 	if err != nil || ins == nil {
 		return err
 	}
+	if state.State(ins.State) == state.StateFrozen {
+		defer e.unlockApp(ins.AppID)
+		e.parkFrozenLocked(ctx, *ins, "park")
+		return nil
+	}
 	if state.State(ins.State) == state.StateWarm {
 		defer e.unlockApp(ins.AppID)
 		if err := e.timedDestroy(ctx, ins.NodeID, instanceID, DestroyTimeout); err != nil {
@@ -6445,6 +6592,17 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 	return repaired, nil
 }
 
+// appMustPark reports whether no instance of app may stay live: the app is
+// evicted_cold, its account is suspended or abuse-held, or the account has
+// reached its monthly spend cap. The cap check is cached and fails open
+// (OverageChecker), so a transient read error never parks an app.
+func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
+	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
+		return true
+	}
+	return e.spendCapReached(ctx, account.ID)
+}
+
 // ParkApp tears down every live instance of an app whose lifecycle has already
 // been changed to evicted_cold by apid. The app-level park endpoint is
 // asynchronous: apid owns the app status write, while schedd owns instance
@@ -6460,6 +6618,9 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 // live state. An app that was unparked before the notification was handled is
 // ignored; the status check prevents an old `parked` notification from
 // tearing down a newly-woken app.
+//
+// Besides an evicted_cold app, a suspended or abuse-held account and an
+// account at its monthly spend cap (ADR-1162) also park every live instance.
 func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if appID == "" {
 		return 0, fmt.Errorf("sched: park app: empty app id")
@@ -6479,7 +6640,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: load account %s: %w", app.AccountID, accountErr)
 	}
-	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended && !account.AbuseHeld() {
+	if !e.appMustPark(ctx, app, account) {
 		return 0, nil
 	}
 
@@ -6499,7 +6660,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: reload account %s: %w", app.AccountID, accountErr)
 	}
-	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended && !account.AbuseHeld() {
+	if !e.appMustPark(ctx, app, account) {
 		return 0, nil
 	}
 
@@ -6760,11 +6921,17 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
 // in STOPPED rather than PARKED.
 func (e *Engine) Evict(ctx context.Context, instanceID string) error {
-	ins, err := e.lockedRunning(ctx, instanceID)
+	ins, err := e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateFrozen)
 	if err != nil || ins == nil {
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
+	if state.State(ins.State) == state.StateFrozen {
+		// ADR-1151: under memory pressure frozen VMs go first. The
+		// deployment's snapshot stays, so the instance parks, not stops.
+		e.parkFrozenLocked(ctx, *ins, "memory_pressure")
+		return nil
+	}
 
 	// Per-call deadline (commit 1). Evict is RAM-pressure, so a wedged
 	// Destroy cannot pin the reaper — the deadline frees it. Using a
@@ -6948,6 +7115,12 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 		if grace <= 0 {
 			grace = 30
 		}
+		deadline := time.Now().Add(time.Duration(grace) * time.Second)
+		drainOutcome := "failed"
+		if mode == state.InstanceModeWorker {
+			e.auditWorkerDrain(ctx, *ins, deadline, "draining")
+			defer func() { e.auditWorkerDrain(ctx, *ins, deadline, drainOutcome) }()
+		}
 		out, serr := e.vmm.StopInstanceOnNode(ctx, ins.NodeID, instanceID, int32(signal), grace)
 		if serr != nil {
 			e.log.Warn("sched: stop instance signal-grace failed; falling through to destroy",
@@ -6982,9 +7155,16 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 			Mode:            string(mode),
 			LifecycleReason: LifecycleReasonCleanExit,
 		}
+		if serr == nil && out != nil {
+			drainOutcome = "completed"
+		}
 		if out != nil {
 			outcome.ExitCode = out.ExitCode
 			outcome.KillSignalSent = out.KillSignalSent
+			if out.KillSignalSent {
+				drainOutcome = "timed_out"
+				outcome.LifecycleReason = LifecycleReasonDrainTimeout
+			}
 		}
 		return outcome, nil
 	case state.InstanceModeService:
@@ -7039,10 +7219,7 @@ type StopOptions struct {
 // SignalAndKill for the worker/job dispatch path; the request /
 // service / mirror path leaves both at zero (snapshotAndPark
 // doesn't capture an exit code). LifecycleReason is the
-// engine-side aggregation — today always LifecycleReasonCleanExit
-// for the success path; a future taxonomy addition can
-// distinguish killed_after_grace (grace expired + SIGKILL
-// escalation) from the clean-exit case.
+// engine-side aggregation — clean_exit or drain_timeout after a forced kill.
 type StopOutcome struct {
 	Instance        string
 	Mode            string
@@ -7052,11 +7229,8 @@ type StopOutcome struct {
 }
 
 // LifecycleReason is the engine-side reason code for a StopInstance
-// transition. M-2 surfaces two: clean_exit (workload exited
-// within the grace window) and unknown (legacy / no-grace
-// path). Future taxonomy additions (killed_after_grace,
-// oom, sigkilled_timeout) land alongside the per-mode
-// expansion in M-3.
+// transition. A worker/job killed after its grace window reports drain_timeout;
+// successful graceful exits and request/service parking report clean_exit.
 type LifecycleReason string
 
 const (
@@ -7064,7 +7238,8 @@ const (
 	// workload exited cleanly within the grace window
 	// (worker/job) or snapshotAndPark succeeded (request/
 	// service).
-	LifecycleReasonCleanExit LifecycleReason = "clean_exit"
+	LifecycleReasonCleanExit    LifecycleReason = "clean_exit"
+	LifecycleReasonDrainTimeout LifecycleReason = "drain_timeout"
 )
 
 // lockedRunning loads an instance, takes its app lock, and returns it only if it
@@ -7079,7 +7254,7 @@ func (e *Engine) lockedRunning(ctx context.Context, instanceID string) (*state.I
 // instances are paused but still resident, so Park must be able to reclaim
 // them without pretending they are serving RUNNING VMs.
 func (e *Engine) lockedParkable(ctx context.Context, instanceID string) (*state.Instance, error) {
-	return e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateWarm)
+	return e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateWarm, state.StateFrozen)
 }
 
 func (e *Engine) lockedInStates(ctx context.Context, instanceID string, allowed ...state.State) (*state.Instance, error) {
@@ -7266,6 +7441,11 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// their RAM accounting or count them toward max_concurrency.
 				kind = KindWarmPool
 			}
+			if state.State(ins.State) == state.StateFrozen {
+				// A frozen VM books its measured memory; until the next
+				// sample the floor stands in for it (ADR-1151).
+				kind = KindFrozen
+			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
@@ -7282,6 +7462,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
 				AllowCPUOvercommitRecovery: true,
 				Kind:                       kind,
+				FrozenChargeMB:             api.MeasuredChargeFloorMB,
 			}
 			// Preserve resident accounting even if scope recovery fails. Unknown
 			// scope cannot authorize an automatic rollout allowance.
@@ -7619,10 +7800,11 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// before terminal capture. Reusing an older snapshot bypasses that handshake
 	// and loses the process state needed to qualify park/restore (ADR-824).
 	profilingEnabled := app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
+	beforeCheckpoint := app.Manifest.BeforeCheckpoint != nil || profilingEnabled
 	if allowReuse && !profilingEnabled {
-		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)
+		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, beforeCheckpoint)
 	} else {
-		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)
+		b, err = e.captureSnapshotWithStandards(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, beforeCheckpoint, "park")
 	}
 	if reused != nil {
 		storageKey = reused.StorageKey
@@ -7851,7 +8033,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	warmVMStateStorageKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: warmMemKey})
 
 	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))
-	b, err := e.vmm.WarmSnapshot(warmCtx, ins.NodeID, ins.ID, warmMemKey, warmVMStateStorageKey)
+	b, err := e.captureSnapshotWithStandards(warmCtx, ins, "", warmMemKey, warmVMStateStorageKey, false, "warm")
 	warmCancel()
 	if err != nil {
 		// Warm capture failed. The VM may be in a wedged state
@@ -7976,6 +8158,9 @@ func (e *Engine) resolveAppAccount(ctx context.Context, appID string) (state.App
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
+	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return state.App{}, state.Account{}, api.Limits{}, err
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
@@ -8555,6 +8740,25 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 		// Another lifecycle operation owns the new state and its reservation.
 		// A completed wake may still be running; leave its capacity intact.
 		return nil
+	}
+	// Qualification reservations have an attempt-bound native owner. Their
+	// capture/restore may legitimately outlive the ordinary cold-boot sweep,
+	// and only the attempt's retirement (or its recovery after lease expiry)
+	// can release physical resources and capacity. A generic Destroy here
+	// cancels the restore before its backing images have finished staging.
+	if executions, ok := e.store.(state.EnvironmentQualificationExecutionStore); ok {
+		status, err := executions.EnvironmentQualificationExecution(ctx, instanceID)
+		switch {
+		case err == nil:
+			if status.Execution.InstanceID != instanceID {
+				return state.ErrConflict
+			}
+			return nil
+		case errors.Is(err, state.ErrNotFound):
+			// An ordinary instance still belongs to the regular watchdog.
+		case err != nil:
+			return fmt.Errorf("sched: KillStuck: inspect qualification execution %s: %w", instanceID, err)
+		}
 	}
 
 	terminal := terminalStateForReason(reason)
@@ -9420,6 +9624,13 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	}
+	// A worker pool has no periodic floor unless it scales on a queue
+	// signal, so a worker parked here never came back: h8-worker sat at
+	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
+	// H9-171).
+	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
+		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
+	}
 	return true, nil
 }
 
@@ -9474,13 +9685,23 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 // same observable transition contract as transitionWithKind.
 func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
 	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
-	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
-		ins.Mode == string(state.InstanceModeService) {
-		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
-	} else if to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker) {
-		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
-	}
+	e.reconcileAfterInstanceTransition(ctx, ins, to)
 	e.appendInstanceTransitionEvent(ctx, ins, from, to, kind, reason)
+}
+
+// reconcileAfterInstanceTransition restores service and worker allocations
+// after a committed edge. A failed worker is replaced with backoff
+// (worker_boot_backoff.go); a running one clears that backoff.
+func (e *Engine) reconcileAfterInstanceTransition(ctx context.Context, ins state.Instance, to state.State) {
+	switch {
+	case (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
+		ins.Mode == string(state.InstanceModeService):
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	case to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker):
+		e.scheduleWorkerReconcileAfterFailure(ctx, ins.DeploymentID)
+	case to == state.StateRunning && ins.Mode == string(state.InstanceModeWorker):
+		e.workerBoots.reset(ins.DeploymentID)
+	}
 }
 
 func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.Instance, from, to state.State, kind, reason string) {
@@ -9574,6 +9795,9 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID strin
 		fields["warm_min_ms"] = promotion.MinMs
 		fields["request_count"] = promotion.RequestCount
 		fields["framework_ready_to_park_ms"] = promotion.ReadyToParkMs
+	}
+	if b.CaptureToken != "" {
+		fields["application_standard_capture_token"] = b.CaptureToken
 	}
 	payload, _ := json.Marshal(fields)
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {
@@ -9674,10 +9898,9 @@ const (
 //     because (a) the trigger is account-scoped not per-app, (b) the
 //     wire surface is CodeAdmissionRefused (HTTP 402 + Retry-After
 //     intentionally omitted — the cap is a deliberate budget, not
-//     back-pressure), and (c) the existing live instances are NOT
-//     auto-parked by the cap alone (that path lives in
-//     pkg/meter/quota.go::EnforceQuota case "stop" and is out of
-//     scope for #561). Caller short-circuits with no INSERT and
+//     back-pressure), and (c) live instances are parked by the
+//     reaper's lifecycle reconcile, not by this gate (ADR-1162:
+//     Engine.appMustPark). Caller short-circuits with no INSERT and
 //     emits the audit row overage.cap_reached via the checker's
 //     RecordReached (UTC-day deduped).
 //
@@ -9769,23 +9992,44 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 		}
 		return wakeMinFloorAlready, 0, 0, concurrency, false, capacity.limit
 	}
-	// Issue #561: spend cap pause-workload. Nil check tolerates
-	// legacy fixtures (the branch becomes a no-op).
-	if e.overage != nil {
-		status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
-		if status == OverageReached {
-			if e.ops != nil {
-				e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
-			}
-			// Audit row emitted here is intentional — the gate
-			// itself is the only decision site that observes the
-			// refusal, and pkg/sched/loop.go:1249 `reaper_scale_down`
-			// is the precedent for engine-initiated audit writes.
-			e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
-			return wakeOverageCapReached, observedCents, capCents, concurrency, false, capacity.limit
-		}
+	// Issue #561: spend cap pause-workload.
+	if reached, observedCents, capCents := e.admitSpendCap(ctx, app); reached {
+		return wakeOverageCapReached, observedCents, capCents, concurrency, false, capacity.limit
 	}
 	return wakeAdmit, 0, 0, concurrency, capacity.fullAfterAdmission(), capacity.limit
+}
+
+// admitSpendCap is the admission-side spend-cap decision shared by the
+// request gate and the explicit-deployment path (ADR-1162). Nil checker
+// tolerates legacy fixtures. The audit row is emitted here because the
+// admission decision is the only site that observes the refusal;
+// pkg/sched/loop.go `reaper_scale_down` is the precedent for
+// engine-initiated audit writes.
+func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64, int64) {
+	if e.overage == nil {
+		return false, 0, 0
+	}
+	status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
+	if status != OverageReached {
+		return false, 0, 0
+	}
+	if e.ops != nil {
+		e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
+	}
+	e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
+	return true, observedCents, capCents
+}
+
+// spendCapReached reports whether the account's monthly spend cap is
+// reached, without the admission metric or audit side effects. Lifecycle
+// reconcilers use it to park live capacity and stop refilling warm pools
+// (ADR-1162). Fails open like OverageChecker.Check.
+func (e *Engine) spendCapReached(ctx context.Context, accountID string) bool {
+	if e.overage == nil || accountID == "" {
+		return false
+	}
+	status, _, _, _ := e.overage.Check(ctx, accountID)
+	return status == OverageReached
 }
 
 // isOnScaleOutCooldown (PR-C, issue #462) returns true when

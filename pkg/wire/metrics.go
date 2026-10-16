@@ -118,6 +118,13 @@ type OpsMetrics struct {
 	warmPoolSize *prometheus.GaugeVec
 	// warmPoolResumeTotal counts bounded warm-pool resume outcomes.
 	warmPoolResumeTotal *prometheus.CounterVec
+	// Frozen tier (ADR-1151): freeze attempts, thaws and parks by bounded
+	// outcome or reason, and the instances currently frozen.
+	frozenFreezeTotal   *prometheus.CounterVec
+	frozenThawTotal     *prometheus.CounterVec
+	frozenParksTotal    *prometheus.CounterVec
+	frozenCompressTotal *prometheus.CounterVec
+	frozenInstances     prometheus.Gauge
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -405,7 +412,7 @@ type OpsMetrics struct {
 	//             DGRAM envelope; "failed" includes handler_error
 	//             AND forced_at_park — the per-plan breakdown is on
 	//             guestTailFailedTotal below)
-	// 4 plans × 5 runtimes × 3 outcomes = 60 series. Buckets
+	// 4 plans × 6 runtimes × 3 outcomes = 72 series. Buckets
 	// {0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 180, 600}: the 60s
 	// bucket matches the Scale plan's TailTimeoutS ceiling; the 180s
 	// bucket catches a runaway tail (3× the longest plan ceiling) so
@@ -1332,8 +1339,13 @@ type OpsMetrics struct {
 	// would nondeterministically overwrite siblings on .Set. The
 	// per-instance values live in pkg/sched/instancestats.Reader;
 	// the wire only carries the {app,node} rollup.
-	instanceCPUPct       *prometheus.GaugeVec
-	instanceRSSMB        *prometheus.GaugeVec
+	instanceCPUPct *prometheus.GaugeVec
+	instanceRSSMB  *prometheus.GaugeVec
+	// nodeMemoryReservedMB / nodeMemoryMeasuredMB: ADR-909 shadow mode. What
+	// admission books per node today, and what admission by measured memory
+	// would book.
+	nodeMemoryReservedMB *prometheus.GaugeVec
+	nodeMemoryMeasuredMB *prometheus.GaugeVec
 	instanceInflightReqs *prometheus.GaugeVec
 	// instanceCPUSecondsTotal (issue #279 / PR-B): cumulative
 	// CPU-seconds per (app, node). Counter (not Gauge) because
@@ -2202,6 +2214,38 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range []string{"success", "missing", "stale"} {
 		warmPoolResumeTotal.WithLabelValues(outcome)
 	}
+	frozenFreezeTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_total",
+		Help: "Idle-timeout freeze attempts (ADR-1151) by outcome: frozen, or why the instance parked or stayed running instead.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenFreezeOutcomes {
+		frozenFreezeTotal.WithLabelValues(outcome)
+	}
+	frozenThawTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_thaw_total",
+		Help: "Thaws of frozen instances for a request (ADR-1151) by outcome.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenThawOutcomes {
+		frozenThawTotal.WithLabelValues(outcome)
+	}
+	frozenParksTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_parks_total",
+		Help: "Frozen instances parked (ADR-1151) by reason; the VM is destroyed and the deployment's snapshot stays.",
+	}, []string{"reason"})
+	for _, reason := range FrozenParkReasons {
+		frozenParksTotal.WithLabelValues(reason)
+	}
+	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_compress_total",
+		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenCompressOutcomes {
+		frozenCompressTotal.WithLabelValues(outcome)
+	}
+	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_frozen_instances",
+		Help: "Instances this schedd holds frozen in place (ADR-1151).",
+	})
 	// warmupErrors (Tier A8 / ADR-083). Counts probe failures on the
 	// standby warm-up scraper (cmd/gatewayd-public/standby_warmup.go).
 	// Labelled by app slug — the per-app cardinality is bounded by the
@@ -2349,7 +2393,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready_reason",
 		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
 	}, []string{"daemon", "reason"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale", "other"} {
+	for _, daemon := range identityDaemons(prefix) {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -2585,7 +2629,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Buckets rationale is in the OpsMetrics field doc comment.
 	guestTailSeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_guest_tail_seconds",
-		Help: "Wall-clock seconds a waitUntil(promise) task ran from registration to terminal (issue #667 / ADR-078). Labelled by {plan, runtime, outcome} — plan ∈ api.Plans, runtime ∈ {node22, node24, python312, python313, go124}, outcome ∈ {completed, failed, timeout}. 60 series total. Buckets sized for the Free→Scale TailTimeoutS matrix (5…60s) plus a 180s bucket for a runaway tail and a 600s bucket matching buildDur's ceiling.",
+		Help: "Wall-clock seconds a waitUntil(promise) task ran from registration to terminal (issue #667 / ADR-078). Labelled by {plan, runtime, outcome} — plan ∈ api.Plans, runtime ∈ {node22, node24, python312, python313, go124, binary}, outcome ∈ {completed, failed, timeout}. 72 series total. Buckets sized for the Free→Scale TailTimeoutS matrix (5…60s) plus a 180s bucket for a runaway tail and a 600s bucket matching buildDur's ceiling.",
 		Buckets: []float64{
 			0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 180, 600,
 		},
@@ -2641,10 +2685,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	evictedPriority.WithLabelValues("reserved", "eviction_ram")
 	evictionFiredTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_eviction_fired_total",
-		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,wake_pressure,zero_traffic,unknown}.",
+		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,measured_memory,wake_pressure,zero_traffic,unknown}.",
 	}, []string{"tenant_tier", "reason"})
 	for _, tier := range []string{"free", "hobby", "pro", "scale", "unknown"} {
-		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "zero_traffic", "unknown"} {
+		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "measured_memory", "wake_pressure", "zero_traffic", "unknown"} {
 			evictionFiredTotal.WithLabelValues(tier, reason)
 		}
 	}
@@ -3387,6 +3431,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_instance_rss_mb",
 		Help: "Cgroup memory.current in MiB, per (app, node) — sum over live siblings (issue #170 / PR-A). Capacity rollup.",
 	}, []string{"app", "node"})
+	nodeMemoryReservedMB := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_memory_reserved_mb",
+		Help: "Plan RAM + 8 MB summed over a node's instances that count toward invariant 2: what admission books today (ADR-909 shadow mode).",
+	}, []string{"node"})
+	nodeMemoryMeasuredMB := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_memory_measured_mb",
+		Help: "What admission by measured memory would book on a node: per instance its cgroup memory plus headroom, capped at plan RAM + 8 MB (ADR-909 shadow mode; admission is unchanged).",
+	}, []string{"node"})
 	instanceInflightReqs := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_instance_inflight_requests",
 		Help: "Outbound ForwardHTTP count in flight, per (app, node) — sum over live siblings (issue #170 / PR-A). Load rollup.",
@@ -3821,7 +3873,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Count of recovery-timeline events emitted via pkg/events.Platform.EmitRecovery, labelled by kind (the substring after `node.` / `instance.`, e.g. `draining`, `drained`, `failed`, `recovered`, `migrated`, `recreated`) and result ∈ {ok, failed} (Workstream B / issue #1184, ADR-137). Single-registry: registered on every daemon; only schedd / apid increment via Platform.EmitRecovery. The closed 7-kind set is pre-instantiated at boot so the recovery-dashboard panel surfaces zero on an idle daemon.",
 	}, []string{"kind", "result"})
 	// commonCollectors is the per-daemon collector set that every
-	// prefix registers. PR-E adds ociEgressDeny to the set when
+	// prefix registers, minus the single-owner collectors that
+	// withoutForeignCollectors keeps off other daemons (owner map
+	// above reg.MustRegister below). PR-E adds ociEgressDeny to the set when
 	// prefix == "imaged" — keeping the common slice as a single source
 	// of truth (review finding #5 on PR #332) means a future collector
 	// only needs to be added here, not in two parallel MustRegister
@@ -3831,7 +3885,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -3859,6 +3913,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
+		nodeMemoryReservedMB, nodeMemoryMeasuredMB,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -4126,7 +4181,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// registered on every daemon; only gatewayd-public
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_spans_ingested_total",
+		Name: prefix + "_otel_spans_ingested_total",
 		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
@@ -4136,7 +4191,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// single-registry pattern; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelSpansTruncated.
 	gatewaydPublicOtelSpansTruncated := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_spans_truncated_total",
+		Name: prefix + "_otel_spans_truncated_total",
 		Help: "OTel spans writer truncation tripwire on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D). Fires once per OTLP POST when the inbound body has more spans than the plan's DebugTelemetrySpansPerTrace ceiling (Hobby=50/Pro=200/Scale=1000). Sustained non-zero means the customer's app is chatty enough that the slowest-N selection is dropping signal — alertable via SpansTruncationRateSlo. Unlabelled — single-registry pattern; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansTruncated.",
 	})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansTruncated)
@@ -4146,7 +4201,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only gatewayd-public increments via
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_auth_failures_total",
+		Name: prefix + "_otel_auth_failures_total",
 		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)
@@ -4646,7 +4701,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	auditLogWriteTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_audit_log_write_total",
-		Help: "Count of events-table appends the audit emit path completed, labelled by endpoint and kind. /v1/admin/obs/health reads this via PromQL `sum(increase(audit_log_write_total[5m]))` to report 5-minute throughput. Single-registry: registered on every daemon; only the audit emit site (pkg/audit.Auditor.Emit / EmitResult) increments via AuditLogWriteTotal.",
+		Help: "Count of events-table appends the audit emit path completed, labelled by endpoint and kind. /v1/admin/obs/health reads this via PromQL `sum(increase(apid_audit_log_write_total[5m]))` to report 5-minute throughput. Single-registry: registered on every daemon; only the audit emit site (pkg/audit.Auditor.Emit / EmitResult) increments via AuditLogWriteTotal.",
 	}, []string{"endpoint", "kind"})
 	auditLogWriteFailuresTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_audit_log_write_failures_total",
@@ -4796,6 +4851,107 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp,
 	)
+	// Single-owner collectors register only on the daemons whose code
+	// writes them. Registered everywhere, their pre-instantiated label
+	// sets exported zero-valued copies from every daemon: 55k of
+	// the 207k series on the two-node test fleet. An owner is a daemon
+	// whose binary reaches one of the collector's accessors; ownership
+	// is pinned by TestSingleOwnerCollectorsRegisterOnOwners and
+	// TestSingleOwnerAccessorsHaveKnownCallers. Calling an accessor from
+	// another daemon still works but exports nothing until the daemon is
+	// added here.
+	schedd := []string{"schedd"}
+	meterd := []string{"meterd"}
+	// pkg/events.Platform: built with the daemon's OpsMetrics in apid,
+	// builderd, gatewayd-internal, schedd and vmmd.
+	eventEmitters := []string{"apid", "builderd", "gatewayd", "schedd", "vmmd"}
+	// pkg/audit.Auditor with metrics: apid, githubd, meterd and schedd
+	// (gatewayd-internal builds its auditor with nil metrics).
+	auditors := []string{"apid", "githubd", "meterd", "schedd"}
+	commonCollectors = withoutForeignCollectors(prefix, commonCollectors, map[prometheus.Collector][]string{
+		// Spec §4 names vmmd as the waitUntil tail owner; nothing
+		// writes these yet.
+		guestTailSeconds:     {"vmmd"},
+		guestTailFailedTotal: {"vmmd"},
+		tailCapReached:       {"vmmd"},
+		guestInitDuration:    {"vmmd"},
+		bridgeFramingTotal:   {"vmmd"},
+		// pkg/apid/apidserver, pkg/apid/apidsource and pkg/imaged; the
+		// last is linked into builderd and vmmd too.
+		apiHostingPhaseTotal:    {"apid", "builderd", "imaged", "vmmd"},
+		apiHostingPhaseDuration: {"apid", "builderd", "imaged", "vmmd"},
+		imagedOCIPull:           {"builderd", "imaged", "vmmd"},
+		deployStageDuration:     {"builderd", "imaged", "vmmd"},
+		// pkg/meter runs in apid and meterd.
+		stripePushDur:         {"apid", "meterd"},
+		paddlePushDur:         {"apid", "meterd"},
+		polarPushDur:          {"apid", "meterd"},
+		meteredMBSecondsTotal: {"apid", "meterd"},
+
+		buildDur:                {"builderd"},
+		gatewayDrainWaitSeconds: {"gatewayd", "gatewayd_public"},
+		writeRedirectTotal:      {"gatewayd"},
+		writeRedirectLatency:    {"gatewayd"},
+		// pkg/sched types that only cmd/schedd constructs: Engine, Loop,
+		// Drain, ExecutionCoordinator and the scale-up Trigger.
+		executionActive:                    schedd,
+		executionTotal:                     schedd,
+		executionPhaseDuration:             schedd,
+		executionFailures:                  schedd,
+		executionOutputBytes:               schedd,
+		executionSweeps:                    schedd,
+		executionQueueDepth:                schedd,
+		executionQueueOldestWait:           schedd,
+		executionWorkers:                   schedd,
+		wakeRPCDuration:                    schedd,
+		serviceRolloutHandoffPhaseDuration: schedd,
+		serviceReplicaStatus:               schedd,
+		esmPollsTotal:                      schedd,
+		esmRecordsConsumedTotal:            schedd,
+		esmLagSeconds:                      schedd,
+		esmRecordsOutcomeTotal:             schedd,
+		esmRecordProcessingSeconds:         schedd,
+		esmConsumerLagMessages:             schedd,
+		esmConsumerLagAgeSeconds:           schedd,
+		cronFireNowDispatchDur:             schedd,
+		delayedTasks.dispatchTotal:         schedd,
+		delayedTasks.scheduleLagSeconds:    schedd,
+		evictionFiredTotal:                 schedd,
+		scaleUpAdmitRPS:                    schedd,
+		eventsWriteFail:                    schedd,
+		wakePhaseEmitted:                   eventEmitters,
+		wakeIdentityInvalid:                eventEmitters,
+		wakePhaseDur:                       eventEmitters,
+		recoveryEventEmitted:               eventEmitters,
+		auditWriteFail:                     auditors,
+		auditWriteDur:                      auditors,
+		auditLogWriteTotal:                 auditors,
+		auditLogWriteFailuresTotal:         auditors,
+		// Only cmd/meterd constructs the safe-deploy orchestrator and the
+		// canary progression; the *AlertFired counters have no writer yet
+		// and stay with their family.
+		canaryProgressionAdvancedTotal:                   meterd,
+		canaryProgressionErrorsTotal:                     meterd,
+		canaryProgressionCircuitBreakerTotal:             meterd,
+		canaryProgressionZeroTimestampTotal:              meterd,
+		canaryProgressionHealthGateBlockedTotal:          meterd,
+		safedeployOrchestratorStartedTotal:               meterd,
+		safedeployOrchestratorCompletedTotal:             meterd,
+		safedeployOrchestratorAbortedTotal:               meterd,
+		safedeployOrchestratorStuckDetectedTotal:         meterd,
+		safedeployOrchestratorAuditEmitFailedTotal:       meterd,
+		safedeployOrchestratorStuckCheckMissingTimestamp: meterd,
+		safedeployOrchestratorAutoAbortedTotal:           meterd,
+		safedeployOrchestratorAutoAbortFailedTotal:       meterd,
+		safedeployInFlightRollouts:                       meterd,
+		deploymentAuditEmittedTotal:                      meterd,
+		deploymentAuditGCFailedTotal:                     meterd,
+		deploymentAuditGCRowsDeletedTotal:                meterd,
+		canaryStuckStepAlertFiredTotal:                   meterd,
+		safedeployAuditEmitFailingAlertFiredTotal:        meterd,
+		deploymentAuditGCFailingAlertFiredTotal:          meterd,
+		canaryFleetInFlightHighAlertFiredTotal:           meterd,
+	})
 	reg.MustRegister(commonCollectors...)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in
@@ -5000,15 +5156,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// outcome) cartesian for guestTailSeconds, the (plan × reason)
 	// cartesian for guestTailFailedTotal, and the plan set for
 	// tailCapReached. All three are closed sets; runtime is the
-	// ADR-052 hard-coded list of 5 images (bumping this list is
+	// ADR-052 hard-coded runtime list (5 images plus binary, ADR-987) (bumping this list is
 	// the load-bearing step when a new runtime is added). An idle
 	// box with no waitUntil traffic would otherwise render the
 	// §12 tail-watchdog panels as "no data" until the first tail
-	// fires. 60 + 16 + 4 = 80 series; the cardinality test pins
+	// fires. 72 + 16 + 4 = 92 series; the cardinality test pins
 	// the bound.
 	for _, plan := range api.Plans {
 		for _, runtime := range []string{
-			"node22", "node24", "python312", "python313", "go124",
+			"node22", "node24", "python312", "python313", "go124", "binary",
 		} {
 			for _, outcome := range []string{"completed", "failed", "timeout"} {
 				guestTailSeconds.WithLabelValues(string(plan), runtime, outcome)
@@ -5236,6 +5392,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
+		frozenFreezeTotal:                          frozenFreezeTotal,
+		frozenThawTotal:                            frozenThawTotal,
+		frozenParksTotal:                           frozenParksTotal,
+		frozenCompressTotal:                        frozenCompressTotal,
+		frozenInstances:                            frozenInstances,
 		warmupErrors:                               warmupErrors,
 		writeRedirectTotal:                         writeRedirectTotal,
 		writeRedirectLatency:                       writeRedirectLatency,
@@ -5403,6 +5564,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		staleDeploymentsReconciled:           staleDeploymentsReconciled,
 		instanceCPUPct:                       instanceCPUPct,
 		instanceRSSMB:                        instanceRSSMB,
+		nodeMemoryReservedMB:                 nodeMemoryReservedMB,
+		nodeMemoryMeasuredMB:                 nodeMemoryMeasuredMB,
 		instanceInflightReqs:                 instanceInflightReqs,
 		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
 		instanceStatsCollectDur:              instanceStatsCollectDur,
@@ -5693,12 +5856,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 	if m == nil || n <= 0 {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	if version == "" {
 		version = Version
 	}
@@ -5717,12 +5875,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	if version == "" {
 		version = Version
 	}
@@ -5740,12 +5893,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	m.daemonUptimeSeconds.WithLabelValues(daemon).Set(seconds)
 }
 
@@ -5766,12 +5914,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	v := 0
 	if ready {
 		v = 1
@@ -6004,6 +6147,57 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 		return nil
 	}
 	return m.warmPoolResumeTotal.WithLabelValues(outcome)
+}
+
+// Bounded label sets of the frozen-tier series (ADR-1151).
+var (
+	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity"}
+	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
+	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
+	// unavailable (no memory-only swap) and error park it.
+	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
+)
+
+// FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
+func (m *OpsMetrics) FrozenFreezeTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenFreezeTotal.WithLabelValues(outcome)
+}
+
+// FrozenThawTotal is the thaw counter for one outcome.
+func (m *OpsMetrics) FrozenThawTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenThawTotal.WithLabelValues(outcome)
+}
+
+// FrozenParksTotal is the frozen-park counter for one reason.
+func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenParksTotal.WithLabelValues(reason)
+}
+
+// FrozenCompressTotal is the frozen-compression counter for one outcome.
+func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenCompressTotal.WithLabelValues(outcome)
+}
+
+// SetFrozenInstances sets the number of instances held frozen.
+func (m *OpsMetrics) SetFrozenInstances(n int) {
+	if m == nil {
+		return
+	}
+	m.frozenInstances.Set(float64(n))
 }
 
 // WarmupErrors returns the per-(app slug) probe-failure counter
@@ -6459,7 +6653,7 @@ func (m *OpsMetrics) EvictionFired(tenantTier, reason string) prometheus.Counter
 		tenantTier = "unknown"
 	}
 	switch reason {
-	case "idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "zero_traffic":
+	case "idle", "eviction_aggressive", "ram_pressure", "measured_memory", "wake_pressure", "zero_traffic":
 	default:
 		reason = "unknown"
 	}
@@ -8934,6 +9128,21 @@ func (m *OpsMetrics) AlertEvaluatorEnabled() bool {
 //
 // Safe on a nil receiver so schedd unit tests without metrics
 // keep working.
+// ReplaceNodeMemoryShadow publishes each node's reserved and measured
+// bookings ([reserved, measured] MB) for ADR-909's shadow mode; nodes absent
+// from byNode are dropped.
+func (m *OpsMetrics) ReplaceNodeMemoryShadow(byNode map[string][2]int) {
+	if m == nil {
+		return
+	}
+	m.nodeMemoryReservedMB.Reset()
+	m.nodeMemoryMeasuredMB.Reset()
+	for node, v := range byNode {
+		m.nodeMemoryReservedMB.WithLabelValues(node).Set(float64(v[0]))
+		m.nodeMemoryMeasuredMB.WithLabelValues(node).Set(float64(v[1]))
+	}
+}
+
 func (m *OpsMetrics) ReplaceInstanceStats(rows []InstanceStatRow, dur time.Duration) {
 	if m == nil {
 		return

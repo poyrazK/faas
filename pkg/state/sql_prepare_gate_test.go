@@ -43,7 +43,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	// database. Restore qualification also owns a separate disposable DB.
 	// Platform migrations must never install either one's public tables.
 	var customerTablesInPlatform bool
-	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL OR to_regclass('public.gregale_qualification_restore_probe') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_realtime_outbox') IS NOT NULL OR to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL OR to_regclass('public.gregale_qualification_restore_probe') IS NOT NULL OR to_regclass('public.gregale_mcp_tasks') IS NOT NULL OR to_regclass('public.gregale_mcp_task_worker_handlers') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
 		t.Fatal(err)
 	}
 	if customerTablesInPlatform {
@@ -57,11 +57,32 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	if _, err := customerPool.Exec(ctx, string(customerSchema)); err != nil {
 		t.Fatal(err)
 	}
+	realtimeSchema, err := os.ReadFile("../../pkg/commit/realtime_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := customerPool.Exec(ctx, string(realtimeSchema)); err != nil {
+		t.Fatal(err)
+	}
 	customerConn, err := customerPool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer customerConn.Release()
+
+	// MCP starters own their queue schema in the customer's database. Apply
+	// the exact initializer statements rather than duplicating its schema here.
+	mcpPool := pgtest.OpenDatabase(t)
+	for _, statement := range mcpStarterSchemaStatements(t) {
+		if _, err := mcpPool.Exec(ctx, statement); err != nil {
+			t.Fatalf("initialize customer MCP schema: %v", err)
+		}
+	}
+	mcpConn, err := mcpPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mcpConn.Release()
 
 	qualificationPool := pgtest.OpenDatabase(t)
 	if _, err := qualificationPool.Exec(ctx, `CREATE TABLE public.gregale_qualification_restore_probe (id integer PRIMARY KEY CHECK (id = 1), marker text NOT NULL)`); err != nil {
@@ -95,7 +116,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		"42P10": true, // invalid_column_reference
 		"42P08": true, // ambiguous_parameter / inconsistent parameter types
 	}
-	var customerStatements, qualificationStatements int
+	var customerStatements, mcpStatements, qualificationStatements int
 	for i, s := range stmts {
 		name := fmt.Sprintf("sql_gate_%d", i)
 		target := conn
@@ -105,6 +126,10 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 			target = customerConn
 			query = s.sql
 			customerStatements++
+		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go/") {
+			target = mcpConn
+			query = s.sql
+			mcpStatements++
 		} else if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/restore_probe.go:") {
 			target = qualificationConn
 			query = s.sql
@@ -129,7 +154,51 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	if qualificationStatements == 0 {
 		t.Fatal("restore qualification SQL was absent from the source walk")
 	}
-	t.Logf("validated %d platform, %d customer and %d qualification SQL literals", len(stmts)-customerStatements-qualificationStatements, customerStatements, qualificationStatements)
+	if mcpStatements == 0 {
+		t.Fatal("customer MCP SQL was absent from the source walk")
+	}
+	t.Logf("validated %d platform, %d Commit, %d MCP and %d qualification SQL literals", len(stmts)-customerStatements-mcpStatements-qualificationStatements, customerStatements, mcpStatements, qualificationStatements)
+}
+
+func mcpStarterSchemaStatements(t *testing.T) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "../../cmd/gregale/templates/mcp-go/tasks.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statements []string
+	for _, declaration := range f.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "initialize" || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			assignment, ok := node.(*ast.AssignStmt)
+			if !ok || len(assignment.Lhs) != 1 || len(assignment.Rhs) != 1 {
+				return true
+			}
+			name, ok := assignment.Lhs[0].(*ast.Ident)
+			if !ok || name.Name != "statements" {
+				return true
+			}
+			list, ok := assignment.Rhs[0].(*ast.CompositeLit)
+			if !ok {
+				t.Fatal("MCP initializer statements must remain statically inspectable")
+			}
+			for _, element := range list.Elts {
+				statement, ok := foldStringLiteral(element)
+				if !ok {
+					t.Fatal("MCP initializer contains a nonliteral schema statement")
+				}
+				statements = append(statements, statement)
+			}
+			return false
+		})
+	}
+	if len(statements) == 0 {
+		t.Fatal("MCP starter schema initializer was absent from the source walk")
+	}
+	return statements
 }
 
 type sqlLiteral struct {

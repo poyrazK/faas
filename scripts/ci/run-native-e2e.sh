@@ -51,9 +51,9 @@ marker_sha="$(tr -d '\n' < "${repo_root}/.faas-e2e-source-sha")"
 [[ "${marker_sha}" == "${FAAS_E2E_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_E2E_SOURCE_SHA}"
 
-kernel="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.134}"
+kernel="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.18.54}"
 builder_base="${FAAS_BUILDER_BASE_PATH:-/srv/fc/base/builder-base.ext4}"
-fc_version="${FAAS_TEST_FC_VERSION:-1.7.0}"
+fc_version="${FAAS_TEST_FC_VERSION:-1.17.0}"
 run_id="${FAAS_E2E_RUN_ID:-manual}"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "run ID contains unsupported characters"
 transfer_root="${FAAS_E2E_TRANSFER_ROOT:-}"
@@ -393,7 +393,7 @@ metal_test_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
 # Every required test must be in the derived set. A required test that loses its
 # metal tag would otherwise silently stop being run AND stop being required.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
-  printf '%s\n' "${metal_tests}" | grep -x "${required}" >/dev/null ||
+  grep -qx "${required}" <<<"${metal_tests}" ||
     die "required test ${required} is not in the metal-tagged set; it lost its //go:build metal tag or was renamed"
 done
 

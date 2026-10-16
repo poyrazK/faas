@@ -280,7 +280,7 @@ func TestLoad_HostingOverridesAreStrict(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	_, _, err := Load(dir)
-	if err == nil || !strings.Contains(err.Error(), "field command not found") {
+	if err == nil || !strings.Contains(err.Error(), `unknown key "command" under hosting:`) {
 		t.Fatalf("error = %v, want unknown hosting field", err)
 	}
 }
@@ -1448,6 +1448,7 @@ worker:
     metric: custom
     name: mcp_tasks_outstanding
     target: 4
+    observer_app_slug: mcp-observer
 `
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write gregale.yaml: %v", err)
@@ -1463,7 +1464,7 @@ worker:
 		t.Fatalf("Validate: %v", err)
 	}
 	got := manifest.Worker.Scale.ToAPI()
-	if got.Metric != api.ScalingMetricCustom || got.Name != "mcp_tasks_outstanding" || got.Target != 4 {
+	if got.Metric != api.ScalingMetricCustom || got.Name != "mcp_tasks_outstanding" || got.Target != 4 || got.ObserverAppSlug != "mcp-observer" {
 		t.Fatalf("worker scale API = %+v, want custom gauge target", got)
 	}
 }
@@ -1502,6 +1503,16 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 		{
 			name: "custom metric valid",
 			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4}},
+		},
+		{
+			name: "MCP task scale-to-zero requires observer app",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 0, Max: 5, Metric: api.ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4}},
+			want: "observer_app_slug is required",
+		},
+		{
+			name: "observer app slug requires MCP task metric",
+			spec: WorkerSpec{Scale: WorkerScaleSpec{Min: 1, Max: 5, Metric: "queue_lag", Target: 10, ObserverAppSlug: "mcp-observer"}},
+			want: "requires the mcp_tasks_outstanding custom metric",
 		},
 		{
 			name: "unsupported source kind",
@@ -1653,6 +1664,10 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 	}{
 		{yaml: "trigers: []\n", want: []string{`line 1: unknown key "trigers"`, `did you mean "triggers"?`}},
 		{yaml: "function:\n  runtime: node22\n  memory_mb: 1\n", want: []string{`line 3: unknown key "memory_mb" under function:`}},
+		// H10-76: the hosting section's type is hostingconfig.Config, outside
+		// this package, so the error named the Go type with no suggestion.
+		{yaml: "hosting:\n  health_path: /healthz\n", want: []string{`line 2: unknown key "health_path" under hosting:`, `did you mean "health"?`}},
+		{yaml: "hosting:\n  prot: 8080\n", want: []string{`unknown key "prot" under hosting:`, `did you mean "port"?`}},
 	} {
 		_, err := ParseBytes([]byte(tc.yaml))
 		if err == nil {
@@ -1663,7 +1678,7 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 				t.Errorf("ParseBytes(%q) error = %q, want it to contain %q", tc.yaml, err, want)
 			}
 		}
-		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "unmarshal errors") {
+		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "hostingconfig.") || strings.Contains(err.Error(), "unmarshal errors") {
 			t.Errorf("error still names Go internals: %q", err)
 		}
 	}
@@ -1682,5 +1697,25 @@ func TestContractCommandManifest(t *testing.T) {
 	}
 	if err := (&ReleaseConfig{ContractCommand: "node migrate.js contract"}).Validate(); err != nil {
 		t.Fatalf("Procfile expansion owner cannot declare cleanup: %v", err)
+	}
+}
+
+// adr: 1036
+func TestValidateBucketComputeTriggers(t *testing.T) {
+	for _, decl := range []string{"", "    triggers: []\n", "    triggers:\n      - id: incoming\n        prefix: uploads/\n"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("buckets:\n  - bucket: assets\n"+decl), 0600); err != nil {
+			t.Fatal(err)
+		}
+		m, _, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = m.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if (m.Buckets[0].Triggers != nil) != (decl != "") {
+			t.Fatal("declaration intent lost", m.Buckets)
+		}
 	}
 }

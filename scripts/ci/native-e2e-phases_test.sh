@@ -67,6 +67,13 @@ native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal
 native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestDevLoopMetal ||
   fail "developer loop is missing from the deploy phase"
 
+# Binary functions exercise the source/builder/runner pipeline.
+native_e2e_phase_tests build "${repo_root}" | grep -qx TestBinaryFunctionMetal ||
+  fail "binary function pipeline is missing from the build phase"
+
+native_e2e_phase_tests streaming "${repo_root}" | grep -qx TestFunctionStreamingMetal ||
+  fail "function streaming is missing from the streaming phase"
+
 # 5. The partition assert must actually FAIL on an unassigned metal test.
 #    A guard that cannot fail is not a guard — this gate has shipped one before.
 probe="$(mktemp -d)"
@@ -102,13 +109,13 @@ native_e2e_assert_lanes "${repo_root}" || fail "a lane names a test that is not 
 smoke_tests="$(native_e2e_lane_tests smoke "${repo_root}")"
 for must in TestSourceDeployWakeMetal TestDeployWakeMetal \
   TestSec11_MemoryMaxFenceEnforced_CrossProcess TestSec11_SeccompFilterEnforced_CrossProcess; do
-  printf '%s\n' "${smoke_tests}" | grep -qx "${must}" ||
+  grep -qx "${must}" <<<"${smoke_tests}" ||
     fail "smoke lane lost ${must}; it no longer exercises the beta path"
 done
 # Fixture checks ride along (no microVM), so a broken fixture tree is reported
 # before anything boots.
 for t in $(native_e2e_phase_tests fixtures "${repo_root}"); do
-  printf '%s\n' "${smoke_tests}" | grep -qx "${t}" || fail "smoke lane lost fixtures test ${t}"
+  grep -qx "${t}" <<<"${smoke_tests}" || fail "smoke lane lost fixtures test ${t}"
 done
 # And it must stay SMALL: the lane is the answer to the hour-long matrix.
 n="$(printf '%s\n' "${smoke_tests}" | grep -c .)"
@@ -137,7 +144,7 @@ native_e2e_is_lane managed-operation-only || fail "managed-operation-only is not
 customer_job_tests="$(native_e2e_lane_tests customer-job-operations-only "${repo_root}")"
 for required in TestCustomerJobOperationResultMetal TestCustomerJobOperationRestartMetal \
   TestCustomerJobOperationRecoveryMetal TestCustomerJobOperationCancellationMetal TestCustomerJobOperationDirectUploadMetal; do
-  printf '%s\n' "${customer_job_tests}" | grep -qx "${required}" || fail "customer Job lane lost ${required}"
+  grep -qx "${required}" <<<"${customer_job_tests}" || fail "customer Job lane lost ${required}"
 done
 native_e2e_is_lane customer-job-operations-only || fail "customer Job selector is not a lane"
 rx="$(native_e2e_lane_regex customer-job-operations-only "${repo_root}")"
@@ -151,7 +158,7 @@ native_e2e_lane_tests customer-job-operations-only "${customer_job_probe}" | gre
 customer_workflow_tests="$(native_e2e_lane_tests customer-workflow-operations-only "${repo_root}")"
 for required in TestCustomerWorkflowOperationResultMetal TestCustomerWorkflowOperationRecoveryMetal \
   TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal; do
-  printf '%s\n' "${customer_workflow_tests}" | grep -qx "${required}" || fail "customer Workflow lane lost ${required}"
+  grep -qx "${required}" <<<"${customer_workflow_tests}" || fail "customer Workflow lane lost ${required}"
 done
 native_e2e_is_lane customer-workflow-operations-only || fail "customer Workflow selector is not a lane"
 rx="$(native_e2e_lane_regex customer-workflow-operations-only "${repo_root}")"
@@ -196,7 +203,7 @@ for must in TestDirectOCIFullRootfsMetal TestDirectOCIProcessContractMetal TestD
   TestBeforeCheckpointMetal TestTCPIngressMetal TestDeployHealthcheckMetal \
   TestE2E_Streaming_Metal_H2CInnerLeg \
   TestSec11_MemoryMaxFenceEnforced_CrossProcess TestSec11_SeccompFilterEnforced_CrossProcess; do
-  grep -x "${must}" <<<"${container_tests}" >/dev/null || fail "container lane lost ${must}"
+  grep -qx "${must}" <<<"${container_tests}" || fail "container lane lost ${must}"
 done
 rx="$(native_e2e_lane_regex containers "${repo_root}")"
 [[ "${rx}" == ^\(*\)\$ ]] || fail "container lane regex is not anchored"

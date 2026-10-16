@@ -187,12 +187,15 @@ func TestOutboundResponseCacheKeyHidesAndPartitionsCredentials(t *testing.T) {
 	first.Header.Set("Authorization", "Bearer very-secret-value")
 	second := first.Clone(first.Context())
 	second.Header.Set("Authorization", "Bearer different-secret")
-	firstKey := cache.key("integration", "app-1", 1, 60, first)
-	if strings.Contains(firstKey, "very-secret-value") || firstKey == cache.key("integration", "app-1", 1, 60, second) {
+	firstKey := cache.key("integration", "app-1", 1, 60, first, nil)
+	if strings.Contains(firstKey, "very-secret-value") || firstKey == cache.key("integration", "app-1", 1, 60, second, nil) {
 		t.Fatal("cache key exposed or failed to partition the provider credential")
 	}
-	if firstKey == cache.key("integration", "app-2", 1, 60, first) || firstKey == cache.key("integration", "app-1", 2, 60, first) {
+	if firstKey == cache.key("integration", "app-2", 1, 60, first, nil) || firstKey == cache.key("integration", "app-1", 2, 60, first, nil) {
 		t.Fatal("cache key did not partition by app or policy revision")
+	}
+	if cache.key("integration", "app-1", 1, 60, first, []byte(`{"a":1}`)) == cache.key("integration", "app-1", 1, 60, first, []byte(`{"a":2}`)) {
+		t.Fatal("cache key did not partition by request body")
 	}
 }
 

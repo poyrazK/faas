@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -37,7 +38,6 @@ import (
 // overlay. When the roster declares sidecars, drive2+ are mounted as their own
 // read-only roots below /run/faas/sidecars after the pivot.
 const (
-	layerDevice        = "/dev/vdb"
 	layerMount         = "/overlay"
 	newRoot            = "/overlay/merged"
 	builderPATH        = "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -69,6 +69,14 @@ const (
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	// A re-executed copy-out child (ADR-1037) never boots.
+	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
+		os.Exit(runCopyOutHelper(os.Args[1:]))
+	}
+	// Nor does the builder's dependency-cache check, run by the build shell.
+	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
+		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
+	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
 		os.Exit(1)
@@ -146,6 +154,12 @@ func boot() error {
 		// the event, so no bearer credential is staged in the guest.
 		if err := startEventPublishProxy(slog.Default()); err != nil {
 			slog.Default().Warn("event publish proxy unavailable", "err", err)
+		}
+		// ADR-989: managed outbound integrations (including the AI gateway)
+		// through GREGALE_OUTBOUND_URL. vmmd binds the identity; no token or
+		// provider key is staged in the guest.
+		if err := startOutboundRelay(slog.Default()); err != nil {
+			slog.Default().Warn("outbound relay unavailable", "err", err)
 		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
@@ -411,6 +425,9 @@ func boot() error {
 	// fails the deploy — that's worse than today's opaque "guest
 	// not ready after 30s" path).
 	go runCharacterizationForSup(supRef, manifest)
+	// ADR-1170: a watch-mode development server may listen on another port
+	// or on localhost only; bridge the runtime port to it.
+	go runDevWatchBridge(supRef.LastAppPID, manifest.EffectivePort(), slog.Default())
 	// M-2 / //code-review PR #1202 finding #7: a single boot-scoped
 	// cancellable context is shared between the HEALTHCHECK poll
 	// goroutine and the PID 1 signal-handler loop so both observe
@@ -506,6 +523,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
+	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampProfileEnv(env, m.Profiling)
 	env = stampTracingEnv(env, m.Tracing)
@@ -535,6 +553,10 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 	}
 	env = StampDevDebugEnv(env, preload)
+	// ADR-1170: a watch-mode developer image runs a development server that
+	// reloads patched files itself.
+	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
+	env = stampDevWatchEnv(env, devWatchActive.Load())
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
@@ -979,7 +1001,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll(builderDriveMount, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir builder drive mount: %w", err), "")
 	}
-	if err := syscall.Mount(layerDevice, builderDriveMount, "ext4", 0, ""); err != nil {
+	if err := syscall.Mount(layerDevice(), builderDriveMount, "ext4", 0, ""); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mount builder drive scratch: %w", err), "")
 	}
 	for _, dir := range []string{builderDriveMount, builderDriveMount + "/upper", builderDriveMount + "/upper/build"} {
@@ -1151,6 +1173,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	guestStage("buildkit-ready")
 
+	if m.DevWatchCommand != "" && m.Framework == api.FrameworkDockerfile {
+		return finish(errDevWatchUnsupported("watch mode needs an app Gregale builds without a Dockerfile; write a development stage in your Dockerfile instead"), "")
+	}
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
 		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
@@ -1237,6 +1262,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		case removed:
 			fmt.Fprintf(os.Stderr, "guest-init: dependency cache exceeded %d bytes and was discarded\n", api.MaxExportedLayerBytes)
 		}
+		finishDependencyCacheInputs(m.OutDir)
 	}
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
@@ -1546,6 +1572,9 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 			deploy["startCommand"] = "/bin/true"
 		}
 	}
+	if err := devWatchRailpackConfig(config, m); err != nil {
+		return nil, err
+	}
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
 	// platform default empty for musl runtimes and minimal scratch bases.
@@ -1725,11 +1754,18 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	if m.DependencyCache {
-		build += " --export-cache " + shellQuote("type=local,dest=/build/out/cache,mode=max")
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if !m.DependencyCache {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
 	}
-	build += " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
-	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
+	// "$@" carries --export-cache. Once the plan exists, a re-executed
+	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
+	// cache came from the same plan and install inputs; anything else exports.
+	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
+		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
+	}, " ")
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
@@ -1992,7 +2028,13 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
-		done.DevPatch = buildDevPatchSourceMap(m, readBuildPlan)
+		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
+		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
+		done.DevPatch = sourceMap
+		if watchErr != nil {
+			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
+			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)
+		}
 	}
 	if data, mErr := json.Marshal(done); mErr == nil {
 		if f, openErr := os.OpenFile(api.BuildDonePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); openErr != nil {
@@ -2105,8 +2147,8 @@ func assembleOverlay() (string, error) {
 	if err := os.MkdirAll(layerMount, 0o755); err != nil {
 		return "", err
 	}
-	if err := syscall.Mount(layerDevice, layerMount, "ext4", 0, ""); err != nil {
-		return "", fmt.Errorf("mount layer %s: %w", layerDevice, err)
+	if err := syscall.Mount(layerDevice(), layerMount, "ext4", 0, ""); err != nil {
+		return "", fmt.Errorf("mount layer %s: %w", layerDevice(), err)
 	}
 	// Full-rootfs artifacts contain all OCI layers and a marker written by
 	// pkg/rootfs.BuildFullRootfs. They use the existing layer device slot for
@@ -2122,7 +2164,16 @@ func assembleOverlay() (string, error) {
 			return "", err
 		}
 	}
-	opts := "lowerdir=/" +
+	lower, err := overlaymetadata.GuestLowerDirectory(layerMount+"/upper", "/", layerMount+"/empty-lower")
+	if err != nil {
+		return "", fmt.Errorf("inspect app root opacity: %w", err)
+	}
+	if lower != "/" {
+		if err := overlaymetadata.EnsureEmptyLowerDirectory(lower); err != nil {
+			return "", fmt.Errorf("prepare opaque root lower: %w", err)
+		}
+	}
+	opts := "lowerdir=" + lower +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
@@ -2237,11 +2288,12 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
-		// at /dev/vdc (drive2) and increments. SidecarCapMax
+		// at /dev/vdc (drive2) and increments; a pmem base moves
+		// each one letter down (drive_devices.go). SidecarCapMax
 		// bounds this to five helper drives per deployment.
 		out = append(out, sidecarDevice{
 			name:         fmt.Sprintf("sidecar-%d", i),
-			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
+			device:       blkDriveDevice(2+i, bootRootOnPmem()),
 			workloadName: workloadName,
 			tmpfsSizeMB:  sidecarScratchSizeMB(roster.Sidecars[i].ScratchMB, roster.Sidecars[i].RamMB),
 		})

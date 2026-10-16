@@ -29,7 +29,7 @@ func goArtifactFixture(t *testing.T, source string, config map[string]any) strin
 	}
 	compressed := gzipBytes(t, layer.Bytes())
 	var cfg map[string]any
-	if err := json.Unmarshal(minimalConfigBytes(), &cfg); err != nil {
+	if err := json.Unmarshal(minimalConfigBytes(layer.Bytes()), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg["config"] = config
@@ -38,9 +38,9 @@ func goArtifactFixture(t *testing.T, source string, config map[string]any) strin
 		t.Fatal(err)
 	}
 	cd, ld := digestFor(t, raw), digestFor(t, compressed)
-	manifest := minimalManifestBytes(cd, []string{ld})
+	manifest := minimalManifestBytes(raw, compressed)
 	md := digestFor(t, manifest)
-	return buildLocalOCIArchive(t, map[string][]byte{"index.json": minimalIndexBytes(md), blobPath(md): manifest, blobPath(cd): raw, blobPath(ld): compressed})
+	return buildLocalOCIArchive(t, map[string][]byte{"index.json": minimalIndexBytes(manifest), blobPath(md): manifest, blobPath(cd): raw, blobPath(ld): compressed})
 }
 
 func TestGoFunctionArtifactUsesRailpackCommand(t *testing.T) {
@@ -70,6 +70,34 @@ func TestGoFunctionArtifactUsesRailpackCommand(t *testing.T) {
 				t.Fatalf("wrong normalized artifact: %q", data)
 			}
 		})
+	}
+}
+
+// ADR-987: a binary function's Dockerfile image names its executable with
+// ENTRYPOINT; imaged extracts exactly that file, as for Go builds.
+func TestBinaryFunctionArtifactUsesDockerfileEntrypoint(t *testing.T) {
+	archive := goArtifactFixture(t, "app/handler", map[string]any{"Entrypoint": []string{"/app/handler"}})
+	h := &Handler{}
+	layers, source, cleanup, err := h.functionBuildArtifact(context.Background(), RuntimeBinary, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if source != "/app/server" || len(layers) != 1 {
+		t.Fatalf("source=%s layers=%d", source, len(layers))
+	}
+	target := t.TempDir()
+	if err := rootfs.ApplyLayerGz(target, layers[0]); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "app", "server")); err != nil || string(data) != "compiled-go-handler" {
+		t.Fatalf("normalized artifact = %q, %v", data, err)
+	}
+	// An executable outside /app is refused, whatever the Dockerfile says.
+	outside := goArtifactFixture(t, "usr/local/bin/handler", map[string]any{"Entrypoint": []string{"/usr/local/bin/handler"}})
+	if _, _, cleanup, err := h.functionBuildArtifact(context.Background(), RuntimeBinary, outside); err == nil {
+		cleanup()
+		t.Fatal("an executable outside /app was accepted")
 	}
 }
 

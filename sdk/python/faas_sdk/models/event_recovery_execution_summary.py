@@ -11,9 +11,11 @@ T = TypeVar("T", bound="EventRecoveryExecutionSummary")
 
 @_attrs_define
 class EventRecoveryExecutionSummary:
-    """Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy
-    admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission state.
-    Omitted for routing recovery. Saved results share recovery job retention.
+    """Observations of admitted execution- or workflow-mode items. Both modes prefer the first saved terminal result, then
+    live evidence of the exact admitted generation. Later native resumes report superseded only without an earlier saved
+    terminal result. Missing evidence without a saved result is unknown. Native failed/dead runs count as failed. Counts
+    sum to tracked_count and are separate from job admission state. Omitted for routing recovery. Saved results in both
+    modes share recovery job retention.
 
     """
 

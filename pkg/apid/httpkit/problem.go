@@ -1,6 +1,7 @@
 package httpkit
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,10 @@ func NotFound(w http.ResponseWriter, what string) {
 	api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what))
 }
 
+// NoSuchRoute writes the 404 apid returns for an unregistered /v1 route.
+// Routes hidden from customers reuse it so they look exactly like missing ones.
+func NoSuchRoute(w http.ResponseWriter) { NotFound(w, "no such API route") }
+
 // WriteCustomerInternalProblem keeps dependency and storage error text in
 // logs while returning customer-safe recovery guidance.
 func WriteCustomerInternalProblem(w http.ResponseWriter, r *http.Request, log *slog.Logger, operation, detail, hint string, cause error) {
@@ -25,10 +30,17 @@ func WriteCustomerInternalProblem(w http.ResponseWriter, r *http.Request, log *s
 }
 
 // CustomerInternalProblem logs cause and returns a customer-safe 500, unless
-// cause is a route-removal/lifecycle gate, which keeps its 409.
+// cause is a route-removal/lifecycle gate, which keeps its 409, or the request
+// ran out of time, which is a retryable 503: on production-us every
+// server-side deploy failure for days was the request budget expiring on a
+// busy control plane, answered as "500 … contact support" (hunt #9, H9-163).
 func CustomerInternalProblem(log *slog.Logger, operation, detail, hint string, cause error) *api.Problem {
 	if p := RouteRemovalBlockedProblem(cause); p != nil {
 		return p
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return CustomerCapacityProblem(log, operation, "Briefly at capacity", detail,
+			"Gregale could not finish this request in time; retry in a few seconds.", cause)
 	}
 	LogCustomerFailure(log, operation, cause)
 	return api.ErrInternal(detail).WithHint(hint)

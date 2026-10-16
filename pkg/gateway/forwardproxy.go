@@ -34,6 +34,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ import (
 	evts "github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -74,10 +76,27 @@ func isSyntheticInvocation(ctx context.Context) bool {
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 	return isTrustedServiceCallerAssertion(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
-		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
+		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
 		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
+}
+
+// guestDeadlineHeader tells the guest how long the request may still run:
+// the request budget left at dispatch (ADR-1150). The function runner bounds
+// the invocation by it. Customer-supplied x-faas-* headers are dropped before
+// this is appended, so the guest only ever sees the platform's value. A
+// request without a budget (synthetic invocations) carries none.
+func guestDeadlineHeader(ctx context.Context) (*vmmdpb.Header, bool) {
+	b, ok := reqbudget.FromContext(ctx)
+	if !ok {
+		return nil, false
+	}
+	remaining := b.Remaining(time.Time{})
+	if remaining <= 0 {
+		return nil, false
+	}
+	return &vmmdpb.Header{Name: api.DeadlineHeader, Value: strconv.FormatInt(remaining.Milliseconds(), 10)}, true
 }
 
 // withTrustedServiceCallerAssertion marks the assertion that ServiceProxy
@@ -291,7 +310,7 @@ func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientL
 
 	cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 	if !ok {
-		markStaleTarget(r.Context())
+		markUndeliveredTarget(r.Context())
 		writeForwarderProblem(w, http.StatusServiceUnavailable)
 		return
 	}
@@ -376,7 +395,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		responseStatus := http.StatusBadGateway
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			markStaleTarget(r.Context())
+			markUndeliveredTargetErr(r.Context(), err)
 			responseStatus = http.StatusServiceUnavailable
 		}
 		log.Error("gateway: forwarder stream open failed",
@@ -429,6 +448,18 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			init.Headers = append(init.Headers, &vmmdpb.Header{Name: name, Value: v})
 		}
 	}
+	// net/http moves Host out of r.Header into r.Host, so the loop above
+	// never carries it and the stream bridge fell back to the guest's own
+	// address: apps saw "Host: 10.0.0.2:<port>", which breaks Django's
+	// ALLOWED_HOSTS, absolute URL and OAuth redirect generation, and apps
+	// served on several hostnames (production-us hunt #9, H9-98). ADR-028:
+	// the guest sees the request's Host.
+	if r.Host != "" {
+		init.Headers = append(init.Headers, &vmmdpb.Header{Name: "Host", Value: r.Host})
+	}
+	if deadline, ok := guestDeadlineHeader(r.Context()); ok {
+		init.Headers = append(init.Headers, deadline)
+	}
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
@@ -436,7 +467,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			markStaleTarget(r.Context())
+			markStaleTargetErr(r.Context(), err)
 		}
 		log.Error("gateway: forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
@@ -532,14 +563,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// transport error, matching the public edge's
 				// mid-body failure handling (internal_proxy.go).
 				if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.NotFound) {
-					markStaleTarget(r.Context())
+					markStaleTargetErr(r.Context(), err)
 				}
 				log.Warn("gateway: forwarder stream failed after response commit; aborting",
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-				markStaleTarget(r.Context())
+				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -548,7 +579,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				// The routed instance has no VM on its node. Say so: a row the
 				// scheduler still calls RUNNING otherwise answers 503 silently.
-				markStaleTarget(r.Context())
+				// vmmd answers NotFound before dialing the guest bridge, so no
+				// guest saw this request (ADR-1133).
+				markUndeliveredTarget(r.Context())
 				log.Warn("gateway: forwarder target not found on node; surfacing 503",
 					"node", t.NodeID, "instance", t.InstanceID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
@@ -889,7 +922,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				wsOutcome = WSOutcomeUpstreamUnavailable
-				markStaleTarget(r.Context())
+				markStaleTargetErr(r.Context(), err)
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)

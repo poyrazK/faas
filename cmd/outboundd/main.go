@@ -122,6 +122,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := ValidateAIGateway(configured, cfg.AIGateway(os.Getenv)); err != nil {
+		return err
+	}
 	identityVerifier, err := cfg.IdentityVerifier(configured)
 	if err != nil {
 		return fmt.Errorf("outboundd: workload identity: %w", err)
@@ -198,6 +201,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
+	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
+	if handler.AIGatewayRollout, err = cfg.AIGatewayRollout(os.Getenv); err != nil {
+		return fmt.Errorf("outboundd: %w", err)
+	}
+	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled,
+		"rollout_accounts", len(handler.AIGatewayRollout), "rollout_limited", handler.AIGatewayRollout != nil)
+	// ADR-990: AI fallback routes are served on relay connections.
+	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
+		return err
+	}
+	go runAIUsagePrune(ctx, backend, log)
+	// ADR-997: replays recorded by apid run through this daemon's handler.
+	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
+	go replayWorker.Run(ctx)
+	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
+	if err != nil {
+		return err
+	}
 	readyProbe := &wire.ReadyzProbe{}
 	pgSignal, stopPGSignal := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
 	readyProbe.RegisterSignal(pgSignal, stopPGSignal)
@@ -244,6 +265,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if metricsServer != nil {
 			_ = metricsServer.Shutdown(shutdownCtx)
 		}
+		if shutdownRelay != nil {
+			shutdownRelay(shutdownCtx)
+		}
 	}()
 	// All startup dependencies (config, Postgres, policy resolution, and the
 	// metrics registry) are ready before the serving listener is entered. Keep
@@ -255,6 +279,33 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// aiUsagePruner removes AI usage rollups past their retention (ADR-988).
+type aiUsagePruner interface {
+	PruneAIUsage(context.Context) (int64, error)
+}
+
+// runAIUsagePrune deletes expired AI usage rollups at startup and hourly.
+// Deletion is idempotent, so concurrent replicas need no coordination.
+func runAIUsagePrune(ctx context.Context, pruner aiUsagePruner, log *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		deleted, err := pruner.PruneAIUsage(pruneCtx)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			log.Warn("outboundd: prune AI usage rollups", "err", err)
+		} else if deleted > 0 {
+			log.Info("outboundd: pruned AI usage rollups", "rows", deleted)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func outboundSpansWriterTarget(getenv func(string) string) string {

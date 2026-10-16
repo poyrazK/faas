@@ -84,6 +84,9 @@ type BackendConfig struct {
 	SecretEnv map[string]string `json:"secret_env,omitempty"`
 	// DataAPIEnabled changes the qualified credential contract, not placement.
 	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
+	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
+	// rule: a fresh qualification report must carry its evidence.
+	AuthEnabled bool `json:"auth_enabled,omitempty"`
 }
 
 type Backend struct {
@@ -221,7 +224,7 @@ func (r *Registry) Default(region string) (Backend, error) {
 	}
 	backend, ok := r.backends[r.defaults[region]]
 	if !ok {
-		return Backend{}, ErrUnsupported
+		return Backend{}, fmt.Errorf("%w: no database backend in region %q (available: %s)", ErrUnsupported, region, joinOffered(r.Regions(), func(v string) string { return v }))
 	}
 	return backend, nil
 }
@@ -248,8 +251,9 @@ func (r *Registry) Regions() []string {
 
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. DataAPIEnabled is a
-	// rollout capability, fenced by qualification's credential-access equality.
+	// environment variable must not change placement. DataAPIEnabled and
+	// AuthEnabled are rollout capabilities, fenced by qualification's
+	// credential-access equality.
 	// Namespace and all non-secret settings fail closed if a backend is
 	// accidentally repurposed.
 	payload := struct {

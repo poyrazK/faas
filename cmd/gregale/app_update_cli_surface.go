@@ -13,7 +13,7 @@ type updateAppCLISurface struct {
 }
 
 var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
-	"deploy_settings_condition":       {Path: "deploy / deploy resume guarded post-ready settings (ADR-986/992)"},
+	"deploy_settings_condition":       {Path: "deploy / deploy resume guarded post-ready settings (ADR-1447/992)"},
 	"visibility":                      {Path: "gregale app <slug> --visibility", AppFlags: []string{"visibility"}},
 	"allowed_service_callers":         {KnownGap: "no customer CLI setter; API-only today"},
 	"allowed_service_call_scopes":     {KnownGap: "no customer CLI setter; API-only today"},
@@ -41,6 +41,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"retry_policy":                    {Path: "gregale.yaml retry_policy"},
 	"service_replicas":                {Path: "gregale.yaml lifecycle.service_replicas"},
 	"before_checkpoint":               {Path: "gregale.yaml lifecycle.before_checkpoint"},
+	"pause":                           {Path: "gregale.yaml lifecycle.pause"},
 	"worker_replicas":                 {Path: "gregale workers scale"},
 	"ports":                           {KnownGap: "no existing-app CLI setter; API-only today"},
 	"favicon":                         {KnownGap: "no customer CLI setter; API-only today"},
@@ -79,8 +80,5 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"overflow_node":                   {Path: "gregale app <slug> --overflow-node", AppFlags: []string{"overflow-node"}},
 	"cors_default_enabled":            {KnownGap: "no customer CLI setter; API-only today"},
 	"cors_default_origins":            {KnownGap: "no customer CLI setter; API-only today"},
-	// The customer PATCH handler ignores this legacy internal field. It is
-	// intentionally recorded as a gap so a DTO change forces an explicit review.
-	"StartCommand":   {KnownGap: "internal reconciliation field; ignored by customer PATCH"},
-	"scaling_policy": {Path: "gregale app <slug> --min / --autoscale-target-rps / --autoscale-target-cpu-pct", AppFlags: []string{"min", "autoscale-target-rps", "autoscale-target-cpu-pct"}},
+	"scaling_policy":                  {Path: "gregale app <slug> --min / --autoscale-target-rps / --autoscale-target-cpu-pct", AppFlags: []string{"min", "autoscale-target-rps", "autoscale-target-cpu-pct"}},
 }

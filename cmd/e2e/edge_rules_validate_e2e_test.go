@@ -40,6 +40,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -476,7 +477,11 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read gateway metrics: %v", err)
 	}
-	if !bytes.Contains(metricsBody, []byte(`gateway_edge_rule_compile_error_total{kind="validate"} 1`)) {
+	// The loader compiles a host's rules once per cache key. Since ADR-1191
+	// a request reads both the host key and the host+app key, so one broken
+	// rule can count more than once; the signal is that the count is not 0.
+	match := regexp.MustCompile(`gateway_edge_rule_compile_error_total\{kind="validate"\} (\d+)`).FindSubmatch(metricsBody)
+	if match == nil || string(match[1]) == "0" {
 		t.Fatalf("external-$ref compile rejection metric missing; metrics=%s", metricsBody)
 	}
 }

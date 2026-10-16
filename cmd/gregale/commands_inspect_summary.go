@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -16,6 +17,8 @@ import (
 const inspectSummarySchemaVersion = 3
 
 type inspectSummary struct {
+	RecentChanges   []inspectRecentChange      `json:"-"`
+	Failure         *inspectFailureOverview    `json:"-"`
 	SchemaVersion   int                        `json:"schema_version"`
 	App             inspectAppSummary          `json:"app"`
 	Runtime         inspectRuntimeSummary      `json:"runtime"`
@@ -100,6 +103,7 @@ type inspectAPISummary struct {
 
 type inspectDataSummary struct {
 	Available     bool     `json:"available"`
+	NotOffered    string   `json:"not_offered,omitempty"`
 	Upstreams     int      `json:"upstreams"`
 	UpstreamQuota int      `json:"upstream_quota"`
 	Kinds         []string `json:"kinds"`
@@ -136,6 +140,7 @@ type inspectRecommendation struct {
 }
 
 type inspectSummaryInputs struct {
+	RecentDeployments    []api.DeploymentResponse
 	Deployment           *api.DeploymentResponse
 	NewerFailedCandidate *api.DeploymentResponse
 	DeploymentErr        error
@@ -145,6 +150,7 @@ type inspectSummaryInputs struct {
 	UpstreamCount        int
 	UpstreamQuota        int
 	UpstreamsErr         error
+	UpstreamsOff         string // why data placement is not offered; "" when it is
 	Alerts               []api.AlertRuleResponse
 	AlertsErr            error
 	Operational          *api.AppOperationalSummary
@@ -194,6 +200,10 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 			return
 		}
 		out.Deployment, out.NewerFailedCandidate = selectInspectDeployments(deployments)
+		if len(deployments) > 3 {
+			deployments = deployments[:3]
+		}
+		out.RecentDeployments = deployments
 	}()
 	go func() {
 		defer wg.Done()
@@ -202,6 +212,7 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 	go func() {
 		defer wg.Done()
 		out.Upstreams, out.UpstreamCount, out.UpstreamQuota, out.UpstreamsErr = client.ListAppDataUpstreamsWithQuota(ctx, app.Slug, "")
+		out.UpstreamsOff, out.UpstreamsErr = upstreamsNotOffered(out.UpstreamsErr)
 	}()
 	go func() {
 		defer wg.Done()
@@ -245,6 +256,8 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 		summary.Unavailable = append(summary.Unavailable, "openapi")
 	}
 	summary.Unavailable = sortedUniqueStrings(summary.Unavailable)
+	summary.RecentChanges = inspectRecentChanges(app.ID, in.RecentDeployments, in.Operational)
+	summary.Failure = inspectPersistedFailure(in.Deployment, in.NewerFailedCandidate)
 	summary.Recommendations = inspectRecommendations(summary)
 	return summary
 }
@@ -386,8 +399,25 @@ func inspectOpenAPI(raw []byte) inspectAPISummary {
 	return summary
 }
 
+// upstreamsNotOffered separates "data placement is not offered here" from a
+// failed read. On a cluster with the feature off, every inspect headline was
+// "Incomplete information … current health is not established" (H10-7).
+func upstreamsNotOffered(err error) (string, error) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return "", err
+	}
+	switch apiErr.Problem.Code {
+	case api.CodeDataUpstreamsDisabled:
+		return "not enabled on this cluster", nil
+	case api.CodePlanDataUpstreamsNotAllowed:
+		return "not included in this plan", nil
+	}
+	return "", err
+}
+
 func inspectData(in inspectSummaryInputs) inspectDataSummary {
-	out := inspectDataSummary{Available: in.UpstreamsErr == nil, Upstreams: in.UpstreamCount, UpstreamQuota: in.UpstreamQuota, Kinds: []string{}}
+	out := inspectDataSummary{Available: in.UpstreamsErr == nil && in.UpstreamsOff == "", NotOffered: in.UpstreamsOff, Upstreams: in.UpstreamCount, UpstreamQuota: in.UpstreamQuota, Kinds: []string{}}
 	seen := map[string]bool{}
 	for _, upstream := range in.Upstreams {
 		kind := string(upstream.Kind)
@@ -555,16 +585,19 @@ func containsString(values []string, want string) bool {
 }
 
 func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
+	renderInspectAttention(w, summary)
 	renderInspectApp(w, summary.App)
 	renderInspectRuntime(w, summary.Runtime)
 	renderInspectResources(w, summary.Resources)
 	renderInspectSignals(w, summary)
 	renderInspectRelease(w, summary.Release, containsString(summary.Unavailable, "deployment"))
+	renderInspectFailureDetails(w, summary)
 	if len(summary.Unavailable) > 0 {
 		_, _ = fmt.Fprintf(w, "  unavailable: %s\n", strings.Join(summary.Unavailable, ", "))
 	}
+	renderInspectRecentChanges(w, summary)
 	renderInspectOperational(w, summary.Operational)
-	renderInspectRecommendations(w, summary.Recommendations)
+	renderInspectRemainingRecommendations(w, summary)
 }
 
 func renderInspectApp(w io.Writer, app inspectAppSummary) {
@@ -596,6 +629,9 @@ func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary) {
 		_, _ = fmt.Fprintf(w, " · %dms", runtime.Health.LatencyMS)
 	}
 	_, _ = fmt.Fprintln(w)
+	if runtime.Health.VerifiedAt != "" {
+		_, _ = fmt.Fprintf(w, "  recorded:  %s (deployment-time check; current health is separate)\n", compactInspectFailureText(runtime.Health.VerifiedAt))
+	}
 }
 
 func renderInspectResources(w io.Writer, resources inspectResourceSummary) {
@@ -636,6 +672,8 @@ func renderInspectSignals(w io.Writer, summary inspectSummary) {
 			kinds = strings.Join(summary.Data.Kinds, ", ")
 		}
 		_, _ = fmt.Fprintf(w, "  data:      %d/%d upstreams · %s\n", summary.Data.Upstreams, summary.Data.UpstreamQuota, kinds)
+	} else if summary.Data.NotOffered != "" {
+		_, _ = fmt.Fprintf(w, "  data:      %s\n", summary.Data.NotOffered)
 	} else {
 		_, _ = fmt.Fprintln(w, "  data:      unavailable")
 	}

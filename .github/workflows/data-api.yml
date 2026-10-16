@@ -4,7 +4,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "cmd/gregale/**"
-      - "cmd/apid/managed_postgres_credentials*"
+      - "pkg/apid/apidserver/managed_postgres_credentials*"
       - "pkg/managedpostgres/**"
       - "pkg/api/limits.go"
       - "pkg/state/app_secret_delivery_policy*"
@@ -14,6 +14,7 @@ on:
       - "sdk/data/**"
       - "tests/data-api/**"
       - "examples/data-api-orders/**"
+      - "examples/data-api-teams/**"
       - "examples/data-api-concurrency/**"
       - "examples/data-api-idempotency/**"
       - "examples/data-api-outbox/**"
@@ -67,7 +68,9 @@ jobs:
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Browser acceptance precedes the full credential and CLI integration run;
+    # cold Go builds need enough time to finish both stages on hosted runners.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

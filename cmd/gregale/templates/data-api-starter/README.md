@@ -8,6 +8,18 @@ gregale init --template data-api-starter --path notes
 cd notes
 ```
 
+With an approved matching CLI/SDK bundle, new projects can instead run:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
+```
+
+Run this from outside an existing project. It creates the starter, verifies and
+installs the SDK, generates types, checks the client and replays the scenarios.
+It removes disposable services when done; run `gregale data-api dev --check`
+inside the new project to start a development session. See the
+[first-application journey](https://gregale.dev/docs/data-api-onboarding).
+
 For local development, install Node.js 22+, npm and Docker, then run
 `gregale data-api dev`. It starts a disposable database and authenticated API,
 applies these migrations, generates client types, and verifies Alice/Bob RLS
@@ -568,7 +580,8 @@ npm run build:browser --prefix client
 npm run serve:browser --prefix client
 ```
 
-Open `http://127.0.0.1:3030`. Configure that exact origin in the Data API's
+Open `http://127.0.0.1:3030`. Local `data-api dev` already allows this
+loopback origin. For a hosted runtime, configure that exact origin in the Data API's
 `--origins` setting and redeploy before testing. Enter the API URL, the signed-in
 application user's subject and application JWT. Management credentials must
 never enter the browser. The example clears the token field immediately and
@@ -902,3 +915,85 @@ The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
 `cursorFrom` helpers. Its public `{ created_at, id }` cursor format and strict
 timestamp/id validation remain the same, including PostgreSQL microseconds.
 Upgrade the installed SDK bundle alongside the starter to use these helpers.
+
+### Validated RPC form
+
+The browser example also includes a note-and-tags form backed by the approved
+`create_note_with_tags_once` function. Apply migrations and RPC permissions,
+refresh the serving schema and install a current paired SDK bundle before using
+it. No additional database migration is needed for this form.
+
+Enter the session information above, then a body and optional comma-separated
+tags. The application-owned parser trims content, rejects a blank body or empty
+tag names and supplies an empty tag list by default. Inline field messages appear
+before token lookup or transport. `client/src/note-form.ts` connects this parser
+to `validatedRpc()`, and preserves the typed `id,body,priority,version` result.
+Constraint, authentication and permission failures use curated messages; raw
+SQL details and parser exceptions are never rendered. Text is rendered with
+`textContent`, including saved note content.
+
+Requests use `dataRequest()` with a five-second deadline and automatic retries
+disabled. If a save cannot be confirmed, the controller retains a frozen request
+key and payload in memory and blocks new submissions. The API URL, subject and
+note fields stay locked; supply a current token for the **same signed-in user**
+and choose **Resolve pending save**. This explicitly calls the idempotent function
+with the original key and payload. It returns the saved receipt, or completes the
+save if the first transaction did not commit. It is not a read-only status check.
+The subject input does not override JWT ownership or verify a renewed token's
+identity; production session management must enforce the same-user requirement.
+
+Resolve pending saves promptly within the owner's receipt-retention window.
+After receipt deletion, replay can create another note. The example does not
+persist tokens or pending requests, and closing or reloading the page loses the
+recovery state. A production app should retain operation state under its own
+identity and privacy policy and enforce its agreed retention window before replay.
+The token input is cleared immediately and the in-memory token is cleared after
+each action; paste a fresh application token for each save or recovery action.
+
+Starter client tests cover field feedback, request/result types, safe messages,
+concurrent-action suppression, deadlines and immutable recovery payloads. The
+PostgreSQL/PostgREST acceptance suite tests committed-response loss and retained
+receipts. Required Chromium acceptance exercises the actual form, checks invalid
+input sends no request, verifies token clearing and locked fields, and confirms
+explicit recovery produces one saved note.
+
+### Schema-driven form feedback
+
+Run `gregale data-api dev --validators --check` to regenerate runtime insert/update
+parsers alongside types, including after watched migrations. The note form uses
+those generated rules before creating a request key or sending a save. Database
+constraints, RPC business rules and RLS remain authoritative. Plain type generation
+keeps the existing form validation. Keep your generation mode consistent in CI:
+
+```sh
+gregale data-api dev --validators --check-types --once
+```
+
+### Validate a CSV before importing notes
+
+After generating with `--validators`, use `previewNotesCsv` from
+`client/src/note-import.ts`. Supply the signed-in subject as application context;
+CSV ownership columns are ignored. Map `body` and optional `priority` headers, review
+all rows, and explicitly approve before submitting a successful `preview.rows`.
+An invalid preview has complete counts, capped row/field issues and no partial rows.
+It never retrieves a token or sends a request. CSV is limited to 1 MiB/1,000 records,
+and errors use record numbers including the header. SQL and RLS recheck submissions.
+
+### Schema-driven create and edit forms
+
+With `dev --validators`, the browser example builds note body and edit-priority
+controls from generated `formMetadata`. Labels and the editable-field allowlist
+remain application-owned; subject, identity and version are never auto-rendered.
+Supported limits and enum choices refresh with the generated module. Field parsers
+provide feedback before transport. Read a current note ID/version before editing;
+blank edit fields keep existing values, conflicts require a fresh read, and uncertain
+saves are never automatically replayed. Plain types retain default starter controls.
+
+### Enable version-checked inspector edits
+
+Review the existing note version trigger, then copy
+`migrations/examples/enable-versioned-edits.sql` into a new numbered migration.
+Its `@gregale:version` column annotation declares that the database advances the
+version on every successful update. The local inspector then offers reviewed edits
+for visible keyed rows, with stale-version rejection and a fresh-read requirement.
+Do not modify an already applied numbered migration to add the annotation.

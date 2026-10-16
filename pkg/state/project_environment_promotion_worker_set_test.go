@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1040
+// adr: 1440
 func TestPromotionWorkerSetMemory(t *testing.T) {
 	testPromotionWorkerSet(t, func(*testing.T) Store { return NewMemStore() })
 	t.Run("recovery", func(t *testing.T) {

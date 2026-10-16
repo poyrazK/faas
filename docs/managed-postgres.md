@@ -37,7 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=7`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=8`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -143,11 +143,24 @@ through rotation, and cleanup verification. Version-7 evidence remains a
 historical provider result; it cannot authorize new provisioning under v8.
 
 The separate [deployed SQL acceptance](ops/managed-postgres-native-acceptance.md)
-exercises release/runtime credential separation, real guest SQL, rotation,
-snapshot restore and cleanup using a disposable PostgreSQL fixture. Run
+exercises release/runtime credential separation, retained writer/reader pools,
+the application's restore reconnect hook, real guest SQL, rotation, snapshot
+restore and cleanup using a disposable PostgreSQL fixture. Run
 `make test-managed-postgres-native` on a designated isolated acceptance host.
 Provider management is simulated; a nested-node run remains diagnostic and
 does not replace fresh provider v8 and supported native-host qualification.
+The probe verifies writer and reader readiness in parallel within the bounded
+restore callback; both must succeed before it accepts traffic.
+
+The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
+joins provider v8 evidence with a versioned report from actual execution of all
+thirteen guest phases. `managed-postgres-qualify --verify --rollout` checks the
+approved qualification-bundle manifest, PostgreSQL major, native host class,
+cleanup and expiry without making provider or SQL calls. Before a staging
+canary, opt in with `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`
+and configure the guest report and expected manifest paths. Partial inputs
+cannot fall back to environment-only approval; production admission stays
+closed. Provider-only verification remains useful for isolated diagnostics.
 
 Save the JSON output as an operator-owned artifact and verify it without making
 provider calls:
@@ -264,6 +277,15 @@ credential mode and the dedicated `api` schema. See the
 and schema refresh. Neon advertises this mode only when the backend explicitly
 sets `data_api_enabled: true` and passes fresh qualification for that configuration.
 
+Application Auth ([ADR-1190](adr/1190-application-auth.md)) uses the separately
+qualified `auth` credential mode. GoTrue enables row-level security on every
+table it creates, so the auth login acts as a dedicated non-login owner of only
+the `auth` and `gregale_auth` schemas. That owner never joins the customer
+schema owner and has no database `CREATE`, temporary-object or customer-schema
+access. Issuance fails closed when an `auth` schema already belongs to another
+role. Neon advertises the mode only when the backend sets `auth_enabled: true`
+and passes fresh qualification including the `auth_credentials_probe`.
+
 Neon's create-project operation is non-idempotent. The adapter never retries
 that POST at the HTTP layer. It assigns a deterministic, hashed project name,
 discovers that exact name before creation, and returns the Neon project ID as
@@ -292,6 +314,8 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `read_write` (default) | Pooled, with direct fallback | Public-schema SELECT, INSERT, UPDATE, DELETE; sequence usage; RLS enforced |
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
+| `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
+| `auth` | Direct required; serving and release tasks | Acts as the owner of only the `auth` and `gregale_auth` schemas for [application Auth](adr/1190-application-auth.md); no customer-schema access |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
@@ -364,6 +388,11 @@ finish. Queued tasks load the new generation when dispatched. Retirement disable
 login and terminates sessions before deleting grants and the role. It refuses
 to delete a role that owns objects, preserving application data for operator
 repair. Stable schema objects survive migration credential retirement.
+
+Migration owners may create custom schemas in their customer database. SQL
+verification accepts that database `CREATE` privilege only for migration access;
+runtime credentials still reject it. The administrative `CREATEDB` role
+attribute, temporary-object access, and unsafe owner memberships remain denied.
 
 Existing preview administrator bindings require deliberate rotation to adopt
 restricted credentials. Existing table ownership is preserved; an operator may
@@ -488,7 +517,10 @@ When enabled, a new database reservation is admitted only if the account has a
 complete usage coverage for every provider resource and no unresolved accounting
 obligation, with fresh active observations and bounded final correction evidence
 for deleted resources and has not crossed its
-monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
+monthly cost, compute, storage, history (when configured), or egress ceiling. A live
+resource created inside the current, still-open window owes no completed window yet,
+so its missing first observation does not block; once that window closes it needs
+coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the
 plan's database-count allowance, converted to the canonical byte-second meter,
@@ -698,14 +730,14 @@ to refresh it. These checks do not prove application VM reachability, data
 correctness, or application compatibility.
 
 Workloads keep using the source throughout this workflow. The current API has
-no activation operation; scheduler writer draining and atomic publication remain
+no activation operation; complete writer draining and atomic publication remain
 pending. Both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and
 reprepare before retiring those keys. See [ADR-465](adr/465-managed-postgres-cutover-verification.md).
 
-The next cutover prerequisite is an internal, durable app-wide admission fence
+An internal, durable app-wide admission fence
 ([ADR-466](adr/466-managed-postgres-cutover-admission-fence.md)). It requires fresh
 verification and blocks new instance admission and running-state publication,
 including worker, job, mirror, and warm-pool paths. It persists through retries
@@ -721,6 +753,41 @@ resources. Delayed boot RPCs must read the fence again, including after a daemon
 restart. Warm and migration resume/capture operations use the same admission check
 and destruction join. Default-local nodes honor a configured `db_url` or
 `FAAS_VMMD_DBURL`; DB-less nodes cannot participate in cutover drains.
+
+Internal scheduler plumbing can now explicitly request retirement of one fenced
+VM incarnation and persist a native drain receipt ([ADR-993](adr/993-managed-postgres-cutover-drain-receipts.md)).
+The frame pins its cutover, fence timestamp, app owner/revision, deployment, node,
+instance and wake ID. vmmd holds authoritative database locks while joining boot
+and stopping the original native generation. Process exit and resource cleanup
+must both be confirmed in the host journal. schedd commits the receipt with the
+terminal state before releasing capacity. Lost replies, failed cleanup and
+failed database writes leave work pending for bounded recovery. Missing journal
+records, DB-less/legacy hosts, changed ownership and migrated lineage fail closed.
+These per-instance receipts do not prove all app writers, cached routes or
+external SQL sessions stopped. Complete writer coverage and customer activation
+remain pending, as does physical native KVM qualification for this step.
+
+An explicit internal scheduler request can now capture a durable app-instance
+drain plan across every deployment, scope and mode
+([ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md)). Capture and native
+member reservations commit atomically under the current owner and admission
+fence; the existing bounded recovery worker resumes the same members after
+restart. The atomic inventory limit is 512 members. Empty or oversized catalogs
+queue no partial drain. Parked, undispatched, migrated, private qualification,
+unsupported-kind and incomplete-identity members remain visible blockers.
+While the plan's epoch is current, catalog guards reject late instance insertion,
+incarnation changes and deletion without a matching native receipt. Confirmed
+retirement evidence survives ordinary terminal retention. Completed cancellation
+releases the catalog fence along with the existing admission barrier.
+
+Read-only plan status reports each member and its pending, retired or blocked
+condition. `catalog_retired` requires matching native receipts for the entire
+captured catalog and current ownership/fence authority. It does not prove
+external SQL-session isolation, empty host inventory, route convergence or
+permission to publish target credentials. Prepare/Verify do not create plans;
+there is still no customer activation operation. Production provisioning and
+customer cutover activation remain disabled.
+
 See [ADR-468](adr/468-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;
 concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the

@@ -25,10 +25,314 @@ import type { ManagedRealtimeScheduleTotals } from '../models/ManagedRealtimeSch
 import type { ManagedRealtimeScheduleUpdate } from '../models/ManagedRealtimeScheduleUpdate.js';
 import type { ManagedRealtimeSignalRequest } from '../models/ManagedRealtimeSignalRequest.js';
 import type { ManagedRealtimeSignalResponse } from '../models/ManagedRealtimeSignalResponse.js';
+import type { MCPAdmissionEvidence } from '../models/MCPAdmissionEvidence.js';
+import type { MCPAdmissionHistoryResponse } from '../models/MCPAdmissionHistoryResponse.js';
+import type { MCPCatalogMonitorConfigRequest } from '../models/MCPCatalogMonitorConfigRequest.js';
+import type { MCPCatalogMonitorSnapshot } from '../models/MCPCatalogMonitorSnapshot.js';
+import type { MCPCatalogMonitorSummary } from '../models/MCPCatalogMonitorSummary.js';
+import type { MCPCatalogOAuthRequest } from '../models/MCPCatalogOAuthRequest.js';
+import type { MCPCatalogOAuthResponse } from '../models/MCPCatalogOAuthResponse.js';
+import type { MCPCatalogObservationRequest } from '../models/MCPCatalogObservationRequest.js';
+import type { MCPCatalogReceipt } from '../models/MCPCatalogReceipt.js';
+import type { MCPConnectionHealthSnapshot } from '../models/MCPConnectionHealthSnapshot.js';
+import type { MCPOAuthRetirement } from '../models/MCPOAuthRetirement.js';
+import type { MCPOAuthRetirementAction } from '../models/MCPOAuthRetirementAction.js';
+import type { MCPOAuthRetirementsResponse } from '../models/MCPOAuthRetirementsResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DefaultService {
+  /**
+   * Read a retained MCP admission receipt by evidence UUID
+   * @returns MCPAdmissionEvidence Account-owned receipt
+   * @throws ApiError
+   */
+  public static getMcpAdmissionReceipt({
+    id,
+  }: {
+    /**
+     * Evidence UUID identifying the retained MCP admission receipt
+     */
+    id: string,
+  }): CancelablePromise<MCPAdmissionEvidence> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/mcp/admissions/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `Receipt missing or owned by another account`,
+      },
+    });
+  }
+  /**
+   * Read opt-in catalog monitoring state and retained transitions
+   * @returns any Configured snapshot, or an exact receipt when evidence is supplied
+   * @throws ApiError
+   */
+  public static getMcpCatalogMonitor({
+    slug,
+    role,
+    allRoles = false,
+    evidence,
+  }: {
+    /**
+     * HTTP application whose catalog monitor is managed
+     */
+    slug: string,
+    /**
+     * Independent reviewed authorization view; omit for default
+     */
+    role?: string,
+    /**
+     * App summary of all roles; cannot combine with role or evidence
+     */
+    allRoles?: boolean,
+    /**
+     * Read one retained transition receipt
+     */
+    evidence?: string,
+  }): CancelablePromise<(MCPCatalogMonitorSnapshot | MCPCatalogReceipt | MCPCatalogMonitorSummary)> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/mcp-catalog-monitor',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'role': role,
+        'all_roles': allRoles,
+        'evidence': evidence,
+      },
+      errors: {
+        404: `Monitor or evidence unavailable to this account`,
+      },
+    });
+  }
+  /**
+   * Configure a reviewed role baseline and optional managed observer; secret binding also requires secrets-read scope
+   * @returns MCPCatalogMonitorSnapshot Monitor revision; current observation is reset until this revision reports
+   * @throws ApiError
+   */
+  public static configureMcpCatalogMonitor({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * HTTP application whose catalog monitor is managed
+     */
+    slug: string,
+    requestBody: MCPCatalogMonitorConfigRequest,
+  }): CancelablePromise<MCPCatalogMonitorSnapshot> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/mcp-catalog-monitor',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid complete baseline or freshness limit`,
+        404: `App unavailable to this account`,
+      },
+    });
+  }
+  /**
+   * Page retained MCP receipts newest first by audit sequence
+   * @returns MCPAdmissionHistoryResponse Retained receipts; an omitted next_cursor means the end of matching history
+   * @throws ApiError
+   */
+  public static listMcpAdmissionHistory({
+    id,
+    limit = 50,
+    cursor,
+    outcome,
+  }: {
+    /**
+     * Deployment UUID whose admission receipts are listed
+     */
+    id: string,
+    /**
+     * Maximum number of matching admission receipts to return
+     */
+    limit?: number,
+    /**
+     * Continuation cursor from the previous page
+     */
+    cursor?: string,
+    /**
+     * Filter receipts by the recorded admission outcome
+     */
+    outcome?: 'accepted' | 'rejected',
+  }): CancelablePromise<MCPAdmissionHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/mcp-admissions',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+        'outcome': outcome,
+      },
+      errors: {
+        400: `Invalid UUID or pagination filter`,
+        404: `Deployment missing or owned by another account`,
+      },
+    });
+  }
+  /**
+   * Read administrator-only OAuth retirement history including deleted applications
+   * @returns MCPOAuthRetirementsResponse Up to fifty retirement records with sealed data omitted
+   * @throws ApiError
+   */
+  public static listMcpoAuthRetirements({
+    offset,
+  }: {
+    /**
+     * Bounded history page offset
+     */
+    offset?: number,
+  }): CancelablePromise<MCPOAuthRetirementsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/mcp-oauth-retirements',
+      query: {
+        'offset': offset,
+      },
+      errors: {
+        400: `Invalid offset`,
+        403: `Administrator access required`,
+      },
+    });
+  }
+  /**
+   * Begin, complete or disconnect guided OAuth for an observer role; requires deploy intent and secret-read permission
+   * @returns MCPCatalogOAuthResponse Authorization URL or completed connection state without token values
+   * @throws ApiError
+   */
+  public static mcpCatalogOAuth({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Application owning the OAuth connection
+     */
+    slug: string,
+    requestBody: MCPCatalogOAuthRequest,
+  }): CancelablePromise<MCPCatalogOAuthResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/mcp-catalog-monitor/oauth',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid connection request or unsuccessful authorization`,
+        403: `Missing connection permissions`,
+        404: `App or role unavailable to this account`,
+        409: `Expired, consumed or superseded authorization state`,
+      },
+    });
+  }
+  /**
+   * Retry retirement or record provider-side manual revocation; administrator access and MFA policy apply
+   * @returns MCPOAuthRetirement Updated public retirement status
+   * @throws ApiError
+   */
+  public static recoverMcpoAuthRetirement({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Account-owned retirement identifier
+     */
+    id: string,
+    requestBody: MCPOAuthRetirementAction,
+  }): CancelablePromise<MCPOAuthRetirement> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/mcp-oauth-retirements/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid recovery action or unavailable credentials`,
+        403: `Administrator access or MFA requirement not satisfied`,
+        404: `Retirement unavailable to this account`,
+        409: `Retirement is leased, terminal or expired`,
+      },
+    });
+  }
+  /**
+   * Account-wide MCP connection health and recovery guidance; administrator access required
+   * @returns MCPConnectionHealthSnapshot Connection health metadata without credential values
+   * @throws ApiError
+   */
+  public static getMcpConnectionHealth({
+    app,
+    offset,
+  }: {
+    /**
+     * Optional owned application slug
+     */
+    app?: string,
+    /**
+     * Issue page offset
+     */
+    offset?: number,
+  }): CancelablePromise<MCPConnectionHealthSnapshot> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/mcp-connection-health',
+      query: {
+        'app': app,
+        'offset': offset,
+      },
+      errors: {
+        400: `Invalid page offset`,
+        403: `Administrator scope required for the account connection inventory`,
+        404: `Application unavailable to this account`,
+      },
+    });
+  }
+  /**
+   * Report an observed catalog or failed probe; requires metrics-write scope
+   * @returns MCPCatalogReceipt Server-computed transition receipt; repeated unchanged observations reuse the receipt
+   * @throws ApiError
+   */
+  public static reportMcpCatalogObservation({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Application receiving the catalog observation
+     */
+    slug: string,
+    requestBody: MCPCatalogObservationRequest,
+  }): CancelablePromise<MCPCatalogReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/mcp-catalog-monitor/observations',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid observation`,
+        404: `Monitor unavailable to this account`,
+        409: `Monitor disabled or baseline revision changed`,
+      },
+    });
+  }
   /**
    * Get fire-now request state
    * Polling surface for the row that `POST /v1/crons/{id}/run`

@@ -37,6 +37,23 @@ func TestScenarioChaosPlanValidationAndEngineLabel(t *testing.T) {
 	}
 }
 
+func TestScenarioDNSChaosDoesNotRequireTCPListener(t *testing.T) {
+	scenario := testScenario{
+		Project:  "checkout",
+		Services: map[string]testService{"cache": {Fixture: testDeliverySinkFixture}},
+		Chaos: &testChaosSpec{Duration: "30s", Rules: []testChaosRule{{
+			From: "checkout", To: "cache", Kind: chaos.KindDNSNXDomain, Percent: 100, MinMatches: 1,
+		}}},
+	}
+	if err := validateScenarioChaos(scenario); err != nil {
+		t.Fatalf("private DNS rule rejected: %v", err)
+	}
+	plan, err := scenario.Chaos.plan()
+	if err != nil || len(plan.Rules) != 1 || plan.Rules[0].Kind != chaos.KindDNSNXDomain {
+		t.Fatalf("DNS plan = (%+v, %v)", plan, err)
+	}
+}
+
 func TestScenarioChaosManifestFieldsAndBounds(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "gregale-test.yaml")
@@ -84,5 +101,41 @@ func TestChaosInjectCommandRejectsAmbiguousFaults(t *testing.T) {
 	}
 	if code := cmdChaos([]string{"inject", "--scenario", "customer-export", "--target", "inventory", "--latency", "1s", "--error", "503"}); code == 0 {
 		t.Fatal("chaos injection accepted two fault kinds")
+	}
+}
+
+func TestChaosRetryAfterPlan(t *testing.T) {
+	for _, tc := range []struct {
+		delay  string
+		status int
+		valid  bool
+	}{
+		{"1s", 429, true}, {"30s", 503, true}, {"", 429, true},
+		{"0s", 429, false}, {"-1s", 429, false}, {"1500ms", 429, false}, {"31s", 429, false}, {"invalid", 429, false}, {"1s", 500, false},
+	} {
+		spec := &testChaosSpec{Duration: "10s", Rules: []testChaosRule{{To: "inventory", Kind: "http_status", Percent: 100, StatusCode: tc.status, RetryAfter: tc.delay}}}
+		plan, err := spec.plan()
+		if (err == nil) != tc.valid {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+		if tc.valid && tc.delay == "1s" && plan.Rules[0].RetryAfterSeconds != 1 {
+			t.Fatal("retry header lost during conversion")
+		}
+	}
+}
+
+func TestChaosHTTPBodyFlagsRejectInvalidCombinations(t *testing.T) {
+	for _, flags := range [][]string{
+		{"--malformed-json", "--truncated-body"},
+		{"--response-lost", "--malformed-json"},
+		{"--response-lost", "--retry-after", "1s"},
+		{"--malformed-json", "--error", "503"},
+		{"--truncated-body", "--retry-after", "1s"},
+		{"--malformed-json", "--tcp-port", "6379"},
+	} {
+		args := append([]string{"inject", "--scenario", "body", "--target", "inventory"}, flags...)
+		if cmdChaos(args) == 0 {
+			t.Fatalf("accepted invalid body flags: %v", flags)
+		}
 	}
 }

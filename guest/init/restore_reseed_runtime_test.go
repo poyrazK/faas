@@ -129,6 +129,13 @@ const replaced = !!m && !/native code/.test(Function.prototype.toString.call(Mat
 process.stdout.write(JSON.stringify({ ready: true, replaced }) + '\n');
 require('readline').createInterface({ input: process.stdin }).on('line', (l) => {
   if (l === 'state') process.stdout.write(JSON.stringify({ state: Array.from(m.state).join(',') }) + '\n');
+  if (l === 'stale') process.stdout.write(JSON.stringify(m.stale) + '\n');
+  const c = require('crypto');
+  if (l === 'uuid') { c.randomUUID(); process.stdout.write(JSON.stringify(m.stale) + '\n'); }
+  if (l === 'webuuid') { globalThis.crypto.randomUUID(); process.stdout.write(JSON.stringify(m.stale) + '\n'); }
+  if (l === 'int') c.randomInt(10, (err) => process.stdout.write(JSON.stringify({ ...m.stale, err: !!err }) + '\n'));
+  if (l === 'shape') process.stdout.write(JSON.stringify({ shape: [c.randomUUID.name, c.randomUUID.length, c.randomInt.name, c.randomInt.length,
+    globalThis.crypto.randomUUID.name, globalThis.crypto.randomUUID.length].join(',') }) + '\n');
 });
 setInterval(() => {}, 1000);
 `
@@ -152,6 +159,53 @@ func TestRestoreReseedNodePreload(t *testing.T) {
 	p.ask(t, "state", &after)
 	if before.State == after.State {
 		t.Fatalf("Math.random state %s unchanged by the reseed", after.State)
+	}
+}
+
+// ADR-1110: a restore marks Node's randomUUID and randomInt caches stale
+// instead of draining them in the barrier, and the first call that reads a
+// cache drains it, through either crypto.randomUUID or webcrypto's, which
+// share one batch. The wrappers keep the originals' names and arity.
+func TestRestoreReseedNodePreloadDrainsCachesOnFirstUse(t *testing.T) {
+	assets := restoreReseedAssetDir(t, true)
+	b, sock := startTestBarrier(t)
+	p := startRuntime(t, "node", baseRuntimeEnv(assets, sock), "-e", nodeProbe)
+	var ready struct{ Ready, Replaced bool }
+	p.read(t, &ready)
+	waitRegistered(t, b, 1)
+
+	var shape struct{ Shape string }
+	p.ask(t, "shape", &shape)
+	if shape.Shape != "randomUUID,1,randomInt,3,randomUUID,0" {
+		t.Fatalf("wrapped crypto functions = %s, want the originals' names and lengths", shape.Shape)
+	}
+	type staleState struct{ UUID, Int, Err bool }
+	var st staleState
+	p.ask(t, "stale", &st)
+	if st.UUID || st.Int {
+		t.Fatalf("caches stale before any restore: %+v", st)
+	}
+	for _, calls := range []struct {
+		cmds []string
+		want staleState
+	}{
+		{cmds: []string{"uuid"}, want: staleState{Int: true}},
+		{cmds: []string{"webuuid"}, want: staleState{Int: true}},
+		{cmds: []string{"uuid", "int"}, want: staleState{}},
+	} {
+		if err := b.Reseed(2 * time.Second); err != nil {
+			t.Fatalf("Reseed: %v", err)
+		}
+		p.ask(t, "stale", &st)
+		if !st.UUID || !st.Int {
+			t.Fatalf("after Reseed caches = %+v, want both stale until first use", st)
+		}
+		for _, cmd := range calls.cmds {
+			p.ask(t, cmd, &st)
+		}
+		if st != calls.want {
+			t.Fatalf("after %v caches = %+v, want %+v", calls.cmds, st, calls.want)
+		}
 	}
 }
 

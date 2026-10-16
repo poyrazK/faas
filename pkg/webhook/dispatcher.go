@@ -544,6 +544,38 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		d.markDead(ctx, row, "webhook: subscription disabled")
 		return
 	}
+	if row.Event == state.AppWebhookEventRecoveryReviewReady {
+		guard, ok := d.store.(state.WorkflowRecoveryReviewNotificationStore)
+		if !ok {
+			d.log.WarnContext(ctx, "webhook: recovery review guard unavailable", "delivery_id", row.ID)
+			return
+		}
+		allowed, reason, err := guard.WorkflowRecoveryReviewNotificationAllowed(ctx, row, d.Now())
+		if err != nil {
+			d.log.WarnContext(ctx, "webhook: recovery review check failed", "delivery_id", row.ID)
+			return
+		}
+		if !allowed {
+			d.markDead(ctx, row, "webhook: recovery review notification suppressed: "+reason)
+			return
+		}
+	}
+	if row.Event == state.AppWebhookEventRecoveryReviewFinished {
+		guard, ok := d.store.(state.WorkflowRecoveryReviewCompletionNotificationStore)
+		if !ok {
+			d.log.WarnContext(ctx, "webhook: review completion guard unavailable", "delivery_id", row.ID)
+			return
+		}
+		allowed, reason, err := guard.WorkflowRecoveryReviewCompletionNotificationAllowed(ctx, row)
+		if err != nil {
+			d.log.WarnContext(ctx, "webhook: review completion check failed", "delivery_id", row.ID)
+			return
+		}
+		if !allowed {
+			d.markDead(ctx, row, "webhook: review completion suppressed: "+reason)
+			return
+		}
+	}
 	if row.Event == state.OperationEffectEvent {
 		guard, ok := d.store.(state.OperationEffectDeliveryStore)
 		if !ok {
@@ -613,6 +645,9 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	if hook.Scope == state.AppWebhookScopePlatformTenant {
 		source = "urn:gregale:platform-tenant:" + hook.PlatformTenantID
 		subject = "platform-tenants/" + hook.PlatformTenantID
+	} else if hook.Scope == state.AppWebhookScopeAccount && row.AppID == "" {
+		source = "urn:gregale:account:" + row.AccountID
+		subject = "accounts/" + row.AccountID
 	}
 	evt := webhookout.Event{
 		ID:         row.ID,
@@ -640,13 +675,16 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// fast-forward 7.5h of backoff in <1s).
 	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{
 		MaxAttempts: 1, // the dispatcher owns the retry ladder
-		BaseBackoff: 0,
-		PerAttempt:  d.PerAttempt,
-		HTTPClient:  d.HTTPClient,
-		Sleeper:     d.Sleeper,
-		Logger:      d.log,
-		HeaderSet:   webhookout.HeaderSetWebhook,
-		Format:      webhookout.DeliveryFormat(hook.DeliveryFormat),
+		// The ledger attempt numbers the request: X-Faas-Webhook-Attempt
+		// read 1 on every retry (production-us hunt #9).
+		FirstAttempt: row.Attempt + 1,
+		BaseBackoff:  0,
+		PerAttempt:   d.PerAttempt,
+		HTTPClient:   d.HTTPClient,
+		Sleeper:      d.Sleeper,
+		Logger:       d.log,
+		HeaderSet:    webhookout.HeaderSetWebhook,
+		Format:       webhookout.DeliveryFormat(hook.DeliveryFormat),
 	})
 	startedAt := d.Now()
 	res := disp.Dispatch(ctx, webhookout.Target{
@@ -706,9 +744,27 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// The claim query's WHERE next_attempt_at <= now predicate picks
 	// it up when the time arrives.
 	if err := d.store.MarkAppWebhookDeliveryFailed(ctx, row.ID, res.StatusCode, row.Attempt,
-		row.NextAttemptAt, fmt.Sprintf("webhook: %v", res.Err), nextAttemptAt, meta); d.markRecorded(row, err) {
+		row.NextAttemptAt, fmt.Sprintf("webhook: %v", singleAttemptError(res.Err)), nextAttemptAt, meta); d.markRecorded(row, err) {
 		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
 	}
+}
+
+// singleAttemptError drops webhookout's retry-budget wrapper. This dispatcher
+// sends one request per call and owns the retry ladder, so "retryable
+// failure after MaxAttempts" misdescribed a delivery still scheduled to
+// retry; the receiver's own failure is what the ledger should show.
+func singleAttemptError(err error) error {
+	if !errors.Is(err, webhookout.ErrAttemptsExhausted) {
+		return err
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, inner := range joined.Unwrap() {
+			if !errors.Is(inner, webhookout.ErrAttemptsExhausted) {
+				return inner
+			}
+		}
+	}
+	return err
 }
 
 func (d *Dispatcher) markDead(ctx context.Context, row state.AppWebhookDelivery, reason string, meta ...state.AppWebhookAttemptMetadata) bool {

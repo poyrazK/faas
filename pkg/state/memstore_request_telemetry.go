@@ -87,6 +87,11 @@ func (m *MemStore) RequestTelemetryBaselineP95ByRoute(_ context.Context, _ sqlc.
 	return nil, errMemStoreRequestTelemetry
 }
 
+// RequestTelemetryErrorsByRoute — MemStore stub. Postgres-only.
+func (m *MemStore) RequestTelemetryErrorsByRoute(_ context.Context, _ sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // RequestTelemetryAnalyticsSummary (customer request analytics) — MemStore
 // stub. Postgres-only because request_telemetry is a partitioned SQL table.
 func (m *MemStore) RequestTelemetryAnalyticsSummary(_ context.Context, _ sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {

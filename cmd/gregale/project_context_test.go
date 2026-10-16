@@ -3,12 +3,48 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestProjectContextTestSandboxPreservesAncestorContext(t *testing.T) {
+	parent := t.TempDir()
+	if _, err := saveProjectContext(parent, localProjectContext{Version: 1, Project: "shop"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(parent, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "isolated")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previous := testOnlyProjectContextRoot
+	testOnlyProjectContextRoot = root
+	t.Cleanup(func() { testOnlyProjectContextRoot = previous })
+	if _, _, err := findProjectContext(root); !errors.Is(err, errProjectContextNotFound) {
+		t.Fatalf("inherited parent context: %v", err)
+	}
+	got, err := projectContextRoot(root)
+	if err != nil || got != root {
+		t.Fatalf("link destination escaped sandbox: %q, %v", got, err)
+	}
+	if _, err := saveProjectContext(got, localProjectContext{Version: 1, Project: "test-project", App: "test-app"}); err != nil {
+		t.Fatal(err)
+	}
+	context, _, err := findProjectContext(root)
+	if err != nil || context.Project != "test-project" {
+		t.Fatalf("test-owned context unavailable: %+v, %v", context, err)
+	}
+	body, err := os.ReadFile(projectContextPath(parent))
+	if err != nil || !bytes.Contains(body, []byte(`"shop"`)) {
+		t.Fatalf("ancestor context overwritten: %s, %v", body, err)
+	}
+}
 
 func TestCmdLinkStoresSingleWorkloadContextAndIgnoresIt(t *testing.T) {
 	resetJSONOut(t)

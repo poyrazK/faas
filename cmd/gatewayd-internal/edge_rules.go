@@ -208,6 +208,15 @@ func (g *gatewaydEdgeRules) Converging(host, ownerAccountID string) bool {
 		if ownerAccountID != "" && key.accountID != "" && key.accountID != ownerAccountID {
 			continue
 		}
+		if api.IsEdgeRuleAppHosts(key.pattern) {
+			// ADR-1191: an app-wide rule covers only hosts an app serves, so
+			// its fence never holds an unclaimed host. The account check
+			// above already skipped other accounts' hosts.
+			if ownerAccountID != "" {
+				ok = true
+			}
+			continue
+		}
 		matched, err := path.Match(key.pattern, host)
 		if err == nil && matched {
 			ok = true
@@ -273,6 +282,14 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	storeRules, err := g.store.MatchEdgeRulesForHost(ctx, host)
 	if err != nil {
 		return nil, err
+	}
+	appID := gateway.EdgeRuleApp(ctx)
+	if store, ok := g.store.(state.AppWideEdgeRuleStore); ok && appID != "" {
+		appWide, appErr := store.AppWideEdgeRules(ctx, appID)
+		if appErr != nil {
+			return nil, appErr
+		}
+		storeRules = state.MergeEdgeRulesInOrder(storeRules, appWide)
 	}
 	storeRules, err = g.environmentEdgeRules(ctx, host, storeRules)
 	if err != nil {
@@ -402,7 +419,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 			g.metrics.ObserveEdgeRuleCompileError("waf")
 		}
 	}
-	g.cache.PutIfGeneration(host, entry, generation)
+	g.cache.PutIfGeneration(gateway.EdgeRuleCacheKey(host, appID), entry, generation)
 	return entry, nil
 }
 
@@ -504,7 +521,7 @@ func (g *gatewaydEdgeRules) MatchRoute(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.Get(host)
+	rules, hit := g.cache.Get(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -529,7 +546,7 @@ func (g *gatewaydEdgeRules) MatchRewrite(ctx context.Context, host, requestPath,
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRewrite(host)
+	rules, hit := g.cache.GetRewrite(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -552,7 +569,7 @@ func (g *gatewaydEdgeRules) MatchRedirect(ctx context.Context, host, requestPath
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRedirect(host)
+	rules, hit := g.cache.GetRedirect(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -575,7 +592,7 @@ func (g *gatewaydEdgeRules) MatchHeaders(ctx context.Context, host, requestPath,
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetHeaders(host)
+	rules, hit := g.cache.GetHeaders(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -600,7 +617,7 @@ func (g *gatewaydEdgeRules) MatchCORS(ctx context.Context, host, requestPath, me
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetCORS(host)
+	rules, hit := g.cache.GetCORS(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -627,7 +644,7 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetJWT(host)
+	rules, hit := g.cache.GetJWT(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -653,7 +670,7 @@ func (g *gatewaydEdgeRules) MatchIP(ctx context.Context, host, requestPath, meth
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetIP(host)
+	rules, hit := g.cache.GetIP(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -681,7 +698,7 @@ func (g *gatewaydEdgeRules) MatchValidate(ctx context.Context, host, requestPath
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetValidate(host)
+	rules, hit := g.cache.GetValidate(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -710,7 +727,7 @@ func (g *gatewaydEdgeRules) MatchLimit(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetLimit(host)
+	rules, hit := g.cache.GetLimit(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -740,7 +757,7 @@ func (g *gatewaydEdgeRules) MatchMaintenance(ctx context.Context, host, requestP
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetMaintenance(host)
+	rules, hit := g.cache.GetMaintenance(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -769,7 +786,7 @@ func (g *gatewaydEdgeRules) MatchGeo(ctx context.Context, host, requestPath, met
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetGeo(host)
+	rules, hit := g.cache.GetGeo(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -800,7 +817,7 @@ func (g *gatewaydEdgeRules) MatchThrottle(ctx context.Context, host, requestPath
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetThrottle(host)
+	rules, hit := g.cache.GetThrottle(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -831,7 +848,7 @@ func (g *gatewaydEdgeRules) MatchBudget(ctx context.Context, host, requestPath, 
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetBudget(host)
+	rules, hit := g.cache.GetBudget(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -870,7 +887,7 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetCache(host)
+	rules, hit := g.cache.GetCache(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -893,7 +910,7 @@ func (g *gatewaydEdgeRules) MatchRespond(ctx context.Context, host, requestPath,
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetRespond(host)
+	rules, hit := g.cache.GetRespond(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -917,7 +934,7 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetAsync(host)
+	rules, hit := g.cache.GetAsync(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -940,7 +957,7 @@ func (g *gatewaydEdgeRules) MatchWAF(ctx context.Context, host, requestPath, met
 	if g == nil || g.cache == nil {
 		return nil
 	}
-	rules, hit := g.cache.GetWAF(host)
+	rules, hit := g.cache.GetWAF(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
 	if !hit {
 		entry, err := g.loadHost(ctx, host)
 		if err != nil {
@@ -1897,13 +1914,15 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
-		// Clamp rps/burst to the minimum-useful positive values.
-		// A 0/0 from a direct-DB write would let the limiter build
-		// a bucket that always-deny (burst=0 means every AllowToken
-		// call consumes a token that was never refilled), and a
-		// negative value would panic the limiter. Floor at {1, 1}.
+		// Replace non-positive rps/burst from a direct-DB write with
+		// {1, 1}: a 0/0 rule would build a bucket that always denies
+		// (burst=0 means every AllowToken call consumes a token that was
+		// never refilled), and a negative value would panic the limiter.
+		// A fractional rps is a real policy that apid accepts (0.1 = one
+		// request per 10 s, e.g. a login throttle) and both limiters refill
+		// fractionally, so it is kept as configured.
 		rps := r.Action.Throttle.RequestsPerSecond
-		if rps < 1 {
+		if !(rps > 0) {
 			rps = 1
 		}
 		burst := r.Action.Throttle.Burst
@@ -1998,12 +2017,13 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			continue
 		}
 		// Clamp the budget to the platform ceiling. Non-positive or
-		// > ceiling → api.RequestBudgetMaxMs (a 0 budget would
+		// > ceiling → api.RequestBudgetPlanMax (a 0 budget would
 		// 504 every request, which is worse than the platform
 		// default; the same defence-in-depth posture as
-		// compileLimitRules silently dropping malformed caps).
+		// compileLimitRules silently dropping malformed caps). The
+		// plan's own ceiling clamps again at request time.
 		budgetMs := r.Action.Budget.BudgetMs
-		maxBudgetMs := int(api.RequestBudgetMax.Milliseconds())
+		maxBudgetMs := int(api.RequestBudgetPlanMax.Milliseconds())
 		if budgetMs <= 0 || budgetMs > maxBudgetMs {
 			budgetMs = maxBudgetMs
 		}

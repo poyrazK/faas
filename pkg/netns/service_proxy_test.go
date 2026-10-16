@@ -132,6 +132,11 @@ func TestQualificationOnlyNetworkAdmitsOnlyCanonicalProxyAndDNS(t *testing.T) {
 	}
 
 	wantProxy := []string{"iifname", "tap0", "ip", "daddr", bridge.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept"}
+	wantProbe := []string{"iifname", config.VethPeer, "oifname", config.Tap, "ip", "saddr", bridge.String(),
+		"ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(AppPort), "ct", "status", "dnat", "accept"}
+	if !containsSequenceInCommands(commands, wantProbe) {
+		t.Fatal("qualification node-local probe admission missing")
+	}
 	if !containsSequenceInCommands(commands, wantProxy) {
 		t.Fatalf("qualification proxy admission missing for port %d", ServiceProxyPort)
 	}
@@ -169,6 +174,7 @@ func TestQualificationOnlyNetworkAdmitsOnlyCanonicalProxyAndDNS(t *testing.T) {
 			continue
 		}
 		if strings.Contains(line, "ct state established,related accept") ||
+			containsSequenceInCommands([][]string{strings.Fields(line)}, wantProbe) ||
 			strings.Contains(line, "ip daddr "+bridge.String()+" tcp dport "+strconv.Itoa(ServiceProxyPort)+" accept") ||
 			strings.Contains(line, "ip daddr "+bridge.String()+" tcp dport "+strconv.Itoa(ServiceProxyHTTPSPort)+" accept") ||
 			strings.Contains(line, "ip daddr "+bridge.String()+" udp dport "+strconv.Itoa(ServiceDiscoveryDNSPort)+" accept") ||

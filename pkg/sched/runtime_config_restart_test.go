@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestRuntimeConfigDrainReadsPhysicalNodeAndRequiresQuietPeriod(t *testing.T) {
@@ -118,5 +119,29 @@ func TestRuntimeConfigDrainDoesNotTreatMissingTelemetryAsZero(t *testing.T) {
 				t.Fatalf("drain error %q does not expose reason %q", err, tt.wantReason)
 			}
 		})
+	}
+}
+
+// deploymentLookupRecorder records DeploymentByID ids.
+type deploymentLookupRecorder struct {
+	MemStore *state.MemStore
+	ids      []string
+}
+
+func (r *deploymentLookupRecorder) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	r.ids = append(r.ids, id)
+	return r.MemStore.DeploymentByID(ctx, id)
+}
+
+// Production-us hunt #9 (H9-102): the runtime-config restart converges routes
+// with an empty rollout id; every handoff phase update looked it up and
+// Postgres rejected "" as a uuid.
+func TestRuntimeConfigRestartHandoffSkipsEmptyRolloutID(t *testing.T) {
+	store := &deploymentLookupRecorder{MemStore: state.NewMemStore()}
+	e := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.updateServiceRolloutHandoff(t.Context(), "", func(h *state.ServiceRolloutHandoff) { h.LastError = "x" })
+	e.failServiceRolloutHandoff(t.Context(), "", state.ServiceRolloutPhaseRouting, "route_publish_failed", nil)
+	if len(store.ids) != 0 {
+		t.Fatalf("DeploymentByID called with %q for a rollout-less restart", store.ids)
 	}
 }

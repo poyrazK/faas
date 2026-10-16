@@ -69,7 +69,7 @@ const deploymentRowFmt = "%-32s %-32s %-12s %-10s %s\n"
 // `--wide` (`-w`) toggles this layout in cmdDeployments; the default
 // table stays the old 5-column shape so existing scripts / dashboard
 // scrapers don't break.
-const deploymentRowFmtWide = "%-32s %-32s %-12s %-10s %-16s %-6s %-24s %-41s %s\n"
+const deploymentRowFmtWide = "%-32s %-6s %-32s %-12s %-10s %-16s %-6s %-24s %-41s %s\n"
 
 // renderDeploymentRow writes one deployment row to w. The fmt.Printf
 // inside writes to os.Stdout by default; tests that need the rendered
@@ -106,8 +106,14 @@ func renderDeploymentRowWide(w io.Writer, d api.DeploymentResponse) {
 	if reason == "" {
 		reason = "-"
 	}
+	// ADR-198: the revision is what rollback --to and deploys show take;
+	// without it the list gave no way to map vN to a row.
+	revision := "-"
+	if d.Revision > 0 {
+		revision = fmt.Sprintf("v%d", d.Revision)
+	}
 	_, _ = fmt.Fprintf(w, deploymentRowFmtWide,
-		d.ID, d.AppID, d.Status, d.Kind, by, pr, tag, reason, d.CreatedAt)
+		d.ID, revision, d.AppID, d.Status, d.Kind, by, pr, tag, reason, d.CreatedAt)
 }
 
 // truncateReason returns s truncated to max runes with "…" appended
@@ -149,6 +155,7 @@ func cmdDeployments(args []string) int {
 	limit := fs.Int("limit", 50, "page size (1-200)")
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
+	failedOnly := fs.Bool("failed-only", false, "show only failed deployments from fetched history")
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	// Issue #977 / ADR-116: --wide / -w toggles the annotation columns
 	// (by / pr / tag / reason). Default stays the old 5-column shape so
@@ -157,12 +164,12 @@ func cmdDeployments(args []string) int {
 	// for ops; matches the awk-flavoured shape other CLI list commands
 	// use (e.g. `kubectl get pods -w` watch flag — semantically
 	// different but the user mental model is "show me more").
-	wide := fs.Bool("wide", false, "include annotation columns (by / pr / tag / reason)")
+	wide := fs.Bool("wide", false, "include the revision (vN) and annotation columns (by / pr / tag / reason)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide] [--failed-only]", "deployments")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
@@ -190,6 +197,15 @@ func cmdDeployments(args []string) int {
 		}
 		return page.Items, page.NextBefore, err
 	})
+	if *failedOnly {
+		failed := make([]api.DeploymentResponse, 0)
+		for _, deployment := range items {
+			if deployment.Status == "failed" {
+				failed = append(failed, deployment)
+			}
+		}
+		items = failed
+	}
 	page := api.DeploymentListResponse{Items: items, NextBefore: next}
 	if err != nil {
 		return printErr("Request failed", err)
@@ -204,15 +220,32 @@ func cmdDeployments(args []string) int {
 			NextCursor string `json:"next_cursor,omitempty"`
 		}{page, next}))
 	}
+	if *failedOnly {
+		return renderFailedDeploymentHistory(page, *app, *limit, *wide)
+	}
 	if len(page.Items) == 0 {
+		target := "deployments in the selected account"
+		nextCommand := recoveryCLI() + " deployments"
 		if *app != "" {
-			_, _ = fmt.Fprintf(osStdout, "No deployments yet for app %q.\n", *app)
-		} else {
+			target = "deployments for app " + *app
+			nextCommand += " --app " + recoveryArgument(*app)
+		}
+		if *before == "" {
+			if *app != "" {
+				nextCommand = recoveryCLI() + " app " + recoveryArgument(*app)
+			} else {
+				nextCommand = recoveryCLI() + " apps"
+			}
+		}
+		if *before == "" && next == "" {
 			_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
 		}
-		_, _ = fmt.Fprintln(osStdout, "Deploy one: `gregale deploy --tarball path/to/source.tar.gz` (or `gregale deploy --image <ref>`).")
-		if next != "" {
-			_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
+		printEmptyResult(target, "starting cursor="+*before+" (blank starts at newest)", nextCommand)
+		if *before != "" {
+			_, _ = fmt.Fprintln(osStdout, "This page is empty; it does not mean deployment history is empty. The next command starts at the newest page.")
+		}
+		if page.NextBefore != "" {
+			_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 		}
 		return 0
 	}
@@ -315,6 +348,8 @@ func cmdDeployment(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "retry-hold":
+		return cmdDeploymentRetryHold(args[1:])
 	case "runtime":
 		return cmdDeploymentRuntime(args[1:])
 	case "advance":
@@ -325,6 +360,10 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentSummary(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
+	case "get":
+		// inspect and deploy recovery hints print `deployment get <id>`;
+		// it is the explicit spelling of the default read (H10-6).
+		return cmdDeploymentGet(args[1:])
 	}
 	return cmdDeploymentGet(args)
 }
@@ -340,15 +379,15 @@ func cmdDeployment(args []string) int {
 func cmdDeploymentWait(args []string) int {
 	flags, pos := splitArgsForFlags(args, "progress", "rollout")
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
-	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
+	appFlag := fs.String("app", "", "app slug; needed for vN or latest outside a linked project")
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	progress := fs.Bool("progress", false, "print rollout transitions while waiting (human output only)")
 	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 || *timeoutSeconds <= 0 || !validDeploymentRef(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment wait <id|vN> [--app SLUG] [--rollout] [--progress] [--timeout SECONDS]", "deployment")
+	if len(pos) != 1 || *timeoutSeconds <= 0 || !validDeploymentReadRef(pos[0]) {
+		PrintUsage(os.Stderr, "usage: gregale deployment wait <id|vN|latest> [--app SLUG] [--rollout] [--progress] [--timeout SECONDS]", "deployment")
 		return 1
 	}
 	client, err := authedClient()
@@ -359,7 +398,7 @@ func cmdDeploymentWait(args []string) int {
 	defer cancel()
 	// ADR-198 — resolve inside the command's own deadline so a slow lookup
 	// is bounded by --timeout like every other call this command makes.
-	resolvedID, resolveErr := resolveDeploymentArg(ctx, client, *appFlag, pos[0])
+	resolvedID, resolveErr := resolveDeploymentReadArg(ctx, client, *appFlag, pos[0])
 	if resolveErr != nil {
 		return printErr("Could not resolve deployment", resolveErr)
 	}
@@ -456,7 +495,7 @@ func cmdDeploymentGet(args []string) int {
 	// customer copying a v42 handle out of `traffic status` will type.
 	flags, pos := splitArgsForFlags(args, "show-scan", "show-secret-scan")
 	fs := newFlagSet("deployment", flag.ContinueOnError)
-	appFlag := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
+	appFlag := fs.String("app", "", "app slug; needed for vN or latest outside a linked project")
 	showScan := fs.Bool("show-scan", false, "fetch + print the per-deploy grype scan payload (GET /v1/deployments/{id}/scan)")
 	showSecretScan := fs.Bool("show-secret-scan", false,
 		"fetch + print the per-deploy image-layer secret-scan payload (GET /v1/deployments/{id}/secret-scan)")
@@ -464,12 +503,12 @@ func cmdDeploymentGet(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN> [--app SLUG] [--show-scan] [--show-secret-scan]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN|latest> [--app SLUG] [--show-scan] [--show-secret-scan]", "deployment")
 		return 1
 	}
 	id := pos[0]
-	if !validDeploymentRef(id) {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN> [--app SLUG] [--show-scan] [--show-secret-scan]   (id is 32 hex chars, or a vN revision)", "deployment")
+	if !validDeploymentReadRef(id) {
+		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN|latest> [--app SLUG] [--show-scan] [--show-secret-scan]   (id is 32 hex chars, a vN revision, or latest)", "deployment")
 		return 1
 	}
 	client, err := authedClient()
@@ -478,11 +517,17 @@ func cmdDeploymentGet(args []string) int {
 	}
 	// ADR-198: a vN handle resolves against --app, else the linked project.
 	// A uuid short-circuits without a lookup.
-	id, err = resolveDeploymentArg(context.Background(), client, *appFlag, id)
+	ctx := context.Background()
+	if id == "latest" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	id, err = resolveDeploymentReadArg(ctx, client, *appFlag, id)
 	if err != nil {
 		return printErr("Could not resolve deployment", err)
 	}
-	d, err := client.GetDeployment(context.Background(), id)
+	d, err := client.GetDeployment(ctx, id)
 	if err != nil {
 		return printErr("Could not fetch deployment", err)
 	}
@@ -552,6 +597,26 @@ func cmdDeploymentGet(args []string) int {
 	}
 	if d.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "error_code:", d.ErrorCode)
+	}
+	if drain := d.WorkerDrain; drain != nil {
+		_, _ = fmt.Fprintf(osStdout, "%-14s active=%d completed=%d timed_out=%d failed=%d overdue=%d\n", "worker_drain:", drain.Active, drain.Completed, drain.TimedOut, drain.Failed, drain.Overdue)
+		if drain.Deadline != nil {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "drain_deadline:", drain.Deadline.Format(time.RFC3339))
+		}
+	}
+	if d.PromotionHold != nil {
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n%-14s %s\n", "promotion_hold:", d.PromotionHold.Code, "hold_detail:", d.PromotionHold.Detail)
+		h := d.PromotionHold
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n%-14s %d\n%-14s %t\n", "held_since:", h.HeldAt.Format(time.RFC3339), "hold_retries:", h.RecoveryAttempts, "retry_running:", h.RecoveryInProgress)
+		if h.NextRetryAt != nil {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "next_retry:", h.NextRetryAt.Format(time.RFC3339))
+		}
+		if h.LastRecoveryOutcome != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "last_recovery:", h.LastRecoveryOutcome)
+		}
+		if h.LastRecoveryErrorCode != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "recovery_error:", h.LastRecoveryErrorCode)
+		}
 	}
 	renderDeploymentHostingReceipt(osStdout, d.APIHostingReceipt)
 	if *showScan {

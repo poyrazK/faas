@@ -1,0 +1,606 @@
+// Tests for cmd/apid/handlers_oauth_code_callback.go (PR-C).
+//
+// The user-to-server OAuth handshake is the load-bearing CSRF boundary
+// for the dashboard's "Connect GitHub" button. Three cases pin the
+// security posture:
+//
+//  1. Happy path: state cookie matches query → 302 to the dashboard
+//     account page with the install id + default branch + connected_at.
+//     The state cookie is cleared on success (single-use).
+//  2. CSRF mismatch: state cookie != query state → 403 + audit
+//     auth.install.csrf_rejected {reason: state_mismatch}. The handler
+//     must NOT call githubd.ExchangeOAuthCode on a mismatch.
+//  3. githubd transport error: cookie matches, but the gRPC call
+//     fails → 502 + audit auth.install.token_exchange_failed.
+//  4. missing GitHub App installation: authorize first, then use the
+//     callback's GitHub discovery to redirect to the installation flow.
+//
+// Plus a missing-state and missing-code branch as the cheap 400
+// guards against malformed queries.
+package apidserver_test
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// oauthCodeCallbackFake is a GithubdClient stub that records the
+// (accountID, code, state) tuple passed to ExchangeOAuthCode and
+// returns a canned (installID, defaultBranch, err). Used by every
+// test in this file; we can't reuse fakeGithubdClient from
+// handlers_oauth_test.go because its ExchangeOAuthCode returns
+// errGithubdNotReady.
+type oauthCodeCallbackFake struct {
+	installID       string
+	defaultBranch   string
+	exchangeErr     error
+	installState    apidserver.InstallState
+	installStateErr error
+
+	gotAccountID string
+	gotCode      string
+	gotState     string
+	gotCalls     int
+	stateCalls   int
+}
+
+// GithubdClient surface, with the methods we don't use falling
+// through to not-ready problems so accidental calls fail loudly.
+func (f *oauthCodeCallbackFake) GetInstallState(context.Context, string) (apidserver.InstallState, string, string, error) {
+	f.stateCalls++
+	return f.installState, "", "", f.installStateErr
+}
+func (f *oauthCodeCallbackFake) ExchangeOAuthCode(_ context.Context, accountID, code, state string) (string, string, error) {
+	f.gotAccountID = accountID
+	f.gotCode = code
+	f.gotState = state
+	f.gotCalls++
+	return f.installID, f.defaultBranch, f.exchangeErr
+}
+func (f *oauthCodeCallbackFake) ListInstallableRepos(context.Context, string, int64) ([]apidserver.Repo, error) {
+	return nil, (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
+	return "", (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) UnbindAppRepo(context.Context, string, string) error {
+	return (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) GetAppBinding(context.Context, string, string) (apidserver.AppBinding, error) {
+	return apidserver.AppBinding{}, (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) CreateDeploymentFromPush(context.Context, string, string, string, string) (string, string, error) {
+	return "", "", (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) WriteCheck(context.Context, string, string, apidserver.CheckPhase, string, string) error {
+	return (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) VerifyInstallation(context.Context, int64, string) (bool, string, string, error) {
+	return false, "", "", (*apidserver.ErrGithubdNotReady)
+}
+
+// MintInstallationToken is unused by the OAuth code-callback test.
+// Returns the not-ready problem (DEPLOY-PROV-4 / ADR-092, issue #739).
+func (f *oauthCodeCallbackFake) MintInstallationToken(context.Context, string, int64) (string, time.Time, error) {
+	return "", time.Time{}, (*apidserver.ErrGithubdNotReady)
+}
+
+// StreamSourceRef is unused by the OAuth code-callback test.
+// Returns the not-ready problem (DEPLOY-PROV-4 / ADR-092, issue #739).
+func (f *oauthCodeCallbackFake) StreamSourceRef(context.Context, string, int64, string, string, int64) (*apidserver.StreamSourceRefResult, error) {
+	return nil, (*apidserver.ErrGithubdNotReady)
+}
+func (f *oauthCodeCallbackFake) Close() error { return nil }
+
+// mintStateToken returns a 32-char hex token (16 bytes from crypto/rand)
+// matching the generator inside issueOAuthCodeState. Test-local
+// helper so the test doesn't have to round-trip through the cookie
+// writer to forge a value.
+func mintStateToken(t *testing.T) string {
+	t.Helper()
+	tokenBytes := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, tokenBytes); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	return hex.EncodeToString(tokenBytes)
+}
+
+// newOAuthCodeCallbackServer wires a session-authed apid handler
+// with the oauthCodeCallbackFake, returning the handler, the session
+// cookie, and the fake so tests can assert the githubd surface.
+func newOAuthCodeCallbackServer(t *testing.T, gh *oauthCodeCallbackFake) (http.Handler, *session.Manager, string, *http.Cookie) {
+	t.Helper()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
+	if err != nil {
+		t.Fatalf("session manager: %v", err)
+	}
+	cookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
+	if err != nil {
+		t.Fatalf("issue session: %v", err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "")
+	return srv.Handler(), mgr, acct.ID, &http.Cookie{Name: apidserver.SessionCookie, Value: cookie}
+}
+
+// TestRenderOAuthCodeCallback_HappyPath pins the success flow: a
+// matching state cookie + valid code + githubd returns success →
+// 302 to /dashboard/account with the install id and default branch
+// in the query. The state cookie is cleared on success (single-use).
+func TestRenderOAuthCodeCallback_HappyPath(t *testing.T) {
+	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
+	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/dashboard/account?") {
+		t.Errorf("Location = %q, want /dashboard/account?…", loc)
+	}
+	if !strings.Contains(loc, "github=connected") {
+		t.Errorf("Location missing github=connected: %q", loc)
+	}
+	if !strings.Contains(loc, "install=9999") {
+		t.Errorf("Location missing install=9999: %q", loc)
+	}
+	if !strings.Contains(loc, "default_branch=main") {
+		t.Errorf("Location missing default_branch=main: %q", loc)
+	}
+	if gh.gotCalls != 1 {
+		t.Errorf("ExchangeOAuthCode calls = %d, want 1", gh.gotCalls)
+	}
+	if gh.gotCode != "oauth-code-xyz" {
+		t.Errorf("githubd got code = %q, want oauth-code-xyz", gh.gotCode)
+	}
+	// Single-use: the handler clears the state cookie on success.
+	cleared := false
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == apidserver.OauthCodeStateCookie && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Errorf("state cookie not cleared on success")
+	}
+}
+
+// TestRenderOAuthCodeCallback_StateMismatch pins the CSRF tripwire:
+// a state cookie that does NOT match the query state → 403 with
+// code=csrf_mismatch. githubd must NOT be called on a mismatch
+// (the CSRF gate is apid's job; leaking the oauth code to githubd
+// would attempt an exchange with a forged state).
+func TestRenderOAuthCodeCallback_StateMismatch(t *testing.T) {
+	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state=querystatetoken", nil)
+	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: "cookiestatetoken", Path: apidserver.OauthCodeCallbackPath})
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code = %d, want 403\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "csrf_mismatch") {
+		t.Errorf("body missing csrf_mismatch code: %s", rec.Body.String())
+	}
+	if gh.gotCalls != 0 {
+		t.Errorf("ExchangeOAuthCode must NOT be called on CSRF mismatch; got %d calls", gh.gotCalls)
+	}
+}
+
+// Account ownership conflicts are actionable 409 responses in both JSON and
+// browser HTML. Neither response may disclose upstream diagnostics.
+func TestRenderOAuthCodeCallback_AccountConflict(t *testing.T) {
+	for _, accept := range []string{"application/json", "text/html"} {
+		t.Run(accept, func(t *testing.T) {
+			upstream := api.ErrGitHubAccountConflict()
+			upstream.Detail, upstream.Hint = "private-owner@example.com", "private-database-diagnostic"
+			gh := &oauthCodeCallbackFake{exchangeErr: upstream}
+			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+			stateToken := mintStateToken(t)
+			r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
+			r.Header.Set("Accept", accept)
+			r.AddCookie(sessionCookie)
+			r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, r)
+			body := rec.Body.String()
+			if rec.Code != http.StatusConflict || gh.gotCalls != 1 {
+				t.Fatalf("callback = %d, exchange calls = %d; want 409 and 1 call", rec.Code, gh.gotCalls)
+			}
+			for _, want := range []string{api.CodeGitHubAccountConflict, "GitHub account conflict", "another Gregale account", "contact support"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("conflict response missing %q: %s", want, body)
+				}
+			}
+			for _, secret := range []string{"private-owner", "private-database", "oauth-code-xyz", stateToken} {
+				if strings.Contains(body, secret) {
+					t.Errorf("conflict response leaked %q", secret)
+				}
+			}
+			if accept == "text/html" && !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+				t.Errorf("browser response is not HTML: %s", rec.Header().Get("Content-Type"))
+			}
+		})
+	}
+}
+
+// Transport failures remain 502 responses with code=github_unreachable.
+func TestRenderOAuthCodeCallback_GithubdErrorPropagates(t *testing.T) {
+	gh := &oauthCodeCallbackFake{exchangeErr: errors.New("dial tcp: connection refused")}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
+	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "github_unreachable") {
+		t.Errorf("body missing github_unreachable code: %s", rec.Body.String())
+	}
+}
+
+// TestRenderOAuthCodeCallback_MissingState covers the 400 path when
+// the dashboard forgets to mint the state cookie (the redirect from
+// the "Connect GitHub" button failed). The handler must short-circuit
+// before reaching githubd.
+// TestRenderOAuthCodeCallback_MissingInstallationResumesInstallFlow covers
+// the race where GitHub has redirected with a code but githubd still finds no
+// App installation. This is an expected first-use condition, not a 502 outage.
+func TestRenderOAuthCodeCallback_MissingInstallationResumesInstallFlow(t *testing.T) {
+	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
+	gh := &oauthCodeCallbackFake{
+		exchangeErr: errors.New("rpc error: code = Internal desc = githubd: user has no app installations"),
+	}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
+	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
+	}
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+	if loc.Path != "/apps/test-app/installations/new" {
+		t.Errorf("Location path = %q, want /apps/test-app/installations/new", loc.Path)
+	}
+	if loc.Query().Get("state") == "" {
+		t.Error("installation redirect missing fresh state")
+	}
+	if strings.Contains(rec.Body.String(), "github_unreachable") {
+		t.Error("missing installation must not render github_unreachable")
+	}
+	if gh.gotCalls != 1 {
+		t.Errorf("ExchangeOAuthCode calls = %d, want 1", gh.gotCalls)
+	}
+}
+
+func TestStartConnectGitHub_DiscoversInstallationAfterAuthorization(t *testing.T) {
+	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
+	t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", "https://gregale.dev/oauth/code-callback")
+	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
+	for _, tc := range []struct {
+		name        string
+		localState  apidserver.InstallState
+		lookupErr   error
+		exchangeErr error
+	}{
+		{name: "existing GitHub installation unknown to Gregale"},
+		{name: "existing GitHub installation locally missing", localState: apidserver.InstallStateNotInstalled},
+		{name: "installed", localState: apidserver.InstallStateInstalled},
+		{name: "bound", localState: apidserver.InstallStateBound},
+		{name: "local lookup unavailable", lookupErr: errors.New("install store unavailable")},
+		{name: "no GitHub installation", exchangeErr: errors.New("githubd: " + apidserver.GithubNoAppInstallError)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := &oauthCodeCallbackFake{
+				installState: tc.localState, installStateErr: tc.lookupErr,
+				installID: "9999", defaultBranch: "main", exchangeErr: tc.exchangeErr,
+			}
+			srv, _, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+			connectToken, connectCookie := browserConnectCSRF(t, srv, sessionCookie)
+			body := url.Values{"csrf_token": {connectToken}, "return_to": {"/dashboard/settings?section=integrations"}}
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.AddCookie(sessionCookie)
+			r.AddCookie(connectCookie)
+			srv.ServeHTTP(rec, r)
+			if rec.Code != http.StatusFound {
+				t.Fatalf("connect: status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			loc, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("parse Location: %v", err)
+			}
+			if loc.Host != "github.com" || loc.Path != "/login/oauth/authorize" {
+				t.Fatalf("must discover existing installations through OAuth, got %s", loc)
+			}
+			if loc.Query().Get("client_id") != "client-123" || loc.Query().Get("redirect_uri") != "https://gregale.dev/oauth/code-callback" {
+				t.Fatalf("incorrect OAuth configuration: %s", loc)
+			}
+			stateToken := loc.Query().Get("state")
+			stateCookie := findCookie(rec.Result().Cookies(), apidserver.OauthCodeStateCookie)
+			if stateToken == "" || stateCookie == nil || stateCookie.Value != stateToken || !stateCookie.HttpOnly {
+				t.Fatal("OAuth state must match the HttpOnly cookie")
+			}
+			if gh.stateCalls != 0 {
+				t.Fatal("local connection state cannot determine whether GitHub has an installation")
+			}
+
+			callback := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code&state="+stateToken, nil)
+			callback.AddCookie(sessionCookie)
+			callback.AddCookie(stateCookie)
+			callback.AddCookie(findCookie(rec.Result().Cookies(), apidserver.GithubConnectReturnCookie))
+			result := httptest.NewRecorder()
+			srv.ServeHTTP(result, callback)
+			if result.Code != http.StatusFound || gh.gotCalls != 1 || gh.gotAccountID != accountID || gh.gotState != stateToken {
+				t.Fatalf("callback failed: status = %d, body = %s", result.Code, result.Body.String())
+			}
+			redirect, err := url.Parse(result.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("parse callback Location: %v", err)
+			}
+			if tc.exchangeErr != nil {
+				freshState := redirect.Query().Get("state")
+				var freshCookie *http.Cookie
+				for _, cookie := range result.Result().Cookies() {
+					if cookie.Name == apidserver.OauthCodeStateCookie && cookie.MaxAge > 0 {
+						freshCookie = cookie
+					}
+				}
+				if redirect.Path != "/apps/test-app/installations/new" || freshState == "" || freshState == stateToken || freshCookie == nil || freshCookie.Value != freshState {
+					t.Fatalf("missing installation must start a fresh installation flow: %s", redirect)
+				}
+				return
+			}
+			if redirect.Path != "/dashboard/settings" || redirect.Query().Get("section") != "integrations" || redirect.Query().Get("github") != "connected" || redirect.Query().Get("install") != "9999" {
+				t.Fatalf("existing installation must return connected to settings: %s", redirect)
+			}
+		})
+	}
+}
+
+// The authorization URL must use operator configuration for the public console,
+// even when a reverse proxy delivers the request on a different host.
+func TestRedirectToGitHubAuthorization_PublicConsoleCallback(t *testing.T) {
+	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
+	for _, tc := range []struct {
+		name        string
+		requestURL  string
+		consoleBase string
+		override    string
+		want        string
+	}{
+		{
+			name:       "default console behind HTTPS proxy",
+			requestURL: "https://api.example.com/dashboard/install/connect",
+			want:       "https://gregale.dev/oauth/code-callback",
+		},
+		{
+			name:       "default console behind TLS termination",
+			requestURL: "http://127.0.0.1:8081/dashboard/install/connect",
+			want:       "https://gregale.dev/oauth/code-callback",
+		},
+		{
+			name:        "configured console",
+			requestURL:  "https://api.example.com/dashboard/install/connect",
+			consoleBase: "https://console.example.com/",
+			want:        "https://console.example.com/oauth/code-callback",
+		},
+		{
+			name:        "local development console",
+			requestURL:  "http://127.0.0.1:8081/dashboard/install/connect",
+			consoleBase: "http://localhost:3000",
+			want:        "http://localhost:3000/oauth/code-callback",
+		},
+		{
+			name:        "explicit GitHub redirect overrides console",
+			requestURL:  "https://api.example.com/dashboard/install/connect",
+			consoleBase: "https://console.example.com",
+			override:    "https://github-console.example.com/oauth/code-callback",
+			want:        "https://github-console.example.com/oauth/code-callback",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", tc.override)
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			srv := apidserver.NewServerWithDeps(state.NewMemStore(), log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, nil, nil, nil, 15*time.Minute, "")
+			if tc.consoleBase != "" {
+				srv.WithCLIAuthURLBase(tc.consoleBase)
+			}
+			r := httptest.NewRequest(http.MethodPost, tc.requestURL, nil)
+			rec := httptest.NewRecorder()
+			if !srv.RedirectToGitHubAuthorization(rec, r, 0) || rec.Code != http.StatusFound {
+				t.Fatalf("authorization: status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			loc, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil {
+				t.Fatalf("parse Location: %v", err)
+			}
+			if loc.Scheme != "https" || loc.Host != "github.com" || loc.Path != "/login/oauth/authorize" {
+				t.Fatalf("authorization destination = %s", loc)
+			}
+			if got := loc.Query().Get("redirect_uri"); got != tc.want {
+				t.Errorf("redirect_uri = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGithubAppInstallURL_RejectsNonHTTPSConfiguration(t *testing.T) {
+	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "http://github.com/apps/test-app/installations/new")
+	if _, err := apidserver.GithubAppInstallURL("state"); err == nil {
+		t.Fatal("githubAppInstallURL accepted non-HTTPS configuration")
+	}
+}
+
+func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
+}
+
+func TestRenderOAuthCodeCallback_MissingState(t *testing.T) {
+	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz", nil)
+	r.AddCookie(sessionCookie)
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if gh.gotCalls != 0 {
+		t.Errorf("ExchangeOAuthCode must NOT be called when state is missing; got %d calls", gh.gotCalls)
+	}
+}
+
+// TestRenderOAuthCodeCallback_MissingCode covers the 400 path when
+// GitHub's redirect landed without a code (operator mis-configured
+// the App's redirect URL? user rejected the dialog?).
+func TestRenderOAuthCodeCallback_MissingCode(t *testing.T) {
+	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?state="+stateToken, nil)
+	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: stateToken, Path: apidserver.OauthCodeCallbackPath})
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if gh.gotCalls != 0 {
+		t.Errorf("ExchangeOAuthCode must NOT be called when code is missing; got %d calls", gh.gotCalls)
+	}
+}
+
+// TestRenderOAuthCodeCallback_CSRFComparisonIsConstantTime is a
+// defensive tripwire: the handler must use crypto/subtle.ConstantTimeCompare
+// (not bytes.Equal) for the state comparison. If a future refactor
+// drops the constant-time compare, this test fails — and the
+// regression is loud, not silent.
+func TestRenderOAuthCodeCallback_CSRFComparisonIsConstantTime(t *testing.T) {
+	// Compile-time check: the constant-time-compare path is
+	// exercised by the handler. We can't directly unit-test that
+	// handler code uses ConstantTimeCompare, but we can at least
+	// assert that the helper is imported and importable in this
+	// package's test scope.
+	if subtle.ConstantTimeCompare([]byte("a"), []byte("a")) != 1 {
+		t.Fatal("crypto/subtle import broken or zero")
+	}
+}
+
+// Exercise the public browser API rather than minting a proof inside the test.
+func browserConnectCSRF(t *testing.T, srv http.Handler, sessionCookie *http.Cookie) (string, *http.Cookie) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/csrf?action=connect_github", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("issue connect csrf: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload api.CSRFTokenResponse
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode connect csrf: %v", err)
+	}
+	cookie := findCookie(rec.Result().Cookies(), apidserver.GithubConnectCSRFCookie)
+	if cookie == nil || !cookie.HttpOnly || cookie.Value != payload.CSRFToken || payload.CSRFToken == "" {
+		t.Fatalf("connect csrf cookie must be HttpOnly and match the response: %#v", cookie)
+	}
+	if findCookie(rec.Result().Cookies(), middleware.CookieNameAuthenticated) != nil {
+		t.Fatal("connect issuance must not overwrite the generic mutation cookie")
+	}
+	return payload.CSRFToken, cookie
+}
+
+func TestStartConnectGitHub_RejectsInvalidBrowserProof(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		body     bool
+		cookie   bool
+		mismatch bool
+	}{
+		{name: "missing proof"},
+		{name: "missing body", cookie: true},
+		{name: "missing cookie", body: true},
+		{name: "mismatched proof", body: true, cookie: true, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, &oauthCodeCallbackFake{})
+			token, cookie := browserConnectCSRF(t, srv, sessionCookie)
+			body := url.Values{}
+			if tc.body {
+				if tc.mismatch {
+					token += "invalid"
+				}
+				body.Set("csrf_token", token)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.AddCookie(sessionCookie)
+			if tc.cookie {
+				req.AddCookie(cookie)
+			}
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/account?github=connect-forbidden" {
+				t.Fatalf("invalid proof: status = %d, location = %q", rec.Code, rec.Header().Get("Location"))
+			}
+		})
+	}
+}

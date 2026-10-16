@@ -15,7 +15,7 @@ import (
 // ReconcileWorkerPools reads demand separately for each captured environment.
 // An app-wide target cannot authorize changing a neighboring worker pool.
 func (e *Engine) ReconcileWorkerPools(ctx context.Context, appID, trigger string) error {
-	return e.reconcileWorkerScopes(ctx, appID, "", nil, trigger)
+	return e.reconcileWorkerScopesWithBusyRetry(ctx, appID, "", nil, trigger)
 }
 
 // ReconcileWorkerPoolForScope changes only this environment. Scope is required;
@@ -24,7 +24,36 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 	if scope == "" || api.ValidateScope(scope) != nil || desired < 0 {
 		return state.ErrInvalidArgument
 	}
-	return e.reconcileWorkerScopes(ctx, appID, scope, &desired, trigger)
+	return e.reconcileWorkerScopesWithBusyRetry(ctx, appID, scope, &desired, trigger)
+}
+
+// Application-standard guards use NOWAIT row locks so a worker cannot enter
+// while its runtime inputs are being changed. A worker-pool pass may already
+// have completed earlier scopes or replicas when that guard reports a
+// transient busy error. Re-read and reconcile the full plan after a short
+// backoff; the failed insert was rolled back, and each pass derives its plan
+// from current durable state.
+func (e *Engine) reconcileWorkerScopesWithBusyRetry(ctx context.Context, appID, onlyScope string, override *int, trigger string) error {
+	const maxAttempts = 4
+	for attempt := 0; ; attempt++ {
+		err := e.reconcileWorkerScopes(ctx, appID, onlyScope, override, trigger)
+		if !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) || attempt+1 == maxAttempts {
+			return err
+		}
+		delay := time.Duration(10<<attempt) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // WakeWorkerApp handles an explicit wake (`gregale wake`) of a worker app.
@@ -338,9 +367,10 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	// Workers are kept in this order, so the tail is stopped first: settled
 	// before booting, busy before idle, then oldest first.
 	now := e.now()
+	leases := e.workerQueueLeases(ctx, app.ID, len(plan.workers) > plan.desired)
 	busy := make(map[string]int, len(plan.workers))
 	for _, ins := range plan.workers {
-		busy[ins.ID] = e.workerBusyRank(ins, now)
+		busy[ins.ID] = e.workerBusyRank(ins, now, leases)
 	}
 	sort.SliceStable(plan.workers, func(i, j int) bool {
 		left, right := workerStatePreference(plan.workers[i]), workerStatePreference(plan.workers[j])
@@ -562,6 +592,21 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 					signal = api.ScalingMetricCustom
 				}
 			}
+			if currentReplicas > desired && mcpTasksScaleToZeroConfigured(app) {
+				heartbeat, hasHeartbeat := stored[mcpTasksObserverHeartbeatMetric]
+				heartbeatFresh := hasHeartbeat && now.Sub(heartbeat.ObservedAt) <= freshness && heartbeat.Value == 1
+				observerReady, readinessErr := e.mcpTasksObserverReady(ctx, app)
+				if readinessErr != nil {
+					return 0, "", fmt.Errorf("verify MCP task observer readiness: %w", readinessErr)
+				}
+				if !observerReady || !heartbeatFresh {
+					// A recent worker-side backlog gauge cannot authorize scale-in
+					// when the dedicated observer is unavailable. Keep this pool at
+					// its current size until both the linked app and heartbeat recover.
+					desired = currentReplicas
+					signal = ""
+				}
+			}
 			if !haveCustomSignal && !haveQueue && !haveLagSignal {
 				if currentReplicas > 0 {
 					return 0, "", fmt.Errorf("custom worker scaling metric is missing or stale: %w", state.ErrConflict)
@@ -582,6 +627,66 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 		desired = max
 	}
 	return desired, signal, nil
+}
+
+const mcpTasksObserverHeartbeatMetric = "mcp_tasks_observer_heartbeat"
+
+func mcpTasksScaleToZeroConfigured(app state.App) bool {
+	scaling := app.Manifest.WorkerReplicas
+	if scaling == nil || scaling.Min != 0 || scaling.Metric != api.ScalingMetricCustom || scaling.Name != "mcp_tasks_outstanding" {
+		return false
+	}
+	if app.ScalingPolicy == nil {
+		return false
+	}
+	for _, target := range app.ScalingPolicy.EffectiveTargets() {
+		if target.Metric == api.ScalingMetricCustom && target.Name == "mcp_tasks_outstanding" {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) mcpTasksObserverReady(ctx context.Context, worker state.App) (bool, error) {
+	scaling := worker.Manifest.WorkerReplicas
+	if scaling == nil || scaling.ObserverAppSlug == "" {
+		return false, nil
+	}
+	observer, err := e.store.AppBySlug(ctx, scaling.ObserverAppSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if observer.ID == worker.ID || observer.AccountID != worker.AccountID || observer.Status != state.AppActive ||
+		(observer.Manifest.ExecutionMode != api.ExecutionModeWorker && observer.WorkloadClass != state.WorkloadClassWorker) ||
+		observer.Manifest.WorkerReplicas == nil || observer.Manifest.WorkerReplicas.Min < 1 {
+		return false, nil
+	}
+	liveDeployments, err := e.store.LiveDeployments(ctx, observer.ID)
+	if err != nil {
+		return false, err
+	}
+	if len(liveDeployments) == 0 {
+		return false, nil
+	}
+	live := make(map[string]struct{}, len(liveDeployments))
+	for _, deployment := range liveDeployments {
+		live[deployment.ID] = struct{}{}
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, observer.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, instance := range instances {
+		if instance.Mode == string(state.InstanceModeWorker) && instance.State == string(state.StateRunning) {
+			if _, ok := live[instance.DeploymentID]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, scope string, target float64) (int, error) {

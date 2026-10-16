@@ -326,11 +326,14 @@ waits for demand to stay low for 60 seconds: a pool shrinks only to the highest
 replica count its queue called for during that window, so a queue that drains
 and refills does not stop and re-boot workers.
 
-Workers do not listen for HTTP, so they consume queues through pull bindings;
-push delivery is for function apps. The platform cannot see which worker holds
-a pulled message, so a worker should stop taking new messages on the stop
-signal and finish in-flight ones within `stop_grace_period_s`; set it above
-your longest message.
+A worker consumes a queue either way: a push binding delivers each message to a
+worker that listens for deliveries on its port, and a pull binding lets a
+worker with no HTTP listener lease messages itself
+([pull leases](../queue-pull-leases.md)). A worker
+holding unexpired leases is kept when the pool scales in. On the stop signal,
+stop leasing and finish or nack in-flight messages within
+`stop_grace_period_s`; an unacked lease is redelivered after its visibility
+timeout.
 
 Lifecycle settings are applied idempotently after the app is created; plan and
 mode compatibility checks remain server-authoritative. Project deploys reject
@@ -824,4 +827,4 @@ their configured stop grace (default 30 seconds, maximum accepted 60 seconds).
 `deploy resume SESSION_ID` reconnects to the durable attempt without rebuilding or
 resubmitting. Rollback restores graph admission and paired variables, preserving
 completed-job, external and database effects. The server gate is disabled by
-default pending native acceptance; see [ADR-1008](../adr/1008-atomic-project-push-worker-handoff.md).
+default pending native acceptance; see [ADR-1408](../adr/1408-atomic-project-push-worker-handoff.md).

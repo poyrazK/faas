@@ -7,8 +7,8 @@ import type { EventRecoveryNotificationReceiver } from './EventRecoveryNotificat
  * Receiver selection is frozen at capture, including an empty selection. Retained deliveries alone cannot prove the complete selection. Counts describe observed receivers and may be lower bounds. Unknown receivers prevent acknowledged status; no_receivers is distinct from acknowledgement. Pending captures have no receiver selection yet.
  */
 export type EventRecoveryNotification = {
-  kind: 'admission' | 'execution';
-  event?: 'event_recovery.completed' | 'event_recovery.cancelled' | 'event_recovery.expired' | 'event_recovery.execution_finished';
+  kind: 'admission' | 'execution' | 'attention';
+  event?: 'event_recovery.completed' | 'event_recovery.cancelled' | 'event_recovery.expired' | 'event_recovery.execution_finished' | 'event_recovery.execution_attention';
   event_id?: string;
   capture_status: 'pending' | 'captured' | 'not_applicable' | 'unknown';
   captured_at?: string;

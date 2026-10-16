@@ -23,14 +23,16 @@ import (
 )
 
 type Fixture struct {
-	Catalog  *mp.PostgresStore
-	Service  *mp.Service
-	Bindings *mp.BindingService
-	Observer credentialdelivery.Observer
-	Data     *pgxpool.Pool
-	Provider *Provider
-	Major    int
-	Enabled  bool
+	Catalog     *mp.PostgresStore
+	Service     *mp.Service
+	Bindings    *mp.BindingService
+	Observer    credentialdelivery.Observer
+	Data        *pgxpool.Pool
+	Provider    *Provider
+	Major       int
+	Enabled     bool
+	Config      mp.Config
+	remoteToken string
 }
 
 func roleAbsent(err error) bool {
@@ -87,7 +89,9 @@ func New(t *testing.T, catalog *pgxpool.Pool, identity *age.X25519Identity, hmac
 			t.Fatal("prepare isolated SQL authority")
 		}
 	}
-	registry, err := mp.NewRegistry(mp.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "native-sql"}, Backends: []mp.BackendConfig{{ID: "native-sql", Driver: "sqlfixture", Region: "us-east-1", Namespace: "disposable"}}}, func(string) string { return "" }, map[string]mp.Factory{"sqlfixture": func(mp.BackendConfig, func(string) string) (mp.Provider, error) { return provider, nil }})
+	remoteURL, remoteToken := serveProvider(t, provider)
+	configEntry := mp.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "native-sql"}, ProvisioningEnabled: true, Backends: []mp.BackendConfig{{ID: "native-sql", Driver: "sqlfixture", Region: "us-east-1", Namespace: "disposable", Settings: map[string]string{"control_url": remoteURL}, SecretEnv: map[string]string{"control-token": remoteTokenEnv}}}}
+	registry, err := mp.NewRegistry(configEntry, func(string) string { return remoteToken }, map[string]mp.Factory{"sqlfixture": func(mp.BackendConfig, func(string) string) (mp.Provider, error) { return provider, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +104,7 @@ func New(t *testing.T, catalog *pgxpool.Pool, identity *age.X25519Identity, hmac
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Fixture{Catalog: store, Data: data, Provider: provider, Major: major, Enabled: true, Observer: credentialdelivery.Observer{Store: secrets, Identity: identity, HMACKey: hmac, PostgresMajor: major}}
+	f := &Fixture{Catalog: store, Data: data, Provider: provider, Major: major, Enabled: true, Config: configEntry, remoteToken: remoteToken, Observer: credentialdelivery.Observer{Store: secrets, Identity: identity, HMACKey: hmac, PostgresMajor: major}}
 	f.Service, err = mp.NewService(registry, store, mp.ServiceOptions{ProvisioningEnabled: func() bool { return f.Enabled }})
 	if err != nil {
 		t.Fatal(err)
@@ -218,6 +222,9 @@ func (p *Provider) IssueCredentials(ctx context.Context, r mp.CredentialRequest)
 			return mp.CredentialMaterial{}, mp.ErrUnsupported
 		}
 		statements = append(statements, "GRANT USAGE ON SCHEMA public TO "+quoted, "GRANT "+grants+" ON ALL TABLES IN SCHEMA public TO "+quoted, "ALTER DEFAULT PRIVILEGES FOR ROLE "+pgx.Identifier{p.owner}.Sanitize()+" IN SCHEMA public GRANT "+grants+" ON TABLES TO "+quoted)
+		if r.Access == mp.CredentialReadWrite {
+			statements = append(statements, "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "+quoted, "ALTER DEFAULT PRIVILEGES FOR ROLE "+pgx.Identifier{p.owner}.Sanitize()+" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "+quoted)
+		}
 	}
 	for _, statement := range statements {
 		if _, err := p.pool.Exec(ctx, statement); err != nil {

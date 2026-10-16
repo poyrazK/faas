@@ -7,7 +7,7 @@
  */
 export type EventRecoveryNotificationJobHealth = {
   job_id: string;
-  kind: 'admission' | 'execution';
+  kind: 'admission' | 'execution' | 'attention';
   event?: string;
   capture_status: string;
   acknowledgement_status: string;

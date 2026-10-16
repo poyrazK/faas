@@ -18,6 +18,15 @@
  *
  */
 export type AppRoutesResponse = {
+  scope?: string;
+  project_id?: string;
+  environment_id?: string;
+  /**
+   * Explicit scopes use deployment_attributed_history over the supplied observation window.
+   */
+  coverage?: string;
+  window_start?: string;
+  window_end?: string;
   slug: string;
   app_id?: string;
   routes: Array<string>;

@@ -134,6 +134,13 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		}
 	}
 	r := *e.recovery
+	if r.DeploymentID == "" && remote != nil && submissionRejected(remote.Problem.Status) {
+		// The server answered with a definitive rejection: nothing was
+		// accepted, so "the server may have accepted the submission" and
+		// an idempotent retry flag were wrong advice (production-us
+		// hunt #9: a secret-scan 422). The server's own hint stands.
+		r.Hint, r.RetryFlag = "The server rejected this submission; nothing was deployed. Fix the reported problem and deploy again.", ""
+	}
 	redact := errorTextRedactor()
 	r.App, r.DeploymentID, r.IdempotencyKey = redact(r.App), redact(r.DeploymentID), redact(r.IdempotencyKey)
 	r.InspectCommand, r.ResumeCommand, r.RetryFlag, r.Hint = redact(r.InspectCommand), redact(r.ResumeCommand), redact(r.RetryFlag), redact(r.Hint)
@@ -160,6 +167,13 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		}
 	}
 	return code
+}
+
+// submissionRejected reports a 4xx that proves the submission was refused
+// rather than possibly accepted: everything except timeouts, conflicts with
+// an in-flight submission, and rate limiting.
+func submissionRejected(status int) bool {
+	return status >= 400 && status < 500 && status != 408 && status != 409 && status != 429
 }
 
 func printDeploymentWaitRecovery(err error, dep api.DeploymentResponse, slug, stage string, timeout time.Duration, rollout bool, exit int) int {

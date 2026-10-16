@@ -273,9 +273,7 @@ func TestPgKeyedReplayOwnershipAndPrunedParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "update apps set account_id=$1 where id=$2", other.ID, appID); err != nil {
-		t.Fatal(err)
-	}
+	seedLegacyForeignCreatingAccount(t, ctx, pool, appID, other.ID)
 	if _, err := store.ExistingKeyedInvocationReplay(ctx, accountID, child.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("transferred app disclosed child: %v", err)
 	}

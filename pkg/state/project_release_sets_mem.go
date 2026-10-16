@@ -288,7 +288,7 @@ func (m *MemStore) validateProjectReleaseFallbackForAppsLocked(appIDs []string, 
 var _ ProjectReleaseSetPromotionStore = (*MemStore)(nil)
 
 func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool) (ProjectReleaseSet, error) {
-	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
+	if !validReleaseTTL(ttlSeconds) || len(members) == 0 && !allowGitOpsReplacement || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
 	project, ok := m.projects[projectID]
@@ -318,9 +318,13 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 		}
 		byApp[member.AppID] = member.DeploymentID
 	}
+	excluded := map[string]bool{}
+	if allowGitOpsReplacement {
+		excluded = m.workloadReleaseExclusionsLocked(EnvironmentGitSource{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
+	}
 	count := 0
 	for _, app := range m.apps {
-		if app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+		if excluded[app.ID] || app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
 			continue
 		}
 		count++

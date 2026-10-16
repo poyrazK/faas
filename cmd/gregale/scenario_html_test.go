@@ -52,3 +52,32 @@ func TestHTMLReportShowsTCPFaultParameters(t *testing.T) {
 		}
 	}
 }
+
+func TestHTMLReportShowsTimedChaosPhaseMetricsAndMatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "timed-chaos.html")
+	started := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	phase := testLoadChaosPhaseEvidence{
+		Name: "slow-cache", StartedAt: started, FinishedAt: started.Add(10 * time.Second),
+		ActualDurationMS: 10_000,
+		testLoadMetrics:  testLoadMetrics{Requests: 40, SuccessRate: 0.95, Latency: testLoadLatency{P95MS: 250, P99MS: 500}},
+		Chaos: &testChaosEvidence{Matches: []testChaosRuleEvidence{{
+			Rule: chaos.Rule{To: "cache", Kind: chaos.KindTCPLatency, Port: 6379}, Matches: 12, MinMatches: 1,
+		}}},
+	}
+	receipt := testRunReceipt{
+		Scenario: "timed-chaos", Status: "passed",
+		Load: &testLoadEvidence{ChaosPhases: []testLoadChaosPhaseEvidence{phase}},
+	}
+	if err := writeTestHTMLReport(path, "", []testRunReceipt{receipt}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"Timed chaos phases", "slow-cache", "40", "95.00%", "250.00 ms", "tcp_latency to cache: 12/1"} {
+		if !strings.Contains(string(data), value) {
+			t.Fatalf("report omitted %q", value)
+		}
+	}
+}

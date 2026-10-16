@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func passingQualificationSmokeEvidence(requests []state.EnvironmentWorkloadQualificationRequest, instances map[string]state.Instance) ([]state.EnvironmentQualificationSmokeEvidence, error) {
@@ -48,7 +49,7 @@ func passingQualificationSmokeEvidence(requests []state.EnvironmentWorkloadQuali
 // Interpose only after the real durable scan; claim/admission/runtime fences
 // still use the real store. This models an old page or simultaneous scanners.
 type delayedQualificationDispatchStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	afterList func()
 }
 
@@ -403,7 +404,7 @@ func TestEnvironmentQualificationHTTPGraphDispatchSupportsUnboundWorkloadsAndSto
 }
 
 type qualificationWrongRouteStore struct {
-	*state.MemStore
+	MemStore   *state.MemStore
 	wrongAt    int32
 	routeCalls atomic.Int32
 }
@@ -423,7 +424,7 @@ func TestEnvironmentQualificationGraphDispatchRejectsMismatchedScopedRoute(t *te
 			store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
 				map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
 			wrapped := &qualificationWrongRouteStore{MemStore: store, wrongAt: wrongAt}
-			engine := newEngine(t, wrapped, &qualificationRestoreRuntimeVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{})},
+			engine := newEngine(t, statetest.NewMem(wrapped), &qualificationRestoreRuntimeVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{})},
 				&fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(
 				func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
 			var smokeVisited bool
@@ -743,7 +744,7 @@ func TestEnvironmentQualificationDispatchRefusesStalePagesBeforeClaim(t *testing
 			request := requests[0]
 			v := newDispatchQualificationVMM(&fakeVMM{})
 			delayed := &delayedQualificationDispatchStore{MemStore: store}
-			e := newEngine(t, delayed, v, &fakeNotifier{}, "test-fc")
+			e := newEngine(t, statetest.NewMem(delayed), v, &fakeNotifier{}, "test-fc")
 			nodeB, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: "new-owner", Active: true, AdmissionCeilingMB: 4096})
 			if err != nil {
 				t.Fatal(err)
@@ -789,7 +790,7 @@ func TestEnvironmentQualificationDispatchRacingScannersBootOnce(t *testing.T) {
 	start := make(chan struct{})
 	delayed := &delayedQualificationDispatchStore{MemStore: store, afterList: func() { ready.Done(); <-start }}
 	vms := []*qualificationRuntimeVMM{newDispatchQualificationVMM(&fakeVMM{}), newDispatchQualificationVMM(&fakeVMM{})}
-	engines := []*Engine{newEngine(t, delayed, vms[0], &fakeNotifier{}, "test-fc"), newEngine(t, delayed, vms[1], &fakeNotifier{}, "test-fc")}
+	engines := []*Engine{newEngine(t, statetest.NewMem(delayed), vms[0], &fakeNotifier{}, "test-fc"), newEngine(t, statetest.NewMem(delayed), vms[1], &fakeNotifier{}, "test-fc")}
 	var visits atomic.Int32
 	type outcome struct {
 		page EnvironmentQualificationDispatchPage

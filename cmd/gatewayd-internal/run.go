@@ -79,6 +79,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
@@ -833,6 +834,20 @@ func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID st
 // body into Invocation.Result. The scheduler persists that result when it
 // completes the invocation row, which is what makes sync invoke and async
 // polling return the function's actual response.
+// invocationTimeout is how long one synthetic invocation of appID may run:
+// the app's request timeout within its plan, at least 30 s (ADR-1180). A
+// failed lookup keeps the 30 s every invocation had before.
+func (a *synthAdapter) invocationTimeout(ctx context.Context, appID string) time.Duration {
+	if a.store == nil || appID == "" {
+		return api.AsyncInvocationTimeoutFloor
+	}
+	app, err := a.store.AppByID(ctx, appID)
+	if err != nil {
+		return api.AsyncInvocationTimeoutFloor
+	}
+	return state.AsyncInvocationTimeout(ctx, a.store, app)
+}
+
 func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, error) {
 	out, _, err := a.forwardInvocationWithStatus(ctx, target, inv)
 	return out, err
@@ -859,6 +874,12 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	if path[0] != '/' {
 		path = "/" + path
 	}
+	// A synthetic invocation has no request budget of its own. Stamp the
+	// app's async timeout so the forwarder sends it as X-Faas-Deadline-Ms
+	// and the runner lets the handler run that long (ADR-1180).
+	timeout := a.invocationTimeout(ctx, inv.AppID)
+	ctx, cancelBudget, _ := reqbudget.WithRemaining(ctx, timeout, timeout, "synth", path)
+	defer cancelBudget()
 	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(inv.Payload))
 	if err != nil {
 		return inv, 0, nil, fmt.Errorf("gateway synth: build request: %w", err)
@@ -908,6 +929,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	applyInvocationAttemptHeaders(req.Header, inv)
 	if state.InvocationHasOperation(inv) {
 		var proof map[string]string
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
@@ -1969,7 +1991,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return ""
 			}
 			return app.PublicAuthMode
-		})
+		}).
+		// ADR-1180: trigger batch records run as long as the app's
+		// invocations may.
+		WithInvocationTimeout(synth.invocationTimeout)
 	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error {
 		run, err := pgStore.GetWorkflowRun(ctx, runID)
 		if err != nil {
@@ -2881,12 +2906,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.asnReader != nil {
 		handler.WithASNReader(deps.asnReader)
 	}
+	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
+	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
 		handler.WithEdgeRuleHitRecorder(hitCounter)
+		// ADR-831 amendment 5: off-path WAF detections become events too.
+		wafInspector.WithEventRecorder(hitCounter)
 		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
@@ -3216,6 +3245,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
 					FlagEvidenceJson:                     row.FlagEvidenceJSON,
+					ContentOutcome:                       row.ContentOutcome,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
@@ -3394,6 +3424,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				S3:     deps.archiveS3,
 				Bucket: deps.archiveBucket,
 				Store:  deps.pgStore,
+				Scope:  deps.pgStore,
 				Log:    log,
 				Ops:    nil,
 			},
@@ -3418,6 +3449,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
@@ -3481,6 +3513,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
 	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log))
+	// ADR-1037: interactive app-task attach is compute-owned too. The
+	// handler dials the task node's vmmd, which apid must never do.
+	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
+		attachMux := http.NewServeMux()
+		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
+			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		// ADR-1330: an interactive image run's task uses the same session.
+		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
+		// ADR-1163: live job task output follows the task VM on its node.
+		logsMux := http.NewServeMux()
+		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
+			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
+	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -3749,9 +3797,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
-			// match, so /v1/internal/apps/foo/routes and
-			// /v1/internal/apps/foo/service-endpoints and
-			// /v1/internal/apps/foo/streaming-cap all
+			// match, so /v1/internal/apps/foo/routes,
+			// /v1/internal/apps/foo/service-endpoints,
+			// /v1/internal/apps/foo/streaming-cap,
+			// /v1/internal/apps/foo/mcp-health, and
+			// /v1/internal/apps/foo/mcp-probe all
 			// reach this dispatcher. Each reader validates its
 			// complete suffix before serving a response.
 			resolve := gateway.ResolveSlugFn(func(slug string) (string, bool) { //nolint:contextcheck // ADR-093 ResolveSlugFn signature is fixed; ctx captured from per-request r.Context().
@@ -3769,6 +3819,45 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
 				return
 			}
+			if strings.HasSuffix(r.URL.Path, "/mcp-health") || strings.HasSuffix(r.URL.Path, "/mcp-probe") {
+				var probeForward func(gateway.Target) http.Handler
+				if deps.nodeCache != nil {
+					probeForward = deps.nodeCache.Forwarding()
+				}
+				resolveProbeTarget := func(ctx context.Context, appID, deploymentID, instanceID string) (gateway.Target, bool, error) {
+					deployment, err := pgStore.DeploymentByID(ctx, deploymentID)
+					if errors.Is(err, state.ErrNotFound) {
+						return gateway.Target{}, false, nil
+					}
+					if err != nil {
+						return gateway.Target{}, false, err
+					}
+					if deployment.AppID != appID || (deployment.Status != state.DeploySnapshotting && deployment.Status != state.DeployLive) {
+						return gateway.Target{}, false, nil
+					}
+					instance, err := pgStore.InstanceByID(ctx, instanceID)
+					if errors.Is(err, state.ErrNotFound) {
+						return gateway.Target{}, false, nil
+					}
+					if err != nil {
+						return gateway.Target{}, false, err
+					}
+					if instance.AppID != appID || instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
+						return gateway.Target{}, false, nil
+					}
+					return gateway.Target{
+						AppID: appID, DeploymentID: deploymentID, InstanceID: instance.ID,
+						NodeID: instance.NodeID, WakeID: instance.WakeID,
+						Port: schedpkg.DeploymentRuntimePort(deployment),
+					}, true, nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/mcp-probe") {
+					internalMCPInstanceProtocolProbeHandler(resolve, resolveProbeTarget, probeForward, log).ServeHTTP(w, r)
+					return
+				}
+				internalMCPInstanceProbeHandler(resolve, resolveProbeTarget, probeForward, log).ServeHTTP(w, r)
+				return
+			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
 		})
 	}
@@ -3777,6 +3866,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	// wakeAheadPersisted closes after the ADR-1132 learner snapshot's final
+	// write, so shutdown can wait for it.
+	var wakeAheadPersisted chan struct{}
 	// guestServices is the same proxy, typed, so the ADR-576 TCP path shares
 	// its identity, authorizer, endpoint leases, wake and breaker.
 	var guestServices *gateway.ServiceProxy
@@ -3792,7 +3884,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-977: opt-in wake-ahead along service edges measured by this
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
-		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics())
+		// ADR-1132: the measured evidence survives restarts and deploys
+		// through a node-local snapshot instead of being relearned.
+		wakeAheadPersisted = make(chan struct{})
+		go func(dir string) {
+			defer close(wakeAheadPersisted)
+			gateway.PersistWakeAhead(ctx, wakeAheadLearner, dir, api.ServiceWakeAheadSnapshotInterval, nil, log)
+		}(envOrGateway("FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", gateway.DefaultWakeAheadStateDir))
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
@@ -3809,10 +3908,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
-			ObserveChaosMatch: chaosMatchRecorder.Observe,
-			Forward:           deps.nodeCache.Forwarding(),
-			RawForward:        deps.nodeCache.RawForwarding(),
-			ObserveRequest:    handler.RecordServiceRequest,
+			ObserveChaosMatch:     chaosMatchRecorder.Observe,
+			ObserveRequestAttempt: chaosMatchRecorder.ObserveRequestAttempt,
+			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
+			Forward:               deps.nodeCache.Forwarding(),
+			RawForward:            deps.nodeCache.RawForwarding(),
+			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
 			// scale-to-zero internal service 503s on every cold call, which
@@ -3822,6 +3923,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			EvictEndpoint:      serviceEndpointEvictor(deps.backend),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
 				releaseID, deploymentID, err := pgStore.ResolveServiceRelease(ctx, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID)
@@ -4105,6 +4207,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 			}
+			if chaosMatchRecorder != nil {
+				dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
+			}
 			// ADR-373: refuse abuse infrastructure at the pinned resolver.
 			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
 			// built-in mining-pool list; a configured file that cannot be
@@ -4208,6 +4313,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// upgrade wire real shutdown without touching call sites.
 		for _, s := range servers {
 			_ = s.Shutdown(shutdownCtx)
+		}
+		if wakeAheadPersisted != nil {
+			select {
+			case <-wakeAheadPersisted:
+			case <-shutdownCtx.Done():
+			}
 		}
 		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
 		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).

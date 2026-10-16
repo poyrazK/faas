@@ -34,6 +34,11 @@ created. Unused blocks remain sparse on local SSDs and compressed in the remote
 registry, so logical capacity does not consume an equal amount of physical
 storage or network transfer.
 
+Writes to `drive1` are rate limited per plan (ADR-910): 50 MB/s and 2,000
+operations/s on Free, 100 MB/s and 4,000/s on Hobby, 200 MB/s and 8,000/s on
+Pro and Scale, each after a one-time burst of 256 MiB and 20,000 operations.
+The limit keeps one app's disk flood from slowing its neighbours.
+
 `/tmp` is a separate tmpfs and is also lost when the instance parks. Sidecar
 drives are read-only. Gregale does not attach durable customer volumes, and
 the API currently reports the per-plan ceiling rather than live free-space

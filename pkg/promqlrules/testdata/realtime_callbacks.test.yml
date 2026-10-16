@@ -18,7 +18,7 @@ tests:
           - exp_labels:
               job: realtimed
               instance: compute-a:9107
-              severity: page
+              severity: warn
               component: realtimed
               family: realtime_callbacks
             exp_annotations:

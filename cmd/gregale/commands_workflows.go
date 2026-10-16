@@ -18,41 +18,47 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|schedule-history|run|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <defaults|list|schedules|schedule-history|run|wait|status|diagnose|steps|attempts|retry|resume|resumes|cancel|cancel-queued-preview|cancel-queued|events>", "workflows")
 		return 1
 	}
-	subcommand := args[0]
+	subcommand, rest := args[0], args[1:]
 	switch subcommand {
+	case "defaults":
+		return cmdWorkflowsDefaults(rest)
 	case "list", "ls", "runs":
-		return cmdWorkflowsList(args[1:])
+		return cmdWorkflowsList(rest)
 	case "schedules":
-		return cmdWorkflowSchedules(args[1:])
+		return cmdWorkflowSchedules(rest)
 	case "schedule-history":
-		return cmdWorkflowScheduleHistory(args[1:])
+		return cmdWorkflowScheduleHistory(rest)
 	case "run":
-		return cmdWorkflowsRun(args[1:])
+		return cmdWorkflowsRun(rest)
+	case "resume-wait":
+		return resumeRecordedRun("workflow", rest)
+	case "wait":
+		return cmdWorkflowsWait(rest)
 	case "diagnose":
-		return cmdWorkflowsDiagnose(args[1:])
+		return cmdWorkflowsDiagnose(rest)
 	case "status", "get", "show":
-		return cmdWorkflowsStatus(args[1:])
+		return cmdWorkflowsStatus(rest)
 	case "steps":
-		return cmdWorkflowsSteps(args[1:])
+		return cmdWorkflowsSteps(rest)
 	case "attempts":
-		return cmdWorkflowsAttempts(args[1:])
+		return cmdWorkflowsAttempts(rest)
 	case "retry":
-		return cmdWorkflowsRetry(args[1:])
+		return cmdWorkflowsRetry(rest)
 	case "resume":
-		return cmdWorkflowsResume(args[1:])
+		return cmdWorkflowsResume(rest)
 	case "resumes":
-		return cmdWorkflowsResumes(args[1:])
+		return cmdWorkflowsResumes(rest)
 	case "cancel":
-		return cmdWorkflowsCancel(args[1:])
+		return cmdWorkflowsCancel(rest)
 	case "cancel-queued-preview":
-		return cmdWorkflowsQueuedCancel(args[1:], false)
+		return cmdWorkflowsQueuedCancel(rest, false)
 	case "cancel-queued":
-		return cmdWorkflowsQueuedCancel(args[1:], true)
+		return cmdWorkflowsQueuedCancel(rest, true)
 	case "events":
-		return cmdWorkflowsEvents(args[1:])
+		return cmdWorkflowsEvents(rest)
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", subcommand), "workflows")
 		if parent, ok := lookupCliCommand("workflows"); ok {
@@ -65,14 +71,15 @@ func cmdWorkflows(args []string) int {
 
 func cmdWorkflowsList(args []string) int {
 	fs := newFlagSet("workflows-list", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug")
+	appSlug := fs.String("app", "", "app slug (defaults to linked project app)")
 	limit := fs.Int("limit", 50, "page size (1..100)")
 	offset := fs.Int("offset", 0, "page offset")
+	all := fs.Bool("all", false, "walk all history pages from the selected offset")
 	status := fs.String("status", "", "filter by status (pending|running|awaiting_event|succeeded|failed|dead)")
 	workflowName := fs.String("workflow-name", "", "filter by exact workflow name")
 	createdAfter := fs.String("created-after", "", "inclusive RFC3339 creation-time start")
 	createdBefore := fs.String("created-before", "", "inclusive RFC3339 creation-time end")
-	usage := "usage: gregale workflows list --app <slug> [--limit N] [--offset N] [--status S] [--workflow-name NAME] [--created-after RFC3339] [--created-before RFC3339]"
+	usage := "usage: gregale workflows list [--app <slug>] [--limit N] [--offset N] [--all] [--status S] [--workflow-name NAME] [--created-after RFC3339] [--created-before RFC3339]"
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -80,10 +87,11 @@ func cmdWorkflowsList(args []string) int {
 		return 1
 	}
 
-	if *appSlug == "" {
-		PrintUsage(os.Stderr, usage, "workflows")
-		return 1
+	resolvedApp, appErr := resolveWorkflowApp(*appSlug)
+	if appErr != nil {
+		return printErr("Could not resolve workflow app", appErr)
 	}
+	*appSlug = resolvedApp
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
 		PrintUsage(os.Stderr, usage+" (1 <= N <= 100)", "workflows")
 		return 1
@@ -116,19 +124,32 @@ func cmdWorkflowsList(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	out, err := client.ListWorkflowRunsWithOptions(context.Background(), *appSlug, api.WorkflowRunListOptions{
+	opts := api.WorkflowRunListOptions{
 		Limit: *limit, Offset: *offset, Status: *status, WorkflowName: *workflowName,
 		CreatedAfter: after, CreatedBefore: before,
-	})
+	}
+	items, next, err := collectWorkflowRunPages(client, *appSlug, opts, *all)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 
 	if jsonOutput {
-		return jsonOut(writeNDJSON(out.Runs))
+		return jsonOut(writeNDJSON(items))
 	}
 
-	renderWorkflowRunsTable(osStdout, out.Runs)
+	if len(items) == 0 {
+		detail := fmt.Sprintf("offset=%d; status=%q; workflow=%q; created-after=%q; created-before=%q (blank filters are unrestricted)", *offset, *status, *workflowName, *createdAfter, *createdBefore)
+		printEmptyResult("workflow runs in app "+*appSlug, detail, recoveryCLI()+" workflows list --app "+recoveryArgument(*appSlug))
+		_, _ = fmt.Fprintln(osStdout, "The next command starts at the first page without these filters. No matches does not establish whether an uncertain submission was accepted.")
+		return 0
+	}
+	renderWorkflowRunsTable(osStdout, items)
+	printFailedWorkflowRunCommands(osStdout, items)
+	printActiveWorkflowRunCommands(osStdout, items)
+	if next >= 0 {
+		opts.Offset = next
+		_, _ = fmt.Fprintf(osStdout, "Next page (POSIX shells):\n  %s\n", workflowListNextCommand(*appSlug, opts))
+	}
 	return 0
 }
 
@@ -147,31 +168,56 @@ func parseWorkflowRunListTime(value, flagName string) (*time.Time, error) {
 func cmdWorkflowsRun(args []string) int {
 	// The workflow name may come before or after the flags (help shows
 	// `workflows run --app <slug> <workflow-name>`).
-	flagArgs, positional := splitArgsForFlags(args)
+	flagArgs, positional := splitArgsForFlags(args, "wait")
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale workflows run <workflow_name> --app <slug> [--input '{\"k\":\"v\"}'] [--idempotency-key <key>]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows run <workflow_name> [--app <slug>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
 		return 1
 	}
 	workflowName := positional[0]
 
 	fs := newFlagSet("workflows-run", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug")
+	appSlug := fs.String("app", "", "app slug (defaults to linked project app)")
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
+	inputFile := fs.String("input-file", "", "read JSON input from a file, or - for stdin (excludes --input)")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying an uncertain run start")
+	wait := fs.Bool("wait", false, "wait for the accepted run to succeed")
+	timeout := fs.Duration("timeout", 5*time.Minute, "maximum wait after acceptance (requires --wait)")
+	interval := fs.Duration("poll-interval", 2*time.Second, "wait poll interval (requires --wait; 1s to 1h)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-
-	if *appSlug == "" {
-		PrintUsage(os.Stderr, "usage: gregale workflows run <workflow_name> --app <slug> [--input '{\"k\":\"v\"}'] [--idempotency-key <key>]", "workflows")
-		return 1
+	waitOptions := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" || f.Name == "poll-interval" {
+			waitOptions = true
+		}
+	})
+	if (waitOptions && !*wait) || (*wait && (*timeout <= 0 || *interval < time.Second || *interval > time.Hour)) {
+		return printErr("Invalid workflow wait options", fmt.Errorf("--timeout and --poll-interval require --wait; use a positive timeout and a poll interval between 1s and 1h"))
 	}
 
-	if !json.Valid([]byte(*inputStr)) {
-		printCommandValidation(os.Stderr, "error: --input must be valid JSON\n")
+	resolvedApp, appErr := resolveWorkflowApp(*appSlug)
+	if appErr != nil {
+		return printErr("Could not resolve workflow app", appErr)
+	}
+	appSource := targetValueSource(*appSlug, resolvedApp)
+	*appSlug = resolvedApp
+
+	var inlineSet, fileSet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "input" {
+			inlineSet = true
+		}
+		if f.Name == "input-file" {
+			fileSet = true
+		}
+	})
+	input, inputErr := workflowRunInput(*inputStr, *inputFile, inlineSet, fileSet)
+	if inputErr != nil {
+		printCommandValidation(osStderr, "%s\n", inputErr)
 		return 1
 	}
 
@@ -180,30 +226,52 @@ func cmdWorkflowsRun(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	run, err := client.RunWorkflowWithIdempotencyKey(context.Background(), *appSlug, workflowName, json.RawMessage(*inputStr), *idempotencyKey)
+	printWorkflowRunTarget(*appSlug, appSource)
+	run, err := client.RunWorkflowWithIdempotencyKey(context.Background(), *appSlug, workflowName, input, *idempotencyKey)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printRunSubmissionError("Request failed", err, recoveryCLI()+" workflows list --app "+recoveryArgument(*appSlug)+" --workflow-name "+recoveryArgument(workflowName), *idempotencyKey != "")
+	}
+	rememberAcceptedWorkflow(*appSlug, workflowName, run)
+	if *wait {
+		if !workflowUUIDPattern.MatchString(run.ID) {
+			if code := renderWorkflowRunStatus(run); code != 0 {
+				return code
+			}
+			return printErr("Cannot wait for accepted workflow", fmt.Errorf("submission response did not include a valid run ID; inspect workflows list --app %s --workflow-name %s before submitting again", recoveryArgument(*appSlug), recoveryArgument(workflowName)))
+		}
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "Workflow run accepted: %s. Waiting for this exact run.\n", run.ID)
+		}
+		return waitWorkflowRun(client, run.ID, *timeout, *interval, &run)
 	}
 
 	if jsonOutput {
 		return jsonOut(json.NewEncoder(osStdout).Encode(run))
 	}
 
-	fmt.Printf("Workflow run initiated: %s\n", run.ID)
-	fmt.Printf("Status:       %s\n", run.Status)
-	fmt.Printf("Workflow:     %s\n", run.WorkflowName)
+	_, _ = fmt.Fprintf(osStdout, "Workflow run accepted: %s\nApp: %s\nWorkflow: %s\nStatus: %s\n", run.ID, oneLine(*appSlug), oneLine(run.WorkflowName), oneLine(run.Status))
+	printWorkflowRunNextSteps(run.ID, run.Status)
 	return 0
 }
 
 func cmdWorkflowsStatus(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows status <run_id>", "workflows")
+	if workflowsInteractiveRequested(args) {
+		return cmdWorkflowsInteractive("status", args)
+	}
+	fs := newFlagSet("workflows status", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug for latest (defaults to linked project app)")
+	name := fs.String("workflow-name", "", "exact workflow name required for latest")
+	check := fs.Bool("check", false, "exit successfully only for a succeeded, non-cancelled run")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	runID := args[0]
-	if !workflowUUIDPattern.MatchString(runID) {
-		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
+		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflows status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]")
 		return 1
+	}
+	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
+	if code != 0 {
+		return code
 	}
 
 	client, err := authedClient()
@@ -211,11 +279,33 @@ func cmdWorkflowsStatus(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	run, err := client.GetWorkflowRun(context.Background(), runID)
+	ctx := context.Background()
+	if target.Ref == "latest" || *check {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	runID, err := resolveWorkflowReadTarget(ctx, client, target)
+	if err != nil {
+		return printErr("Could not resolve workflow run", err)
+	}
+	run, err := client.GetWorkflowRun(ctx, runID)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
+	if *check && run.ID != runID {
+		return printErr("Invalid workflow run", fmt.Errorf("status response did not identify the requested run"))
+	}
+	if code := renderWorkflowRunStatus(run); code != 0 {
+		return code
+	}
+	if *check && (run.Status != "succeeded" || run.CancelledAt != nil) {
+		return printErr("Workflow run check failed", fmt.Errorf("run %s has recorded status %s (cancelled=%t); only a succeeded, non-cancelled run passes --check", runID, oneLine(run.Status), run.CancelledAt != nil))
+	}
+	return 0
+}
 
+func renderWorkflowRunStatus(run api.WorkflowRunResponse) int {
 	if jsonOutput {
 		return jsonOut(json.NewEncoder(osStdout).Encode(run))
 	}
@@ -240,18 +330,26 @@ func cmdWorkflowsStatus(args []string) int {
 	if len(run.Output) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Output:       %s\n", string(run.Output))
 	}
+	printWorkflowFailureEvidence(osStdout, run)
+	printActiveWorkflowRunCommands(osStdout, []api.WorkflowRunResponse{run})
 	return 0
 }
 
 func cmdWorkflowsSteps(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows steps <run_id>", "workflows")
+	fs := newFlagSet("workflows steps", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug for latest (defaults to linked project app)")
+	name := fs.String("workflow-name", "", "exact workflow name required for latest")
+	failedOnly := fs.Bool("failed-only", false, "show only failed steps")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	runID := args[0]
-	if !workflowUUIDPattern.MatchString(runID) {
-		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
+		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflows steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]")
 		return 1
+	}
+	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
+	if code != 0 {
+		return code
 	}
 
 	client, err := authedClient()
@@ -259,51 +357,114 @@ func cmdWorkflowsSteps(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	resp, err := client.ListWorkflowSteps(context.Background(), runID)
+	ctx := context.Background()
+	if target.Ref == "latest" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	runID, err := resolveWorkflowReadTarget(ctx, client, target)
+	if err != nil {
+		return printErr("Could not resolve workflow run", err)
+	}
+	resp, err := client.ListWorkflowSteps(ctx, runID)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 
+	if *failedOnly {
+		failed := make([]api.WorkflowStepResponse, 0)
+		for _, step := range resp.Steps {
+			if step.Status == "failed" {
+				failed = append(failed, step)
+			}
+		}
+		resp.Steps = failed
+	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(resp.Steps))
 	}
 
+	if *failedOnly && len(resp.Steps) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No failed steps found for workflow run %s. Step states may still change.\n", runID)
+		return 0
+	}
 	renderWorkflowStepsTable(osStdout, resp.Steps)
+	if *failedOnly {
+		_, _ = fmt.Fprintf(osStdout, "Inspect run diagnostics (POSIX shells):\n  %s workflows diagnose %s\nInspect failed step attempts:\n", recoveryCLI(), recoveryArgument(runID))
+		for _, step := range resp.Steps {
+			_, _ = fmt.Fprintf(osStdout, "  %s workflows attempts %s %s\n", recoveryCLI(), recoveryArgument(runID), recoveryArgument(step.StepName))
+		}
+	}
 	return 0
 }
 
 func cmdWorkflowsAttempts(args []string) int {
-	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows attempts <run_id> <step_name>", "workflows")
+	fs := newFlagSet("workflows attempts", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug for latest (defaults to linked project app)")
+	name := fs.String("workflow-name", "", "exact workflow name required for latest")
+	failedOnly := fs.Bool("failed-only", false, "show only failed attempts")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	runID, stepName := args[0], args[1]
-	if !workflowUUIDPattern.MatchString(runID) {
-		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+	if fs.NArg() != 2 {
+		PrintUsage(os.Stderr, "usage: gregale workflows attempts <run_id|latest> <step_name> [--workflow-name NAME] [--app SLUG] [--failed-only]", "workflows")
+		return 1
+	}
+	ref, stepName := fs.Arg(0), fs.Arg(1)
+	if ref != "latest" && !workflowUUIDPattern.MatchString(ref) {
+		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID or latest)\n", ref)
 		return 1
 	}
 	if stepName == "" {
 		printCommandValidation(os.Stderr, "error: step name is required\n")
 		return 1
 	}
+	target, code := validateWorkflowReadTarget(ref, *app, *name)
+	if code != 0 {
+		return code
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListWorkflowStepAttempts(context.Background(), runID, stepName)
+	ctx := context.Background()
+	if ref == "latest" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	runID, err := resolveWorkflowReadTarget(ctx, client, target)
+	if err != nil {
+		return printErr("Could not resolve workflow run", err)
+	}
+	resp, err := client.ListWorkflowStepAttempts(ctx, runID, stepName)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
+	if *failedOnly {
+		failed := make([]api.WorkflowStepAttemptResponse, 0)
+		for _, attempt := range resp.Attempts {
+			if attempt.Status == "failed" {
+				failed = append(failed, attempt)
+			}
+		}
+		resp.Attempts = failed
+	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(resp.Attempts))
+	}
+	if *failedOnly && len(resp.Attempts) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No failed attempts found for workflow run %s step %s. Attempt states and retained history may change.\n", runID, oneLine(stepName))
+		return 0
 	}
 	renderWorkflowStepAttemptsTable(osStdout, resp.Attempts)
 	return 0
 }
 
 func cmdWorkflowsResume(args []string) int {
-	flagArgs, positional := splitArgsForFlags(args)
-	usage := "usage: gregale workflows resume <run_id> --expected-resume-count <N> [--idempotency-key <KEY>]"
+	flagArgs, positional := splitArgsForFlags(args, "wait")
+	usage := "usage: gregale workflows resume <run_id> --expected-resume-count <N> [--idempotency-key <KEY>] [--wait [--timeout 5m] [--poll-interval 2s]]"
 	if len(positional) != 1 {
 		PrintUsage(os.Stderr, usage, "workflows")
 		return 1
@@ -317,11 +478,23 @@ func cmdWorkflowsResume(args []string) int {
 	fs := newFlagSet("workflows-resume", flag.ContinueOnError)
 	expectedResumeCount := fs.Int("expected-resume-count", -1, "current resume_count from workflows status")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying the same resume request")
+	wait := fs.Bool("wait", false, "wait for the resumed run to succeed")
+	timeout := fs.Duration("timeout", 5*time.Minute, "maximum wait after resume acceptance (requires --wait)")
+	interval := fs.Duration("poll-interval", 2*time.Second, "wait poll interval (requires --wait; 1s to 1h)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	waitOptions := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" || f.Name == "poll-interval" {
+			waitOptions = true
+		}
+	})
+	if (waitOptions && !*wait) || (*wait && (*timeout <= 0 || *interval < time.Second || *interval > time.Hour)) {
+		return printErr("Invalid workflow wait options", fmt.Errorf("--timeout and --poll-interval require --wait; use a positive timeout and a poll interval between 1s and 1h"))
 	}
 	if *expectedResumeCount < 0 || *expectedResumeCount > api.WorkflowRunMaxResumes {
 		PrintUsage(os.Stderr, usage+fmt.Sprintf(" (0 <= N <= %d)", api.WorkflowRunMaxResumes), "workflows")
@@ -343,6 +516,21 @@ func cmdWorkflowsResume(args []string) int {
 	if err != nil {
 		return printErr("Request failed", err)
 	}
+	if run.ID == runID {
+		rememberAcceptedWorkflow("", "", run)
+	}
+	if *wait {
+		if run.ID != runID {
+			if code := renderWorkflowRunStatus(run); code != 0 {
+				return code
+			}
+			return printErr("Cannot wait for resumed workflow", fmt.Errorf("resume response did not identify the requested run; inspect %s workflows status %s and its resume history before repeating the resume request", recoveryCLI(), recoveryArgument(runID)))
+		}
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "Workflow resume accepted: %s (resume count=%d). Waiting for this exact run.\n", run.ID, run.ResumeCount)
+		}
+		return waitWorkflowRun(client, runID, *timeout, *interval, &run)
+	}
 	if jsonOutput {
 		return jsonOut(json.NewEncoder(osStdout).Encode(run))
 	}
@@ -353,20 +541,25 @@ func cmdWorkflowsResume(args []string) int {
 }
 
 func cmdWorkflowsResumes(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale workflows resumes <run_id>", "workflows")
-		return 1
-	}
-	runID := args[0]
-	if !workflowUUIDPattern.MatchString(runID) {
-		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
-		return 1
+	target, code := parseWorkflowReadTarget("resumes", args)
+	if code != 0 {
+		return code
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListWorkflowResumes(context.Background(), runID)
+	ctx := context.Background()
+	if target.Ref == "latest" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	runID, err := resolveWorkflowReadTarget(ctx, client, target)
+	if err != nil {
+		return printErr("Could not resolve workflow run", err)
+	}
+	resp, err := client.ListWorkflowResumes(ctx, runID)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
@@ -378,6 +571,9 @@ func cmdWorkflowsResumes(args []string) int {
 }
 
 func cmdWorkflowsCancel(args []string) int {
+	if workflowsInteractiveRequested(args) {
+		return cmdWorkflowsInteractive("cancel", args)
+	}
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale workflows cancel <run_id>", "workflows")
 		return 1
@@ -402,27 +598,73 @@ func cmdWorkflowsCancel(args []string) int {
 		return jsonOut(json.NewEncoder(osStdout).Encode(run))
 	}
 
-	fmt.Printf("Workflow run %s cancelled (status: %s)\n", run.ID, run.Status)
+	if run.CancelledAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "Workflow run %s cancelled (status: %s)\n", run.ID, oneLine(run.Status))
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Workflow run %s was already finished; no cancellation applied (status: %s)\n", run.ID, oneLine(run.Status))
+	}
+	printWorkflowRunNextSteps(run.ID, run.Status)
 	return 0
 }
 
 func cmdWorkflowsRetry(args []string) int {
-	if len(args) != 2 || !workflowUUIDPattern.MatchString(args[0]) || args[1] == "" {
-		PrintUsage(os.Stderr, "usage: gregale workflows retry <run_id> <step_name>", "workflows")
+	if workflowsInteractiveRequested(args) {
+		return cmdWorkflowsInteractive("retry", args)
+	}
+	flagArgs, positional := splitArgsForFlags(args, "wait")
+	usage := "usage: gregale workflows retry <run_id> <step_name> [--wait [--timeout 5m] [--poll-interval 2s]]"
+	if len(positional) != 2 || !workflowUUIDPattern.MatchString(positional[0]) || positional[1] == "" {
+		PrintUsage(os.Stderr, usage, "workflows")
 		return 1
 	}
+	fs := newFlagSet("workflows-retry", flag.ContinueOnError)
+	wait := fs.Bool("wait", false, "wait for the retried run to succeed")
+	timeout := fs.Duration("timeout", 5*time.Minute, "maximum wait after retry acceptance (requires --wait)")
+	interval := fs.Duration("poll-interval", 2*time.Second, "wait poll interval (requires --wait; 1s to 1h)")
+	if err := fs.Parse(flagArgs); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	waitOptions := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" || f.Name == "poll-interval" {
+			waitOptions = true
+		}
+	})
+	if (waitOptions && !*wait) || (*wait && (*timeout <= 0 || *interval < time.Second || *interval > time.Hour)) {
+		return printErr("Invalid workflow wait options", fmt.Errorf("--timeout and --poll-interval require --wait; use a positive timeout and a poll interval between 1s and 1h"))
+	}
+	runID, stepName := positional[0], positional[1]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	run, err := client.RetryWorkflowStep(context.Background(), args[0], args[1])
+	run, err := client.RetryWorkflowStep(context.Background(), runID, stepName)
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if run.ID == runID {
+		rememberAcceptedWorkflow("", "", run)
+	}
+	if *wait {
+		if run.ID != runID {
+			if code := renderWorkflowRunStatus(run); code != 0 {
+				return code
+			}
+			return printErr("Cannot wait for retried workflow", fmt.Errorf("retry response did not identify the requested run; inspect %s workflows status %s and its step attempts before repeating the retry request", recoveryCLI(), recoveryArgument(runID)))
+		}
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "Workflow retry accepted: %s (step=%s). Waiting for this exact run.\n", run.ID, oneLine(stepName))
+		}
+		return waitWorkflowRun(client, runID, *timeout, *interval, &run)
 	}
 	if jsonOutput {
 		return jsonOut(json.NewEncoder(osStdout).Encode(run))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Workflow run %s requeued at step %s (status: %s)\n", run.ID, args[1], run.Status)
+	_, _ = fmt.Fprintf(osStdout, "Workflow run %s requeued at step %s (status: %s)\n", run.ID, oneLine(stepName), oneLine(run.Status))
+	printWorkflowRunNextSteps(run.ID, run.Status)
 	return 0
 }
 
@@ -436,12 +678,13 @@ func cmdWorkflowsEvents(args []string) int {
 
 	fs := newFlagSet("workflows-events-send", flag.ContinueOnError)
 	payloadStr := fs.String("payload", "{}", "JSON payload for the event")
+	payloadFile := fs.String("payload-file", "", "read JSON payload from a file, or - for stdin (excludes --payload)")
 	flags, posArgs := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]", "workflows")
 		return 1
 	}
 
@@ -453,8 +696,18 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 
-	if !json.Valid([]byte(*payloadStr)) {
-		printCommandValidation(os.Stderr, "error: --payload must be valid JSON\n")
+	var inlineSet, fileSet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "payload" {
+			inlineSet = true
+		}
+		if f.Name == "payload-file" {
+			fileSet = true
+		}
+	})
+	payload, payloadErr := workflowEventPayload(*payloadStr, *payloadFile, inlineSet, fileSet, eventName)
+	if payloadErr != nil {
+		printCommandValidation(osStderr, "%s\n", payloadErr)
 		return 1
 	}
 
@@ -463,7 +716,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	resp, err := client.SendWorkflowEvent(context.Background(), runID, eventName, json.RawMessage(*payloadStr))
+	resp, err := client.SendWorkflowEvent(context.Background(), runID, eventName, payload)
 	if err != nil {
 		return printErr("Request failed", err)
 	}

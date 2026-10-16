@@ -4,6 +4,8 @@
 - **Date:** 2026-08-01
 - **Issue:** #472 (SEC: enforce cosign signature at deploy time)
 - **Supersedes:** — (extends ADR-038 build-side signing primitive)
+- **Superseded in part by:** ADR-435 for registry signature transport and
+  company-standard source-build admission; ADR-038 local rootfs signing remains.
 - **Decision:** Close the gap between PR #371's build-side `gregale
   sign-keys` and a regulated-workload deploy-time gate by adding a
   per-app `require_signed` flag plus a per-app trusted-publisher list.
@@ -76,6 +78,8 @@ This ADR commits to:
    and before `PullDigest`. The verify path:
    - Loads `/etc/faas/secrets/trusted-publishers/*.pem` once at
      startup; refreshes on `pg_notify('trusted_signer_changed')`.
+     (Superseded 2026-10-11: imaged reads `app_trusted_signers` on
+     every verify; see the amendment at the end.)
    - For each pending deployment, resolves the manifest digest,
      fetches the cosign signature blob at the registry's
      well-known `sha256-<digest>.sig` location, and verifies
@@ -125,47 +129,25 @@ P-256 r||s over the 32-byte SHA-256 of the manifest digest).
 Rekor transparency log verification is out of scope per the
 issue body; it surfaces as a follow-up if a customer asks for it.
 
-## Wire format (operator contract)
+## Registry wire format (superseded by ADR-435)
 
-The verify path expects a **raw 64-byte ECDSA P-256 r||s signature
-over the 32-byte SHA-256 digest of the manifest** — NOT the
-cosign v2 JSON envelope (Rekor bundle, plain sig, or certificate).
+The original raw-signature operator contract required signature bytes at the
+image manifest's own digest blob URL. OCI content addressing cannot represent
+that: different bytes require their own digest. The old signing/push recipes
+are withdrawn. Raw r||s is also distinct from Cosign's ASN.1 simple-signing
+signature format.
 
-This is the same wire format as the build-side
-`pkg/cosign/verifier.go::verifyDigest` (ECDSAP256Raw signing /
-verification). The signature MUST be reachable via the OCI
-content-addressed blob endpoint at the manifest's digest.
+ADR-435 replaces the registry deployment transport with keyed simple-signing
+attachments at `sha256-<subject-hex>.sig`. The attachment manifest references a
+payload by that payload's own digest and size; its detached ASN.1 P256 signature
+authenticates the exact payload, including the image subject digest. Trust
+comes exclusively from the approved publisher key set. See
+[ADR-581](581-inherited-application-standards.md#registry-publisher-signature-transport)
+for the supported format and remaining artifact-admission work.
 
-Operators MUST sign with a tooling that emits this raw shape — the
-official `cosign sign` CLI emits the cosign v2 JSON envelope as a
-*tagged* `sha256-<hex>.sig` artifact, which the platform's
-verify path does NOT parse. Recommended signers (in priority
-order):
-
-1. **`cosign sign --output-signature=signature.sig --key <key>`** then
-   push the signature blob with the manifest digest as the OCI tag
-   (manually, e.g. `crane blob push <registry>/<image>@sha256-<manifest-hex>.sig signature.sig`).
-2. **A custom OCI signing CLI** that emits the raw 64-byte signature
-   blob and pushes it via the registry's content-addressed blob endpoint.
-3. **`rekor-cli`** — see `rekor-cli` docs for the raw signature
-   emission flow.
-
-The verify path returns `ErrSignatureInvalid` (NOT
-`ErrSignatureMissing`) when the signature blob is present but
-fails ECDSA verification. Operators hitting this 403 should:
-
-- Confirm the signing tool emitted raw r||s (not JSON envelope).
-- Confirm the trusted publisher's public key DER bytes match the
-  signing tool's `--key` argument.
-- Confirm the signature was pushed to the manifest's digest path,
-  not the cosign v2 `sha256-<hex>.sig` tag location.
-
-This is a deliberate deviation from the cosign v2 standard. The
-trade-off is documented in `## Why not the full cosign CLI / sigstore-go bundle?`
-above — we keep the verifier primitive to keep the deploy-time
-dependency surface minimal. A follow-up issue will add full
-cosign v2 envelope parsing (with Rekor bundle verification) when
-a customer asks for it.
+The preceding raw primitive rationale is historical. ADR-038's local ext4
+signer/verifier retains its raw digest signature; this decision changes only
+registry publisher verification.
 
 ## What this PR is NOT
 
@@ -176,10 +158,10 @@ a customer asks for it.
   customer PATCH endpoint is purely additive (a new field that
   gets silently dropped); the customer-facing create-deployment
   path gains a 403 in two narrow operator-policy scenarios.
-- **Not a source-tarball change.** The railpack path bypasses the
-  gate by design (ADR-003 — builds run inside ephemeral builder
-  microVMs, so the customer's host-side tarball is never signed
-  and never needs to be).
+- **Historical source-tarball exclusion.** ADR-435 supersedes this bypass
+  for company standards. Builder isolation alone cannot prove an approved
+  publisher. Scoped source/rootfs evidence is required before that standards
+  admission path can be activated.
 
 ## Consequences
 
@@ -275,3 +257,39 @@ a customer asks for it.
 | `deploy/ansible/roles/apid/templates/apid.env.j2` | `FAAS_TRUSTED_PUBLISHERS_DIR` |
 | `docs/adr/035-auth-audit-events.md` | append 6 new audit-event rows |
 | `docs/faas_implementation_spec.md` §11 | add the trusted-publishers / require_signed paragraph |
+
+## Amendment 2026-10-11: imaged reads `app_trusted_signers` (hunt #9 H9-51)
+
+Decision 5 loaded the trust list from `/etc/faas/secrets/trusted-publishers/`,
+which apid mirrored from `app_trusted_signers`. That only works when apid and
+imaged share a filesystem. In the multi-host topology apid runs on the
+control plane and imaged runs on compute nodes. On production-us the
+directory existed only on the control plane, and it stayed empty: no unit set
+`FAAS_TRUSTED_PUBLISHERS_DIR`, so the apid writer never ran. imaged had
+neither the directory nor the variable. A publisher added with
+`gregale trusted-publishers add` therefore never reached imaged. Every
+`require_signed` deploy failed with "no trusted publishers configured", and
+the posture report scored the app higher.
+
+**Decision.** imaged reads the app's rows from `app_trusted_signers` on every
+verify, for both the deploy gate and the live-image revalidation. This is the
+same pattern imaged already uses for per-app registry credentials (ADR-062).
+apid stays the only writer. `trusted_signer_changed` now only triggers
+revalidation of live signed images; there is no cache to refresh. The disk
+mirror is removed: the apid writer, imaged's directory cache,
+`FAAS_TRUSTED_PUBLISHERS_DIR`, the ansible directory task, and the
+`pkg/cosign` directory loaders.
+
+**Failure handling.** A stored key that does not parse fails the verify
+closed instead of being skipped, so a corrupt row cannot shrink the trust
+set. A database error is not a verdict on the image:
+- the deploy fails with `signature_verify: trusted publisher list
+  unavailable`;
+- the live-image sweep stops without quarantining.
+
+An app with no signer rows still fails closed, and a live image is still
+quarantined when its last signer is removed.
+
+**Cost.** One indexed query per signed deploy and per live signed image in a
+revalidation sweep. Both are rare next to the registry round trip a verify
+already makes.

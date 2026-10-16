@@ -266,3 +266,195 @@ func terminalExitForBuild(b api.BuildResponse, appSlug string) int {
 func terminalExitForBuildContext(ctx context.Context, c *Client, b api.BuildResponse, appSlug string) int {
 	return terminalExitForBuildWithFailureContext(ctx, c, b, appSlug, nil)
 }
+
+func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.MinInstances != b.MinInstances || a.MaxInstances != b.MaxInstances ||
+		a.ScaleOutCooldownS != b.ScaleOutCooldownS || a.ScaleInCooldownS != b.ScaleInCooldownS ||
+		a.ConcurrencyOverflow != b.ConcurrencyOverflow || a.MaxQueueWaitMS != b.MaxQueueWaitMS ||
+		a.MaxQueueDepth != b.MaxQueueDepth || a.WakeMaxQueueDepth != b.WakeMaxQueueDepth ||
+		a.WakeMaxQueueWaitSeconds != b.WakeMaxQueueWaitSeconds {
+		return false
+	}
+	if a.Target == nil || b.Target == nil {
+		return a.Target == nil && b.Target == nil
+	}
+	return a.Target.Metric == b.Target.Metric && a.Target.Value == b.Target.Value
+}
+
+func serviceReplicasEqual(a, b *api.ServiceReplicas) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Min == b.Min && a.Max == b.Max && a.Desired == b.Desired
+}
+
+func workerReplicasEqual(a, b *api.WorkerScaling) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Name == b.Name &&
+		a.Target == b.Target && a.ObserverAppSlug == b.ObserverAppSlug
+}
+
+func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
+	manifest := current.Manifest
+	if desired.Profiling != nil && (manifest.Profiling == nil || *desired.Profiling != *manifest.Profiling) {
+		return true
+	}
+	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
+		return true
+	}
+	if desired.RestartPolicy != nil && manifest.RestartPolicy != *desired.RestartPolicy {
+		return true
+	}
+	if desired.StartupDeadlineS != nil && manifest.StartupDeadlineS != *desired.StartupDeadlineS {
+		return true
+	}
+	if desired.MaxRetries != nil && manifest.MaxRetries != *desired.MaxRetries {
+		return true
+	}
+	if desired.StopGracePeriodS != nil {
+		currentGraceS := int(manifest.StopGracePeriod / time.Second)
+		if currentGraceS != *desired.StopGracePeriodS {
+			return true
+		}
+	}
+	if desired.StopSignal != nil && manifest.StopSignal != *desired.StopSignal {
+		return true
+	}
+	if desired.RequestTimeoutS != nil && manifest.RequestTimeoutS != *desired.RequestTimeoutS {
+		return true
+	}
+	if desired.ServiceReplicas != nil && !serviceReplicasEqual(manifest.ServiceReplicas, desired.ServiceReplicas) {
+		return true
+	}
+	if desired.WorkerReplicas != nil && !workerReplicasEqual(manifest.WorkerReplicas, desired.WorkerReplicas) {
+		return true
+	}
+	return false
+}
+
+// applyManifestLifecycle reads and applies the optional lifecycle block. It
+// runs after the app exists, allowing OCI image deploys to use worker mode
+// without requiring an HTTP listener or an image-derived app.json first.
+func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, slug, cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil && m.Profiling == nil) {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	desired := api.UpdateAppRequest{}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		desired = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		desired.ExecutionMode = &workerMode
+		desired.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			desired.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			desired.StopSignal = &sig
+		}
+	}
+	current, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("read app before applying lifecycle policy: %w", err)
+	}
+	if !lifecyclePatchNeeded(current, desired) {
+		return nil
+	}
+	if _, err := client.UpdateApp(ctx, slug, desired); err != nil {
+		return fmt.Errorf("apply lifecycle policy: %w", err)
+	}
+	return nil
+}
+
+// applyManifestScalingPolicy reads and applies optional app defaults from the
+// manifest. The API remains authoritative for plan gates and validation.
+// It runs after the deployment has been accepted so a failed build/upload
+// cannot leave app configuration changed. The API remains authoritative for
+// plan gates and workload-class compatibility.
+func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClient, slug, cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil || (m.Scaling == nil && m.RetryPolicy == nil && (m.Worker == nil || m.Worker.Scale.Metric == "")) {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	current, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("read app before applying scaling policy: %w", err)
+	}
+	update := api.UpdateAppRequest{}
+	changed := false
+	if m.Worker != nil && m.Worker.Scale.Metric != "" {
+		policy := &api.ScalingPolicy{
+			MinInstances: m.Worker.Scale.Min,
+			MaxInstances: m.Worker.Scale.Max,
+			Target: &api.ScalingTarget{
+				Metric: m.Worker.Scale.Metric,
+				Name:   m.Worker.Scale.Name,
+				Value:  m.Worker.Scale.Target,
+			},
+		}
+		if !scalingPolicyEqual(current.ScalingPolicy, policy) {
+			update.ScalingPolicy = policy
+			changed = true
+		}
+	} else if m.Scaling != nil {
+		desired := m.Scaling.ToAPI()
+		if !scalingPolicyEqual(current.ScalingPolicy, desired) {
+			update.ScalingPolicy = desired
+			changed = true
+		}
+	}
+	if m.RetryPolicy != nil {
+		desired := &api.RetryPolicyDTO{
+			MaxAttempts: m.RetryPolicy.MaxAttempts, BaseSeconds: m.RetryPolicy.BaseSeconds,
+			MaxSeconds: m.RetryPolicy.MaxSeconds, JitterSeconds: m.RetryPolicy.JitterSeconds,
+		}
+		if !retryPolicyDTOEqual(current.RetryPolicy, desired) {
+			update.RetryPolicy = desired
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if _, err := client.UpdateApp(ctx, slug, update); err != nil {
+		return fmt.Errorf("apply manifest app defaults: %w", err)
+	}
+	return nil
+}
+
+func retryPolicyDTOEqual(left, right *api.RetryPolicyDTO) bool {
+	zero := func(p *api.RetryPolicyDTO) bool {
+		return p == nil || (p.MaxAttempts == 0 && p.BaseSeconds == 0 && p.MaxSeconds == 0 && p.JitterSeconds == 0)
+	}
+	if zero(left) || zero(right) {
+		return zero(left) && zero(right)
+	}
+	return left.MaxAttempts == right.MaxAttempts && left.BaseSeconds == right.BaseSeconds &&
+		left.MaxSeconds == right.MaxSeconds && left.JitterSeconds == right.JitterSeconds
+}

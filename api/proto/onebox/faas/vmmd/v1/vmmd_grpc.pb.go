@@ -22,6 +22,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	Vmmd_RuntimeAdmissionIdentity_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RuntimeAdmissionIdentity"
+	Vmmd_CreateAdmittedRuntime_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/CreateAdmittedRuntime"
+	Vmmd_PromoteAdmittedRuntime_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/PromoteAdmittedRuntime"
+	Vmmd_CaptureAdmittedRuntime_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CaptureAdmittedRuntime"
 	Vmmd_CreateFromSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
 	Vmmd_CreateEnvironmentQualification_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/CreateEnvironmentQualification"
@@ -39,10 +43,13 @@ const (
 	Vmmd_RestoreAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
 	Vmmd_ExecuteAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
 	Vmmd_ExecuteAppTaskStream_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
+	Vmmd_AttachAppTask_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/AttachAppTask"
 	Vmmd_WaitJobExit_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
 	Vmmd_ResumeWarmInstance_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/ResumeWarmInstance"
+	Vmmd_FreezeInstance_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FreezeInstance"
+	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
@@ -52,6 +59,8 @@ const (
 	Vmmd_Ping_FullMethodName                                    = "/onebox.faas.vmmd.v1.Vmmd/Ping"
 	Vmmd_Heartbeat_FullMethodName                               = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
+	Vmmd_UpdateAppEgressPolicy_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppEgressPolicy"
+	Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateAdmittedAppEgressPolicy"
 	Vmmd_AllowResolvedEgress_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
 	Vmmd_UpdateAppCPULimit_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
 	Vmmd_UpdateStaticEgressIP_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
@@ -67,6 +76,8 @@ const (
 	Vmmd_ForwardUDPStream_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/ForwardUDPStream"
 	Vmmd_MountParentExt4ReadOnly_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
 	Vmmd_MaterializeParentExt4_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
+	Vmmd_MaterializeVerifiedParentExt4_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/MaterializeVerifiedParentExt4"
+	Vmmd_MaterializeRuntimeScan_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/MaterializeRuntimeScan"
 	Vmmd_UmountParentExt4_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
 	Vmmd_MountOverlayParent_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
 	Vmmd_UmountOverlayParent_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
@@ -74,6 +85,7 @@ const (
 	Vmmd_AdoptMigratedInstance_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
 	Vmmd_AcknowledgeMigration_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
 	Vmmd_CancelLiveMigration_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
+	Vmmd_RetireManagedPostgresDrain_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RetireManagedPostgresDrain"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -84,6 +96,12 @@ const (
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 type VmmdClient interface {
+	// Distinct methods fail closed on older nodes before allocating a VM.
+	RuntimeAdmissionIdentity(ctx context.Context, in *RuntimeAdmissionIdentityRequest, opts ...grpc.CallOption) (*RuntimeAdmissionIdentityResponse, error)
+	CreateAdmittedRuntime(ctx context.Context, in *CreateAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CreateAdmittedRuntimeResponse, error)
+	PromoteAdmittedRuntime(ctx context.Context, in *PromoteAdmittedRuntimeRequest, opts ...grpc.CallOption) (*PromoteAdmittedRuntimeResponse, error)
+	// A distinct method refuses older nodes before they can pause a managed VM.
+	CaptureAdmittedRuntime(ctx context.Context, in *CaptureAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CaptureAdmittedRuntimeResponse, error)
 	// CreateFromSnapshot wakes an instance by restoring a previously-parked
 	// snapshot. Falls back to cold boot if the snapshot is stale, missing, or
 	// fails to load (ADR-005: cold boot always works).
@@ -144,6 +162,12 @@ type VmmdClient interface {
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error)
+	// AttachAppTask connects one client to an interactive app task (ADR-1037).
+	// The first frame names the instance and presents the single-use attach
+	// token; vmmd matches it against the digest schedd registered through
+	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
+	// output plus one terminal result back.
+	AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -190,6 +214,25 @@ type VmmdClient interface {
 	// owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
 	// only resumes Firecracker and re-attaches its liveness loops.
 	ResumeWarmInstance(ctx context.Context, in *ResumeWarmInstanceRequest, opts ...grpc.CallOption) (*ResumeWarmInstanceResponse, error)
+	// FreezeInstance (ADR-1151) pauses an idle running instance in place for
+	// the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
+	// stops its probes and, only when asked (memory pressure), reclaims its
+	// cgroup memory. The VM keeps its lease, netns and Firecracker process.
+	// Ineligible instances (warm pool, jobs, app tasks, builders, private
+	// network members, pending waitUntil tasks) fail with FailedPrecondition
+	// and code instance_not_freezable; an instance serving a request, stream
+	// or session fails with FailedPrecondition and code instance_busy, and
+	// keeps running. Freezing a frozen instance succeeds without pausing it
+	// again; with reclaim it compresses the frozen guest's memory into
+	// memory-only swap (zswap, ADR-906 decision 6), or fails with
+	// FailedPrecondition and code frozen_compress_unavailable on a host
+	// without it. A forward that reaches a frozen instance fails fast with
+	// Unavailable and code instance_frozen.
+	FreezeInstance(ctx context.Context, in *FreezeInstanceRequest, opts ...grpc.CallOption) (*FreezeInstanceResponse, error)
+	// ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
+	// its probes. schedd admits the thaw first. Thawing a live instance that
+	// is not frozen is a successful no-op.
+	ThawInstance(ctx context.Context, in *ThawInstanceRequest, opts ...grpc.CallOption) (*ThawInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -268,6 +311,11 @@ type VmmdClient interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(ctx context.Context, in *UpdateEgressAllowlistRequest, opts ...grpc.CallOption) (*UpdateEgressAllowlistAck, error)
+	// A separate method makes old nodes refuse revision-aware updates before
+	// touching the network. Acknowledgments echo the successfully applied revision.
+	UpdateAppEgressPolicy(ctx context.Context, in *UpdateAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAppEgressPolicyAck, error)
+	// Strict current-process acknowledgment for inherited standards.
+	UpdateAdmittedAppEgressPolicy(ctx context.Context, in *UpdateAdmittedAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAdmittedAppEgressPolicyAck, error)
 	// AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
 	// addresses a guest just resolved; vmmd lets that guest open TCP to them
 	// for the answer's TTL before the resolver replies. source_ip is the
@@ -440,6 +488,12 @@ type VmmdClient interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(ctx context.Context, in *MaterializeParentExt4Request, opts ...grpc.CallOption) (*MaterializeParentExt4Response, error)
+	// ADR-435: separate capability; old servers refuse instead of ignoring the
+	// expected complete artifact identity. Receipt follows copy and cleanup.
+	MaterializeVerifiedParentExt4(ctx context.Context, in *MaterializeVerifiedParentExt4Request, opts ...grpc.CallOption) (*MaterializeVerifiedParentExt4Response, error)
+	// ADR-435: verified distinct drives, actual read-only composition and bounded
+	// scanner projections. Receipt follows native cleanup; it grants no approval.
+	MaterializeRuntimeScan(ctx context.Context, in *MaterializeRuntimeScanRequest, opts ...grpc.CallOption) (*MaterializeRuntimeScanResponse, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
 	// returned from MountParentExt4ReadOnly. Idempotent on an
 	// unknown mountpoint — imaged's call-on-error-defer pattern
@@ -522,6 +576,9 @@ type VmmdClient interface {
 	// paused VM and returns it to RUNNING; the snapshot stays
 	// where it was (the dying vmmd's drive1 + mem are intact).
 	CancelLiveMigration(ctx context.Context, in *CancelLiveMigrationRequest, opts ...grpc.CallOption) (*CancelLiveMigrationResponse, error)
+	// Internal, fenced retirement of one PostgreSQL cutover incarnation.
+	// Generic Destroy and process inventory cannot acknowledge this contract.
+	RetireManagedPostgresDrain(ctx context.Context, in *RetireManagedPostgresDrainRequest, opts ...grpc.CallOption) (*RetireManagedPostgresDrainResponse, error)
 }
 
 type vmmdClient struct {
@@ -530,6 +587,46 @@ type vmmdClient struct {
 
 func NewVmmdClient(cc grpc.ClientConnInterface) VmmdClient {
 	return &vmmdClient{cc}
+}
+
+func (c *vmmdClient) RuntimeAdmissionIdentity(ctx context.Context, in *RuntimeAdmissionIdentityRequest, opts ...grpc.CallOption) (*RuntimeAdmissionIdentityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RuntimeAdmissionIdentityResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RuntimeAdmissionIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CreateAdmittedRuntime(ctx context.Context, in *CreateAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CreateAdmittedRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateAdmittedRuntimeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CreateAdmittedRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) PromoteAdmittedRuntime(ctx context.Context, in *PromoteAdmittedRuntimeRequest, opts ...grpc.CallOption) (*PromoteAdmittedRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PromoteAdmittedRuntimeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_PromoteAdmittedRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CaptureAdmittedRuntime(ctx context.Context, in *CaptureAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CaptureAdmittedRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureAdmittedRuntimeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureAdmittedRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *vmmdClient) CreateFromSnapshot(ctx context.Context, in *CreateFromSnapshotRequest, opts ...grpc.CallOption) (*WakeResponse, error) {
@@ -723,6 +820,19 @@ func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTas
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteAppTaskStreamClient = grpc.ServerStreamingClient[ExecuteAppTaskEvent]
 
+func (c *vmmdClient) AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_AttachAppTask_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AttachAppTaskRequest, AttachAppTaskEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_AttachAppTaskClient = grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent]
+
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobExitResponse)
@@ -757,6 +867,26 @@ func (c *vmmdClient) ResumeWarmInstance(ctx context.Context, in *ResumeWarmInsta
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResumeWarmInstanceResponse)
 	err := c.cc.Invoke(ctx, Vmmd_ResumeWarmInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) FreezeInstance(ctx context.Context, in *FreezeInstanceRequest, opts ...grpc.CallOption) (*FreezeInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FreezeInstanceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_FreezeInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ThawInstance(ctx context.Context, in *ThawInstanceRequest, opts ...grpc.CallOption) (*ThawInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ThawInstanceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ThawInstance_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -853,6 +983,26 @@ func (c *vmmdClient) UpdateEgressAllowlist(ctx context.Context, in *UpdateEgress
 	return out, nil
 }
 
+func (c *vmmdClient) UpdateAppEgressPolicy(ctx context.Context, in *UpdateAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAppEgressPolicyAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateAppEgressPolicyAck)
+	err := c.cc.Invoke(ctx, Vmmd_UpdateAppEgressPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) UpdateAdmittedAppEgressPolicy(ctx context.Context, in *UpdateAdmittedAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAdmittedAppEgressPolicyAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateAdmittedAppEgressPolicyAck)
+	err := c.cc.Invoke(ctx, Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) AllowResolvedEgress(ctx context.Context, in *AllowResolvedEgressRequest, opts ...grpc.CallOption) (*AllowResolvedEgressAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AllowResolvedEgressAck)
@@ -935,7 +1085,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -954,7 +1104,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +1117,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -980,7 +1130,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -993,7 +1143,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1018,6 +1168,26 @@ func (c *vmmdClient) MaterializeParentExt4(ctx context.Context, in *MaterializeP
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MaterializeParentExt4Response)
 	err := c.cc.Invoke(ctx, Vmmd_MaterializeParentExt4_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) MaterializeVerifiedParentExt4(ctx context.Context, in *MaterializeVerifiedParentExt4Request, opts ...grpc.CallOption) (*MaterializeVerifiedParentExt4Response, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MaterializeVerifiedParentExt4Response)
+	err := c.cc.Invoke(ctx, Vmmd_MaterializeVerifiedParentExt4_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) MaterializeRuntimeScan(ctx context.Context, in *MaterializeRuntimeScanRequest, opts ...grpc.CallOption) (*MaterializeRuntimeScanResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MaterializeRuntimeScanResponse)
+	err := c.cc.Invoke(ctx, Vmmd_MaterializeRuntimeScan_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1094,6 +1264,16 @@ func (c *vmmdClient) CancelLiveMigration(ctx context.Context, in *CancelLiveMigr
 	return out, nil
 }
 
+func (c *vmmdClient) RetireManagedPostgresDrain(ctx context.Context, in *RetireManagedPostgresDrainRequest, opts ...grpc.CallOption) (*RetireManagedPostgresDrainResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireManagedPostgresDrainResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireManagedPostgresDrain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -1102,6 +1282,12 @@ func (c *vmmdClient) CancelLiveMigration(ctx context.Context, in *CancelLiveMigr
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 type VmmdServer interface {
+	// Distinct methods fail closed on older nodes before allocating a VM.
+	RuntimeAdmissionIdentity(context.Context, *RuntimeAdmissionIdentityRequest) (*RuntimeAdmissionIdentityResponse, error)
+	CreateAdmittedRuntime(context.Context, *CreateAdmittedRuntimeRequest) (*CreateAdmittedRuntimeResponse, error)
+	PromoteAdmittedRuntime(context.Context, *PromoteAdmittedRuntimeRequest) (*PromoteAdmittedRuntimeResponse, error)
+	// A distinct method refuses older nodes before they can pause a managed VM.
+	CaptureAdmittedRuntime(context.Context, *CaptureAdmittedRuntimeRequest) (*CaptureAdmittedRuntimeResponse, error)
 	// CreateFromSnapshot wakes an instance by restoring a previously-parked
 	// snapshot. Falls back to cold boot if the snapshot is stale, missing, or
 	// fails to load (ADR-005: cold boot always works).
@@ -1162,6 +1348,12 @@ type VmmdServer interface {
 	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
 	// metadata-only because stdout/stderr have already arrived as chunks.
 	ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error
+	// AttachAppTask connects one client to an interactive app task (ADR-1037).
+	// The first frame names the instance and presents the single-use attach
+	// token; vmmd matches it against the digest schedd registered through
+	// ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
+	// output plus one terminal result back.
+	AttachAppTask(grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]) error
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -1208,6 +1400,25 @@ type VmmdServer interface {
 	// owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
 	// only resumes Firecracker and re-attaches its liveness loops.
 	ResumeWarmInstance(context.Context, *ResumeWarmInstanceRequest) (*ResumeWarmInstanceResponse, error)
+	// FreezeInstance (ADR-1151) pauses an idle running instance in place for
+	// the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
+	// stops its probes and, only when asked (memory pressure), reclaims its
+	// cgroup memory. The VM keeps its lease, netns and Firecracker process.
+	// Ineligible instances (warm pool, jobs, app tasks, builders, private
+	// network members, pending waitUntil tasks) fail with FailedPrecondition
+	// and code instance_not_freezable; an instance serving a request, stream
+	// or session fails with FailedPrecondition and code instance_busy, and
+	// keeps running. Freezing a frozen instance succeeds without pausing it
+	// again; with reclaim it compresses the frozen guest's memory into
+	// memory-only swap (zswap, ADR-906 decision 6), or fails with
+	// FailedPrecondition and code frozen_compress_unavailable on a host
+	// without it. A forward that reaches a frozen instance fails fast with
+	// Unavailable and code instance_frozen.
+	FreezeInstance(context.Context, *FreezeInstanceRequest) (*FreezeInstanceResponse, error)
+	// ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
+	// its probes. schedd admits the thaw first. Thawing a live instance that
+	// is not frozen is a successful no-op.
+	ThawInstance(context.Context, *ThawInstanceRequest) (*ThawInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -1286,6 +1497,11 @@ type VmmdServer interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error)
+	// A separate method makes old nodes refuse revision-aware updates before
+	// touching the network. Acknowledgments echo the successfully applied revision.
+	UpdateAppEgressPolicy(context.Context, *UpdateAppEgressPolicyRequest) (*UpdateAppEgressPolicyAck, error)
+	// Strict current-process acknowledgment for inherited standards.
+	UpdateAdmittedAppEgressPolicy(context.Context, *UpdateAdmittedAppEgressPolicyRequest) (*UpdateAdmittedAppEgressPolicyAck, error)
 	// AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
 	// addresses a guest just resolved; vmmd lets that guest open TCP to them
 	// for the answer's TTL before the resolver replies. source_ip is the
@@ -1458,6 +1674,12 @@ type VmmdServer interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(context.Context, *MaterializeParentExt4Request) (*MaterializeParentExt4Response, error)
+	// ADR-435: separate capability; old servers refuse instead of ignoring the
+	// expected complete artifact identity. Receipt follows copy and cleanup.
+	MaterializeVerifiedParentExt4(context.Context, *MaterializeVerifiedParentExt4Request) (*MaterializeVerifiedParentExt4Response, error)
+	// ADR-435: verified distinct drives, actual read-only composition and bounded
+	// scanner projections. Receipt follows native cleanup; it grants no approval.
+	MaterializeRuntimeScan(context.Context, *MaterializeRuntimeScanRequest) (*MaterializeRuntimeScanResponse, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
 	// returned from MountParentExt4ReadOnly. Idempotent on an
 	// unknown mountpoint — imaged's call-on-error-defer pattern
@@ -1540,6 +1762,9 @@ type VmmdServer interface {
 	// paused VM and returns it to RUNNING; the snapshot stays
 	// where it was (the dying vmmd's drive1 + mem are intact).
 	CancelLiveMigration(context.Context, *CancelLiveMigrationRequest) (*CancelLiveMigrationResponse, error)
+	// Internal, fenced retirement of one PostgreSQL cutover incarnation.
+	// Generic Destroy and process inventory cannot acknowledge this contract.
+	RetireManagedPostgresDrain(context.Context, *RetireManagedPostgresDrainRequest) (*RetireManagedPostgresDrainResponse, error)
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -1550,6 +1775,18 @@ type VmmdServer interface {
 // pointer dereference when methods are called.
 type UnimplementedVmmdServer struct{}
 
+func (UnimplementedVmmdServer) RuntimeAdmissionIdentity(context.Context, *RuntimeAdmissionIdentityRequest) (*RuntimeAdmissionIdentityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RuntimeAdmissionIdentity not implemented")
+}
+func (UnimplementedVmmdServer) CreateAdmittedRuntime(context.Context, *CreateAdmittedRuntimeRequest) (*CreateAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateAdmittedRuntime not implemented")
+}
+func (UnimplementedVmmdServer) PromoteAdmittedRuntime(context.Context, *PromoteAdmittedRuntimeRequest) (*PromoteAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PromoteAdmittedRuntime not implemented")
+}
+func (UnimplementedVmmdServer) CaptureAdmittedRuntime(context.Context, *CaptureAdmittedRuntimeRequest) (*CaptureAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureAdmittedRuntime not implemented")
+}
 func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSnapshotRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateFromSnapshot not implemented")
 }
@@ -1601,6 +1838,9 @@ func (UnimplementedVmmdServer) ExecuteAppTask(context.Context, *ExecuteAppTaskRe
 func (UnimplementedVmmdServer) ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteAppTaskStream not implemented")
 }
+func (UnimplementedVmmdServer) AttachAppTask(grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]) error {
+	return status.Error(codes.Unimplemented, "method AttachAppTask not implemented")
+}
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
 }
@@ -1612,6 +1852,12 @@ func (UnimplementedVmmdServer) WarmSnapshot(context.Context, *WarmSnapshotReques
 }
 func (UnimplementedVmmdServer) ResumeWarmInstance(context.Context, *ResumeWarmInstanceRequest) (*ResumeWarmInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResumeWarmInstance not implemented")
+}
+func (UnimplementedVmmdServer) FreezeInstance(context.Context, *FreezeInstanceRequest) (*FreezeInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FreezeInstance not implemented")
+}
+func (UnimplementedVmmdServer) ThawInstance(context.Context, *ThawInstanceRequest) (*ThawInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ThawInstance not implemented")
 }
 func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderReadyRequest) (*WaitBuilderReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitBuilderReady not implemented")
@@ -1639,6 +1885,12 @@ func (UnimplementedVmmdServer) Heartbeat(context.Context, *HeartbeatRequest) (*H
 }
 func (UnimplementedVmmdServer) UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateEgressAllowlist not implemented")
+}
+func (UnimplementedVmmdServer) UpdateAppEgressPolicy(context.Context, *UpdateAppEgressPolicyRequest) (*UpdateAppEgressPolicyAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateAppEgressPolicy not implemented")
+}
+func (UnimplementedVmmdServer) UpdateAdmittedAppEgressPolicy(context.Context, *UpdateAdmittedAppEgressPolicyRequest) (*UpdateAdmittedAppEgressPolicyAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateAdmittedAppEgressPolicy not implemented")
 }
 func (UnimplementedVmmdServer) AllowResolvedEgress(context.Context, *AllowResolvedEgressRequest) (*AllowResolvedEgressAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method AllowResolvedEgress not implemented")
@@ -1685,6 +1937,12 @@ func (UnimplementedVmmdServer) MountParentExt4ReadOnly(context.Context, *MountPa
 func (UnimplementedVmmdServer) MaterializeParentExt4(context.Context, *MaterializeParentExt4Request) (*MaterializeParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method MaterializeParentExt4 not implemented")
 }
+func (UnimplementedVmmdServer) MaterializeVerifiedParentExt4(context.Context, *MaterializeVerifiedParentExt4Request) (*MaterializeVerifiedParentExt4Response, error) {
+	return nil, status.Error(codes.Unimplemented, "method MaterializeVerifiedParentExt4 not implemented")
+}
+func (UnimplementedVmmdServer) MaterializeRuntimeScan(context.Context, *MaterializeRuntimeScanRequest) (*MaterializeRuntimeScanResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MaterializeRuntimeScan not implemented")
+}
 func (UnimplementedVmmdServer) UmountParentExt4(context.Context, *UmountParentExt4Request) (*UmountParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method UmountParentExt4 not implemented")
 }
@@ -1706,6 +1964,9 @@ func (UnimplementedVmmdServer) AcknowledgeMigration(context.Context, *Acknowledg
 func (UnimplementedVmmdServer) CancelLiveMigration(context.Context, *CancelLiveMigrationRequest) (*CancelLiveMigrationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelLiveMigration not implemented")
 }
+func (UnimplementedVmmdServer) RetireManagedPostgresDrain(context.Context, *RetireManagedPostgresDrainRequest) (*RetireManagedPostgresDrainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireManagedPostgresDrain not implemented")
+}
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
 
@@ -1725,6 +1986,78 @@ func RegisterVmmdServer(s grpc.ServiceRegistrar, srv VmmdServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Vmmd_ServiceDesc, srv)
+}
+
+func _Vmmd_RuntimeAdmissionIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RuntimeAdmissionIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RuntimeAdmissionIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RuntimeAdmissionIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RuntimeAdmissionIdentity(ctx, req.(*RuntimeAdmissionIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CreateAdmittedRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAdmittedRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CreateAdmittedRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CreateAdmittedRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CreateAdmittedRuntime(ctx, req.(*CreateAdmittedRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_PromoteAdmittedRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PromoteAdmittedRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).PromoteAdmittedRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_PromoteAdmittedRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).PromoteAdmittedRuntime(ctx, req.(*PromoteAdmittedRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CaptureAdmittedRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureAdmittedRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureAdmittedRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureAdmittedRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureAdmittedRuntime(ctx, req.(*CaptureAdmittedRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Vmmd_CreateFromSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -2008,6 +2341,13 @@ func _Vmmd_ExecuteAppTaskStream_Handler(srv interface{}, stream grpc.ServerStrea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteAppTaskStreamServer = grpc.ServerStreamingServer[ExecuteAppTaskEvent]
 
+func _Vmmd_AttachAppTask_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).AttachAppTask(&grpc.GenericServerStream[AttachAppTaskRequest, AttachAppTaskEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_AttachAppTaskServer = grpc.BidiStreamingServer[AttachAppTaskRequest, AttachAppTaskEvent]
+
 func _Vmmd_WaitJobExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WaitJobExitRequest)
 	if err := dec(in); err != nil {
@@ -2076,6 +2416,42 @@ func _Vmmd_ResumeWarmInstance_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).ResumeWarmInstance(ctx, req.(*ResumeWarmInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_FreezeInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FreezeInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).FreezeInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_FreezeInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).FreezeInstance(ctx, req.(*FreezeInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ThawInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ThawInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ThawInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ThawInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ThawInstance(ctx, req.(*ThawInstanceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2238,6 +2614,42 @@ func _Vmmd_UpdateEgressAllowlist_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).UpdateEgressAllowlist(ctx, req.(*UpdateEgressAllowlistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_UpdateAppEgressPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateAppEgressPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).UpdateAppEgressPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_UpdateAppEgressPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).UpdateAppEgressPolicy(ctx, req.(*UpdateAppEgressPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_UpdateAdmittedAppEgressPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateAdmittedAppEgressPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).UpdateAdmittedAppEgressPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).UpdateAdmittedAppEgressPolicy(ctx, req.(*UpdateAdmittedAppEgressPolicyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2461,6 +2873,42 @@ func _Vmmd_MaterializeParentExt4_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_MaterializeVerifiedParentExt4_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaterializeVerifiedParentExt4Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).MaterializeVerifiedParentExt4(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_MaterializeVerifiedParentExt4_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).MaterializeVerifiedParentExt4(ctx, req.(*MaterializeVerifiedParentExt4Request))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_MaterializeRuntimeScan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaterializeRuntimeScanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).MaterializeRuntimeScan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_MaterializeRuntimeScan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).MaterializeRuntimeScan(ctx, req.(*MaterializeRuntimeScanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_UmountParentExt4_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UmountParentExt4Request)
 	if err := dec(in); err != nil {
@@ -2587,6 +3035,24 @@ func _Vmmd_CancelLiveMigration_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_RetireManagedPostgresDrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireManagedPostgresDrainRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireManagedPostgresDrain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireManagedPostgresDrain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireManagedPostgresDrain(ctx, req.(*RetireManagedPostgresDrainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2594,6 +3060,22 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.vmmd.v1.Vmmd",
 	HandlerType: (*VmmdServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RuntimeAdmissionIdentity",
+			Handler:    _Vmmd_RuntimeAdmissionIdentity_Handler,
+		},
+		{
+			MethodName: "CreateAdmittedRuntime",
+			Handler:    _Vmmd_CreateAdmittedRuntime_Handler,
+		},
+		{
+			MethodName: "PromoteAdmittedRuntime",
+			Handler:    _Vmmd_PromoteAdmittedRuntime_Handler,
+		},
+		{
+			MethodName: "CaptureAdmittedRuntime",
+			Handler:    _Vmmd_CaptureAdmittedRuntime_Handler,
+		},
 		{
 			MethodName: "CreateFromSnapshot",
 			Handler:    _Vmmd_CreateFromSnapshot_Handler,
@@ -2667,6 +3149,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_ResumeWarmInstance_Handler,
 		},
 		{
+			MethodName: "FreezeInstance",
+			Handler:    _Vmmd_FreezeInstance_Handler,
+		},
+		{
+			MethodName: "ThawInstance",
+			Handler:    _Vmmd_ThawInstance_Handler,
+		},
+		{
 			MethodName: "WaitBuilderReady",
 			Handler:    _Vmmd_WaitBuilderReady_Handler,
 		},
@@ -2701,6 +3191,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateEgressAllowlist",
 			Handler:    _Vmmd_UpdateEgressAllowlist_Handler,
+		},
+		{
+			MethodName: "UpdateAppEgressPolicy",
+			Handler:    _Vmmd_UpdateAppEgressPolicy_Handler,
+		},
+		{
+			MethodName: "UpdateAdmittedAppEgressPolicy",
+			Handler:    _Vmmd_UpdateAdmittedAppEgressPolicy_Handler,
 		},
 		{
 			MethodName: "AllowResolvedEgress",
@@ -2743,6 +3241,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_MaterializeParentExt4_Handler,
 		},
 		{
+			MethodName: "MaterializeVerifiedParentExt4",
+			Handler:    _Vmmd_MaterializeVerifiedParentExt4_Handler,
+		},
+		{
+			MethodName: "MaterializeRuntimeScan",
+			Handler:    _Vmmd_MaterializeRuntimeScan_Handler,
+		},
+		{
 			MethodName: "UmountParentExt4",
 			Handler:    _Vmmd_UmountParentExt4_Handler,
 		},
@@ -2770,6 +3276,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CancelLiveMigration",
 			Handler:    _Vmmd_CancelLiveMigration_Handler,
 		},
+		{
+			MethodName: "RetireManagedPostgresDrain",
+			Handler:    _Vmmd_RetireManagedPostgresDrain_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -2787,6 +3297,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "ExecuteAppTaskStream",
 			Handler:       _Vmmd_ExecuteAppTaskStream_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "AttachAppTask",
+			Handler:       _Vmmd_AttachAppTask_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "Logs",

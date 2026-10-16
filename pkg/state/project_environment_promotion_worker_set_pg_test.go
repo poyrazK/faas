@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// adr: 1040
+// adr: 1440
 func TestPromotionWorkerSetPG(t *testing.T) {
 	testPromotionWorkerSet(t, func(t *testing.T) Store { return NewPgStore(pgtest.OpenMigrated(t)) })
 	t.Run("recovery", func(t *testing.T) {
@@ -19,7 +19,7 @@ func TestPromotionWorkerSetPG(t *testing.T) {
 	t.Run("older_controller_publication", testPromotionWorkerSetPublicationFence)
 }
 
-// adr: 1040
+// adr: 1440
 func testPromotionWorkerSetPublicationFence(t *testing.T) {
 	store := NewPgStore(pgtest.OpenMigrated(t))
 	f := newPromotionWorkerSetFixture(t, store, false)

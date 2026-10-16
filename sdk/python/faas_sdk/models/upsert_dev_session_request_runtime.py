@@ -1,8 +1,11 @@
 from typing import Literal
 
-UpsertDevSessionRequestRuntime = Literal["go124", "go124-alpine", "node22", "node24", "python312", "python313"]
+UpsertDevSessionRequestRuntime = Literal[
+    "binary", "go124", "go124-alpine", "node22", "node24", "python312", "python313"
+]
 
 UPSERT_DEV_SESSION_REQUEST_RUNTIME_VALUES: set[UpsertDevSessionRequestRuntime] = {
+    "binary",
     "go124",
     "go124-alpine",
     "node22",

@@ -18,6 +18,9 @@ const FlagsAudience = "gregale:flags"
 // OperationsAudience fences runtime reporting from cloud federation and Flags.
 const OperationsAudience = "gregale:operations"
 
+// QueuesAudience fences pull-queue leasing (ADR-1140) from other token uses.
+const QueuesAudience = "gregale:queues"
+
 type Verifier struct {
 	keys   jose.JSONWebKeySet
 	issuer string

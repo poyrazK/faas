@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1041
+// adr: 1441
 func TestDeployCheckReportsCIOutcomeWithoutSubmission(t *testing.T) {
 	for _, status := range []string{"passed", "blocked", "unknown", "inconsistent"} {
 		t.Run(status, func(t *testing.T) {
@@ -77,7 +77,7 @@ func TestDeployCheckReportsCIOutcomeWithoutSubmission(t *testing.T) {
 	}
 }
 
-// adr: 1041
+// adr: 1441
 func TestDeployCheckPromotionsSkipLocalSourceAndFailClosedOnOlderServer(t *testing.T) {
 	resetJSONOut(t)
 	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput

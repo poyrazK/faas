@@ -18,7 +18,13 @@ export async function browserInspector(url, check) {
     const deadline = Date.now() + 30000
     while (Date.now() < deadline) {
       if (spawnError || child.exitCode !== null || child.signalCode !== null) break
-      try { port = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break } catch {}
+      try {
+        // Chromium can create the file before writing its contents. Wait for
+        // a terminated port line rather than accepting an empty/partial read.
+        const contents = await readFile(join(profile, 'DevToolsActivePort'), 'utf8')
+        const match = /^([1-9]\d{0,4})\r?\n/.exec(contents)
+        if (match && Number(match[1]) <= 65535) { port = match[1]; break }
+      } catch {}
       await new Promise(resolve => setTimeout(resolve, 50))
     }
     assert.equal(spawnError, undefined, 'chromium_failed_to_start')
@@ -31,8 +37,10 @@ export async function browserInspector(url, check) {
     socket = new WebSocket(page.webSocketDebuggerUrl)
     await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }) })
     let serial = 0
+    const parsedDocuments = new Set()
     socket.addEventListener('message', event => {
       const data = JSON.parse(event.data)
+      if (data.method === 'Page.lifecycleEvent' && data.params.name === 'DOMContentLoaded') parsedDocuments.add(`${data.params.frameId}:${data.params.loaderId}`)
       if (pending.has(data.id)) { const { resolve, reject, timer } = pending.get(data.id); clearTimeout(timer); pending.delete(data.id); data.error ? reject(new Error('browser_protocol_failed')) : resolve(data.result) }
     })
     const send = (method, params = {}) => new Promise((resolve, reject) => {
@@ -45,7 +53,17 @@ export async function browserInspector(url, check) {
       assert.equal(data.exceptionDetails, undefined, 'browser_evaluation_failed')
       return data.result.value
     }
-    await send('Page.navigate', { url })
+    await send('Page.enable')
+    await send('Page.setLifecycleEventsEnabled', { enabled: true })
+    const navigation = await send('Page.navigate', { url })
+    assert.ok(!navigation.errorText, 'browser_navigation_failed')
+    // Navigation is acknowledged before the new document has finished parsing.
+    // Match its loader so an event from about:blank or an iframe cannot release
+    // the check, and retain events that arrive before the navigation response.
+    const documentKey = `${navigation.frameId}:${navigation.loaderId}`
+    const documentDeadline = Date.now() + 10000
+    while (navigation.loaderId && !parsedDocuments.has(documentKey) && Date.now() < documentDeadline) await new Promise(resolve => setTimeout(resolve, 25))
+    assert.ok(!navigation.loaderId || parsedDocuments.has(documentKey), 'browser_document_not_ready')
     await check(evaluate)
   } finally {
     for (const item of pending.values()) clearTimeout(item.timer)

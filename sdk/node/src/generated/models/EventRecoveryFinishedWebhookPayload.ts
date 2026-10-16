@@ -9,7 +9,7 @@ export type EventRecoveryFinishedWebhookPayload = {
   event_id: string;
   job_id: string;
   app_id: string;
-  mode: 'routing' | 'execution';
+  mode: 'routing' | 'execution' | 'workflow';
   state: 'completed' | 'cancelled';
   outcome: 'completed' | 'cancelled' | 'expired';
   selected_count: number;

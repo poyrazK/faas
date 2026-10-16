@@ -1,9 +1,10 @@
 from typing import Literal
 
-InboundWebhookReceiptResponseStatus = Literal["accepted"]
+InboundWebhookReceiptResponseStatus = Literal["accepted", "ignored"]
 
 INBOUND_WEBHOOK_RECEIPT_RESPONSE_STATUS_VALUES: set[InboundWebhookReceiptResponseStatus] = {
     "accepted",
+    "ignored",
 }
 
 

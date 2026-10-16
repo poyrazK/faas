@@ -6,9 +6,10 @@
 // restore of one snapshot would replay the same crypto.randomBytes, TLS
 // randomness, randomUUID/randomInt values and Math.random sequence. On resume,
 // guest-init sends each registered process a fresh nonce; this preload then
-// reseeds OpenSSL (reseed.node -> RAND_poll), reseeds Math.random and drains
-// Node's userspace crypto caches before replying "ok". guest-init waits for
-// that reply before the instance can serve traffic.
+// reseeds OpenSSL (reseed.node -> RAND_poll), reseeds Math.random and marks
+// Node's userspace crypto caches stale before replying "ok", so the first call
+// that reads a cache drains it (ADR-981). guest-init waits for that reply
+// before the instance can serve traffic.
 //
 // It must never write to stdout (function adapters frame responses there) and
 // must never keep the event loop alive.
@@ -90,17 +91,58 @@
     return out;
   }
 
+  // Node serves randomUUID (crypto's and webcrypto's) from one 128-entry
+  // batch and randomInt from a 6 KiB buffer, both filled before the
+  // snapshot. Consuming a full batch crosses exactly one refill, so after a
+  // reseed it leaves only entries drawn from the reseeded OpenSSL. A restore
+  // marks both caches stale and the first call that reads one drains it
+  // first (ADR-981): an app that never calls them never pays the drain.
+  const stale = { uuid: false, int: false };
+  exposed.stale = stale;
+  const nodeRandomUUID = crypto.randomUUID;
+  const nodeRandomInt = crypto.randomInt;
+  function drainUUIDs() {
+    if (!stale.uuid) return;
+    stale.uuid = false;
+    for (let i = 0; i < 128; i++) nodeRandomUUID();
+  }
+  function drainInts() {
+    if (!stale.int) return;
+    stale.int = false;
+    // A range of 1 accepts every 6-byte entry and returns 0, so each call
+    // consumes one entry without allocating a heap number.
+    for (let i = 0; i < 1024; i++) nodeRandomInt(0, 1);
+  }
+  function wrap(original, before) {
+    const wrapped = {
+      [original.name](...args) {
+        before();
+        return Reflect.apply(original, this, args);
+      },
+    }[original.name];
+    Object.defineProperty(wrapped, 'length', { value: original.length });
+    return wrapped;
+  }
+  crypto.randomUUID = wrap(nodeRandomUUID, drainUUIDs);
+  crypto.randomInt = wrap(nodeRandomInt, drainInts);
+  try {
+    const proto = Object.getPrototypeOf(crypto.webcrypto);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'randomUUID');
+    if (desc && typeof desc.value === 'function') {
+      Object.defineProperty(proto, 'randomUUID', { ...desc, value: wrap(desc.value, drainUUIDs) });
+    }
+  } catch (_) {
+    // No webcrypto in this build: nothing else reads the batch.
+  }
+
   function reseed(nonceHex) {
     const nonce = Buffer.from(nonceHex, 'hex');
     if (nonce.length < 16) return 'err bad_nonce';
     if (!addon || typeof addon.poll !== 'function') return 'err openssl_reseed_unavailable';
     if (addon.poll() !== true) return 'err openssl_reseed_failed';
     seedMathRandom(freshBytes(nonce));
-    // Node serves randomUUID from a 128-entry batch and randomInt from a
-    // 6 KiB buffer, both filled before the snapshot. Consuming a full batch
-    // of each forces a refill from the now-reseeded OpenSSL.
-    for (let i = 0; i < 128; i++) crypto.randomUUID();
-    for (let i = 0; i < 1024; i++) crypto.randomInt(0, 0xffffffffff);
+    stale.uuid = true;
+    stale.int = true;
     return 'ok';
   }
 

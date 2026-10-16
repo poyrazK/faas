@@ -648,12 +648,63 @@ func TestCmdSecretsUnsetRestartUsesFreshRestartAfterDelete(t *testing.T) {
 	}
 }
 
-func TestCmdSecrets_Unset_RequiresExactlyOneKey(t *testing.T) {
-	if code := cmdSecrets([]string{"unset", "--app", "x"}); code != 1 {
+// Hunt #9 H9-74: on a parked app the restart API answers 409 "App is not
+// active"; `secrets unset --restart` had already removed the secret but exited
+// 5, so scripts treated a successful change as a failure. A parked app boots
+// with the change on its next wake, so the command succeeds without a restart.
+// An app that is not active for another reason still fails.
+func TestCmdSecretsRestartOnParkedAppSucceeds(t *testing.T) {
+	for _, tc := range []struct {
+		name, status string
+		args         []string
+		wantCode     int
+	}{
+		{name: "unset parked", status: "evicted_cold", args: []string{"unset", "--app", "x", "OLD_KEY", "--restart"}, wantCode: 0},
+		{name: "set parked", status: "evicted_cold", args: []string{"set", "--app", "x", "NEW_KEY=v", "--restart"}, wantCode: 0},
+		{name: "unset deleted", status: "deleted", args: []string{"unset", "--app", "x", "OLD_KEY", "--restart"}, wantCode: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/secrets/"):
+					w.WriteHeader(http.StatusNoContent)
+				case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/secrets"),
+					r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/secrets"):
+					writeJSONTestStatus(w, http.StatusOK, map[string]any{})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+					w.Header().Set("Content-Type", "application/problem+json")
+					w.WriteHeader(http.StatusConflict)
+					_, _ = w.Write([]byte(`{"title":"App is not active","status":409,"code":"conflict","detail":"only an active app can be restarted"}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x":
+					writeJSONTestStatus(w, http.StatusOK, api.AppResponse{Slug: "x", Status: tc.status})
+				default:
+					writeJSONTestStatus(w, http.StatusOK, map[string]any{})
+				}
+			}))
+			defer server.Close()
+			t.Setenv("FAAS_API", server.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			var stdout bytes.Buffer
+			old := osStdout
+			osStdout = &stdout
+			defer func() { osStdout = old }()
+
+			if code := cmdSecrets(tc.args); code != tc.wantCode {
+				t.Fatalf("cmdSecrets %v = %d, want %d (stdout %q)", tc.args, code, tc.wantCode, stdout.String())
+			}
+			if tc.wantCode == 0 && !strings.Contains(stdout.String(), "App is parked") {
+				t.Fatalf("output = %q, want the parked note", stdout.String())
+			}
+		})
+	}
+}
+
+func TestCmdSecrets_Unset_RequiresKeys(t *testing.T) {
+	if code := cmdSecrets([]string{"unset", "--app", "demo"}); code != 1 {
 		t.Errorf("unset no key = %d, want 1", code)
 	}
-	if code := cmdSecrets([]string{"unset", "--app", "x", "A", "B"}); code != 1 {
-		t.Errorf("unset two keys = %d, want 1", code)
+	if code := cmdSecrets([]string{"unset", "--app", "demo", "A", "B", "--dry-run"}); code != 0 {
+		t.Errorf("unset two keys preview = %d, want 0", code)
 	}
 }
 

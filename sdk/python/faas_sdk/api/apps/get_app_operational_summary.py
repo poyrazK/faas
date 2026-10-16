@@ -7,19 +7,38 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_operational_summary import AppOperationalSummary
+from ...models.get_app_operational_summary_scope import (
+    GetAppOperationalSummaryScope,
+)
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    environment: str | Unset = UNSET,
+    scope: GetAppOperationalSummaryScope | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    json_scope: str | Unset = UNSET
+    if not isinstance(scope, Unset):
+        json_scope = scope
+
+    params["scope"] = json_scope
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/operational-summary".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -79,6 +98,8 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppOperationalSummaryScope | Unset = UNSET,
 ) -> Response[AppOperationalSummary | Problem]:
     """Read current production monitoring and recovery progress.
 
@@ -87,10 +108,14 @@ def sync_detailed(
     failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery.
     Component availability and bounded-list truncation are explicit. Deployment smoke verification
     remains a separate launch-time result. Customer identities, request evidence, free-form rollback
-    reasons and internal restart errors are omitted. No query parameters are accepted.
+    reasons and internal restart errors are omitted. An environment selector or scope=default returns an
+    attributed scoped summary, scoped health and explicitly scoped recovery records; aggregate route-
+    monitor evaluations and unscoped restart handoffs are omitted.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppOperationalSummaryScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -102,6 +127,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
+        scope=scope,
     )
 
     response = client.get_httpx_client().request(
@@ -115,6 +142,8 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppOperationalSummaryScope | Unset = UNSET,
 ) -> AppOperationalSummary | Problem | None:
     """Read current production monitoring and recovery progress.
 
@@ -123,10 +152,14 @@ def sync(
     failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery.
     Component availability and bounded-list truncation are explicit. Deployment smoke verification
     remains a separate launch-time result. Customer identities, request evidence, free-form rollback
-    reasons and internal restart errors are omitted. No query parameters are accepted.
+    reasons and internal restart errors are omitted. An environment selector or scope=default returns an
+    attributed scoped summary, scoped health and explicitly scoped recovery records; aggregate route-
+    monitor evaluations and unscoped restart handoffs are omitted.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppOperationalSummaryScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,6 +172,8 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        environment=environment,
+        scope=scope,
     ).parsed
 
 
@@ -146,6 +181,8 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppOperationalSummaryScope | Unset = UNSET,
 ) -> Response[AppOperationalSummary | Problem]:
     """Read current production monitoring and recovery progress.
 
@@ -154,10 +191,14 @@ async def asyncio_detailed(
     failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery.
     Component availability and bounded-list truncation are explicit. Deployment smoke verification
     remains a separate launch-time result. Customer identities, request evidence, free-form rollback
-    reasons and internal restart errors are omitted. No query parameters are accepted.
+    reasons and internal restart errors are omitted. An environment selector or scope=default returns an
+    attributed scoped summary, scoped health and explicitly scoped recovery records; aggregate route-
+    monitor evaluations and unscoped restart handoffs are omitted.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppOperationalSummaryScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,6 +210,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
+        scope=scope,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -180,6 +223,8 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppOperationalSummaryScope | Unset = UNSET,
 ) -> AppOperationalSummary | Problem | None:
     """Read current production monitoring and recovery progress.
 
@@ -188,10 +233,14 @@ async def asyncio(
     failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery.
     Component availability and bounded-list truncation are explicit. Deployment smoke verification
     remains a separate launch-time result. Customer identities, request evidence, free-form rollback
-    reasons and internal restart errors are omitted. No query parameters are accepted.
+    reasons and internal restart errors are omitted. An environment selector or scope=default returns an
+    attributed scoped summary, scoped health and explicitly scoped recovery records; aggregate route-
+    monitor evaluations and unscoped restart handoffs are omitted.
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppOperationalSummaryScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,5 +254,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            environment=environment,
+            scope=scope,
         )
     ).parsed

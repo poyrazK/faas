@@ -60,6 +60,14 @@ func cmdCompletion(args []string) int {
 	switch args[0] {
 	case "install":
 		return cmdCompletionInstall(args[1:])
+	case "local-names":
+		return cmdCompletionLocalNames(args[1:], false)
+	case "local-name-context":
+		return cmdCompletionLocalNames(args[1:], true)
+	case "secret-keys":
+		return cmdCompletionSecretKeys(args[1:], false)
+	case "secret-key-context":
+		return cmdCompletionSecretKeys(args[1:], true)
 	case "profile-names":
 		return cmdCompletionProfileNames()
 	case "bash":

@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -150,6 +151,9 @@ type HostingPhaseObserver interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
+	ReviewedRolloutMode string
+	ExpectedReview      *api.AppReleaseReview
+	ReviewedSettings    *state.ProjectEnvironmentWorkloadSettings
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
@@ -224,18 +228,20 @@ type EnqueueParams struct {
 	// Sidecars is the envelope-sealed sidecar set produced by apid's
 	// deployment validator. Source builds use the same immutable deployment
 	// shape as image deploys.
-	Sidecars               json.RawMessage
-	OverrideHealthcheck    json.RawMessage
-	OverrideMainDependsOn  json.RawMessage
-	TrafficPercent         int
-	TrafficPercentExplicit bool
-	RollbackOn5xx          bool
-	DisableStartupCPUBoost bool
-	CanaryPreset           string
-	CanaryStep             int
-	CanaryTotalSteps       int
-	CanaryStepStartedAt    *time.Time
-	CanaryStages           json.RawMessage
+	Sidecars                 json.RawMessage
+	OverrideEnv              json.RawMessage
+	MCPTaskMigrationOverride bool
+	OverrideHealthcheck      json.RawMessage
+	OverrideMainDependsOn    json.RawMessage
+	TrafficPercent           int
+	TrafficPercentExplicit   bool
+	RollbackOn5xx            bool
+	DisableStartupCPUBoost   bool
+	CanaryPreset             string
+	CanaryStep               int
+	CanaryTotalSteps         int
+	CanaryStepStartedAt      *time.Time
+	CanaryStages             json.RawMessage
 	// ReleaseCommand is immutable source intent. The deployment orchestrator
 	// consumes it after the build has produced an artifact; Enqueue only pins
 	// the validated declaration to this exact deployment row.
@@ -262,6 +268,7 @@ type EnqueueParams struct {
 type EnqueueResult struct {
 	DeploymentID string
 	BuildID      string
+	StagedReview *api.AppReleaseReview
 }
 
 // sourceBackendFromEnv enables the split-box source handoff only when the
@@ -291,10 +298,27 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 		return fmt.Errorf("open source archive: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := be.Put(ctx, "sources/"+buildID+".tar.gz", f); err != nil {
+	var size int64
+	if info, statErr := f.Stat(); statErr == nil {
+		size = info.Size()
+	}
+	// The upload gets its own bound instead of whatever the request budget
+	// has left after the archive scans: on production-us a 243 MiB source,
+	// inside the Scale plan's 250 MB cap, failed every retry with "context
+	// deadline exceeded" in this Put (hunt #10, H10-26).
+	putCtx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(ctx)), sourcePublishTimeout(size))
+	defer cancel()
+	if err := be.Put(putCtx, "sources/"+buildID+".tar.gz", f); err != nil {
 		return fmt.Errorf("publish source archive: %w", err)
 	}
 	return nil
+}
+
+// sourcePublishTimeout allows a 30 s floor plus 8 MiB/s of transfer, so a
+// 250 MB archive has about a minute.
+func sourcePublishTimeout(bytes int64) time.Duration {
+	const floor, bytesPerSecond = 30 * time.Second, 8 << 20
+	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
 }
 
 // PublishReviewedSource stages a checksum-verified source under its reserved
@@ -493,6 +517,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
+		ExpectedReview:       p.ExpectedReview,
+		ReviewedRolloutMode:  p.ReviewedRolloutMode,
+		ReviewedSettings:     p.ReviewedSettings,
 		ID:                   deploymentID,
 		AppID:                p.AppID,
 		Kind:                 p.Kind,
@@ -519,26 +546,28 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// the upstream caller (CLI multipart, JSON body, githubd
 		// bridge). pgstore.CreateDeployment collapses "" to NULL
 		// via nullString and PRNumber=0 to NULL via nullif(0).
-		Reason:                 p.Reason,
-		Tag:                    p.Tag,
-		DeployedBy:             p.DeployedBy,
-		PRNumber:               p.PRNumber,
-		Workflows:              append(json.RawMessage(nil), p.Workflows...),
-		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
-		OverrideHealthcheck:    append(json.RawMessage(nil), p.OverrideHealthcheck...),
-		OverrideMainDependsOn:  append(json.RawMessage(nil), p.OverrideMainDependsOn...),
-		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
-		TrafficPercent:         p.TrafficPercent,
-		TrafficPercentExplicit: p.TrafficPercentExplicit,
-		RollbackOn5xx:          p.RollbackOn5xx,
-		DisableStartupCPUBoost: p.DisableStartupCPUBoost,
-		CanaryPreset:           p.CanaryPreset,
-		CanaryStep:             p.CanaryStep,
-		CanaryTotalSteps:       p.CanaryTotalSteps,
-		CanaryStepStartedAt:    p.CanaryStepStartedAt,
-		CanaryStages:           append(json.RawMessage(nil), p.CanaryStages...),
-		ReleaseCommand:         append([]string(nil), p.ReleaseCommand...),
-		ReleaseCommandShell:    p.ReleaseCommandShell,
+		Reason:                   p.Reason,
+		Tag:                      p.Tag,
+		DeployedBy:               p.DeployedBy,
+		PRNumber:                 p.PRNumber,
+		Workflows:                append(json.RawMessage(nil), p.Workflows...),
+		Sidecars:                 append(json.RawMessage(nil), p.Sidecars...),
+		OverrideEnv:              append(json.RawMessage(nil), p.OverrideEnv...),
+		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
+		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
+		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
+		TrafficPercent:           p.TrafficPercent,
+		TrafficPercentExplicit:   p.TrafficPercentExplicit,
+		RollbackOn5xx:            p.RollbackOn5xx,
+		DisableStartupCPUBoost:   p.DisableStartupCPUBoost,
+		CanaryPreset:             p.CanaryPreset,
+		CanaryStep:               p.CanaryStep,
+		CanaryTotalSteps:         p.CanaryTotalSteps,
+		CanaryStepStartedAt:      p.CanaryStepStartedAt,
+		CanaryStages:             append(json.RawMessage(nil), p.CanaryStages...),
+		ReleaseCommand:           append([]string(nil), p.ReleaseCommand...),
+		ReleaseCommandShell:      p.ReleaseCommandShell,
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service
@@ -738,7 +767,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	p.Log.Info("apidsource.Enqueue: build enqueued",
 		"deployment", d.ID, "app", p.AppID, "kind", p.Kind, "build", build.ID, "source", source)
 
-	return EnqueueResult{DeploymentID: d.ID, BuildID: build.ID}, nil
+	return EnqueueResult{DeploymentID: d.ID, BuildID: build.ID, StagedReview: d.StagedReview}, nil
 }
 
 var githubDeliveryNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/github-delivery/v1"))

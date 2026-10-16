@@ -9,6 +9,18 @@
 # task guests and routed to outboundd. Omit to leave outbound probes unsupported.
 # outbound_probe_gateway_url = "https://outbound.example.com"
 
+# ADR-991 AI gateway release gate. Off by default: the AI gateway APIs return
+# 403 outbound_ai_gateway_unavailable and integrations cannot set ai_provider.
+# Turn it on together with outboundd's ai_gateway_enabled;
+# FAAS_AI_GATEWAY_ENABLED=1 overrides this setting.
+# ai_gateway_enabled = false
+#
+# ADR-998 staged preview rollout: with the gate on, only these accounts may
+# use the AI gateway; empty or "*" admits every account whose plan includes
+# it (Hobby, Pro, Scale). Set the same list in outboundd.
+# FAAS_AI_GATEWAY_ACCOUNTS (comma-separated) overrides this setting.
+# ai_gateway_accounts = ["00000000-0000-0000-0000-000000000000"]
+
 # apps_domain: the wildcard suffix for app URLs.
 # Default: gregale.dev
 # apps_domain = "gregale.dev"
@@ -53,24 +65,6 @@
 # Partial cluster is rejected at startup with the exact env-var
 # name(s) missing. See cmd/gregale/commands_pki.go for the operator
 # CLI that issues /etc/faas/tls/<daemon>/<role>.{crt,key}.
-
-# Per-app cosign signature-enforcement (issue #472 / ADR-058).
-# apid reads the env var on startup; it points at the directory
-# where apid mirrors each (app_id, signer_name) row as a base64-DER
-# blob so imaged can read it directly. The directory is created
-# by the ansible role (mode 0755 root:root) and per-file perms
-# are 0444 root:root. Default location if unset:
-#
-#   /etc/faas/secrets/trusted-publishers
-#
-# Operator onboards a publisher via:
-#
-#   gregale trusted-publishers add <slug> <name> <pub.pem>
-#
-# which PUTs the base64(DER) blob to /v1/apps/{slug}/trusted_signers/{name}.
-# apid then writes the per-app mirror to this directory; imaged
-# picks it up via pg_notify('trusted_signer_changed') and
-# refreshes its in-memory trust cache on the next deploy.
 
 # [billing] block — provider config (PR-P2 + public-release billing). Every key
 # has a working default; missing block ⇒ Polar is selected and credentials

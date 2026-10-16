@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -386,10 +387,11 @@ func TestServiceProxyMetricsPreInstantiatesOutcomes(t *testing.T) {
 			t.Errorf("%s = %v, want 0", outcome, got)
 		}
 	}
-	if got := testutil.CollectAndCount(m.serviceChaosInjected); got != 2 {
-		t.Errorf("pre-instantiated chaos kind series = %d, want 2", got)
+	kinds := []string{"latency", "http_status", "http_malformed_json", "http_truncated_body", "http_response_lost"}
+	if got := testutil.CollectAndCount(m.serviceChaosInjected); got != len(kinds) {
+		t.Errorf("pre-instantiated chaos kind series = %d, want %d", got, len(kinds))
 	}
-	for _, kind := range []string{"latency", "http_status"} {
+	for _, kind := range kinds {
 		if got := testutil.ToFloat64(m.serviceChaosInjected.WithLabelValues(kind)); got != 0 {
 			t.Errorf("chaos kind %s = %v, want 0", kind, got)
 		}
@@ -403,5 +405,107 @@ func TestServiceProxyMetricsNilIsSafe(t *testing.T) {
 		staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "i", NodeID: "n", Port: 8080}}}, nil, nil)
 	if rec := meteredGET(t, proxy); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 with nil metrics", rec.Code)
+	}
+}
+
+// edgeWakeProvider lists no endpoint until the wake installs one.
+type edgeWakeProvider struct {
+	mu        sync.Mutex
+	endpoints []ServiceEndpoint
+}
+
+func (p *edgeWakeProvider) ServiceEndpoints(context.Context, string) (ServiceEndpointsSnapshot, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return ServiceEndpointsSnapshot{Endpoints: append([]ServiceEndpoint(nil), p.endpoints...)}, nil
+}
+
+// ADR-1131: the service map's cold-call share needs to know which edge calls
+// had to restore a parked target. A woken call counts once; a warm call on
+// the same edge does not.
+func TestServiceProxyCountsEdgeCallsThatWokeTheTarget(t *testing.T) {
+	callerID, targetID := uuid.NewString(), uuid.NewString()
+	m := NewMetrics()
+	provider := &edgeWakeProvider{}
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: targetID}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: callerID}, nil
+		},
+		Wake: func(context.Context, string) error {
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			provider.endpoints = []ServiceEndpoint{{InstanceID: "target", NodeID: "n", Port: 8080}}
+			return nil
+		},
+		Metrics: m,
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		},
+	})
+	call := func() {
+		req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders", nil)
+		req.Header.Set(ServiceProxyCallerAppHeader, callerID)
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	}
+	call() // parked: the proxy wakes the target
+	call() // warm
+	if got := testutil.ToFloat64(m.serviceDependencyEdges.WithLabelValues(callerID, targetID, "success")); got != 2 {
+		t.Fatalf("edge calls = %g, want 2", got)
+	}
+	if got := testutil.ToFloat64(m.serviceDependencyEdgeWakes.WithLabelValues(callerID, targetID)); got != 1 {
+		t.Fatalf("edge wakes = %g, want 1 (only the call that restored the target)", got)
+	}
+}
+
+// ADR-1131/ADR-1133: a call whose leased endpoint has just parked is
+// re-routed, and the wake that re-route does still makes it a cold edge call.
+func TestServiceProxyCountsRerouteWakeAsColdEdgeCall(t *testing.T) {
+	callerID, targetID := uuid.NewString(), uuid.NewString()
+	m := NewMetrics()
+	provider := &parkingProvider{}
+	provider.set(ServiceEndpoint{InstanceID: "instance-parked", NodeID: "node-a", Port: 8080})
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: targetID}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: callerID}, nil
+		},
+		Wake: func(context.Context, string) error {
+			provider.set(ServiceEndpoint{InstanceID: "instance-woken", NodeID: "node-a", Port: 8081})
+			return nil
+		},
+		EvictEndpoint: func(_, instanceID string) { provider.remove(instanceID) },
+		Metrics:       m,
+		Forward: func(target Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if target.InstanceID == "instance-parked" {
+					markUndeliveredTarget(r.Context())
+					http.Error(w, "gone", http.StatusServiceUnavailable)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+		EndpointTTL: 5 * time.Second,
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://gateway/v1/internal/services/orders", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, callerID)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %q, want 200 from the woken instance", rec.Code, rec.Body.String())
+	}
+	if got := testutil.ToFloat64(m.serviceDependencyEdgeWakes.WithLabelValues(callerID, targetID)); got != 1 {
+		t.Fatalf("edge wakes = %g, want 1 for the call whose re-route woke the target", got)
 	}
 }

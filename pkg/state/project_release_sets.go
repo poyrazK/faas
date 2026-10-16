@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -118,7 +119,7 @@ func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, proje
 func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, expectedActiveID *string,
 	expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool,
 	beforePublish projectReleaseSetBeforePublish, activateID string, skipFallbackApps ...map[string]struct{}) (ProjectReleaseSet, error) {
-	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
+	if !validReleaseTTL(ttlSeconds) || len(members) == 0 && !allowGitOpsReplacement || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
 	var found int
@@ -202,6 +203,18 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if allowGitOpsReplacement {
+		excluded, err := workloadReleaseExclusionsTx(ctx, tx, EnvironmentGitSource{ID: "", AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
+		if err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		appRows = slices.DeleteFunc(appRows, func(app struct {
+			id       string
+			manifest []byte
+		}) bool {
+			return excluded[app.id]
+		})
 	}
 	if activeID != "" && !allowGitOpsReplacement {
 		if err := validateGitOpsReleaseMembersTx(ctx, tx, activeID, byApp); err != nil {

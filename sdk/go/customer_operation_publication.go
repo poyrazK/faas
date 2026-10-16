@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"time"
 )
 
@@ -21,6 +22,8 @@ func (r *CustomerOperationRuntime) publishCustomerOperationMilestones(ctx contex
 		return fmt.Errorf("faas: read pending milestone outbox rows: %w", err)
 	}
 	type pending struct {
+		changeReason      []byte
+		selectedPaths     []byte
 		id, name, payload string
 		occurredAt        time.Time
 	}
@@ -75,7 +78,7 @@ func (r *CustomerOperationRuntime) publishCustomerOperationMilestones(ctx contex
 
 func (r *CustomerOperationRuntime) publishCustomerOperationWorkflowStates(ctx context.Context, db *sql.DB, input customerOperationInput) error {
 	digest := customerOperationRequestDigest(input)
-	rows, err := db.QueryContext(ctx, `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only
+	rows, err := db.QueryContext(ctx, `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at,s.blockers,s.blockers_only,s.blocker_resolutions,s.deadline_at,s.deadline_only,s.outcome_code,s.outcome_description,s.outcome_only,s.depends_on,s.dependencies_only,s.selected_paths,s.change_reason
 		FROM public.gregale_customer_operation_workflow_states s
 		JOIN public.gregale_customer_operation_inbox r ON r.operation_id=s.operation_id
 		WHERE r.operation_id=$1::uuid AND r.account_id=$2::uuid AND r.app_id=$3::uuid AND r.platform_tenant_id=$4::uuid
@@ -85,6 +88,8 @@ func (r *CustomerOperationRuntime) publishCustomerOperationWorkflowStates(ctx co
 		return fmt.Errorf("faas: read pending workflow state outbox rows: %w", err)
 	}
 	type pending struct {
+		changeReason                               []byte
+		selectedPaths                              []byte
 		id, workflow, instanceID, fromState, state string
 		revision                                   int64
 		blockers                                   []byte
@@ -102,7 +107,7 @@ func (r *CustomerOperationRuntime) publishCustomerOperationWorkflowStates(ctx co
 	pendingRows := make([]pending, 0, operationWorkflowStateReports)
 	for rows.Next() {
 		var row pending
-		if err := rows.Scan(&row.id, &row.workflow, &row.instanceID, &row.fromState, &row.state, &row.revision, &row.evidence, &row.occurredAt, &row.blockers, &row.blockersOnly, &row.resolutions, &row.deadlineAt, &row.deadlineOnly, &row.outcomeCode, &row.outcomeDescription, &row.outcomeOnly, &row.dependenciesJSON, &row.dependenciesOnly); err != nil {
+		if err := rows.Scan(&row.id, &row.workflow, &row.instanceID, &row.fromState, &row.state, &row.revision, &row.evidence, &row.occurredAt, &row.blockers, &row.blockersOnly, &row.resolutions, &row.deadlineAt, &row.deadlineOnly, &row.outcomeCode, &row.outcomeDescription, &row.outcomeOnly, &row.dependenciesJSON, &row.dependenciesOnly, &row.selectedPaths, &row.changeReason); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("faas: read pending workflow state outbox row: %w", err)
 		}
@@ -166,7 +171,23 @@ func (r *CustomerOperationRuntime) publishCustomerOperationWorkflowStates(ctx co
 		if err != nil {
 			return err
 		}
-		report := OperationWorkflowStateReport{DependsOn: dependencies, DependenciesOnly: row.dependenciesOnly, OutcomeCode: row.outcomeCode, OutcomeDescription: row.outcomeDescription, OutcomeOnly: row.outcomeOnly, DeadlineAt: deadline, DeadlineOnly: row.deadlineOnly, BlockerResolutions: resolutions, Blockers: blockers, BlockersOnly: row.blockersOnly, ID: row.id, Workflow: row.workflow, InstanceID: row.instanceID, State: row.state,
+		var selectedPaths []OperationWorkflowPathSelection
+		if json.Unmarshal(row.selectedPaths, &selectedPaths) != nil {
+			return errors.New("faas: invalid saved path selections")
+		}
+		selectedPaths, err = canonicalCustomerWorkflowPaths(selectedPaths)
+		if err != nil {
+			return err
+		}
+		var reason *OperationWorkflowChangeReason
+		if json.Unmarshal(row.changeReason, &reason) != nil {
+			return errors.New("faas: invalid saved workflow change reason")
+		}
+		reason, err = api.CanonicalOperationWorkflowChangeReason(reason)
+		if err != nil {
+			return err
+		}
+		report := OperationWorkflowStateReport{ChangeReason: reason, SelectedPaths: selectedPaths, DependsOn: dependencies, DependenciesOnly: row.dependenciesOnly, OutcomeCode: row.outcomeCode, OutcomeDescription: row.outcomeDescription, OutcomeOnly: row.outcomeOnly, DeadlineAt: deadline, DeadlineOnly: row.deadlineOnly, BlockerResolutions: resolutions, Blockers: blockers, BlockersOnly: row.blockersOnly, ID: row.id, Workflow: row.workflow, InstanceID: row.instanceID, State: row.state,
 			Revision: row.revision, OccurredAt: row.occurredAt.UTC(), EvidenceMilestones: evidence}
 		if row.fromState != "" {
 			report.FromState = row.fromState
@@ -184,7 +205,7 @@ func (r *CustomerOperationRuntime) publishCustomerOperationWorkflowStates(ctx co
 		}
 		if receipt.ID != report.ID || receipt.OperationID != input.operationID || receipt.Workflow != report.Workflow ||
 			receipt.InstanceID != report.InstanceID || receipt.FromState != report.FromState || receipt.State != report.State ||
-			!sameCustomerWorkflowDependencies(receipt.DependsOn, report.DependsOn) || receipt.DependenciesOnly != report.DependenciesOnly || receipt.OutcomeCode != report.OutcomeCode || receipt.OutcomeDescription != report.OutcomeDescription || receipt.OutcomeOnly != report.OutcomeOnly || receipt.DeadlineAt != report.DeadlineAt || receipt.DeadlineOnly != report.DeadlineOnly || receipt.Revision != report.Revision || receipt.ContractVersion < 1 || !sameCustomerOperationEvidence(receipt.EvidenceMilestones, report.EvidenceMilestones) || receipt.BlockersOnly != report.BlockersOnly || !sameCustomerWorkflowBlockers(receipt.Blockers, report.Blockers) || !sameCustomerWorkflowResolutions(receipt.BlockerResolutions, report.BlockerResolutions) {
+			!sameCustomerWorkflowChangeReason(receipt.ChangeReason, report.ChangeReason) || !sameCustomerWorkflowPaths(receipt.SelectedPaths, report.SelectedPaths) || !sameCustomerWorkflowDependencies(receipt.DependsOn, report.DependsOn) || receipt.DependenciesOnly != report.DependenciesOnly || receipt.OutcomeCode != report.OutcomeCode || receipt.OutcomeDescription != report.OutcomeDescription || receipt.OutcomeOnly != report.OutcomeOnly || receipt.DeadlineAt != report.DeadlineAt || receipt.DeadlineOnly != report.DeadlineOnly || receipt.Revision != report.Revision || receipt.ContractVersion < 1 || !sameCustomerOperationEvidence(receipt.EvidenceMilestones, report.EvidenceMilestones) || receipt.BlockersOnly != report.BlockersOnly || !sameCustomerWorkflowBlockers(receipt.Blockers, report.Blockers) || !sameCustomerWorkflowResolutions(receipt.BlockerResolutions, report.BlockerResolutions) {
 			return errors.New("faas: Customer Operation workflow state publication identity was not confirmed")
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE public.gregale_customer_operation_workflow_states s SET acknowledged_at=clock_timestamp()

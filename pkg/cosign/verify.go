@@ -1,45 +1,12 @@
-// verify.go — cosign image-signature verification at deploy time
-// (issue #472 / ADR-054). Mirrors AWS Lambda's Code Signing for
-// Lambda (TrustedSigners + SigningProfileVersionArns). Loads a
-// per-app trusted-publisher list from disk and verifies the manifest
-// digest of an OCI image against the cosign signature attached to
-// the registry's sha256-<digest>.sig location.
-//
-// Trust model
-//
-//   - The trusted-publisher list is operator-controlled via apid
-//     (PUT /v1/apps/{slug}/trusted_signers/{name}); imaged reads
-//     the on-disk mirror at /etc/faas/secrets/trusted-publishers/
-//     (mode 0444 per file, root:root). imaged DOES NOT talk to
-//     Postgres directly; the apid-written .pem file IS the trust
-//     root for verify. apid notifies imaged of trust changes via
-//     pg_notify('trusted_signer_changed') so imaged's in-memory
-//     cache can refresh without a restart.
-//   - The verify path is fail-closed: a registry without cosign's
-//     sha256-<digest>.sig artifact → ErrSignatureMissing. A signed
-//     artifact that doesn't match ANY trusted key → ErrSignatureInvalid.
-//     Both bubbles up to the apid-imaged pipeline as 403
-//     deploy_signature_invalid.
-//   - The signature payload is the canonical cosign v2 shape: 64
-//     bytes (r||s) ECDSA P-256 over the 32-byte SHA-256 digest of
-//     the manifest. Same wire as the build-side LocalVerifier (see
-//     pkg/cosign/verifier.go::verifyDigest).
-//
-// Why a separate file (not bolted onto verifier.go)
-//
-//   - The build-side LocalVerifier operates on local layer files
-//     (drive1 ext4 images staged under /var/lib/faas/snapshots/...).
-//     The deploy-time path operates on a registry pull — the
-//     signature has to be fetched BEFORE the layer is downloaded.
-//     This file wires the registry-pulling helper (ResolveDigest +
-//     FetchSignature) and keeps verifier.go's hot path (cold-boot
-//     layer verify) free of OCI concerns.
+// verify.go loads operator-controlled mirrored publisher keys and retains the
+// legacy raw P256 digest primitive from ADR-058. The registry deploy path uses
+// VerifyImageSignatureAttachments (ADR-435); raw r||s is not the Cosign
+// simple-signing wire format. ADR-038's local ext4 signer remains unchanged.
 
 package cosign
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -50,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
 // DefaultTrustedPublishersDir is the canonical location for the
@@ -64,7 +32,7 @@ const DefaultTrustedPublishersDir = "/etc/faas/secrets/trusted-publishers"
 // because the operator action is different (either onboard a
 // publisher if they're expecting a signed deploy, or relax the
 // apps.require_signed flag if they aren't).
-var ErrSignatureMissing = errors.New("cosign: image signature missing")
+var ErrSignatureMissing = imagepublisher.ErrSignatureMissing
 
 // ErrSignatureInvalid is returned by VerifyImageSignature when a
 // signature exists but doesn't verify against any trusted publisher
@@ -72,15 +40,12 @@ var ErrSignatureMissing = errors.New("cosign: image signature missing")
 // the operator action is different (the signature is there, but the
 // publisher isn't trusted — either the wrong key was used, or the
 // trust list needs to be updated).
-var ErrSignatureInvalid = errors.New("cosign: image signature invalid")
+var ErrSignatureInvalid = imagepublisher.ErrSignatureInvalid
 
 // TrustedPublisher is one entry in the per-app trust list. Name is
 // the apid-side label (matches app_trusted_signers.signer_name);
 // PublicKey is the parsed ECDSA P-256 SPKI.
-type TrustedPublisher struct {
-	Name      string
-	PublicKey *ecdsa.PublicKey
-}
+type TrustedPublisher = imagepublisher.TrustedPublisher
 
 // TrustedPublishersFromDir reads every *.pem in dir and parses each
 // as an ECDSA P-256 public key. Missing dir → (nil, nil) so callers
@@ -132,28 +97,17 @@ func TrustedPublishersFromDir(dir string) ([]TrustedPublisher, error) {
 	return out, nil
 }
 
-// ImageSignaturePuller is the minimal OCI surface VerifyImageSignature
-// needs. Defined here as an interface so the imaged-side wrapper
-// (pkg/imaged/handler.go) can supply either the production
-// pkg/oci/puller.Puller or a test fake without coupling pkg/cosign
-// to pkg/oci.
-//
-// ResolveDigest returns the canonical manifest digest (the
-// "sha256:..." form) for the image reference.
-//
-// FetchSignature fetches the cosign v2 signature blob for digest
-// from the registry's well-known sha256-<digest>.sig location.
-// Returns ErrSignatureMissing when the registry has no signature
-// for the digest (a "fail-closed missing" rather than a generic
-// network error — the caller branches on this to surface
-// ErrSignatureMissing up to the customer-facing error code).
+// ImageSignaturePuller supplies the legacy raw digest-signature primitive.
+// Registry deployments use ImageSignatureAttachmentPuller instead. This
+// interface prescribes no OCI blob location: a detached signature cannot be
+// stored under the image manifest's content digest.
 type ImageSignaturePuller interface {
 	ResolveDigest(ctx context.Context, ref string) (string, error)
 	FetchSignature(ctx context.Context, ref, digest string) ([]byte, error)
 }
 
-// VerifyImageSignature resolves the manifest digest for ref, fetches
-// the cosign signature, and verifies it against every trusted
+// VerifyImageSignature resolves a digest and verifies a legacy raw r||s
+// digest signature against every trusted
 // publisher. Returns the name of the first matching publisher and
 // the canonical digest on success. Returns ErrSignatureMissing
 // when the registry has no signature, ErrSignatureInvalid when the

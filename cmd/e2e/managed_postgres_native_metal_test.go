@@ -4,25 +4,29 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresprobe"
 	mp "github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/guestqualification"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -31,13 +35,30 @@ import (
 // serving, task, replacement and restored guests. Only provider management is
 // simulated: the catalog, sealed credentials, daemons and SQL authority are real.
 func TestManagedPostgresNativeMetal(t *testing.T) {
+	var guestIdentity *guestqualification.Identity
+	var artifactPaths map[string]string
+	var artifactsVerified bool
+	// Registered first: emit evidence only after every SQL/daemon cleanup has
+	// succeeded, and recheck artifacts after the workload rather than trusting
+	// a caller-supplied manifest or a reused harness binary directory.
+	t.Cleanup(func() {
+		if t.Failed() || guestIdentity == nil || !artifactsVerified {
+			return
+		}
+		encoded, err := json.Marshal(guestIdentity)
+		if err != nil {
+			t.Error("guest qualification identity encoding failed")
+			return
+		}
+		t.Log(guestqualification.IdentityPrefix + string(encoded))
+	})
 	if os.Getenv("GREGALE_POSTGRES_NATIVE_ACCEPTANCE") != "1" {
 		t.Fatal("use make test-managed-postgres-native for isolated SQL guest acceptance")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Fatal("SQL guest acceptance requires root on x86_64 Linux")
 	}
-	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_SQL_IP"} {
+	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_SQL_IP", "GREGALE_POSTGRES_NATIVE_CA_PATH"} {
 		if os.Getenv(required) == "" {
 			t.Fatalf("missing native SQL prerequisite %s", required)
 		}
@@ -80,7 +101,20 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if err := secretbox.WriteRecipientFile(public, identity); err != nil {
 		t.Fatal(err)
 	}
+	hmac := make([]byte, 32)
+	if _, err := rand.Read(hmac); err != nil {
+		t.Fatal(err)
+	}
+	hmacPath := filepath.Join(keys, "host.hmac")
+	if err := os.WriteFile(hmacPath, hmac, 0400); err != nil {
+		t.Fatal(err)
+	}
+	fixture := postgresfixture.New(t, pool, identity, hmac, proxy.Host, proxy.Port)
+	if fixture == nil {
+		t.Fatal("customer SQL fixture missing")
+	}
 	environment := []string{
+		"FAAS_HOST_HMAC_KEY_PATH=" + hmacPath,
 		"FAAS_RELEASE_PHASE_ENABLED=1",
 		"FAAS_APP_TASK_DISPATCH=1",
 		"FAAS_HOST_KEY_PATH=" + filepath.Join(keys, "host.age"),
@@ -88,6 +122,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + public,
 		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + public,
 	}
+	environment = append(environment, fixture.DaemonEnvironment(t)...)
 	// The daemon harness deliberately inherits a narrow environment. Forward
 	// the isolated scanner configuration explicitly; all scans remain required.
 	for _, name := range []string{"GRYPE_DB_CACHE_DIR", "GRYPE_DB_AUTO_UPDATE"} {
@@ -95,10 +130,58 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			environment = append(environment, name+"="+value)
 		}
 	}
+	if root := os.Getenv("FAAS_STORAGE_ROOT"); root != "" {
+		environment = append(environment, "FAAS_STORAGE_ROOT="+root)
+	}
 	h := e2etest.Start(t, pool, e2etest.All, environment...)
+	revision, err := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal("guest qualification requires a checkout revision")
+	}
+	artifactPaths = map[string]string{"kernel": os.Getenv("FAAS_TEST_KERNEL"), "guest_init": os.Getenv("FAAS_GUEST_INIT"), "builder_base": e2etest.StagedBuilderBasePath()}
+	for _, name := range append(append([]string(nil), e2etest.DaemonBinaries...), e2etest.StaticHelperBinaries...) {
+		artifactPaths[name] = filepath.Join(h.BinDir, name)
+	}
+	for _, name := range []string{"firecracker", "jailer"} {
+		artifactPaths[name], err = exec.LookPath(name)
+		if err != nil {
+			t.Fatal("guest qualification host executable missing")
+		}
+	}
+	artifactPaths["e2e_test"], err = os.Executable()
+	if err != nil {
+		t.Fatal("guest qualification test executable missing")
+	}
+	manifest, err := e2etest.PostgresGuestRuntimeManifest(artifactPaths, strings.TrimSpace(string(revision)), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestIdentity = &guestqualification.Identity{Runtime: manifest, PostgresMajor: fixture.Major}
 	key := h.SeedAccount(t.Context(), api.PlanPro)
 	store := state.NewPgStore(pool)
 	account := accountIDFromKey(t, t.Context(), pool, key)
+	recordRuntime := func(t *testing.T, deploymentID, runtimeName string) {
+		t.Helper()
+		deployment, err := store.DeploymentByID(t.Context(), deploymentID)
+		if err != nil {
+			t.Fatal("guest runtime deployment missing")
+		}
+		release, err := store.RuntimeReleaseForArtifact(t.Context(), account, deployment.RootfsKey)
+		if err != nil || release.Validate() != nil || (runtimeName == "node22" && release.Runtime != runtimeName) || release.Architecture != "amd64" || release.GuestInitSHA256 != guestIdentity.Runtime.Artifacts["guest_init"] {
+			t.Fatal("guest runtime release identity unverified")
+		}
+		storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
+		if storageRoot == "" {
+			storageRoot = "/srv/fc"
+		}
+		path := filepath.Join(storageRoot, release.BaseKey())
+		digest, err := e2etest.PostgresGuestArtifactDigest(path)
+		if err != nil || digest != release.BaseSHA256 {
+			t.Fatal("guest runtime base bytes differ from published release")
+		}
+		artifactPaths[runtimeName+"_base"] = path
+		guestIdentity.Runtime.Artifacts[runtimeName+"_base"] = digest
+	}
 	slug := "postgres-native-" + randHexSuffix()
 	falsy := false
 	if status := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RAMMB: 256, RequireAuthn: &falsy}); status != http.StatusCreated {
@@ -116,14 +199,6 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	app, err := store.AppByID(t.Context(), appID)
 	if err != nil || len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != proxyCIDR || len(app.EgressPorts) != 1 || app.EgressPorts[0] != 5432 {
 		t.Fatal("public app policy did not persist the isolated SQL destination and port")
-	}
-	hmac, err := os.ReadFile(h.HostHMACKeyPath)
-	if err != nil {
-		t.Fatal("read isolated host signing key")
-	}
-	fixture := postgresfixture.New(t, pool, identity, hmac, proxy.Host, proxy.Port)
-	if fixture == nil {
-		t.Fatal("customer SQL fixture missing")
 	}
 	database, bindings := fixture.Create(t, account, appID)
 	uri := func(binding mp.Binding) string {
@@ -183,6 +258,9 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if result.RuntimeProof != postgresprobe.Proof(runID, uri(binding)) || result.ReaderProof != postgresprobe.Proof(runID, uri(bindings[mp.CredentialReadOnly])) || result.Counter <= last.Counter || (last.Marker != "" && result.Marker != last.Marker) {
 			t.Fatal("guest received wrong credentials or lost SQL data")
 		}
+		if result.PoolGeneration == 0 || result.WriterConnections == 0 || result.ReaderConnections == 0 || (wakeMethod == "restore" && result.PoolGeneration < 2) {
+			t.Fatal("SQL guest did not retain pools or complete its restore reconnect hook")
+		}
 		if wakeMethod != "" {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
@@ -209,7 +287,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		source := buildTarGz(t, map[string]string{
 			"Dockerfile":       "FROM scratch\nCOPY --chmod=0755 postgres-probe /postgres-probe\nCOPY --chmod=0755 postgres-probe /bin/sh\nEXPOSE 8080\nCMD [\"/postgres-probe\"]\n",
 			"postgres-probe":   string(binary),
-			"gregale.yaml":     "hosting:\n  port: 8080\n  health: /healthz\nrelease:\n  command: /postgres-probe migrate\n",
+			"gregale.yaml":     "hosting:\n  port: 8080\n  health: /healthz\nlifecycle:\n  after_restore:\n    path: /internal/after-restore\n    timeout_ms: 2000\nrelease:\n  command: /postgres-probe migrate\n",
 			"faas-build-token": runID,
 		})
 		body, status := postMultipartDeployment(t, h, key, slug, source, true, "")
@@ -225,9 +303,14 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			}
 			t.Fatalf("SQL source deployment: %v", err)
 		}
+		recordRuntime(t, deploymentID, "probe")
 		release, err := store.ReleaseAppTaskByDeployment(ctx, deploymentID)
 		if err != nil || release.Kind != state.AppTaskKindRelease || release.Status != state.AppTaskSucceeded {
 			t.Fatal("normal deployment did not complete its SQL migration release")
+		}
+		currentApp, err := store.AppByID(ctx, appID)
+		if err != nil || currentApp.Manifest.AfterRestore == nil || currentApp.Manifest.AfterRestore.Path != postgresprobe.RestorePath {
+			t.Fatal("source deployment did not persist its pool reconnect hook")
 		}
 		if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
 			t.Fatal("initial SQL guest snapshot did not park")
@@ -252,6 +335,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			return task.Kind == state.AppTaskKindManual && task.Status == state.AppTaskSucceeded
 		})
 	})
+	workload := func(t *testing.T, binding mp.Binding, method string) { last = probe(t, binding, method) }
 	rotate := func(t *testing.T, parked bool) {
 		t.Helper()
 		old := bindings[mp.CredentialReadWrite]
@@ -259,7 +343,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if !parked {
 			// Manual tasks may outlast the serving guest's idle window. Issue
 			// real SQL immediately before rotating and require a running guest.
-			last = probe(t, old, "")
+			workload(t, old, "")
 		}
 		instances, err := store.ListInstancesForApp(t.Context(), appID)
 		if err != nil {
@@ -273,29 +357,47 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if (!parked && !running) || (parked && (!parkedGuest || running)) {
 			t.Fatal("SQL rotation did not begin in its required guest state")
 		}
-		rotated, err := fixture.Bindings.Rotate(t.Context(), account, old.ID)
+		// Inspect the snapshots eligible immediately before this rotation. An
+		// earlier rotation or failed restore may already have staled the original
+		// capture; checking that original again would not prove invalidation.
+		rows, err := pool.Query(t.Context(), `SELECT id FROM snapshots WHERE deployment_id=$1 AND NOT stale`, deploymentID)
 		if err != nil {
-			t.Fatal("SQL credential rotation failed")
+			t.Fatal(err)
+		}
+		var eligible []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			eligible = append(eligible, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if parked {
+			// Lose the notification before submitting the public intent. Killing
+			// schedd afterward could race with a completed retirement and never
+			// exercise durable replay at all.
+			if err := h.KillSchedd(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		body, status := doReq(t, h, key, http.MethodPost, "/v1/postgres/bindings/"+old.ID+"/rotate", nil)
+		var response api.ManagedPostgresBinding
+		if status != http.StatusOK || json.Unmarshal(body, &response) != nil || response.CredentialGeneration != old.CredentialGeneration+1 || !response.RotationPending {
+			t.Fatalf("public SQL rotation failed: status=%d", status)
+		}
+		rotated, err := fixture.Catalog.GetBinding(t.Context(), account, old.ID)
+		if err != nil || rotated.RotationWakeID == "" {
+			t.Fatal("public SQL rotation was not committed")
 		}
 		bindings[mp.CredentialReadWrite] = rotated
-		// Exercise the production rotation's durable restart seam. Provider
-		// management runs in-process; no retirement receipt is fabricated here.
-		if _, err := state.InvalidateAppSnapshotsAtExistingStamp(t.Context(), store, appID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.CompareAndSetAppStatus(t.Context(), appID, state.AppActive, state.AppEvictedCold); err != nil {
-			t.Fatal("rotation runtime refresh claim failed")
-		}
-		var stale bool
-		if err := pool.QueryRow(t.Context(), `SELECT stale FROM snapshots WHERE id=$1`, initialSnapshot).Scan(&stale); err != nil || !stale {
-			t.Fatal("rotation left the old SQL credential snapshot eligible")
-		}
-		payload, err := json.Marshal(map[string]string{"app_id": appID, "wake_id": rotated.RotationWakeID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Notify(t.Context(), pool, db.NotifyRuntimeConfigRestart, string(payload)); err != nil {
-			t.Fatal(err)
+		var remaining int
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM snapshots WHERE id=ANY($1::uuid[]) AND NOT stale`, eligible).Scan(&remaining); err != nil || remaining != 0 {
+			t.Fatal("public rotation left the old SQL credential snapshot eligible")
 		}
 		if parked {
 			// The durable restart must remain replayable across scheduler loss.
@@ -305,7 +407,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		}
 		postgresNativeWait(t, "scheduler rotation retirement", func(ctx context.Context) bool {
 			current, err := fixture.Catalog.GetBinding(ctx, account, old.ID)
-			return err == nil && current.RotationCleanupReady
+			return err == nil && (current.RotationCleanupReady || current.RotationPreviousGeneration == 0)
 		})
 		for _, oldInstance := range instances {
 			if !state.State(oldInstance.State).CountsForRAM() {
@@ -316,15 +418,27 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 				t.Fatal("scheduler retired SQL credential before old guest drained")
 			}
 		}
-		if _, err := fixture.Bindings.ReconcileRotationCleanup(t.Context(), account, old.ID); err != nil {
-			t.Fatal("credential retirement reconciliation failed")
-		}
+		postgresNativeWait(t, "public rotation completion", func(ctx context.Context) bool {
+			body, status := doReq(t, h, key, http.MethodGet, "/v1/postgres/bindings/"+old.ID, nil)
+			var current api.ManagedPostgresBinding
+			return status == http.StatusOK && json.Unmarshal(body, &current) == nil && !current.RotationPending && current.CredentialGeneration == rotated.CredentialGeneration
+		})
 		if fixture.VerifyRevoked(t.Context(), oldURI) != nil {
 			t.Fatal("retired credential still authenticates or SQL is unavailable")
 		}
-		last = probe(t, rotated, "")
+		workload(t, rotated, "")
 	}
 	phase("running_rotation_and_retirement", func(t *testing.T) { rotate(t, false) })
+	phase("pooled_disconnect_recovery", func(t *testing.T) {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
+			t.Fatalf("park pooled SQL app: status=%d", status)
+		}
+		initialSnapshot = waitAfterRestoreSnapshot(t, store, deploymentID, initialSnapshot)
+		// The snapshot retains application pools, but their external TCP
+		// sessions are now gone. Only the real restore hook repairs them.
+		proxy.Disconnect()
+		last = probe(t, bindings[mp.CredentialReadWrite], "restore")
+	})
 	phase("rotated_snapshot_restore", func(t *testing.T) {
 		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park SQL app: status=%d", status)
@@ -343,7 +457,15 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		}
 		rotate(t, true)
 	})
-	phase("independent_cleanup", func(t *testing.T) { cleanup() })
+	postgresNativeStarterPhases(t, h, key, slug, appID, account, pool, store, fixture, proxy, bindings, phase, rotate, &workload, &deploymentID, &initialSnapshot, recordRuntime)
+	phase("independent_cleanup", func(t *testing.T) {
+		cleanup()
+		after, err := e2etest.PostgresGuestRuntimeManifest(artifactPaths, guestIdentity.Runtime.SourceRevision, true)
+		if err != nil || !reflect.DeepEqual(after, guestIdentity.Runtime) {
+			t.Fatal("guest qualification artifacts changed during acceptance")
+		}
+		artifactsVerified = true
+	})
 }
 
 func postgresNativeWait(t *testing.T, what string, ready func(context.Context) bool) {

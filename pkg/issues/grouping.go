@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -20,7 +19,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/redact"
 )
 
-const GroupingVersion = 1
+const (
+	// GroupingVersion is the unchanged default for existing reporters and groups.
+	GroupingVersion            = 1
+	FailureSiteStrategy        = "failure-site-v1"
+	FailureSiteGroupingVersion = 2
+	CauseStrategy              = "cause-chain-v1"
+	CauseGroupingVersion       = 3
+)
+
+// GroupingVersionFor must be called with a successfully normalized event.
+func GroupingVersionFor(in api.IssueEvent) int {
+	if in.GroupingStrategy == CauseStrategy {
+		return CauseGroupingVersion
+	}
+	if in.GroupingStrategy == FailureSiteStrategy {
+		return FailureSiteGroupingVersion
+	}
+	return GroupingVersion
+}
 
 var unstableValue = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b[0-9]+\b`)
 var traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -46,6 +63,19 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	}
 	if in.TraceID != "" && (!traceIDPattern.MatchString(in.TraceID) || strings.Trim(in.TraceID, "0") == "") {
 		return in, "", "", errors.New("invalid trace_id")
+	}
+	switch in.GroupingStrategy {
+	case "", "legacy", FailureSiteStrategy, CauseStrategy:
+	default:
+		return in, "", "", errors.New("invalid grouping_strategy")
+	}
+	switch in.FrameOrder {
+	case "", "newest-first", "oldest-first":
+	default:
+		return in, "", "", errors.New("invalid frame_order")
+	}
+	if len(in.ErrorCode) > api.IssueMaxTypeBytes || !utf8.ValidString(in.ErrorCode) {
+		return in, "", "", errors.New("error_code must be bounded UTF-8 text")
 	}
 	if in.SpanID != "" && (!spanIDPattern.MatchString(in.SpanID) || strings.Trim(in.SpanID, "0") == "") {
 		return in, "", "", errors.New("invalid span_id")
@@ -85,9 +115,18 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 		in.RequestID = sanitize(in.RequestID, api.IssueMaxTypeBytes)
 	}
 	in.FingerprintOverride = sanitize(in.FingerprintOverride, api.IssueMaxTypeBytes)
+	in.ErrorCode = sanitize(strings.TrimSpace(in.ErrorCode), api.IssueMaxTypeBytes)
 	in.Frames = append([]api.IssueFrame(nil), in.Frames...)
 	if len(in.Frames) == 0 {
-		in.Frames = ParseStack(in.StackTrace)
+		if in.GroupingStrategy == FailureSiteStrategy || in.GroupingStrategy == CauseStrategy {
+			var order string
+			in.Frames, order = parseFailureSiteStack(in.StackTrace)
+			if in.FrameOrder == "" {
+				in.FrameOrder = order
+			}
+		} else {
+			in.Frames = ParseStack(in.StackTrace)
+		}
 	}
 	for i := range in.Frames {
 		f := &in.Frames[i]
@@ -97,30 +136,19 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 		f.File = sanitize(f.File, api.IssueMaxFrameBytes)
 		f.Function = sanitize(f.Function, api.IssueMaxFrameBytes)
 	}
-	parts := []string{fmt.Sprint(GroupingVersion), in.SourceKind, in.ExceptionType}
-	if in.FingerprintOverride != "" {
-		parts = append(parts, "override", in.FingerprintOverride)
-	} else {
-		frames := 0
-		for _, f := range in.Frames {
-			if f.InApp {
-				parts = append(parts, groupingPath(f.File)+":"+f.Function)
-				frames++
-			}
-		}
-		if frames == 0 {
-			parts = append(parts, "fallback", in.Route, fmt.Sprint(in.HTTPStatus), unstableValue.ReplaceAllString(in.Message, "<value>"))
-		}
+	if err := normalizeCauses(&in, sanitize); err != nil {
+		return in, "", "", err
 	}
 	sort.Strings(in.Redactions)
 	in.Redactions = compactRedactions(in.Redactions)
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
+	decision := decideGrouping(in, GroupingVersionFor(in))
+	fingerprint := groupingFingerprint(decision.parts, decision.explanation.GroupingVersion)
 	title := in.ExceptionType
 	if in.Message != "" {
 		title += ": " + in.Message
 	}
 	title, _ = redact.New(api.IssueMessageMaxBytes).Apply(title)
-	return in, hex.EncodeToString(sum[:]), title, nil
+	return in, fingerprint, title, nil
 }
 
 // PayloadDigest makes an exact retry idempotent while rejecting an event-ID

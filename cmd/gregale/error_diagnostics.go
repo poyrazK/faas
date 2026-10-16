@@ -61,10 +61,19 @@ func diagnosticProblem(p api.Problem) api.Problem {
 		switch {
 		case p.Status == 401:
 			p.Hint = authenticationHint()
-		case p.Status == 403:
+		case p.Status == 403 && authorizationRefusal(p.Code):
 			p.Hint = "Check the selected profile, account membership, and credential permissions with gregale profile check."
 		case p.Status == 429:
 			p.Hint = "Wait for Retry-After when provided, then retry."
+		case p.Code == "long_poll_timeout":
+			// The server stopped waiting, not working: a sync invoke past its
+			// wait keeps running, so a retry would run it twice.
+			p.Hint = "The work keeps running on Gregale; follow it with the command in the detail instead of retrying."
+		case p.Status == 501 || p.Status >= 500 && strings.HasSuffix(p.Code, "_not_enabled"):
+			// Operator-gated features answer 501 (disposable executions, app
+			// tasks) or 503 with a *_not_enabled code (tenant surfaces, private
+			// networks); retrying or checking service status cannot help.
+			p.Hint = "This feature is not enabled on this Gregale installation; ask its operator to enable it."
 		case p.Status >= 500:
 			p.Hint = "Check Gregale's service status and run gregale profile check. Inspect deployment status before retrying a deploy."
 		}
@@ -113,4 +122,16 @@ func redactProblem(p api.Problem) api.Problem {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
 	return safe
+}
+
+// authorizationRefusal reports whether a 403 is about who is asking. Plan
+// limits and policy refusals also answer 403 and explain themselves; the
+// credential hint sent an alert rule's "Egress denied" (a private webhook
+// address) to gregale profile check (H10-73).
+func authorizationRefusal(code string) bool {
+	switch code {
+	case "", "forbidden", api.CodeForbidden, api.CodeOrgRoleForbidden:
+		return true
+	}
+	return false
 }

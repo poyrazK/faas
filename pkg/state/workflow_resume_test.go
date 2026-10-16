@@ -12,14 +12,21 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/pressly/goose/v3"
 )
 
 func seedResumeRun(t *testing.T, store Store, spec api.WorkflowSpec) (*WorkflowRun, App) {
 	t.Helper()
-	ctx := context.Background()
-	app, _ := seedWorkflowSchedule(t, store, "allow")
+	return seedResumeRunWithContext(t, context.Background(), store, spec)
+}
+
+func seedResumeRunWithContext(t *testing.T, ctx context.Context, store Store, spec api.WorkflowSpec) (*WorkflowRun, App) {
+	t.Helper()
+	app, _ := seedWorkflowScheduleWithContext(t, ctx, store, "allow")
 	snapshot, _ := json.Marshal(spec)
 	run := &WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, Input: json.RawMessage(`{"enabled":true}`), DefinitionSnapshot: snapshot}
 	if err := store.CreateWorkflowRun(ctx, run); err != nil {
@@ -39,8 +46,12 @@ func seedResumeRun(t *testing.T, store Store, spec api.WorkflowSpec) (*WorkflowR
 }
 func failResumeRun(t *testing.T, store Store, run *WorkflowRun, name string) {
 	t.Helper()
-	ctx := context.Background()
-	step := guardStep(t, store, run.ID, name)
+	failResumeRunWithContext(t, context.Background(), store, run, name)
+}
+
+func failResumeRunWithContext(t *testing.T, ctx context.Context, store Store, run *WorkflowRun, name string) {
+	t.Helper()
+	step := guardStepWithContext(t, ctx, store, run.ID, name)
 	if _, err := store.StartWorkflowStep(ctx, run.ID, name, step.Attempt+1, json.RawMessage(`{"literal":"{{input.keep_literal}}"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -405,17 +416,47 @@ func TestWorkflowResumeIntegrationBindingsAndLimit(t *testing.T) {
 }
 
 func TestWorkflowResumeMigrationRollbackAndReapply(t *testing.T) {
-	store := NewPgStore(pgtest.OpenMigrated(t))
+	// Exercise the resume migration at its own schema version. Later recovery
+	// triggers depend on its columns and must be downgraded before this version.
+	pool := pgtest.Open(t)
 	ctx := context.Background()
-	run, app := seedResumeRun(t, store, simpleResumeSpec())
-	failResumeRun(t, store, run, "send")
-	if _, _, _, err := store.ResumeWorkflowRun(ctx, resumeOptions(run, app, 0)); err != nil {
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	defer func() { _ = sqlDB.Close() }()
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+	if _, err := provider.UpTo(ctx, 20261003180000001); err != nil {
 		t.Fatal(err)
 	}
-	failResumeRun(t, store, run, "send")
+	// This fixture uses SQL from the migration's own version; today's generated
+	// queries may require columns added after this migration.
+	definition, err := json.Marshal(simpleResumeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runID string
+	if err := pool.QueryRow(ctx, `WITH account AS (
+		INSERT INTO accounts(email,plan) VALUES('resume-migration@example.com','hobby') RETURNING id
+	), app AS (
+		INSERT INTO apps(account_id,slug,ram_mb) SELECT id,'resume-migration',256 FROM account RETURNING id,account_id
+	), run AS (
+		INSERT INTO workflow_runs(app_id,workflow_name,status,definition_snapshot,resume_count,last_error)
+		SELECT id,'recover','dead',$1::jsonb,1,'provider unavailable' FROM app RETURNING id,app_id
+	), history AS (
+		INSERT INTO workflow_run_resumes(run_id,resume_number,account_id,previous_status,resumed_steps)
+		SELECT run.id,1,app.account_id,'dead','["send"]'::jsonb FROM run JOIN app ON app.id=run.app_id
+	) SELECT id::text FROM run`, definition).Scan(&runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO workflow_steps(run_id,step_name,status,attempt,retry_base)
+		VALUES($1,'send','failed',2,1)`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO workflow_step_attempts(run_id,step_name,attempt,status,http_status,error)
+		VALUES($1,'send',1,'failed',503,'provider unavailable'),($1,'send',2,'failed',503,'provider unavailable')`, runID); err != nil {
+		t.Fatal(err)
+	}
 	migration, err := os.ReadFile("../../migrations/20261003180000001_workflow_resume.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -424,26 +465,28 @@ func TestWorkflowResumeMigrationRollbackAndReapply(t *testing.T) {
 	if !ok {
 		t.Fatal("missing down migration")
 	}
-	if _, err := store.pool.Exec(ctx, down); err != nil {
+	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	var attempts int
 	var historyExists bool
-	if err := store.pool.QueryRow(ctx, "SELECT count(*) FROM workflow_step_attempts WHERE run_id=$1", run.ID).Scan(&attempts); err != nil || attempts != 2 {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workflow_step_attempts WHERE run_id=$1", runID).Scan(&attempts); err != nil || attempts != 2 {
 		t.Fatalf("downgrade destroyed attempts: %d %v", attempts, err)
 	}
-	if err := store.pool.QueryRow(ctx, "SELECT to_regclass('workflow_run_resumes') IS NOT NULL").Scan(&historyExists); err != nil || historyExists {
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('workflow_run_resumes') IS NOT NULL").Scan(&historyExists); err != nil || historyExists {
 		t.Fatalf("history table remains: %v %v", historyExists, err)
 	}
-	if _, err := store.pool.Exec(ctx, up); err != nil {
+	if _, err := pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := store.GetWorkflowRun(ctx, run.ID)
-	if err != nil || restored.ResumeCount != 0 || restored.Status != WorkflowRunStatusDead || !equalWorkflowJSON(restored.DefinitionSnapshot, run.DefinitionSnapshot) {
-		t.Fatalf("restore changed run: %+v %v", restored, err)
+	var resumeCount int
+	var status string
+	var restoredDefinition json.RawMessage
+	if err := pool.QueryRow(ctx, "SELECT resume_count,status,definition_snapshot FROM workflow_runs WHERE id=$1", runID).Scan(&resumeCount, &status, &restoredDefinition); err != nil || resumeCount != 0 || status != WorkflowRunStatusDead || !equalWorkflowJSON(restoredDefinition, definition) {
+		t.Fatalf("restore changed run: resumes=%d status=%s definition=%s err=%v", resumeCount, status, restoredDefinition, err)
 	}
-	history, err := store.ListWorkflowResumes(ctx, run.ID)
-	if err != nil || len(history) != 0 {
+	var historyCount int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM workflow_run_resumes WHERE run_id=$1", runID).Scan(&historyCount); err != nil || historyCount != 0 {
 		t.Fatal("new history table is not empty", err)
 	}
 }

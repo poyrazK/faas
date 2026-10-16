@@ -379,6 +379,7 @@ func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 		printAppScalePlan(osStdout, plan.Preview)
 		PrintProgress(osStdout, "Applying the confirmed plan.")
 	}
+	printAppSettingsTarget(slug, plan.Environment, "saved plan", plan.Request)
 	updated, err := appClient.UpdateApp(context.Background(), slug, plan.Request)
 	if err != nil {
 		return printErr("Could not apply saved app settings plan", err)

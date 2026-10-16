@@ -40,6 +40,9 @@ func cmdEventsSubscriptionExecutionHealth(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | executions %d | queued %d | running %d | retrying %d\n", oneLine(h.SubscriptionID), h.Executions, h.Queued, h.Running, h.Retrying)
 	_, _ = fmt.Fprintf(osStdout, "Succeeded %d | failed %d | expired %d | dead letters %d | cancelled %d | superseded %d | unknown %d\n", h.Succeeded, h.Failed, h.Expired, h.DeadLettered, h.Cancelled, h.Superseded, h.Unknown)
 	_, _ = fmt.Fprintf(osStdout, "Window %s | successful attempts %d | failed attempts %d (%.2f%%) | unknown attempts %d | dead-letter outcomes %d (%.3f/s) | completions %d | completion p95 %.3fs\n", *window, h.SuccessfulAttempts, h.FailedAttempts, h.HandlerFailurePct, h.UnknownAttempts, h.WindowDeadLetters, h.DeadLetterRatePerSecond, h.WindowCompletions, h.CompletionLatencyP95Seconds)
+	_, _ = fmt.Fprintf(osStdout, "History %s (%s) | collection start %v | evidence lost %v\n", oneLine(h.HistoryStatus), oneLine(h.HistoryReason), h.CoverageStartedAt, h.CoverageLostAt)
+	_, _ = fmt.Fprintf(osStdout, "Window evidence %s (%s) | scope %s | collection start %v | lost through %v | retain until %v\n", oneLine(h.WindowHistoryStatus), oneLine(h.WindowHistoryReason), oneLine(h.WindowCoverage), h.WindowCoverageStartedAt, h.WindowCoverageLostThroughAt, h.WindowEvidenceRetainUntil)
 	_, _ = fmt.Fprintf(osStdout, "Coverage %s | retained roots %d | missing roots %d | truncated %t | history complete %t\n", oneLine(h.Coverage), h.RetainedRoots, h.MissingRoots, h.Truncated, h.HistoryComplete)
+	printLineageRetryJobHealth(h.LineageRetryJobs)
 	return 0
 }

@@ -42,6 +42,37 @@ type NodeLedger struct {
 	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-590)
 	perAppProduction  map[string]int              // valid production ownership, including unpinned compatibility rows
 	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	// measured, when set, admits by measured memory (ADR-909): it returns a
+	// node's measured charge and when it was taken. nil keeps invariant 2's
+	// reservation check.
+	measured MeasuredMemory
+	// quietPaused, when set, lets the vCPU and CPU gates count only active
+	// instances (ADR-1151, admission_quiet.go).
+	quietPaused QuietPaused
+	now         func() time.Time // nil means time.Now; tests set it
+}
+
+func (l *NodeLedger) clock() time.Time {
+	if l.now != nil {
+		return l.now()
+	}
+	return time.Now()
+}
+
+// MeasuredMemory reports a node's measured memory charge (MB), the time the
+// measurement reflects, and whether one is available and fresh.
+type MeasuredMemory func(nodeID string) (mb int, asOf time.Time, ok bool)
+
+// EnableMeasuredAdmission switches RAM admission to measured memory
+// (ADR-909). Reservations may then reach MeasuredAdmissionMaxOvercommitPercent
+// of a node's ceiling while the node's measured charge, plus every
+// reservation admitted after that measurement and the request itself, stays
+// under the ceiling. A node without a fresh measurement keeps the
+// reservation check.
+func (l *NodeLedger) EnableMeasuredAdmission(measured MeasuredMemory) {
+	l.mu.Lock()
+	l.measured = measured
+	l.mu.Unlock()
 }
 
 type nodeReservation struct {
@@ -49,6 +80,9 @@ type nodeReservation struct {
 	usedVCPU          int // Σ guest-visible vCPU topology on this node
 	usedCPUMillicores int // Σ sustained host CPU quota on this node
 	ceilingMB         int // latest per-node RAM admission ceiling
+	// frozenRAM is the part of residentRAM booked by frozen reservations
+	// (ADR-1151). It stays outside measured admission's overcommit cap.
+	frozenRAM int
 }
 
 // reservation remembers the node it belongs to so Release can route
@@ -72,6 +106,10 @@ type reservation struct {
 	cpuBoostMillicores int
 	cpuBoostUntil      time.Time
 	countsConc         bool // still in {WAKING,COLD_BOOTING,RUNNING}
+	admittedAt         time.Time
+	// frozen marks a frozen reservation (ADR-1151): admissionMB is the
+	// instance's measured charge and it books no vCPU, CPU or concurrency.
+	frozen bool
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -144,6 +182,10 @@ const (
 	// node RAM/vCPU/CPU but is not a serving replica and therefore must not
 	// consume the app's request-concurrency budget.
 	KindAppTask
+	// KindFrozen re-books a frozen instance (ADR-1151) when schedd seeds its
+	// ledger after a restart: Request.FrozenChargeMB of RAM, no vCPU, CPU or
+	// concurrency. A live freeze converts a reservation with Freeze instead.
+	KindFrozen
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -151,7 +193,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -215,6 +257,9 @@ type Request struct {
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
 	Kind Kind
+	// FrozenChargeMB is the RAM a KindFrozen reservation books, at least
+	// MeasuredChargeFloorMB.
+	FrozenChargeMB int
 	// Flexible jobs may use only capacity above the per-node app wake
 	// reserve. Placement applies the same reserve before selecting a node.
 	Flexible bool
@@ -340,6 +385,10 @@ func (l *NodeLedger) Admit(r Request) error {
 	if _, dup := l.entries[r.Instance]; dup {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
 	}
+	if r.Kind == KindFrozen {
+		l.admitFrozen_locked(r)
+		return nil
+	}
 
 	// ADR-590: apply the deployed environment's configured cap and the shared
 	// app plan budget together. Both counts are global across compute nodes.
@@ -394,10 +443,8 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		ramCeiling -= flexibleAppReserveRAMMB
 	}
-	if node.residentRAM+r.admissionMB() > ramCeiling {
-		return api.ErrCapacity(fmt.Sprintf(
-			"RAM headroom: node %q resident %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
-			r.NodeID, node.residentRAM, r.admissionMB(), ramCeiling))
+	if err := l.ramHeadroom_locked(r, node, ramCeiling); err != nil {
+		return err
 	}
 
 	// Per-node vCPU headroom (Tier A2, migration 00123). Replaces
@@ -417,10 +464,12 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		vcpuCeiling -= flexibleAppReserveVCPU
 	}
-	if node.usedVCPU+r.VCPU > vcpuCeiling {
+	quietVCPU, quietCPU := l.quietDiscount_locked(r.NodeID)
+	vcpuUsed := quietEffective(node.usedVCPU, quietVCPU, vcpuCeiling)
+	if vcpuUsed+r.VCPU > vcpuCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
-			r.NodeID, node.usedVCPU, r.VCPU, vcpuCeiling))
+			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling))
 	}
 
 	// Host CPU admission is distinct from guest-visible vCPU topology.
@@ -437,12 +486,13 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
 		cpuCeiling -= flexibleAppReserveCPUMillicores
 	}
+	cpuUsed := quietEffective(node.usedCPUMillicores, quietCPU, cpuCeiling)
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
-		node.usedCPUMillicores+reservedCPU > cpuCeiling &&
+		cpuUsed+reservedCPU > cpuCeiling &&
 		!r.AllowCPUOvercommitRecovery {
 		return api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
-			r.NodeID, node.usedCPUMillicores, reservedCPU, cpuCeiling))
+			r.NodeID, cpuUsed, reservedCPU, cpuCeiling))
 	}
 
 	l.entries[r.Instance] = &reservation{
@@ -452,6 +502,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		deploymentScope:    normalizedDeploymentScope(r.DeploymentScope),
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
+		admittedAt: l.clock(),
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
@@ -633,6 +684,9 @@ func (l *NodeLedger) Release(instance string) {
 		if node.residentRAM < 0 {
 			node.residentRAM = 0
 		}
+		if e.frozen {
+			node.frozenRAM = max(node.frozenRAM-e.admissionMB, 0)
+		}
 		node.usedVCPU -= e.vcpu
 		if node.usedVCPU < 0 {
 			node.usedVCPU = 0
@@ -800,4 +854,85 @@ func (l *NodeLedger) NodeCount() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.resident)
+}
+
+// ramHeadroom_locked is invariant 2's RAM check, or ADR-909's measured
+// variant when measured admission is enabled.
+func (l *NodeLedger) ramHeadroom_locked(r Request, node *nodeReservation, ramCeiling int) error {
+	want := r.admissionMB()
+	used, basis := l.admissionUsed_locked(r.NodeID, node.residentRAM, node.frozenRAM, ramCeiling)
+	if used+want > ramCeiling {
+		return api.ErrCapacity(fmt.Sprintf(
+			"RAM headroom: node %q %s %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
+			r.NodeID, basis, used, want, ramCeiling))
+	}
+	return nil
+}
+
+// admissionUsed_locked is the RAM a node counts against its ceiling: a
+// request fits iff used + request <= ceiling. By default that is the
+// node's reservations, Σ(ram_mb + 8). Under measured admission (ADR-909)
+// it is the node's measured charge plus every reservation admitted after
+// the measurement, unless the reservations' overcommit cap binds first.
+// basis names the figure for capacity errors.
+func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceiling int) (used int, basis string) {
+	if l.measured == nil {
+		return reserved, "resident"
+	}
+	used, asOf, ok := l.measured(nodeID)
+	if !ok {
+		return reserved, "resident"
+	}
+	// The measurement cannot include instances admitted after it.
+	for _, e := range l.entries {
+		if e.nodeID == nodeID && e.admittedAt.After(asOf) {
+			used += e.admissionMB
+		}
+	}
+	// reserved + request <= cap  <=>  reserved - (cap - ceiling) + request <= ceiling
+	// Frozen reservations already book measured memory, so the cap on
+	// reservations leaves them out (ADR-1151).
+	overcommit := ceiling * (api.MeasuredAdmissionMaxOvercommitPercent - 100) / 100
+	if capped := reserved - frozen - overcommit; capped > used {
+		return capped, "reservations beyond the overcommit allowance"
+	}
+	return used, "measured"
+}
+
+// AdmissionUsedMB is the RAM a node counts against its admission ceiling
+// for the next reservation: ResidentRAMForNode by default, the measured
+// figure under measured admission (ADR-909). The placement chooser uses it
+// as the ledger floor so it agrees with Admit.
+func (l *NodeLedger) AdmissionUsedMB(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	node := l.resident[nodeID]
+	if node == nil {
+		used, _ := l.admissionUsed_locked(nodeID, 0, 0, l.ceilingForNode_locked(nodeID, api.Limits{}))
+		return used
+	}
+	ceiling := node.ceilingMB
+	if ceiling <= 0 {
+		ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
+	}
+	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, ceiling)
+	return used
+}
+
+// MeasuredAdmissionEnabled reports whether EnableMeasuredAdmission is on.
+func (l *NodeLedger) MeasuredAdmissionEnabled() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.measured != nil
+}
+
+// CeilingForNode is the RAM admission ceiling the ledger last applied on a
+// node, or the global ceiling for a node it has not admitted to.
+func (l *NodeLedger) CeilingForNode(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if node := l.resident[nodeID]; node != nil && node.ceilingMB > 0 {
+		return node.ceilingMB
+	}
+	return l.ceilingForNode_locked(nodeID, api.Limits{})
 }

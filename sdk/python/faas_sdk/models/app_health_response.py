@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 
 from ..models.app_health_response_phase import AppHealthResponsePhase, check_app_health_response_phase
-from ..models.app_health_response_scope import AppHealthResponseScope, check_app_health_response_scope
 from ..models.app_health_response_status import AppHealthResponseStatus, check_app_health_response_status
 from ..types import UNSET, Unset
 
@@ -22,13 +21,13 @@ T = TypeVar("T", bound="AppHealthResponse")
 
 @_attrs_define
 class AppHealthResponse:
-    """Read-only observed health of default-scope HTTP serving workloads."""
+    """Read-only observed health of selected-scope HTTP serving workloads."""
 
     app_id: str
     status: AppHealthResponseStatus
     phase: AppHealthResponsePhase
     summary: str
-    scope: AppHealthResponseScope
+    scope: str
     evaluated_at: datetime.datetime
     valid_for_seconds: int
     """Maximum age before clients must reconfirm this assessment."""
@@ -36,6 +35,8 @@ class AppHealthResponse:
     capacity: AppHealthCapacity
     """Measured serving replica counts, with explicit evidence availability."""
     checks: list[AppHealthCheck]
+    project_id: str | Unset = UNSET
+    environment_id: str | Unset = UNSET
     metrics_as_of: datetime.datetime | Unset = UNSET
     """Actual telemetry sample time; absent when unconfirmed."""
     latest_deployment_id: str | Unset = UNSET
@@ -52,7 +53,7 @@ class AppHealthResponse:
 
         summary = self.summary
 
-        scope: str = self.scope
+        scope = self.scope
 
         evaluated_at = self.evaluated_at.isoformat()
 
@@ -66,6 +67,10 @@ class AppHealthResponse:
         for checks_item_data in self.checks:
             checks_item = checks_item_data.to_dict()
             checks.append(checks_item)
+
+        project_id = self.project_id
+
+        environment_id = self.environment_id
 
         metrics_as_of: str | Unset = UNSET
         if not isinstance(self.metrics_as_of, Unset):
@@ -93,6 +98,10 @@ class AppHealthResponse:
                 "checks": checks,
             }
         )
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
         if metrics_as_of is not UNSET:
             field_dict["metrics_as_of"] = metrics_as_of
         if latest_deployment_id is not UNSET:
@@ -117,7 +126,7 @@ class AppHealthResponse:
 
         summary = d.pop("summary")
 
-        scope = check_app_health_response_scope(d.pop("scope"))
+        scope = d.pop("scope")
 
         evaluated_at = datetime.datetime.fromisoformat(d.pop("evaluated_at"))
 
@@ -133,6 +142,10 @@ class AppHealthResponse:
             checks_item = AppHealthCheck.from_dict(checks_item_data)
 
             checks.append(checks_item)
+
+        project_id = d.pop("project_id", UNSET)
+
+        environment_id = d.pop("environment_id", UNSET)
 
         _metrics_as_of = d.pop("metrics_as_of", UNSET)
         metrics_as_of: datetime.datetime | Unset
@@ -161,6 +174,8 @@ class AppHealthResponse:
             serving_deployment_ids=serving_deployment_ids,
             capacity=capacity,
             checks=checks,
+            project_id=project_id,
+            environment_id=environment_id,
             metrics_as_of=metrics_as_of,
             latest_deployment_id=latest_deployment_id,
             requests=requests,

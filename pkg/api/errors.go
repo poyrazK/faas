@@ -46,6 +46,10 @@ import (
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
 
+const CodeApplicationStandardVersionStale = "application_standard_version_stale"
+
+const CodeApplicationStandardsPending = "application_standards_pending"
+
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
 const dashboardBillingURL = "https://gregale.dev/dashboard/billing"
@@ -654,6 +658,7 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
@@ -785,6 +790,28 @@ const (
 	// instance that was served a developer live patch. The VM is destroyed
 	// instead, and the next wake restores the unpatched artifact.
 	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevWatchUnsupported (ADR-1170) refuses watch mode for an
+	// environment or build it cannot serve: too little RAM, an
+	// unauthenticated developer app, a Dockerfile build, or a build plan the
+	// watch overlay does not understand.
+	CodeDevWatchUnsupported = "dev_watch_unsupported"
+	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
+	// freeze an instance whose traffic or lifecycle does not allow it (warm
+	// pool, job, app task, builder, private network member, pending waitUntil
+	// task). CodeInstanceBusy refuses a freeze while a forwarded request,
+	// stream or session is in flight; the guest keeps running.
+	// CodeFrozenInstanceRefused is vmmd's refusal to snapshot or migrate a
+	// frozen instance; schedd destroys it instead. CodeInstanceFrozen fails a
+	// forward to a frozen instance fast, so the gateway wakes it through
+	// schedd instead of waiting on a paused guest.
+	CodeInstanceNotFreezable  = "instance_not_freezable"
+	CodeInstanceBusy          = "instance_busy"
+	CodeFrozenInstanceRefused = "frozen_instance_refused"
+	CodeInstanceFrozen        = "instance_frozen"
+	// CodeFrozenCompressUnavailable refuses to compress a frozen instance on
+	// a host without memory-only swap (zswap with writeback disabled, ADR-906
+	// decision 6); schedd parks it instead.
+	CodeFrozenCompressUnavailable = "frozen_compress_unavailable"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1002,6 +1029,8 @@ const (
 	// first" rather than retry blindly. Renders 409 Conflict,
 	// matching the rest of state.ErrConflict's 4xx family.
 	CodeDeploymentScopeCollision = "deployment_scope_collision"
+	// ADR-1239: app/release review changed before the atomic candidate insert.
+	CodeReleaseReviewChanged = "release_review_changed"
 
 	// Trusted cosign signers (issue #472 / ADR-054). Same shape as
 	// the env-var quota — config cap, not a credential one — but a
@@ -1123,10 +1152,14 @@ const (
 	CodeTrafficPercentSumInvalid = "traffic_percent_sum_invalid"
 	// CodeTrafficServingChanged is a 409 when a conditional promotion's
 	// expected 100% serving deployment no longer serves the app.
-	CodeTrafficServingChanged = "traffic_serving_changed"
+	CodeTrafficServingChanged  = "traffic_serving_changed"
+	CodeMCPAccessPolicyChanged = "mcp_access_policy_changed"
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
+	// CodeMCPTaskCompatibilityGate is a 409 when promotion would route away
+	// from the final workers for an outstanding MCP task handler version.
+	CodeMCPTaskCompatibilityGate = "mcp_task_compatibility_gate_blocked"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1587,6 +1620,12 @@ const (
 	CodeAppRuntimeOOM          = "app_runtime_oom"
 	CodeDepInstallFailed       = "dep_install_failed"
 	CodeAppStartupTimeout      = "app_startup_timeout"
+	// CodeAppStartupCrash means the customer's workload exited before it
+	// became ready: guest-init's supervisor reported its restarts or crash
+	// loop, or the characterization report carried a non-zero startup exit.
+	// Distinct from app_startup_timeout (still running, never ready) and
+	// app_not_listening (running, nothing bound).
+	CodeAppStartupCrash = "app_startup_crash"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -1626,8 +1665,10 @@ const (
 	// "unavailable" code covers every other failure mode (expired,
 	// already used, unknown) — the CLI does not need to distinguish
 	// them, and returning a single code avoids probing.
-	CodeCliAuthPending     = "cli_auth_code_pending"
-	CodeCliAuthUnavailable = "cli_auth_code_unavailable"
+	CodeCliAuthPending             = "cli_auth_code_pending"
+	CodeCliAuthUnavailable         = "cli_auth_code_unavailable"
+	CodeBrowserApprovalPending     = "browser_approval_pending"
+	CodeBrowserApprovalUnavailable = "browser_approval_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -1855,6 +1896,7 @@ const (
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
 	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
 	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
 	CodeWorkflowResumeLimit               = "workflow_resume_limit"
@@ -1901,7 +1943,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked:
+	case CodeProfileGateBlocked, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
@@ -1943,7 +1985,8 @@ func StatusForCode(code string) int {
 		return http.StatusGone
 	case CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
-		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
+		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable,
+		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -1982,16 +2025,17 @@ func StatusForCode(code string) int {
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2079,6 +2123,7 @@ func StatusForCode(code string) int {
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
+		CodeAppStartupCrash,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:
@@ -2199,9 +2244,9 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeAppRenameFailed:
 		return http.StatusConflict
-	case CodeCliAuthPending:
+	case CodeCliAuthPending, CodeBrowserApprovalPending:
 		return http.StatusNotFound
-	case CodeCliAuthUnavailable:
+	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap:
 		return http.StatusForbidden
@@ -2428,6 +2473,16 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrDevWatchRAM refuses watch mode (ADR-1170) for a developer app whose RAM
+// is below DevWatchMinRAMMB. Limit and observed are MB.
+func ErrDevWatchRAM(ramMB int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeDevWatchUnsupported,
+		"Watch mode needs more memory",
+		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
+		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
+		WithDocs(docsBase + "/gregale-dev#watch-mode")
 }
 
 // ErrPlanLimitDeveloperLease is returned when a developer session requests a
@@ -4757,10 +4812,20 @@ func ErrSecretInvalidKey(detail string) *Problem {
 // Limits.SecretValueMaxBytes. apid checks the byte length of the request body
 // BEFORE sealing so the cap is enforced on the wire (no over-quota ciphertext
 // ever lands in PG).
+// secretValueTooLargeDetail names the plan only when the caller knows it.
+// Most callers pass just the byte cap, which printed " plan caps ..." with
+// an empty plan name (hunt #9 H9-70).
+func secretValueTooLargeDetail(l Limits, observedBytes int) string {
+	if l.Plan != "" {
+		return fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)
+	}
+	return fmt.Sprintf("Secret values are capped at %d bytes; got %d.", l.SecretValueMaxBytes, observedBytes)
+}
+
 func ErrSecretValueTooLarge(l Limits, observedBytes int) *Problem {
 	return NewProblem(http.StatusRequestEntityTooLarge, CodeSecretValueTooLarge,
 		"Secret value too large",
-		fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)).
+		secretValueTooLargeDetail(l, observedBytes)).
 		WithLimit(int64(l.SecretValueMaxBytes), int64(observedBytes)).
 		WithDocs(docsBase + "/secrets#limits")
 }
@@ -5230,6 +5295,16 @@ func ErrTrafficChangeDuringCanary() *Problem {
 		"Canary rollout controls traffic",
 		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
 		WithDocs(docsBase + "/deployments#canary")
+}
+
+// ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so
+// operators can see which task handler version blocks promotion.
+func ErrMCPTaskCompatibilityGate(detail string) *Problem {
+	detail = strings.TrimPrefix(detail, "state: ")
+	return NewProblem(http.StatusConflict, CodeMCPTaskCompatibilityGate,
+		"MCP task handler compatibility blocks promotion",
+		detail+" Refresh the observer report or use --mcp-task-migration-override if dropping those tasks is intentional.").
+		WithDocs(docsBase + "/mcp#mcp-tasks")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring
@@ -5879,6 +5954,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			"Plan doesn't include analytics",
 			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
 			WithDocs(docsBase + "/plans#analytics")
+	}
+	if feature == "ai_gateway" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI gateway",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
+			WithDocs(docsBase + "/ai-gateway#plans")
 	}
 	if feature == "sync_invoke" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
@@ -6587,3 +6668,32 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 const CodeProfileInvestigationLimit = "profile_investigation_limit"
 
 const CodeProfileGateBlocked = "profile_gate_blocked"
+
+func ErrMCPAccessPolicyChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeMCPAccessPolicyChanged, "MCP access policy changed", "Stored MCP access policy changed after the audit. Audit again before retrying promotion; traffic was not changed.")
+}
+
+const (
+	CodeMCPAccountRevisionChanged     = "mcp_account_revision_changed"
+	CodeMCPGatewayEvidenceUnavailable = "mcp_gateway_evidence_unavailable"
+	CodeMCPGatewayEvidenceStale       = "mcp_gateway_evidence_stale"
+	CodeMCPGatewayReplayPending       = "mcp_gateway_replay_pending"
+)
+
+func ErrMCPGatewayPromotion(code string) *Problem {
+	return NewProblem(http.StatusConflict, code, "MCP gateway convergence condition failed", "Account policy or gateway evidence no longer satisfies the audited condition. Audit again before retrying; traffic was not changed.")
+}
+
+func IsMCPPromotionConditionFailure(code string) bool {
+	switch code {
+	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+		return true
+	}
+	return false
+}
+
+const CodeMCPAdmissionEvidenceUnavailable = "mcp_admission_evidence_unavailable"
+
+func ErrMCPAdmissionEvidenceUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeMCPAdmissionEvidenceUnavailable, "MCP admission evidence unavailable", "Traffic admission evidence could not be committed. Inspect deployment traffic before retrying after audit storage recovers.")
+}

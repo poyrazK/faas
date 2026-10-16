@@ -51,6 +51,10 @@ const (
 	runtimePython312 = "python312"
 	runtimePython313 = "python313"
 	runtimeGo124     = "go124"
+	// runtimeBinary builds one static executable from the source's
+	// Dockerfile (ADR-987). It is never inferred: deploys select it
+	// with --runtime binary, a template, or gregale.yaml.
+	runtimeBinary = "binary"
 )
 
 // shape is the deploy shape auto-detected from the current directory when
@@ -1105,6 +1109,15 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 				"OR a single handler.{js,ts,py,go} for a *function* — "+
 				"or pass --image, --tarball, --template, --repo, --function, or --app",
 			filepath.Base(srcDir))
+		// A Compose file at the root is a project, which deploys with
+		// --project; the bare error never said so (H10-55).
+		if compose := composeFileIn(srcDir); compose != "" {
+			return shapeUnknown, "", "", &NestedMarkerHintError{
+				Dir:  filepath.Base(srcDir),
+				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy it with `gregale deploy --project`.", compose),
+				Err:  baseErr,
+			}
+		}
 		// Issue #744 / ADR-086: if the cwd has app markers at depth 1 (a
 		// common monorepo layout — apps/web/package.json, services/api/go.mod),
 		// surface a customer-visible hint pointing at `gregale scan --path .`.
@@ -1124,6 +1137,34 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 		}
 		return shapeUnknown, "", "", baseErr
 	case shapeFunction:
+		// ADR-987: a binary function is built from a Dockerfile at the
+		// source root and has no handler.* file to infer from.
+		if len(displayOverride) > 0 && displayOverride[0] == runtimeBinary {
+			if info, statErr := os.Stat(filepath.Join(srcDir, "Dockerfile")); statErr != nil || info.IsDir() {
+				return shapeUnknown, "", "", fmt.Errorf("--runtime binary builds from a Dockerfile at the source root; none found in %s", filepath.Base(srcDir))
+			}
+			handler := defaultTemplateHandler
+			if len(displayOverride) > 1 && displayOverride[1] != "" {
+				handler = displayOverride[1]
+			}
+			if !jsonOutput {
+				PrintOK(osStdout, "Detected: function, runtime=%s, built from Dockerfile, class=function", runtimeBinary)
+			}
+			return shapeFunction, runtimeBinary, handler, nil
+		}
+		// ADR-985: an explicit runtime plus a handler file that exists in the
+		// source is a complete function shape; a shared source tree may hold
+		// several handlers and no conventional handler.* at its root.
+		if len(displayOverride) > 1 {
+			if file, isFile, _ := api.FunctionHandlerFile(displayOverride[0], displayOverride[1]); isFile {
+				if info, statErr := os.Stat(filepath.Join(srcDir, filepath.FromSlash(file))); statErr == nil && !info.IsDir() {
+					if !jsonOutput {
+						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayOverride[0], file)
+					}
+					return shapeFunction, displayOverride[0], displayOverride[1], nil
+				}
+			}
+		}
 		rt, hnd, ok := inferFunctionRuntime(srcDir)
 		if !ok {
 			// Issue #740 / DEPLOY-PROV-5 / ADR-087: when the user
@@ -1288,8 +1329,8 @@ func functionGoBuildOnlyFiles(detectDir, packDir string) (map[string][]byte, err
 //
 // 2 checks:
 //
-//  1. Loopback bind: app.listen("127.0.0.1"...) or bind("127.0.0.1")
-//     patterns in source — would trip app_loopback_bound post-deploy.
+//  1. Loopback bind: listeners bound to 127.0.0.1, localhost or ::1
+//     (loopbackBindRegex) in source — would trip app_loopback_bound post-deploy.
 //  2. Arch mismatch: tarball contains a Mach-O / ARM aarch64 binary
 //     — would trip app_arch_mismatch post-deploy (ENOEXEC in the
 //     build VM's linux/amd64 kernel).

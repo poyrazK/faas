@@ -63,6 +63,7 @@ type cliFlag struct {
 //   - pki             (init | status | rotate | list)
 //   - sign-keys       (init | rotate | status)
 //   - node-key        (init | rotate | status)
+//   - workload-identity (init | rotate | status)
 //   - backup          (init | unseal-rclone | unseal-archive-creds)
 //   - secrets         (init | rotate | status | stamp)
 //   - artifact        (publish | verify)
@@ -920,6 +921,19 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "node-key", Short: "path to the node signing private key"},
 			{Name: "node-key-pub", Short: "path to the node signing public key"},
+		},
+	},
+	{
+		Name:    dispatchWorkloadIdentity,
+		DocSlug: "workload-identity",
+		Short:   "Provision the cluster workload-identity signing key and JWKS (operator; ADR-1141)",
+		Subcommands: []cliSub{
+			{Name: subInit, Short: "Write a new key, key id and JWKS"},
+			{Name: subRotate, Short: "Rotate the key; the JWKS keeps the previous public key"},
+			{Name: subStatus, Short: "Show the key id and check the kid file and JWKS match"},
+		},
+		Flags: []cliFlag{
+			{Name: "out", Short: "directory holding workload-identity.{key,kid,jwks.json}"},
 		},
 	},
 	{

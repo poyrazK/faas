@@ -151,6 +151,11 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 				if _, err := fmt.Fprintf(out, "workflow-readiness\toperation=%s\tfrom=%s\tto=%s\tdeclared=%t\tready=%t\trevision=%d\treasons=%s\tmissing-milestones=%s\tadvisories=%s\n", item.Transition.Operation, item.Transition.From, item.Transition.To, item.Declared, item.Ready, item.StateRevision, strings.Join(item.Reasons, ","), strings.Join(item.MissingMilestones, ","), strings.Join(item.Advisories, ",")); err != nil {
 					return err
 				}
+				for _, guidance := range item.Guidance() {
+					if _, err := fmt.Fprintf(out, "workflow-guidance\toperation=%s\t%s\n", item.Transition.Operation, guidance); err != nil {
+						return err
+					}
+				}
 				for _, unmet := range item.UnmetEffects {
 					if _, err := fmt.Fprintf(out, "workflow-effect-required\toperation=%s\tmilestone=%s\tcode=%s\tversion=%s\treason=%s\n", item.Transition.Operation, unmet.Requirement.Milestone, unmet.Requirement.Code, unmet.Requirement.Version, unmet.Reason); err != nil {
 						return err
@@ -254,6 +259,48 @@ func printCustomerMilestones(out io.Writer, page api.OperationMilestonesResponse
 		}
 	}
 	for _, transition := range page.WorkflowStateHistory {
+		if reason := transition.ChangeReason; reason != nil {
+			if _, err := fmt.Fprintf(out, "workflow-change-reason\t%s\tinstance=%s\trevision=%d\tfact=%s\tcode=%s\trule=%s\tversion=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, reason.MilestoneID, reason.Decision.Code, reason.Decision.RuleID, reason.Decision.RuleVersion, reason.Decision.Description); err != nil {
+				return err
+			}
+		}
+
+		if link := transition.OutcomeLink; link != nil {
+			if _, err := fmt.Fprintf(out, "workflow-outcome-path\t%s\tinstance=%s\trevision=%d\tstatus=%s\toutcome=%s\toutcome-revision=%d\treport=%s\toperation=%s\telapsed-seconds=%d\tblocked-seconds=%d\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, link.Status, link.OutcomeCode, link.OutcomeRevision, link.OutcomeReportID, link.OutcomeOperationID, link.ElapsedSeconds, link.BlockedSeconds, link.Summary); err != nil {
+				return err
+			}
+		}
+
+		if comparison := transition.Comparison; comparison != nil {
+			if _, err := fmt.Fprintf(out, "workflow-revision-comparison\t%s\tinstance=%s\trevision=%d\tstatus=%s\tprevious-revision=%d\tprevious-report=%s\tprevious-operation=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, comparison.Status, comparison.PreviousRevision, comparison.PreviousReportID, comparison.PreviousOperationID, comparison.Summary); err != nil {
+				return err
+			}
+			for _, change := range comparison.Changes {
+				if _, err := fmt.Fprintf(out, "workflow-revision-change\t%s\trevision=%d\tkind=%s\tkey=%s\tbefore=%s\tafter=%s\t%s\n", transition.Workflow, transition.Revision, change.Kind, change.Key, change.Before, change.After, change.Explanation); err != nil {
+					return err
+				}
+			}
+			if err := writeWorkflowConditionComparison(out, transition.Workflow, transition.Revision, comparison.ConditionComparison); err != nil {
+				return err
+			}
+			for _, fact := range comparison.Evidence {
+				if _, err := fmt.Fprintf(out, "workflow-revision-evidence\t%s\trevision=%d\tkind=%s\toperation=%s\tmilestone=%s\tfact=%s\n", transition.Workflow, transition.Revision, fact.Kind, fact.OperationID, fact.Milestone, fact.MilestoneID); err != nil {
+					return err
+				}
+			}
+		}
+
+		for _, selection := range transition.SelectedPaths {
+			if selection.DecisionMilestoneID != "" {
+				if _, err := fmt.Fprintf(out, "workflow-path-decision\t%s\tinstance=%s\trevision=%d\tgroup=%s\tpath=%s\tfact=%s\tcode=%s\trule=%s\tversion=%s\t%s\n", transition.Workflow, transition.InstanceID, transition.Revision, selection.GroupID, selection.PathID, selection.DecisionMilestoneID, selection.DecisionCode, selection.DecisionRuleID, selection.DecisionRuleVersion, selection.DecisionDescription); err != nil {
+					return err
+				}
+			}
+
+			if _, err := fmt.Fprintf(out, "workflow-selected-path\t%s\tinstance=%s\trevision=%d\tgroup=%s\tpath=%s\n", transition.Workflow, transition.InstanceID, transition.Revision, selection.GroupID, selection.PathID); err != nil {
+				return err
+			}
+		}
 		var pending int64
 		for _, v := range transition.ResolutionVerifications {
 			if v.Status == "awaiting_verification" {
@@ -349,6 +396,43 @@ func printWorkflowBottlenecks(out io.Writer, b *api.OperationWorkflowBottlenecks
 	for _, g := range b.VerificationOwners {
 		if _, err := fmt.Fprintf(out, "workflow-verification-duration\towner=%s\tseconds=%d\tresolutions=%d\tpending=%d\tunknown-starts=%d\n", g.Owner, g.ObservedSeconds, g.ResolutionCount, g.PendingCount, g.UnknownStartCount); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func writeWorkflowConditionComparison(out io.Writer, workflow string, revision int64, comparison *api.OperationWorkflowConditionComparison) error {
+	if comparison == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "workflow-condition-comparison\t%s\trevision=%d\tstatus=%s\ttruncated=%t\n", workflow, revision, comparison.Status, comparison.Truncated); err != nil {
+		return err
+	}
+	for _, change := range comparison.Changes {
+		before, after := "unreported", "unreported"
+		if change.Before != nil {
+			data, _ := json.Marshal(change.Before)
+			before = string(data)
+		}
+		if change.After != nil {
+			data, _ := json.Marshal(change.After)
+			after = string(data)
+		}
+		if _, err := fmt.Fprintf(out, "workflow-condition-change\t%s\trevision=%d\tsource=%s\tgroup=%s\tcondition=%s\tstatus=%s\tbefore=%s\tafter=%s\t%s\n", workflow, revision, change.Source, change.GroupID, change.ConditionID, change.Status, before, after, change.Explanation); err != nil {
+			return err
+		}
+		refs := []struct {
+			side string
+			fact *api.OperationWorkflowConditionEvidence
+		}{{"previous", change.PreviousEvidence}, {"current", &change.CurrentEvidence}}
+		for _, ref := range refs {
+			if ref.fact == nil {
+				continue
+			}
+			f := ref.fact
+			if _, err := fmt.Fprintf(out, "workflow-condition-evidence\t%s\tcondition=%s\tside=%s\trevision=%d\treport=%s\toperation=%s\tfact=%s\tdecision=%s\trule=%s\trule-version=%s\tpath=%s\n", workflow, change.ConditionID, ref.side, f.Revision, f.ReportID, f.OperationID, f.MilestoneID, f.DecisionCode, f.RuleID, f.RuleVersion, f.PathID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

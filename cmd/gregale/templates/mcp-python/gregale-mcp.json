@@ -3,8 +3,25 @@
   "endpoint": "/mcp",
   "transport": "streamable-http",
   "mode": "stateless",
-  "legacy": false,
+  "legacy": true,
   "allowed_origins": [],
+  "auth": {
+    "mode": "open",
+    "tool_scopes": {
+      "greet": [],
+      "add": [],
+      "stream_demo": [],
+      "build_report": []
+    },
+    "resource_scopes": {
+      "greeting://welcome": [],
+      "customer://records/{recordId}": [],
+      "task://tasks/{taskId}": []
+    },
+    "prompt_scopes": {
+      "summarize": []
+    }
+  },
   "tasks": {
     "enabled": false,
     "database_url_env": "DATABASE_URL",
@@ -13,15 +30,10 @@
     "ttl_seconds": 86400,
     "poll_interval_ms": 2000,
     "max_outstanding": 1000,
-    "max_outstanding_per_owner": 100
-  },
-  "auth": {
-    "mode": "open",
-    "tool_scopes": { "greet": [], "add": [], "build_report": [] },
-    "resource_scopes": {
-      "greeting://welcome": [],
-      "customer://records/{recordId}": []
-    },
-    "prompt_scopes": { "summarize": [] }
+    "max_outstanding_per_owner": 100,
+    "owner_key_id": "initial",
+    "payload_encryption_version": 1,
+    "previous_owner_keys": [],
+    "worker_concurrency": 1
   }
 }

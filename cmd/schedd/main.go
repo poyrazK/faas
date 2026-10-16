@@ -375,7 +375,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"vmmd_socket", cfg.VMMDSocket,
 		"metrics_addr", cfg.MetricsAddr)
 
-	pool, err := deps.openDB(ctx, cfg.DBURL)
+	var bootWait db.BootWaitRecord
+	pool, err := deps.openDB(db.WithBootWaitRecord(ctx, &bootWait), cfg.DBURL)
 	if err != nil {
 		return err
 	}
@@ -491,7 +492,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
-		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay())
+		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
+		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
+		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -615,6 +619,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
+	// ADR-1344 §5 rule 4: a schedd that waited for Postgres at boot holds
+	// its liveness verdicts for a full staleness window; every heartbeat is
+	// old because nobody could write.
+	storeOutageAtStartup := bootWait.Waited()
+	if storeOutageAtStartup {
+		log.Info("schedd: store was unavailable before startup; liveness verdicts wait for a full staleness window")
+	}
+	engine.WithStoreOutageAtStartup(storeOutageAtStartup)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
@@ -629,6 +641,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// owner that created each frame so an abandoned VM remains charged until
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
+	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -1530,10 +1543,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
 		WithStalePeerObserver(ownerNodeID != "").
+		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
-		WithEvents(eventsPlatform)
+		WithEvents(eventsPlatform).
+		WithReachableHook(engine.DestroyLostVMs)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
+	// FAAS_HEARTBEAT_FAILURE_THRESHOLD overrides how many consecutive failed
+	// pings fail a node over (default sched.DefaultHeartbeatFailureThreshold;
+	// ADR-191 amendment 2026-10-12). Tests that pin failover latency set 1.
+	if v := os.Getenv("FAAS_HEARTBEAT_FAILURE_THRESHOLD"); v != "" {
+		n, parseErr := strconv.Atoi(v)
+		if parseErr != nil || n <= 0 {
+			log.Error("FAAS_HEARTBEAT_FAILURE_THRESHOLD must be a positive integer", "value", v)
+			return fmt.Errorf("FAAS_HEARTBEAT_FAILURE_THRESHOLD: %s", v)
+		}
+		hb.FailureThreshold = n
+	}
 	if deps.heartbeatInterval > 0 {
 		// Tests inject a sub-second cadence via runDeps to exercise
 		// the wiring without waiting 30s for production cadence.
@@ -1559,12 +1585,35 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	).WithTelemetry(engine.NodeTelemetryCache()).
 		WithNodeRegistry(nodeRegistry).
 		WithOwnerNodeID(ownerNodeID).
+		WithStatsRouter(vmmRouter).
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
 		}).
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	if cfg.MeasuredAdmission {
+		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
+			return reader.MeasuredMB(nodeID, time.Now())
+		})
+		log.Info("measured admission enabled (ADR-909)",
+			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+	}
+	if cfg.QuietPauseAdmission {
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return reader.QuietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
+	}
+	if cfg.FrozenTier {
+		engine.EnableFrozenTier()
+		if cfg.FrozenTierApps {
+			engine.EnableFrozenTierApps()
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
+			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership

@@ -7,6 +7,9 @@ import type { AdoptEnvironmentGitOpsResponse } from '../models/AdoptEnvironmentG
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { ApproveEnvironmentGitRevisionRequest } from '../models/ApproveEnvironmentGitRevisionRequest.js';
 import type { ApproveEnvironmentGitRevisionResponse } from '../models/ApproveEnvironmentGitRevisionResponse.js';
+import type { BrowserPromotionApprovalExchange } from '../models/BrowserPromotionApprovalExchange.js';
+import type { BrowserPromotionApprovalRequest } from '../models/BrowserPromotionApprovalRequest.js';
+import type { BrowserPromotionApprovalResponse } from '../models/BrowserPromotionApprovalResponse.js';
 import type { CreateEnvironmentGitSourceRequest } from '../models/CreateEnvironmentGitSourceRequest.js';
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
@@ -20,6 +23,7 @@ import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOp
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
+import type { PreviewEnvironmentGitPlanResponse } from '../models/PreviewEnvironmentGitPlanResponse.js';
 import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
@@ -1274,6 +1278,57 @@ export class ProjectsService {
     });
   }
   /**
+   * Preview field changes for an immutable commit without approval or writes.
+   * Requires environment read scope and a bound Git source. Verifies the immutable commit, repository identity and definition scope, then observes current intent and ownership. Values are redacted. The candidate plan cannot approve, adopt, deploy or certify runtime readiness. Request a fresh plan after source or environment changes.
+   * @returns PreviewEnvironmentGitPlanResponse Read-only field plan with redacted values and current observation metadata.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitPlan({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Immutable commit to assess using the bound Git source.
+     */
+    requestBody: PreviewEnvironmentGitRevisionRequest,
+  }): CancelablePromise<PreviewEnvironmentGitPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/plan',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Fetch an immutable commit and review its definition digest.
    * @returns PreviewEnvironmentGitRevisionResponse Fetch an immutable commit and review its definition digest. result.
    * @throws ApiError
@@ -2288,6 +2343,94 @@ export class ProjectsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Request signed-in human review of an exact protected promotion.
+   * @returns BrowserPromotionApprovalResponse Private bridge response; credentials must never be returned to an agent.
+   * @throws ApiError
+   */
+  public static requestBrowserPromotionApproval({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug for promotion browser approval request.
+     */
+    slug: string,
+    /**
+     * Target registered environment slug for promotion browser approval request.
+     */
+    environment: string,
+    requestBody: BrowserPromotionApprovalRequest,
+  }): CancelablePromise<BrowserPromotionApprovalResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/approval-requests',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Privately poll a browser-approved promotion; retry returns the same unconsumed credential.
+   * @returns ProjectEnvironmentApprovalResponse Existing promotion approval bound to the reviewed plan, after human authorization.
+   * @throws ApiError
+   */
+  public static exchangeBrowserPromotionApproval({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug for authorized promotion ticket exchange.
+     */
+    slug: string,
+    /**
+     * Target registered environment slug for authorized promotion ticket exchange.
+     */
+    environment: string,
+    requestBody: BrowserPromotionApprovalExchange,
+  }): CancelablePromise<ProjectEnvironmentApprovalResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/approval-requests/exchange',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

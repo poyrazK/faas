@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto'
 import { verifyPermissions } from './rpc-permissions.mjs'
 import { verifyRetention } from './retention.mjs'
 import { verifyIdempotency } from './idempotency.mjs'
+import { verifyNoteForm } from './note-form.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
 import { command } from './staging/canary.mjs'
@@ -122,7 +123,11 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   await owner.query('CREATE UNIQUE INDEX details_unique_index ON api.note_details (subject, note_id)')
   assert.equal(generate(await inspect(loginURL.toString(), ['api'])), many, 'standalone unique indexes must match PostgREST cardinality')
   await owner.query('DROP INDEX api.details_unique_index; ALTER TABLE api.note_details ADD CONSTRAINT details_unique UNIQUE (subject, note_id)')
-  assert.equal(generate(await inspect(loginURL.toString(), ['api'])), types)
+  const uniqueSnapshot = await inspect(loginURL.toString(), ['api'])
+  const uniqueDetails = uniqueSnapshot.tables.find(table => table.name === 'note_details')
+  assert.equal(uniqueDetails.relationships[0].isOneToOne, true)
+  assert.equal(uniqueDetails.primary_key ?? null, null, 'a unique constraint is not primary-key metadata')
+  assert.notEqual(generate(uniqueSnapshot), types, 'removing the primary key changes the generated contract')
   await owner.query('ALTER TABLE api.note_details DROP CONSTRAINT details_unique')
   await owner.query('ALTER TABLE api.note_details ADD PRIMARY KEY (subject, note_id)')
   assert.equal(generate(await inspect(loginURL.toString(), ['api'])), types)
@@ -202,6 +207,8 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const diagnostics = []
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token, onResponse: info => diagnostics.push(info) })
   const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
+  const { createNoteForm } = await import(pathToFileURL(join(root, 'client/dist/note-form.js')))
+  await verifyNoteForm({ owner, url, userA, makeClient: notesClient, createNoteForm })
   await verifyRPC({ owner, client, url, userA, userB })
   // The RPC's explicit isolation must win over a stronger role default.
   await admin.query(`ALTER ROLE "${role}" SET default_transaction_isolation = 'repeatable read'`)
@@ -217,7 +224,13 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
     try {
       await verifyBrowserCORS({ origins, url, token: userA.token, expired, subject: userA.subject, gateway, expectedID: fixtures.rows.find(row => row.subject === userA.subject).id, expectedSchemaFingerprint: serving.fingerprint })
-    } finally { await owner.query('DELETE FROM api.notes WHERE id = ANY($1::integer[])', [fixtures.rows.map(row => row.id)]) }
+      const created = await owner.query("SELECT body,count(*)::integer AS n FROM api.notes WHERE subject=$1 AND body IN ('browser validated form','browser pending form') GROUP BY body ORDER BY body", [userA.subject])
+      assert.deepEqual(created.rows, [{ body: 'browser pending form', n: 1 }, { body: 'browser validated form', n: 1 }])
+    } finally {
+      await owner.query("DELETE FROM api.note_create_receipts WHERE subject=$1 AND response->>'body' IN ('browser validated form','browser pending form')", [userA.subject])
+      await owner.query("DELETE FROM api.notes WHERE subject=$1 AND body IN ('browser validated form','browser pending form')", [userA.subject])
+      await owner.query('DELETE FROM api.notes WHERE id = ANY($1::integer[])', [fixtures.rows.map(row => row.id)])
+    }
   }
   let sessionToken = expired
   const sessionClient = notesClient({ url, subject: userA.subject, accessToken: () => sessionToken })

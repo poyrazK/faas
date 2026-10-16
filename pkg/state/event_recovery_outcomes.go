@@ -110,11 +110,16 @@ func observeRecoveryExecutions(ctx context.Context, q *sqlc.Queries, db sqlc.DBT
 }
 func getEventRecovery(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, job string) (api.EventRecoveryJob, error) {
 	out, err := getEventRecoveryMetadata(ctx, q, db, account, job)
-	if err != nil || out.Selection.Mode != "execution" {
+	if err != nil || out.Selection.Mode != "execution" && out.Selection.Mode != "workflow" {
 		return out, err
 	}
 	now := time.Now().UTC()
-	observations, err := observeRecoveryExecutions(ctx, q, db, account, job, 0, api.EventRecoveryRecipientsMax, now)
+	var observations map[int64]api.EventRecoveryExecution
+	if out.Selection.Mode == "workflow" {
+		observations, err = observeWorkflowRecoveryExecutions(ctx, q, db, account, job, 0, api.AutomationRecoveryBatchMaxRuns, now)
+	} else {
+		observations, err = observeRecoveryExecutions(ctx, q, db, account, job, 0, api.EventRecoveryRecipientsMax, now)
+	}
 	if err != nil {
 		return api.EventRecoveryJob{}, err
 	}
@@ -161,11 +166,20 @@ func (m *MemStore) recoveryAttemptIndexLocked(account, app string, now time.Time
 }
 func (m *MemStore) eventRecoveryObservedItemWithAttemptsLocked(job *memEventRecoveryJob, item memEventRecoveryItem, now time.Time, attempts map[recoveryAttemptKey]InvocationAttempt) api.EventRecoveryItem {
 	out := item.EventRecoveryItem
+	if item.ExpectedResumeCount != nil {
+		count := *item.ExpectedResumeCount
+		out.ExpectedResumeCount = &count
+	}
 	recoveryItemLineage(&out, item.ExpectedProgress)
 	out.Execution = nil
 	if item.ReplayGeneration != nil {
 		generation := *item.ReplayGeneration
 		out.ReplayGeneration = &generation
+	}
+	if job.Job.Selection.Mode == "workflow" && item.State == "queued" {
+		execution := m.workflowRecoveryExecutionLocked(job, item, now)
+		out.Execution = &execution
+		return out
 	}
 	if job.Job.Selection.Mode != "execution" || item.State != "queued" {
 		return out
@@ -196,11 +210,14 @@ func (m *MemStore) eventRecoveryObservedItemWithAttemptsLocked(job *memEventReco
 }
 func (m *MemStore) eventRecoveryObservedResponseLocked(job *memEventRecoveryJob, now time.Time) api.EventRecoveryJob {
 	out := memEventRecoveryResponse(job)
-	if out.Selection.Mode != "execution" {
+	if out.Selection.Mode != "execution" && out.Selection.Mode != "workflow" {
 		return out
 	}
 	summary := api.EventRecoveryExecutionSummary{ObservedAt: now}
-	attempts := m.recoveryAttemptIndexLocked(job.AccountID, job.Job.AppID, now)
+	var attempts map[recoveryAttemptKey]InvocationAttempt
+	if out.Selection.Mode == "execution" {
+		attempts = m.recoveryAttemptIndexLocked(job.AccountID, job.Job.AppID, now)
+	}
 	for _, item := range job.Items {
 		observed := m.eventRecoveryObservedItemWithAttemptsLocked(job, item, now, attempts)
 		if observed.Execution != nil {

@@ -22,6 +22,30 @@ metrics_addr = "127.0.0.1:9108"
 # write_timeout = "2m"
 # idle_timeout = "2m"
 
+# ADR-989 app relay. Apps call GREGALE_OUTBOUND_URL (http://127.0.0.1:2774)
+# inside the VM; vmmd splices those connections here with a relay assertion,
+# so apps need no route, token or provider key. Requires the workload
+# identity JWKS below. Single box (vmmd sets
+# FAAS_VMMD_OUTBOUND_RELAY_TARGET=unix:///run/faas/outboundd-relay.sock):
+# relay_listen = "unix:///run/faas/outboundd-relay.sock"
+# Split box (compute vmmd dials tcp://outboundd.faas:8096 with its
+# node-identity vmmd/outboundd-client leaf):
+# relay_listen = "tcp://0.0.0.0:8096"
+# relay_tls_cert_path = "/etc/faas/tls/outboundd/server.crt"
+# relay_tls_key_path = "/etc/faas/tls/outboundd/server.key"
+# relay_tls_ca_path = "/etc/faas/tls/ca/ca.crt"
+
+# ADR-991 AI gateway release gate. Off by default: integrations with an
+# ai_provider and AI routes are refused. Turn it on together with apid's
+# ai_gateway_enabled; FAAS_AI_GATEWAY_ENABLED=1 overrides this setting.
+# ai_gateway_enabled = false
+#
+# ADR-998 staged preview rollout: customer AI integrations of other accounts
+# are refused; empty or "*" admits every account whose plan includes the AI
+# gateway. Keep it equal to apid's ai_gateway_accounts.
+# FAAS_AI_GATEWAY_ACCOUNTS (comma-separated) overrides this setting.
+# ai_gateway_accounts = ["00000000-0000-0000-0000-000000000000"]
+
 # Required for managed integrations, including integrations customers create
 # through the API. Install a
 # public JWKS published by vmmd (never its signing private key) at this path.
@@ -66,6 +90,8 @@ metrics_addr = "127.0.0.1:9108"
 # circuit_breaker_failure_threshold = 0 # optional; 0 disables, otherwise 1..20
 # circuit_breaker_open_seconds = 0 # required with threshold; cool-down 1..300s
 # retry_budget_per_minute = 0 # optional shared extra-attempt bucket; 0 disables
+# ai_provider = "openai" # optional AI gateway mode: "openai" (compatible wire format) or "anthropic" (ADR-988)
+# ai_daily_token_limit = 0 # optional UTC-day input+output token limit; requires ai_provider; 0 disables
 # enabled = true
 # request_timeout defaults to 30s when omitted; enabled defaults to true.
 # To let the account provide and rotate the provider Authorization value,

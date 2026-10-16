@@ -400,7 +400,10 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 	if err != nil || bucket == "" || strings.Contains(bucket, "/") {
 		return "", "", false, false, errors.New("invalid bucket")
 	}
-	if len(parts) == 1 {
+	// AWS JavaScript path-style bucket operations use /bucket/ (H9-132).
+	// Preserve the original URI for SigV4; classify its empty final segment
+	// as the bucket itself because S3 has no empty key.
+	if len(parts) == 1 || parts[1] == "" {
 		return bucket, "", true, false, nil
 	}
 	key, err = url.PathUnescape(parts[1])
@@ -511,6 +514,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("attributes") {
+		if r.Method != http.MethodGet || !queryKeysOnly(query, "attributes", "versionId") || len(query["attributes"]) != 1 || query.Get("attributes") != "" || query.Has("versionId") && len(query["versionId"]) != 1 {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.objectAttributes(w, r, req, key)
+		return
+	}
 	if query.Has("retention") || query.Has("legal-hold") {
 		kind := "retention"
 		if query.Has("legal-hold") {
@@ -848,6 +859,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
 		return
 	}
+	if !validReadChecksumHeaders(response.Header) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
 	h.writeGatewayRead(w, r, req, key, response)
 }
 
@@ -894,7 +909,7 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) && !supportedWriteProtectionHeader(r, name) && !supportedMultipartChecksumHeader(r, name) {
 			return true
 		}
 	}
@@ -955,6 +970,30 @@ func (h *Handler) closeResponseBody(body io.Closer, requestID string) {
 	if err := body.Close(); err != nil {
 		h.log.Warn("S3 provider response close failed", "request_id", requestID)
 	}
+}
+
+// keepEdgeFromRewritingHTML marks HTML object responses Cache-Control:
+// no-transform on the CDN-proxied profile. Behind Cloudflare a text/html GET
+// otherwise came back with the bot-detection script appended (H9-S161: a
+// 116-byte object served as 1,054 bytes); the edge leaves no-transform bodies
+// alone. The stored directives are kept and only no-transform is added.
+func keepEdgeFromRewritingHTML(headers http.Header, profile string) {
+	mediaType, _, _ := strings.Cut(headers.Get("Content-Type"), ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if profile != "proxied" || mediaType != "text/html" && mediaType != "application/xhtml+xml" {
+		return
+	}
+	value := strings.TrimSpace(headers.Get("Cache-Control"))
+	for _, directive := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(directive), "no-transform") {
+			return
+		}
+	}
+	if value == "" {
+		headers.Set("Cache-Control", "no-transform")
+		return
+	}
+	headers.Set("Cache-Control", value+", no-transform")
 }
 
 func copyObjectHeaders(dst, src http.Header) {
@@ -1076,6 +1115,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		setURLDownloadHeaders(w.Header(), r, req)
+		keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -1096,6 +1136,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
+	keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)
 	if r.Method == http.MethodGet {

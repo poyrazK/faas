@@ -168,6 +168,11 @@ def sync_detailed(
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
+    An operation-bound endpoint (ADR-1193) admits one customer operation per
+    provider event, owned by the binding's platform tenant, with input
+    {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+    preview admission or an unavailable operation returns 503 with
+    Retry-After so the provider retries.
 
     Args:
         token (str):
@@ -236,6 +241,11 @@ def sync(
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
+    An operation-bound endpoint (ADR-1193) admits one customer operation per
+    provider event, owned by the binding's platform tenant, with input
+    {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+    preview admission or an unavailable operation returns 503 with
+    Retry-After so the provider retries.
 
     Args:
         token (str):
@@ -295,6 +305,11 @@ async def asyncio_detailed(
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
+    An operation-bound endpoint (ADR-1193) admits one customer operation per
+    provider event, owned by the binding's platform tenant, with input
+    {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+    preview admission or an unavailable operation returns 503 with
+    Retry-After so the provider retries.
 
     Args:
         token (str):
@@ -361,6 +376,11 @@ async def asyncio(
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
+    An operation-bound endpoint (ADR-1193) admits one customer operation per
+    provider event, owned by the binding's platform tenant, with input
+    {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+    preview admission or an unavailable operation returns 503 with
+    Retry-After so the provider retries.
 
     Args:
         token (str):

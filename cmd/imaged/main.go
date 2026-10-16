@@ -370,6 +370,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// imaged_layer_entry_skipped_total surface on /metrics. The
 	// setter is idempotent — call once at boot.
 	rootfs.SetOpsMetrics(ops)
+	// ADR-1239: publish root-owned image files as root. The production unit
+	// runs as faas-imaged with CAP_CHOWN; without it (an unprivileged dev
+	// daemon) extraction keeps the previous ownership instead of failing.
+	canChown := canChownToRoot()
+	rootfs.SetPreserveRootOwnership(canChown)
+	if !canChown {
+		log.Warn("imaged: no CAP_CHOWN; root-owned image files keep the daemon's uid")
+	}
 	// ADR-054 acceptance: wire the LocalCacheBackend observer onto the
 	// daemon's *wire.OpsMetrics so stale-fallback serves emit
 	// `imaged_storage_cache_stale_fallback_total`. Uses
@@ -479,14 +487,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithBaseArtifactValidator(imaged.ValidateBaseArtifact).
 		WithArtifactReplicator(artifactReplicator).
 		WithOpsMetrics(ops).
-		// Issue #472 / ADR-054: per-app cosign signature-enforcement
-		// at deploy time. Default off (the apps.require_signed=false
-		// default means the open-deploy posture stays in place).
-		// Operators populate /etc/faas/secrets/trusted-publishers/
-		// and set FAAS_TRUSTED_PUBLISHERS_DIR to enable. apid emits
-		// pg_notify('trusted_signer_changed') on every CRUD op, and
-		// imaged's HandleNotification refreshes the in-memory cache.
-		WithTrustedPublishersDir(os.Getenv("FAAS_TRUSTED_PUBLISHERS_DIR")).
 		// Issue #299 / ADR-038 Phase 3 + Tier-2 ship blocker.
 		// Wire the production runners explicitly so a misconfigured
 		// imaged (e.g. an ansible role that forgets to install
@@ -499,6 +499,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// "scan-critical" failure rather than the supply-chain
 		// installation gap it actually is.
 		WithGrypeRun(makeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
+		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
 		// PR-A: layer-side secret-scan walker. Wired
 		// unconditionally so the default in
@@ -658,6 +659,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
 	}
+	h.WithLegacyParentDeferral(prestageOnlyFromEnv(getenv))
 	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
 	if err != nil {
 		return err
@@ -674,6 +676,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
+			"deferred_to_serving_imaged", assignedBases.Deferred,
 		)
 		return nil
 	}
@@ -1038,6 +1041,15 @@ func makeGrypeRunner(bin string) func(ctx context.Context, dir string) (*imaged.
 			return imaged.RunGrypeAt(ctx, bin, dir)
 		}
 		return imaged.RunGrype(ctx, dir)
+	}
+}
+
+func makeRuntimeGrypeRunner(bin string) func(context.Context, string) (*imaged.ScanResult, error) {
+	if bin == "" {
+		bin = "grype"
+	}
+	return func(ctx context.Context, dir string) (*imaged.ScanResult, error) {
+		return imaged.RunRuntimeGrypeAt(ctx, bin, dir)
 	}
 }
 

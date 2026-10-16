@@ -27,7 +27,7 @@ func recoveryExecutionNotificationPayload(job api.EventRecoveryJob, summary api.
 	if err != nil {
 		return api.EventRecoveryExecutionFinishedWebhookPayload{}, err
 	}
-	if job.Selection.Mode != "execution" || job.PendingCount != 0 || job.QueuedCount == 0 || summary.TrackedCount != job.QueuedCount || summary.SavedResults != job.QueuedCount || summary.Queued+summary.Running+summary.Retrying+summary.Unknown != 0 {
+	if (job.Selection.Mode != "execution" && job.Selection.Mode != "workflow") || job.PendingCount != 0 || job.QueuedCount == 0 || summary.TrackedCount != job.QueuedCount || summary.SavedResults != job.QueuedCount || summary.Queued+summary.Running+summary.Retrying+summary.Unknown != 0 {
 		return api.EventRecoveryExecutionFinishedWebhookPayload{}, fmt.Errorf("recovery execution is unresolved")
 	}
 	base.EventID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:event-recovery:"+job.ID+":execution_finished")).String()
@@ -35,7 +35,7 @@ func recoveryExecutionNotificationPayload(job api.EventRecoveryJob, summary api.
 	if summary.Succeeded == job.QueuedCount {
 		base.Outcome = "all_succeeded"
 	}
-	return api.EventRecoveryExecutionFinishedWebhookPayload{EventRecoveryFinishedWebhookPayload: base, Execution: summary, ExecutionFinishedAt: now}, nil
+	return api.EventRecoveryExecutionFinishedWebhookPayload{EventRecoveryFinishedWebhookPayload: base, Execution: summary, ExecutionFinishedAt: now, ItemsURL: "/v1/event-recoveries/" + job.ID + "/items"}, nil
 }
 
 func (s *PgStore) ProcessNextEventRecoveryExecutionNotification(ctx context.Context, now time.Time) (bool, error) {
@@ -64,7 +64,12 @@ func (s *PgStore) ProcessNextEventRecoveryExecutionNotification(ctx context.Cont
 		}
 		return true, tx.Commit(ctx)
 	}
-	observations, err := observeRecoveryExecutions(ctx, q, tx, uuidString(candidate.AccountID), job.ID, 0, api.EventRecoveryRecipientsMax, now)
+	var observations map[int64]api.EventRecoveryExecution
+	if job.Selection.Mode == "workflow" {
+		observations, err = observeWorkflowRecoveryExecutions(ctx, q, tx, uuidString(candidate.AccountID), job.ID, 0, api.AutomationRecoveryBatchMaxRuns, now)
+	} else {
+		observations, err = observeRecoveryExecutions(ctx, q, tx, uuidString(candidate.AccountID), job.ID, 0, api.EventRecoveryRecipientsMax, now)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -100,7 +105,7 @@ func (m *MemStore) ProcessNextEventRecoveryExecutionNotification(ctx context.Con
 	}
 	jobs := make([]*memEventRecoveryJob, 0, len(m.eventRecoveryJobs))
 	for _, job := range m.eventRecoveryJobs {
-		if job.Job.Selection.Mode == "execution" && !job.ExecutionNotificationCaptured && !job.NextExecutionNotificationAt.After(now) && (job.Job.State == "completed" || job.Job.State == "cancelled") && job.Job.CompletedAt != nil && !job.Job.CompletedAt.After(now) {
+		if (job.Job.Selection.Mode == "execution" || job.Job.Selection.Mode == "workflow") && !job.ExecutionNotificationCaptured && !job.NextExecutionNotificationAt.After(now) && (job.Job.State == "completed" || job.Job.State == "cancelled" || job.Job.Selection.Mode == "workflow" && job.Job.State == "expired") && job.Job.CompletedAt != nil && !job.Job.CompletedAt.After(now) {
 			jobs = append(jobs, job)
 		}
 	}

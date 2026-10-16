@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// adr: 1041
+// adr: 1441
 func TestProjectDeploymentCheckClientRejectsContradictoryReports(t *testing.T) {
 	for _, contradictory := range []bool{false, true} {
 		t.Run(map[bool]string{false: "valid", true: "contradictory"}[contradictory], func(t *testing.T) {

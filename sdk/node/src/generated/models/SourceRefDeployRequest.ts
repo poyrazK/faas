@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
+import type { SourceReviewResponse } from './SourceReviewResponse.js';
 /**
  * JSON body for POST /v1/apps/{slug}/deployments/source-ref
  * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
@@ -13,6 +14,14 @@ import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
  *
  */
 export type SourceRefDeployRequest = {
+  /**
+   * Reviewed native service handoff or worker generation activation. Requires expected_source, omitted traffic, an unprotected target and matching workload mode.
+   */
+  native_rollout?: 'service' | 'worker';
+  /**
+   * Commit-pinned staging or native rollout guard. Requires no_triggers, an exact commit, and no rollout overrides. Repository declarations are not imported. Named targets freeze reviewed settings; the response includes staged_review.
+   */
+  expected_source?: SourceReviewResponse;
   /**
    * Startup readiness for this source-ref deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
    */
@@ -81,6 +90,10 @@ export type SourceRefDeployRequest = {
    * Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions.
+   */
+  mcp_task_migration_override?: boolean;
   /**
    * Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */

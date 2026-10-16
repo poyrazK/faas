@@ -383,3 +383,231 @@ conditional mutations where needed. A single normal `insert([...])` request
 retains its existing atomic semantics. See the
 [bulk document example](../../examples/data-api-bulk/README.md) for full outcomes,
 transaction boundaries and retry guidance.
+
+### Classify errors for application recovery
+
+```ts
+import { classifyDataError } from '@gregale/data'
+
+const result = await db.from('notes').insert(input).retry(false)
+const failure = classifyDataError(result.error, { status: result.status })
+if (failure?.category === 'unique_violation') {
+  showValidationMessage('That value is already in use.')
+}
+```
+
+The helper returns `null` for a null/undefined error. Otherwise it returns frozen
+metadata with `category`, `recovery`, `code`, `status`, and the unchanged, typed
+`original` error. It also accepts errors caught from `throwOnError()`; omit status
+when no response status is available. It never executes a request or changes
+retry settings. `.retry(false)` in this example disables the underlying client's
+retries explicitly.
+
+| Category | Recognized code or fallback | Recovery guidance |
+| --- | --- | --- |
+| `unique_violation` | SQLSTATE `23505` | `change_input` |
+| `foreign_key_violation` | SQLSTATE `23503` | `change_input` |
+| `authentication` | `token_required`, `token_invalid`, `PGRST301`–`PGRST303`, HTTP 401 | `authenticate` |
+| `permission_denied` | SQLSTATE `42501`, `origin_not_allowed`, HTTP 403 | `check_permissions` |
+| `contract_mismatch` | `schema_contract_mismatch` | `refresh_contract` |
+| `timeout` | `request_timeout`, `query_timeout`, HTTP 504 | `reconcile` |
+| `cancelled` | `request_cancelled`, SQLSTATE `57014` | `reconcile` |
+| `unavailable` | `data_api_unavailable`, `serving_contract_unavailable`, `data_api_refresh_unavailable`, HTTP 503 | `check_service` |
+| `no_response` | Status 0 with no recognized code | `reconcile` |
+| `unknown` | Other errors | `inspect` |
+
+Recognized codes take precedence over HTTP fallback. Messages, details and hints
+never determine the category. Generic 409/`PT409` errors do not establish a
+contract mismatch; SQLSTATE `57014` establishes cancellation, not its cause.
+Pass the response status to classify SQL `PT503` maintenance errors as unavailable.
+Native exceptions without a recognized code or supplied status remain unknown;
+use `dataRequest()` for stable deadline/cancellation codes.
+
+Recovery values are suggestions, not instructions to retry. Timeouts,
+cancellation, missing responses, and service failures do not prove a mutation
+rolled back. Reconcile writes or use an application-owned idempotency contract
+before replaying them. `refresh_contract` means review the rollout and regenerate
+appropriate client types; it does not automatically change a pinned fingerprint.
+An empty RLS-filtered result is not a permission error. The preserved original
+error and its code can contain application or database information: use curated
+UI messages and do not blindly log or display the classification object.
+
+### Validate RPC arguments at runtime
+
+Use `validatedRpc()` when inputs come from forms, JSON or JavaScript. Supply a
+synchronous application-owned parser that returns the generated RPC argument
+object, then construct the typed query in the callback:
+
+```ts
+import { validatedRpc, classifyDataError } from '@gregale/data'
+
+// Example approved RPC: create_note({ body: string }) -> note ID.
+const noteArgs = {
+  parse(value: unknown): { body: string } {
+    if (!value || typeof value !== 'object' || !('body' in value) ||
+        typeof value.body !== 'string' || !value.body.trim()) {
+      throw new Error('Body is required')
+    }
+    return { body: value.body.trim() }
+  },
+}
+
+const outcome = await validatedRpc(formInput, noteArgs,
+  args => db.rpc('create_note', args).retry(false))
+if (outcome.outcome === 'validation_failed') {
+  showValidationMessage('Enter a note body.')
+} else {
+  const { data, error, status } = outcome.result
+  const failure = classifyDataError(error, { status })
+  // data retains the generated create_note return type.
+}
+```
+
+A compatible schema's `.parse()` method, such as a synchronous Zod parser, can
+replace `noteArgs`. The parser owns required fields, unknown-key policy, defaults,
+transformations and field-level UI validation. It must return an argument object;
+null, arrays, primitives and asynchronous outputs are rejected. Empty objects
+support zero-argument RPCs. Generated types check parser output against the chosen
+RPC, including required arguments and value types. Select the appropriate schema
+on `db` before calling the helper.
+
+Invalid input returns `{ outcome: 'validation_failed', error }` with a
+`RpcValidationError` and code `RPC_ARGUMENT_VALIDATION_FAILED`. No query callback,
+token lookup or request runs. The error excludes input values and original parser
+exceptions; obtain field feedback separately through your application's parser,
+using its own disclosure policy.
+
+Valid input returns `{ outcome: 'completed', result }`. Completed means the
+callback was awaited, not that the database operation succeeded: inspect
+`result.error` as usual. The helper preserves the original result by reference,
+including null results and server/transport errors. `throwOnError()` and callback
+exceptions propagate unchanged. The callback can apply projections, filters,
+`.single()`, abort signals or `dataRequest()` without losing result inference.
+
+The helper does not change retry settings. `.retry(false)` above explicitly
+prevents automatic retries; write reconciliation and idempotency remain
+application responsibilities. PostgreSQL constraints and RLS remain authoritative.
+The helper does not clone parser input or output; application parsers own any
+mutation they perform.
+
+### Validate entire RPC responses
+
+Generated declarations describe expected responses; they do not validate received
+JSON. Use `validateRpcResponse()` with a synchronous application-owned parser
+after awaiting a direct RPC or a completed `validatedRpc()` result:
+
+```ts
+import { validateRpcResponse, classifyDataError } from '@gregale/data'
+
+// Example approved scalar RPC: count_notes() -> integer.
+const result = await db.rpc('count_notes', {}).retry(false)
+const checked = validateRpcResponse(result, {
+  parse(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new Error('Invalid count')
+    }
+    return value
+  },
+})
+
+if (checked.outcome === 'validated') {
+  const count: number = checked.result.data
+} else if (checked.outcome === 'request_failed') {
+  const failure = classifyDataError(checked.result.error, {
+    status: checked.result.status,
+  })
+} else {
+  // RPC_RESPONSE_VALIDATION_FAILED; the original HTTP status is retained.
+  showValidationMessage('The server returned an unexpected result.')
+}
+```
+
+The parser checks the entire `data` value: a scalar, JSON object, projected row or
+row array. It owns validation, transformations, nullable handling and cloning.
+Synchronous schema parsers such as Zod's `.parse()` are compatible. Null or
+undefined successful data is passed through the parser, not silently skipped.
+Async parser outputs are rejected. To validate individual JSON fields in an
+already checked row result, the existing `validateJson()` remains available.
+
+`validated` returns a shallow copy of the response with parser output in `data`
+and `error: null`. The parser output determines the new data type; status, count
+and other response metadata retain their original types and values.
+`request_failed` returns the original response by reference without parsing when
+it has an error or a non-2xx status, including transport/deadline failures.
+`validation_failed` returns a `RpcResponseValidationError` with code
+`RPC_RESPONSE_VALIDATION_FAILED` and the original HTTP status. It excludes rejected
+data and the original parser exception. Its HTTP status can still be 200.
+
+This helper executes no requests and changes no retry settings. A response
+validation failure does not imply rollback: a mutation may already have committed.
+Reconcile through reads or a reviewed idempotency contract before considering
+another write; never automatically replay on a validation failure. Raw request
+failure results may still contain private database errors. Use curated UI messages.
+The helper does not mutate the original response itself, but parsers receive its
+data by reference and are responsible for any mutation they perform.
+
+### Encrypted continuation tokens for server routes
+
+Existing `cursorPage`/`cursorFrom` helpers use raw ordering values. For routes that
+accept an untrusted continuation token, use `createCursorPager` on the server:
+
+```ts
+import { createCursorPager } from '@gregale/data'
+
+// Load a stable 32-byte random key from server-side configuration. Never send it
+// to a browser or commit it. Reuse the pager across requests on this server.
+const pager = await createCursorPager({ key: cursorKeyBytes, ttlMs: 15 * 60_000, maxPageSize: 100 })
+const order = [
+  { column: 'created_at' },
+  { column: 'id', unique: true },
+] as const
+
+// Derive scope from verified application identity/tenant/permission claims.
+const page = await pager.page(
+  db.from('orders').select('id,created_at,total').eq('team_id', authenticatedTeamId),
+  {
+    order, size: 50,
+    scope: { identity: trustedIdentityScope, schemaFingerprint: currentSchemaFingerprint },
+    after: incomingContinuation,
+  },
+)
+// Return page.result and page.nextCursor to the caller. API errors remain in result.
+```
+
+Ordering columns must appear in the selected projection and have scalar types.
+A single primary key works with `[{ column: 'id', unique: true }]`; timestamp-plus-ID
+ordering uses the example above. The final column must actually be non-null and
+unique within the filtered result. The helper validates the declaration and values,
+but does not inspect database constraints. Use a fresh GET array query with no root
+order, limit, offset or range applied beforehand. Nested projection types are preserved.
+
+Tokens use authenticated AES-GCM encryption with fresh random nonces. They bind the
+actual query endpoint, schema, filter/projection parameters, ordering, page size,
+identity scope and schema fingerprint. Refreshing a JWT need not change the scope;
+include tenant and relevant permission/version claims in a server-derived scope.
+Create the data client with `expectedSchemaFingerprint` matching the scope so the
+gateway also rejects schema changes before executing a read. The scope alone does
+not detect an unannounced gateway migration. The helper does not authenticate callers,
+read claims from JWTs or replace RLS.
+Keep the key exclusively on trusted servers. A browser should submit issued tokens
+to your route; browser-only clients can continue using the raw keyset helpers.
+
+The default TTL is 15 minutes (maximum one day), and default maximum page size is
+999. One additional row is fetched to determine continuation within Gregale's
+1,000-row response cap. Each page returns at most the requested size, with
+`nextCursor`, `previousCursor`, `hasMore` and `direction`. `hasMore` describes the
+current traversal direction. `before` returns nearest preceding rows in reverse
+order, as with `cursorPage`; use `previousCursor` to continue backward and reverse
+rows for normal display. Empty/error results return no continuations. First forward
+pages have no previous cursor. Continuations describe boundaries, not guaranteed
+nonempty pages if records are subsequently deleted.
+
+Malformed/tampered tokens fail with `CursorPaginationError.code = 'invalid_cursor'`.
+Expired tokens use `expired_cursor`; changed query, scope, ordering, page size or
+schema uses `incompatible_cursor`. These failures occur before query execution.
+Invalid options or malformed successful responses have separate codes. Key rotation
+invalidates existing tokens; restart pagination rather than attempting an automatic
+fallback. Tokens are bounded to 16 KiB and ordering to 16 columns. Cursor values
+and filters are not exposed in plaintext tokens. Pagination does not provide a
+snapshot across requests, and changing ordered values can still move rows between
+pages. Index the filter and ordering columns and review plans with representative data.

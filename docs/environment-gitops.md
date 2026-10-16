@@ -6,15 +6,22 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
-| Git source | Immutable definition review, approval, polling and separate source freshness | Full outage and rollback journey with serving workloads |
-| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance | Other providers and incomplete or conflicting GitHub provenance |
-| Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
+| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey | Dedicated native outage/rollback acceptance for live workloads; workload deletion remains unsupported |
+| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity for report mode | GitLab protected-branch evidence and workload provenance; incomplete or conflicting GitHub provenance |
+| Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery; PostgreSQL apid acceptance for an API/worker/queue graph through a source outage and controller restart | Live report-mode qualification on a deployed control plane |
 | Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies and unsupported source-provider provenance |
 | Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image-only schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
 | Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, private Manager restore orchestration, version-checked load, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels; restore-target config/runtime receipts and receipt-gated route selection in both stores; native-retired and native-effects-absent proofs; schedd's periodic, node-bound abandoned-execution recovery; smoke-authorized conditional GCS retirement with durable host tombstones and an opt-in vmmd retry loop | Dedicated Linux capture/restore acceptance; production qualification polling remains gated until those pass |
 | Enforcement | Transactional ownership, override and execution fences; lease-bound activation and serving of supported request/service graphs including pinned scoped service bindings, push and pull workers, queue-bound HTTP functions, and scheduled Jobs with a successful post-activation occurrence | Production qualification polling remains gated; dedicated Linux acceptance and unsupported production execution adapters |
 
 Approved Git content, observed intent, qualification, activation and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source, runtime, secret-reference, service-binding and queue-binding fields prevent the applied revision from advancing.
+
+An immutable `source.kind: image` may set `source.full_rootfs: true` when the image is not layered on Gregale's runtime base. The choice is part of the reviewed source contract and is frozen with the candidate deployment; other source kinds reject it. Omitting the field keeps the existing dispatch policy, including inherited settings on adopted workloads.
+For an adopted workload with live deployments, a conflicting inherited full-rootfs setting blocks preparation until the live deployment policy and reviewed source agree.
+
+The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker in a rollback is still blocked by the unavailable workload-pruning adapter.
+
+The opt-in apid reporter has a separate PostgreSQL journey for API variables, routes and policies alongside a worker queue binding. It retains durable drift reports across a Git source outage and controller restart while leaving console values and the queue contract unchanged. This validates report mode, not live workload activation or enforcement.
 
 ## Try review and reporting
 
@@ -26,6 +33,31 @@ gregale projects environments gitops bind shop staging \
 gregale projects environments gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
+
+For a GitLab.com source, an account owner first connects GitLab on the
+dashboard account page. The control plane needs a GitLab OAuth application
+with `read_api` and `read_repository` access. Set
+`FAAS_GITLAB_OAUTH_CLIENT_ID`, `FAAS_GITLAB_OAUTH_CLIENT_SECRET`, and
+`FAAS_GITLAB_OAUTH_REDIRECT_URI` on apid; register the exact HTTPS redirect
+URI ending in `/v1/gitlab/callback` in GitLab.com. The account connection is
+sealed at rest and can be disconnected on the account page. A GitLab source
+may be bound to a Gregale project without a GitHub installation:
+
+```sh
+gregale projects environments gitops bind shop staging \
+  --provider gitlab --repository group/subgroup/service \
+  --ref refs/heads/main --manifest-path environments/staging.yaml \
+  --mode report --approval-policy manual
+gregale projects environments gitops review shop staging \
+  --commit "$REVIEWED_COMMIT" > revision-review.json
+```
+
+GitLab.com sources currently support reporting, manual approval, and
+`prune=false` only. Gregale verifies the connected account's access, the
+canonical GitLab project path and numeric ID, and the immutable commit before
+reading a bounded archive. A source outage or OAuth disconnect is reported
+separately; it does not discard the last approved revision. GitLab
+protected-branch approval and workload enforcement are not qualified yet.
 
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 
@@ -63,6 +95,10 @@ reports them serving when their selected route already receives traffic. It
 stores one route generation per app, retries notifications
 after restart, and records a receipt after every registered gateway acknowledges
 every route. A gateway roster change requires fresh generations and acks.
+The PostgreSQL completion guard checks the exact registered gateway names, not
+only the acknowledgement count. A stale roster supplied to preparation is
+rejected; a registry change before completion leaves the receipt pending until
+preparation resets its route generations and obtains fresh acknowledgements.
 Database guards require the current lease and exact prepared graph member;
 activated candidate artifacts cannot be rewritten. Generic deployment promotion,
 direct live-status changes, rollback,
@@ -82,7 +118,9 @@ neither creates a customer invocation or queue row. HTTP functions continue to
 use push bindings only. Push and pull workers may activate dark after
 qualification; Gregale reports them serving only after a successfully completed
 named-queue or generic pull invocation is atomically recorded against the
-selected live deployment. Queue-bound HTTP functions use the same durable
+selected live deployment. The invocation must complete after that active
+release was published; an older delivery or acknowledgement cannot establish
+serving for a later release. Queue-bound HTTP functions use the same durable
 push-consumer acknowledgement, scoped to a reviewed function and
 `workload_class: http`; they require both the queue acknowledgement and their
 request-route acknowledgements. A gateway route acknowledgement cannot prove
@@ -166,6 +204,113 @@ normal reporting cadence. A plan using a temporary override schedules its next
 check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
+
+## Preview a pull or merge request
+
+Preview a candidate before approving it, including on a binding that has no
+approved revision yet:
+
+```sh
+gregale projects environments gitops plan shop staging \
+  --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
+```
+
+Gregale verifies the commit through the bound provider and plans against current
+scoped intent and ownership. It returns the commit, digest, source generation,
+observed intent version and plan hash. Before/after values are omitted. It
+creates no revision, ownership claim, workload reservation or run. Its candidate
+hash cannot authorize approval or adoption. Refresh after source or environment
+changes; a passing check does not prove qualification or serving readiness.
+
+JSON is the default. `--fail-on-blocked` prints the result before exit 2 for
+ownership conflicts and unsupported operations. Exit 1 means the request or
+response could not be validated. See the
+[GitHub Actions and GitLab CI examples](../examples/gitops-ci/README.md) for
+summaries, artifacts and read-only `project_environments:read` credentials.
+
+Before adoption, unmanaged edits can change the plan hash while the managed
+intent counter remains zero. The hash includes the actual observed fields;
+candidate plans always require a fresh request and grant no write authority.
+
+## Receive drift and source notifications
+
+Subscribe an account receiver explicitly to `environment.gitops.changed`:
+
+```sh
+printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+  --target-url https://alerts.example.test/gregale \
+  --event environment.gitops.changed --from-stdin
+```
+
+The `drift` axis reports `in_sync`, `drifted`, `blocked` or `unavailable` for
+current observations. The independent `source` axis reports `verified`,
+`blocked` or `unavailable`; an outage preserves the last approved definition.
+An initial healthy result establishes a silent baseline. Failures and later
+recoveries notify; unchanged status stays quiet. Stale reports cannot change
+the current baseline. New receivers get future transitions; inspect GitOps
+status for the current report. Drift reporting retains its operator opt-in; source
+notifications follow completed polls. Existing fleet stale-poll alerts remain
+separate from confirmed access loss.
+
+Signed payloads include a transition UUID, approved revision/commit when known,
+generation, observation version, field paths/actions, stable error/blocker codes,
+and a dashboard link. They omit values, secret-reference targets and credentials.
+Field and blocker details are limited to 100 each; `details_truncated` identifies
+shortened payloads. Baselines and all receiver deliveries commit together and
+survive restart and report pruning. Existing retries, receiver controls and
+account quotas apply. Native qualification and enforcement keep their gates.
+
+## Isolated enforcement acceptance
+
+The real apid enforcement worker can run only in an isolated development
+acceptance process with all three settings set to `1`: `FAAS_DEV`,
+`GREGALE_GITOPS_ACCEPTANCE`, and
+`FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT`. The production control-plane
+role rejects the dev-only enforcement setting at boot. Customer enforcement
+remains closed by default.
+
+Against a disposable PostgreSQL cluster, run the subprocess journey with:
+
+```sh
+GREGALE_GITOPS_ACCEPTANCE=1 DATABASE_URL="$DISPOSABLE_DATABASE_URL" \
+  FAAS_PGTEST_TEMPLATE_DATABASE=1 go test ./cmd/e2e \
+  -run '^TestEnvironmentGitOpsAcceptanceE2E$' -count=1
+```
+
+This journey covers HTTP console writes and ownership rejection, approved
+intent in PostgreSQL, the real apid worker, repair, and durable partial status.
+It intentionally has no serving candidate. Dedicated native x86_64 KVM
+capture, restore, guest, gateway and rollback acceptance is still required
+before production qualification polling or enforcement can be enabled.
+
+The opt-in native graph journey now includes an image API and a push worker
+with a reviewed queue binding. It requires an isolated designated x86_64 KVM
+host, a disposable PostgreSQL database, the qualified kernel and generic base,
+and guest-init built from the same checkout. Run it with
+`make test-environment-gitops-native` after setting `DATABASE_URL`,
+`FAAS_TEST_KERNEL`, `FAAS_TEST_MINIMAL_BASE_PATH`, `FAAS_GUEST_INIT`, and
+`GREGALE_GITOPS_NATIVE_HOST_CLASS=native`. The guarded runner requires a clean
+checkout, refuses active Gregale services, checks leaks before and after, and
+requires the named metal test to pass rather than skip. Set the host class to
+`nested-diagnostic` only for troubleshooting; that result cannot qualify a
+production gate. A passing journey must prove API serving through the gateway,
+a completed scoped customer queue delivery for each applied generation, and
+repair of a console change after its temporary override expires while the
+graph is serving. It observes activation before sending the delivery needed to
+prove mixed-graph serving; it never waits for an applied revision before
+admitting that first customer message.
+
+The resilience cases inject source unavailability through the real githubd RPC
+client, restart apid during that outage and while an image pull is held, and
+supersede the held revision through HTTP review and approval. A later case
+restarts schedd after activation with an accepted customer delivery in flight.
+The reviewed rollback must obtain a fresh graph and native qualification at a
+new generation, preserve accepted queue identities, and serve another customer
+delivery before convergence. Slow gateway requests continue throughout these
+transitions; a failed request or a response from the superseded image fails the
+journey. The guarded runner allows up to 90 minutes and retains its pre-run and
+post-run leak checks. These cases still require execution on the exclusive
+native host; no passing dedicated native result has been established.
 
 ## Next implementation steps
 

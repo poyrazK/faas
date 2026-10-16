@@ -39,8 +39,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestNewMigrationsAreReplaySafe(t *testing.T) {
@@ -54,12 +54,14 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 		t.Skip("no parseable versions in FAAS_REPLAY_CHECK_VERSIONS")
 	}
 	ctx := context.Background()
-	pool := pgtest.Open(t) // t.Skip-friendly when Postgres is absent
+	pool := newMigrationReplayPool(t, versions)
 
 	// 1. Bring the schema fully up, the way CI always has.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("initial MigrateUp: %v", err)
 	}
+
+	beforeConstraints := replayConstraintFingerprint(t, pool)
 
 	// 2. Drop exactly the ledger rows added by this PR, leaving their schema
 	//    effects in place. With timestamp IDs, unrelated migrations may have
@@ -73,8 +75,10 @@ func TestNewMigrationsAreReplaySafe(t *testing.T) {
 			"what was applied, so this test would prove only part of the diff", got, versions, want)
 	}
 
-	// 3. Re-apply. Every migration this PR added must tolerate its own
-	//    effects already being present.
+	// Frozen issued standards SQL uses the explicit, schema-verified recovery
+	// path. Every other added migration still has to replay through Goose.
+	recoverFrozenStandardsForReplay(t, pool, versions)
+	// 3. Re-apply all remaining migrations against their existing effects.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf(`migration set %v is not replay-safe: %v
 
@@ -92,6 +96,10 @@ Make the new migration re-runnable. The established shapes in this repo:
 Do NOT edit an already-merged migration to fix this — migrations are
 append-only (CLAUDE.md). Only the migration this PR adds should change.`, versions, err)
 	}
+	if after := replayConstraintFingerprint(t, pool); after != beforeConstraints {
+		t.Fatal("replaying the migration tail changed existing constraint definitions")
+	}
+
 }
 
 // parseVersions turns legacy or timestamp version strings into sorted int64s.
@@ -112,4 +120,17 @@ func parseVersions(t *testing.T, raw string) []int64 {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+// Replaying an earlier migration must not narrow constraints widened by a later one.
+func replayConstraintFingerprint(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var fingerprint string
+	err := pool.QueryRow(context.Background(), `SELECT md5(COALESCE(string_agg(c.relname || ':' || k.conname || ':' || pg_get_constraintdef(k.oid), E'\n' ORDER BY c.relname,k.conname),''))
+ FROM pg_constraint k JOIN pg_class c ON c.oid=k.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname=current_schema()`).Scan(&fingerprint)
+	if err != nil {
+		t.Fatalf("capture constraint definitions: %v", err)
+	}
+	return fingerprint
 }

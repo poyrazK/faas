@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1041
+// adr: 1441
 func TestReadinessVerifiedReleaseUsesAdmissionPolicy(t *testing.T) {
 	store := state.NewMemStore()
 	account, project, app := seedReadiness(t, store)
@@ -43,7 +43,7 @@ func TestReadinessVerifiedReleaseUsesAdmissionPolicy(t *testing.T) {
 	}
 }
 
-// adr: 1041
+// adr: 1441
 func TestReadinessPromotionAggregatesPreviewAndApproval(t *testing.T) {
 	store := state.NewMemStore()
 	account, project, app := seedReadiness(t, store)

@@ -1,8 +1,8 @@
 [Unit]
 Description=onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)
 Documentation=https://gregale.dev/docs/ops/vmmd
-After=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice nftables.service br-tenants-up.service
-Wants=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice nftables.service br-tenants-up.service
+After=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice faas-tenant-free-fence.slice faas-tenant-hobby-fence.slice faas-tenant-pro-fence.slice faas-tenant-scale-fence.slice faas-cp-build-fence.slice nftables.service br-tenants-up.service
+Wants=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice faas-tenant-free-fence.slice faas-tenant-hobby-fence.slice faas-tenant-pro-fence.slice faas-tenant-scale-fence.slice faas-cp-build-fence.slice nftables.service br-tenants-up.service
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 
@@ -16,6 +16,7 @@ ExecStartPost=/usr/bin/chown root:faas /run/faas
 ExecStartPost=/usr/bin/chmod 0775 /run/faas
 Restart=on-failure
 RestartSec=15s
+TimeoutStartSec=5min
 WatchdogSec=120s
 Slice=faas-cp.slice
 MemoryMax=6G

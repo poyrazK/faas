@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -379,11 +381,12 @@ func newGuestH1Transport(guestIP string, guestPort uint16) *http.Transport {
 			d := net.Dialer{Timeout: dialTimeout}
 			return d.DialContext(ctx, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 		},
-		DisableCompression:    true,
-		MaxIdleConns:          guestTransportMaxIdleConnsPerHost,
-		MaxIdleConnsPerHost:   guestTransportMaxIdleConnsPerHost,
-		IdleConnTimeout:       h1IdleConnTimeout,
-		ResponseHeaderTimeout: readHeaderTimeout,
+		DisableCompression:  true,
+		MaxIdleConns:        guestTransportMaxIdleConnsPerHost,
+		MaxIdleConnsPerHost: guestTransportMaxIdleConnsPerHost,
+		IdleConnTimeout:     h1IdleConnTimeout,
+		// Outer cap; each request bounds its own wait (guestHeaderWait).
+		ResponseHeaderTimeout: api.RequestBudgetPlanMax,
 		ExpectContinueTimeout: time.Second,
 	}
 }

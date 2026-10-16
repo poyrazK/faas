@@ -7,7 +7,52 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
+
+func TestMigrationDSNUTC(t *testing.T) {
+	t.Setenv("PGTZ", "Europe/Istanbul")
+	for _, dsn := range []string{
+		"postgres://owner@localhost/reviewed?sslmode=disable",
+		"postgresql://owner@/reviewed?host=/local/socket&timezone=Europe/Istanbul",
+		"user=owner host=/local/socket dbname=reviewed timezone=Europe/Istanbul",
+	} {
+		t.Run(dsn, func(t *testing.T) {
+			canonical, err := migrationDSNUTC(dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := pgx.ParseConfig(dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := pgx.ParseConfig(canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.RuntimeParams["timezone"] != "UTC" {
+				t.Fatal("migration sessions inherit a non-UTC timezone")
+			}
+			if after.Host != before.Host || after.Database != before.Database || after.User != before.User || after.Port != before.Port {
+				t.Fatal("timezone selection changed the target database")
+			}
+		})
+	}
+}
+
+func TestLivePgDumpPinsUTC(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pg_dump"), []byte("#!/bin/sh\nprintf '%s' \"$PGTZ\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("PGTZ", "Europe/Istanbul")
+	got, err := (liveRunner{}).pgDump(t.Context(), "postgres:///reviewed")
+	if err != nil || string(got) != "UTC" {
+		t.Fatalf("pg_dump timezone = %q, err = %v; want UTC", got, err)
+	}
+}
 
 func TestStripNoise(t *testing.T) {
 	in := strings.Join([]string{
@@ -47,6 +92,16 @@ func TestStripNoise_PreservesUnrelated(t *testing.T) {
 	}
 	if strings.Contains(got, "Dumped by pg_dump") {
 		t.Errorf("stripNoise left pg_dump version line in output:\n%s", got)
+	}
+}
+
+func TestStripNoiseCanonicalizesDumpFooter(t *testing.T) {
+	const schema = "CREATE TABLE public.example (id bigint);\n"
+	for _, footer := range []string{"", "\n\n", "\n-- PostgreSQL database dump complete\n\n\\unrestrict xyz\n\n"} {
+		got := string(stripNoise([]byte(schema + footer)))
+		if got != schema {
+			t.Fatalf("footer %q changed canonical schema: %q", footer, got)
+		}
 	}
 }
 

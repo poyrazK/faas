@@ -1091,7 +1091,8 @@ func (c *EdgeRuleCache) InvalidateHosts(patterns []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.generation++
-	for host, el := range c.byID {
+	for key, el := range c.byID {
+		host := EdgeRuleCacheKeyHost(key)
 		for _, pattern := range patterns {
 			if EdgeRuleHostPatternMatches(pattern, host) {
 				c.removeElement(el)

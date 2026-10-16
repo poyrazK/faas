@@ -278,9 +278,20 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 			`socket_path = %q
 owner_user = %q
 kernel_path = %q
+resource_journal_dir = %q
+failure_report_dir = %q
 `,
-			sockPath, "root", kernelPath,
+			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
+		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
+			for _, path := range []string{images, publications} {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatalf("e2etest: create native ownership root: %v", err)
+				}
+			}
+			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+		}
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
@@ -1039,6 +1050,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(h.TmpDir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
@@ -1131,6 +1143,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(dir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)

@@ -8,9 +8,41 @@ gregale billing status
 gregale billing portal
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
+Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and function instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
+
+## Spend cap
+
+A spend cap is a hard ceiling on the overage an account is billed in a UTC
+calendar month. The included GB-RAM-hours are not counted against it.
+
+```bash
+gregale overage-cap 500      # cap overage at EUR 5.00 this month
+gregale overage-cap --clear  # remove the cap
+```
+
+`POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
+to clear) does the same. A cap of 0 is a pause switch: it counts as reached
+immediately, so the account's workloads stop even within the included
+allowance.
+
+When the month's overage reaches the cap:
+
+- usage is billed exactly up to the cap and no further. Raising the cap later
+  does not bill the usage the cap excluded;
+- running instances, minimum-instance floors, service replicas, workers and
+  warm pools are parked within one scheduler tick;
+- new wakes are refused with HTTP 402 `admission_refused`; the problem body
+  carries the observed overage and the cap;
+- queued job tasks wait in the queue; they are not failed;
+- object storage, which is billed once the month closes, is billed only up
+  to what the cap still allows after the month's compute and egress overage.
+  Object storage keeps serving within its plan limits.
+
+Raising or clearing the cap, or the start of the next month, lets workloads
+wake again on the next request or scheduler tick. If you change plans during
+a month, the month keeps the largest allowance any of its plans granted.
 
 ## Retained usage costs and forecasts
 

@@ -30,6 +30,13 @@ func instanceModeForApp(app state.App) string {
 	}
 }
 
+// refusesRequestWake reports whether request-driven admission refuses app,
+// booting in mode, because it has no request listener (PR-D, issue #462).
+func refusesRequestWake(app state.App, mode string) bool {
+	return app.WorkloadClass == state.WorkloadClassWorker ||
+		mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeJob)
+}
+
 func desiredServiceReplicas(manifest state.AppManifest) int {
 	if manifest.ServiceReplicas == nil {
 		return 1
@@ -132,7 +139,14 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 	}
 	desired := 0
 	if instanceModeForApp(app) == string(state.InstanceModeService) {
-		desired = desiredServiceReplicas(app.Manifest)
+		targets, err := e.serviceReplicaTargets(ctx, app, deployments)
+		if err != nil {
+			e.log.Warn("sched: observe deployed service targets", "app", app.ID, "err", err)
+			return
+		}
+		for _, target := range targets {
+			desired += target
+		}
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -363,13 +377,49 @@ func (e *Engine) serviceReplicaTargets(ctx context.Context, app state.App, deplo
 	}
 
 	targets := make(map[string]int, len(deployments))
-	desired := desiredServiceReplicas(app.Manifest)
 	for _, scoped := range byScope {
+		deployedApp, active, err := e.serviceReplicaTargetApp(ctx, app, scoped)
+		if err != nil {
+			return nil, err
+		}
+		desired := 0
+		if active && instanceModeForApp(deployedApp) == string(state.InstanceModeService) {
+			desired = desiredServiceReplicas(deployedApp.Manifest)
+		}
 		for deploymentID, target := range allocateServiceReplicaTargets(scoped, desired) {
 			targets[deploymentID] = target
 		}
 	}
 	return targets, nil
+}
+
+// Select the deployed settings through the same active release/traffic lane
+// as wakes. A newer dark generation or desired head cannot replace them.
+func (e *Engine) serviceReplicaTargetApp(ctx context.Context, app state.App, deployments []state.Deployment) (state.App, bool, error) {
+	scope := normalizedDeploymentScope(deployments[0].Scope)
+	selected, err := state.ResolveEnvironmentDeployment(ctx, e.store, app.ID, scope)
+	if errors.Is(err, state.ErrNotFound) {
+		// Retain the established repair fallback for all-zero legacy traffic.
+		for _, deployment := range deployments {
+			if deployment.TrafficPercent > 0 {
+				return state.App{}, false, err
+			}
+		}
+		selected, err = deployments[0], nil
+	}
+	if err != nil {
+		return state.App{}, false, err
+	}
+	if normalizedDeploymentScope(selected.Scope) != scope {
+		return state.App{}, false, nil // The other production alias owns traffic.
+	}
+	for _, deployment := range deployments {
+		if deployment.ID == selected.ID {
+			resolved, err := state.ResolveAppForDeployment(ctx, e.store, app, deployment)
+			return resolved, true, err
+		}
+	}
+	return state.App{}, false, state.ErrConflict
 }
 
 func serviceRolloutScope(dep state.Deployment) string {
@@ -533,6 +583,12 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		}
 		switch state.State(fresh.State) {
 		case state.StateRunning:
+			if fresh.Mode == string(state.InstanceModeWorker) {
+				if err := e.beginWorkerStop(ctx, fresh, e.workerStopOptions(app)); err != nil {
+					e.log.Warn("sched: drain superseded worker", "instance", fresh.ID, "err", err)
+				}
+				continue
+			}
 			if preserveSnapshot {
 				if err := e.Park(ctx, fresh.ID); err != nil {
 					e.log.Warn("sched: park superseded deployment instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
@@ -543,6 +599,22 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		case state.StateWaking, state.StateColdBooting:
 			if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
 				e.log.Warn("sched: destroy superseded deployment wake", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		case state.StateFrozen:
+			// ADR-1151: a frozen VM of a superseded deployment is never
+			// thawed again. Park it while its snapshot is kept, stop it
+			// when the snapshot goes too.
+			if preserveSnapshot {
+				if err := e.ParkFrozen(ctx, fresh.ID, "superseded"); err != nil {
+					e.log.Warn("sched: park superseded frozen instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
+				}
+				continue
+			}
+			if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
+				e.log.Warn("sched: destroy superseded frozen instance", "instance", fresh.ID, "deployment", deploymentID, "err", err)
 				continue
 			}
 			e.ledger.Release(fresh.ID)
@@ -611,6 +683,14 @@ func sortedServiceGatewaySet(values map[string]struct{}) []string {
 }
 
 func (e *Engine) updateServiceRolloutHandoff(ctx context.Context, deploymentID string, mutate func(*state.ServiceRolloutHandoff)) {
+	// A runtime-configuration restart converges routes without a deployment
+	// rollout and passes no rollout id. Looking up "" made Postgres reject
+	// the uuid on every phase update (production-us hunt #9, H9-102: a burst
+	// of "load service rollout handoff: invalid input syntax for type uuid"
+	// warnings per restart).
+	if deploymentID == "" {
+		return
+	}
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {

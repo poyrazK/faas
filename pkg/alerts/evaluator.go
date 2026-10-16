@@ -70,9 +70,10 @@ const legacyAlertSecretNamespace = "alert_rule"
 //
 // The methods mirror state.Store with identical semantics; the only
 // reason they aren't `state.Store` is so we don't drag in
-// pkg/state's full interface when the only methods the evaluator
-// touches are these twelve.
+// pkg/state's full interface when the evaluator needs only
+// alert-specific reads and transitions.
 type Store interface {
+	MCPTaskPromotionHoldAgeSeconds(ctx context.Context, accountID, appID string, at time.Time) (float64, error)
 	ListEnabledAlertRules(ctx context.Context) ([]state.AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (state.AlertRule, error)
 	AppByID(ctx context.Context, id string) (state.App, error)
@@ -86,6 +87,7 @@ type Store interface {
 	ColdWakeRatePctSince(ctx context.Context, accountID, appID string, since time.Time) (float64, error)
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 	CountFailedCertIssuancesSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
 	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
@@ -359,6 +361,18 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 // cancellation — every other failure is observation, not load-
 // bearing for the next tick.
 func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time.Time, stats *Stats) {
+	var health *api.MCPConnectionHealthSnapshot
+	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+		ctx, health = e.withMCPConnectionHealth(ctx, rule)
+	}
+	var catalog *api.MCPCatalogMonitorSignal
+	if api.IsMCPCatalogMonitorMetric(string(rule.Metric)) {
+		ctx, catalog = e.withMCPCatalogSignal(ctx, rule)
+	}
+	var convergence *api.MCPPolicyConvergenceSnapshot
+	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
+		ctx, convergence = withMCPPolicyConvergenceSnapshot(ctx, e.store, rule)
+	}
 	observed, comparisonResult, skipReason := e.observe(ctx, rule)
 	if skipReason != "" {
 		switch skipReason {
@@ -393,13 +407,16 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	}
 
 	if !comparisonResult {
+		if health != nil {
+			e.recoverMCPConnectionHealth(ctx, rule, observed, health, now, stats)
+		}
 		// Healthy tick — comparison false. If we were firing,
 		// flip back to ok and emit audit.resolved.
 		if rule.State != state.AlertStateOk {
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil {
+			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 				e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
 					"rule_id": rule.ID,
 					"rule":    rule.Name,
@@ -413,6 +430,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
+	if health != nil && e.sameMCPHealthIncident(ctx, rule, health) {
+		_, _ = e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now)
+		_ = e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now)
+		return
+	}
 	// Comparison fires. Apply the cool-down, then build the dedupe key.
 	//
 	// The cool-down is a plain time gate on last_fired_at. The dedupe key
@@ -432,9 +454,12 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
 	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
-		// Still breaching inside the cool-down: a degraded read that has
-		// recovered goes back to firing, as a lost claim did before.
-		if rule.State == state.AlertStateDegraded {
+		// Still breaching inside the cool-down: record the breach even
+		// though the cool-down withholds a delivery. That covers a degraded
+		// read that recovered and a new breach after the rule resolved to
+		// ok, which otherwise read "ok" for a whole incident (production-us
+		// hunt #9, H9-94).
+		if rule.State != state.AlertStateFiring {
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
 			}
@@ -464,7 +489,13 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// takes the bytes directly; the same bytes are re-decoded later
 	// (webhookout's HTTP body) so we never re-serialise on the
 	// dispatch hot path.
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, e.investigationPaths(ctx, rule))
+	paths := e.investigationPaths(ctx, rule)
+	paths.mcpCatalog = catalog
+	paths.mcpHealth = health
+	if convergence != nil {
+		paths.mcpConvergence = convergence
+	}
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths)
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -514,6 +545,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
 	}
 
+	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
+}
+func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -721,6 +755,15 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
+		return e.observeMCPConnectionHealth(ctx, rule)
+	}
+	if api.IsMCPCatalogMonitorMetric(string(rule.Metric)) {
+		return e.observeMCPCatalogMonitor(ctx, rule)
+	}
+	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
+		return e.observeMCPPolicyConvergence(ctx, rule)
+	}
 	if api.IsEventRetentionAlertMetric(string(rule.Metric)) {
 		return e.observeEventRetention(ctx, rule)
 	}
@@ -756,6 +799,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits:
+		return e.observeEdgeRuleHits(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -883,6 +928,82 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			return 0, false, skipDegraded
 		}
 		observed := float64(n)
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricMCPTaskPromotionHoldAgeSeconds:
+		age, err := e.store.MCPTaskPromotionHoldAgeSeconds(ctx, rule.AccountID, rule.AppID, e.now())
+		if err != nil {
+			e.log.Warn("alerts: read MCP promotion hold age", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		return age, compareFloat(age, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricMCPTasksOldestAgeSeconds:
+		// MCP task backlog age is a pushed, current gauge. Never alert on a
+		// missing or expired reading: doing so could turn a dead observer into
+		// a false healthy zero or fire on a frozen value. The normal alert
+		// degraded state makes the missing signal visible to operators.
+		metrics, err := e.store.ListCustomMetrics(ctx, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: list MCP task metrics", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+		for _, metric := range metrics {
+			if metric.Name != string(state.AlertMetricMCPTasksOldestAgeSeconds) {
+				continue
+			}
+			if metric.ObservedAt.IsZero() ||
+				now.Sub(metric.ObservedAt) > freshness ||
+				metric.Value < 0 || math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) {
+				e.log.Warn("alerts: MCP task age metric is stale or invalid", "rule", rule.ID)
+				return 0, false, skipDegraded
+			}
+			return metric.Value, compareFloat(metric.Value, rule.Comparison, rule.Threshold), ""
+		}
+		e.log.Warn("alerts: MCP task age metric is missing", "rule", rule.ID)
+		return 0, false, skipDegraded
+	case state.AlertMetricMCPTasksMetricsStale:
+		// This binary health signal intentionally treats missing, stale, and
+		// invalid app gauges as an observable breach. Min=0 worker apps also
+		// require the dedicated observer heartbeat. It lets operators send a
+		// webhook when a publisher disappears, while backend read failures
+		// still degrade because the evaluator cannot determine the app signal.
+		app, err := e.store.AppByID(ctx, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: get app for MCP task metrics health", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		metrics, err := e.store.ListCustomMetrics(ctx, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: list MCP task metrics", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
+		present := make(map[string]state.CustomMetric, 4)
+		for _, metric := range metrics {
+			if metric.Name == "mcp_tasks_outstanding" || metric.Name == string(state.AlertMetricMCPTasksOldestAgeSeconds) || metric.Name == "mcp_tasks_without_compatible_worker" || metric.Name == "mcp_tasks_observer_heartbeat" {
+				present[metric.Name] = metric
+			}
+		}
+		stale := false
+		requiredMetrics := []string{"mcp_tasks_outstanding", string(state.AlertMetricMCPTasksOldestAgeSeconds), "mcp_tasks_without_compatible_worker"}
+		if app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Min == 0 {
+			requiredMetrics = append(requiredMetrics, "mcp_tasks_observer_heartbeat")
+		}
+		for _, name := range requiredMetrics {
+			metric, ok := present[name]
+			if !ok || metric.ObservedAt.IsZero() || now.Sub(metric.ObservedAt) > freshness ||
+				metric.Value < 0 || math.IsNaN(metric.Value) || math.IsInf(metric.Value, 0) ||
+				(name == "mcp_tasks_observer_heartbeat" && metric.Value != 1) {
+				stale = true
+				break
+			}
+		}
+		observed := 0.0
+		if stale {
+			observed = 1
+		}
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
@@ -1023,6 +1144,9 @@ func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR fl
 // scrape and the customer's webhook see the same envelope — one
 // source of truth, one marshal per firing.
 type investigationPaths struct {
+	mcpHealth        *api.MCPConnectionHealthSnapshot
+	mcpCatalog       *api.MCPCatalogMonitorSignal
+	mcpConvergence   *api.MCPPolicyConvergenceSnapshot
 	observations     string
 	dashboard        string
 	appID            string
@@ -1086,6 +1210,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
 	}
+	if rule.EdgeRuleID != "" {
+		m["edge_rule_id"] = rule.EdgeRuleID
+	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations
 		m["dashboard_path"] = paths.dashboard
@@ -1097,6 +1224,17 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		if paths.workflowDeadRuns != "" {
 			m["workflow_dead_runs_path"] = paths.workflowDeadRuns
 		}
+	}
+	if paths.mcpHealth != nil {
+		m["mcp_connection_health"] = paths.mcpHealth
+		m["incident_id"] = paths.mcpHealth.Fingerprints[api.MCPConnectionHealthKind(string(rule.Metric))]
+		m["event"] = "alert.fired"
+	}
+	if paths.mcpCatalog != nil {
+		m["mcp_catalog"] = paths.mcpCatalog
+	}
+	if paths.mcpConvergence != nil {
+		m["mcp_convergence"] = paths.mcpConvergence
 	}
 	b, err := json.Marshal(m)
 	if err != nil {

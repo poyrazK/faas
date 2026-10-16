@@ -34,13 +34,36 @@ const (
 	WakeAheadFailed           = "failed"
 )
 
+// WakeAheadSink receives the learner's evidence (ADR-977, ADR-1152). *Metrics
+// implements it; the series it publishes are what apid shows customers.
+// Edge shares are published only for a caller's top ServiceWakeAheadMaxTargets
+// edges once it has ServiceWakeAheadMinWakes wakes, so the series stay bounded.
+type WakeAheadSink interface {
+	WakeAheadOutcome(caller, target, outcome string)
+	WakeAheadEdge(caller, target string, callShare, coldShare float64)
+	WakeAheadEdgeGone(caller, target string)
+	WakeAheadCallerWakes(caller string, wakes float64)
+	WakeAheadCallerGone(caller string)
+}
+
+type noopWakeAheadSink struct{}
+
+func (noopWakeAheadSink) WakeAheadOutcome(string, string, string)        {}
+func (noopWakeAheadSink) WakeAheadEdge(string, string, float64, float64) {}
+func (noopWakeAheadSink) WakeAheadEdgeGone(string, string)               {}
+func (noopWakeAheadSink) WakeAheadCallerWakes(string, float64)           {}
+func (noopWakeAheadSink) WakeAheadCallerGone(string)                     {}
+
 // WakeAheadLearner measures caller → target service edges around caller wakes.
 type WakeAheadLearner struct {
 	mu          sync.Mutex
 	now         func() time.Time
-	outcome     func(string)
+	sink        WakeAheadSink
 	callers     map[string]*wakeAheadCaller
 	speculative map[string]*wakeAheadSpeculation
+	// changed is set whenever the learned statistics move, so the snapshot
+	// writer (ADR-1132) skips unchanged intervals.
+	changed bool
 }
 
 type wakeAheadCaller struct {
@@ -49,25 +72,28 @@ type wakeAheadCaller struct {
 	called      map[string]bool // target → the call found it parked or pre-woken
 	wakes       float64
 	edges       map[string]*wakeAheadEdge
+	published   map[string]bool // targets whose shares the sink currently holds
+	wakesShown  bool
 }
 
 type wakeAheadEdge struct{ calls, cold float64 }
 
 type wakeAheadSpeculation struct {
-	at   time.Time
-	used bool
+	caller string
+	at     time.Time
+	used   bool
 }
 
-// NewWakeAheadLearner returns an empty learner. outcome receives used and
-// unused verdicts for wake-aheads; it may be nil.
-func NewWakeAheadLearner(now func() time.Time, outcome func(string)) *WakeAheadLearner {
+// NewWakeAheadLearner returns an empty learner. sink receives its evidence
+// and wake-ahead verdicts; it may be nil.
+func NewWakeAheadLearner(now func() time.Time, sink WakeAheadSink) *WakeAheadLearner {
 	if now == nil {
 		now = time.Now
 	}
-	if outcome == nil {
-		outcome = func(string) {}
+	if sink == nil {
+		sink = noopWakeAheadSink{}
 	}
-	return &WakeAheadLearner{now: now, outcome: outcome, callers: map[string]*wakeAheadCaller{}, speculative: map[string]*wakeAheadSpeculation{}}
+	return &WakeAheadLearner{now: now, sink: sink, callers: map[string]*wakeAheadCaller{}, speculative: map[string]*wakeAheadSpeculation{}}
 }
 
 // ObserveWake records that app is starting a wake. It reports false when the
@@ -81,13 +107,16 @@ func (l *WakeAheadLearner) ObserveWake(app string) bool {
 	c := l.callers[app]
 	if c == nil {
 		l.evictLocked()
-		c = &wakeAheadCaller{called: map[string]bool{}, edges: map[string]*wakeAheadEdge{}}
+		c = &wakeAheadCaller{called: map[string]bool{}, edges: map[string]*wakeAheadEdge{}, published: map[string]bool{}}
 		l.callers[app] = c
 	}
 	if c.open && now.Sub(c.windowStart) <= api.ServiceWakeAheadFollowWindow {
 		return false
 	}
-	c.finishLocked()
+	if c.finishLocked() {
+		l.publishLocked(app, c)
+		l.changed = true
+	}
 	c.open, c.windowStart = true, now
 	return true
 }
@@ -106,7 +135,7 @@ func (l *WakeAheadLearner) ObserveCall(caller, target string, woken bool) {
 		benefit = true
 		if !s.used {
 			s.used = true
-			l.outcome(WakeAheadUsed)
+			l.sink.WakeAheadOutcome(s.caller, target, WakeAheadUsed)
 		}
 	}
 	c := l.callers[caller]
@@ -127,8 +156,9 @@ func (l *WakeAheadLearner) Predict(app string) []string {
 	if c == nil {
 		return nil
 	}
-	if c.open && l.now().Sub(c.windowStart) > api.ServiceWakeAheadFollowWindow {
-		c.finishLocked()
+	if c.open && l.now().Sub(c.windowStart) > api.ServiceWakeAheadFollowWindow && c.finishLocked() {
+		l.publishLocked(app, c)
+		l.changed = true
 	}
 	if c.wakes < api.ServiceWakeAheadMinWakes {
 		return nil
@@ -154,9 +184,9 @@ func (l *WakeAheadLearner) Predict(app string) []string {
 	return targets
 }
 
-// ClaimSpeculation reserves one wake-ahead of target. It fails while an
-// earlier wake-ahead of the same target is still fresh.
-func (l *WakeAheadLearner) ClaimSpeculation(target string) bool {
+// ClaimSpeculation reserves one wake-ahead of target on behalf of caller. It
+// fails while an earlier wake-ahead of the same target is still fresh.
+func (l *WakeAheadLearner) ClaimSpeculation(caller, target string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -164,7 +194,7 @@ func (l *WakeAheadLearner) ClaimSpeculation(target string) bool {
 	if _, fresh := l.speculative[target]; fresh {
 		return false
 	}
-	l.speculative[target] = &wakeAheadSpeculation{at: now}
+	l.speculative[target] = &wakeAheadSpeculation{caller: caller, at: now}
 	return true
 }
 
@@ -175,10 +205,11 @@ func (l *WakeAheadLearner) ReleaseSpeculation(target string) {
 	delete(l.speculative, target)
 }
 
-// finishLocked folds an expired follow window into the edge statistics.
-func (c *wakeAheadCaller) finishLocked() {
+// finishLocked folds an expired follow window into the edge statistics and
+// reports whether it did.
+func (c *wakeAheadCaller) finishLocked() bool {
 	if !c.open {
-		return
+		return false
 	}
 	c.open = false
 	c.wakes++
@@ -204,6 +235,49 @@ func (c *wakeAheadCaller) finishLocked() {
 			e.cold /= 2
 		}
 	}
+	return true
+}
+
+// publishLocked hands the sink the caller's wake count and its top edges
+// once it has enough wakes, and withdraws edges that left the top.
+func (l *WakeAheadLearner) publishLocked(app string, c *wakeAheadCaller) {
+	if c.wakes < api.ServiceWakeAheadMinWakes {
+		return
+	}
+	l.sink.WakeAheadCallerWakes(app, c.wakes)
+	c.wakesShown = true
+	top := make([]string, 0, len(c.edges))
+	for target := range c.edges {
+		top = append(top, target)
+	}
+	slices.SortFunc(top, func(a, b string) int {
+		if c.edges[a].calls != c.edges[b].calls {
+			if c.edges[a].calls > c.edges[b].calls {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	if len(top) > api.ServiceWakeAheadMaxTargets {
+		top = top[:api.ServiceWakeAheadMaxTargets]
+	}
+	keep := map[string]bool{}
+	for _, target := range top {
+		e := c.edges[target]
+		cold := 0.0
+		if e.calls > 0 {
+			cold = e.cold / e.calls
+		}
+		l.sink.WakeAheadEdge(app, target, e.calls/c.wakes, cold)
+		keep[target] = true
+	}
+	for target := range c.published {
+		if !keep[target] {
+			l.sink.WakeAheadEdgeGone(app, target)
+		}
+	}
+	c.published = keep
 }
 
 func (c *wakeAheadCaller) dropWeakestEdge() {
@@ -221,7 +295,7 @@ func (l *WakeAheadLearner) sweepLocked(now time.Time) {
 	for target, s := range l.speculative {
 		if now.Sub(s.at) > api.ServiceWakeAheadFollowWindow {
 			if !s.used {
-				l.outcome(WakeAheadUnused)
+				l.sink.WakeAheadOutcome(s.caller, target, WakeAheadUnused)
 			}
 			delete(l.speculative, target)
 		}
@@ -239,6 +313,12 @@ func (l *WakeAheadLearner) evictLocked() {
 		if oldest == "" || c.windowStart.Before(l.callers[oldest].windowStart) {
 			oldest = app
 		}
+	}
+	for target := range l.callers[oldest].published {
+		l.sink.WakeAheadEdgeGone(oldest, target)
+	}
+	if l.callers[oldest].wakesShown {
+		l.sink.WakeAheadCallerGone(oldest)
 	}
 	delete(l.callers, oldest)
 }
@@ -325,24 +405,24 @@ func (h *Handler) runWakeAhead(parent context.Context, appID string, depth int) 
 		return
 	}
 	if !r.cached(ctx, "") {
-		for range targets {
-			h.metrics.IncServiceWakeAhead(WakeAheadSkippedResidency)
+		for _, target := range targets {
+			h.metrics.WakeAheadOutcome(appID, target, WakeAheadSkippedResidency)
 		}
 		return
 	}
 	ctx = context.WithValue(ctx, wakeAheadDepthKey{}, depth)
 	var wg sync.WaitGroup
 	for _, target := range targets {
-		if h.backend.HealthyCount(target) > 0 || !r.cfg.Learner.ClaimSpeculation(target) {
+		if h.backend.HealthyCount(target) > 0 || !r.cfg.Learner.ClaimSpeculation(appID, target) {
 			continue
 		}
-		h.metrics.IncServiceWakeAhead(WakeAheadStarted)
+		h.metrics.WakeAheadOutcome(appID, target, WakeAheadStarted)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := r.cfg.Wake(ctx, target); err != nil {
 				r.cfg.Learner.ReleaseSpeculation(target)
-				h.metrics.IncServiceWakeAhead(WakeAheadFailed)
+				h.metrics.WakeAheadOutcome(appID, target, WakeAheadFailed)
 				if h.log != nil {
 					h.log.Warn("gateway: service wake-ahead failed", "caller_app", appID, "target_app", target, "err", err)
 				}

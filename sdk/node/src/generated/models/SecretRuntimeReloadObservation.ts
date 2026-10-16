@@ -17,7 +17,7 @@ export type SecretRuntimeReloadObservation = {
   /**
    * Current active instance state.
    */
-  runtime_state: 'waking' | 'cold_booting' | 'running' | 'draining' | 'snapshotting' | 'migrating' | 'warm';
+  runtime_state: 'waking' | 'cold_booting' | 'running' | 'draining' | 'snapshotting' | 'migrating' | 'warm' | 'frozen';
   /**
    * Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted metadata.
    */

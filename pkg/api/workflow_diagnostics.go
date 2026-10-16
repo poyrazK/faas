@@ -6,7 +6,7 @@ import (
 )
 
 // WorkflowRunDiagnosticsResponse is a read-only observation, not an admission
-// reservation. Resume rechecks the current generation and all admission gates.
+// reservation. Resume and step retry recheck state and their admission gates.
 type WorkflowRunDiagnosticsResponse struct {
 	RunID          string                   `json:"run_id"`
 	WorkflowName   string                   `json:"workflow_name"`
@@ -23,13 +23,17 @@ type WorkflowRunDiagnosticsResponse struct {
 }
 
 type WorkflowDiagnosticStep struct {
-	StepName    string  `json:"step_name"`
-	Status      string  `json:"status"`
-	Kind        string  `json:"kind"`
-	Attempt     int     `json:"attempt"`
-	RetryBase   int     `json:"retry_base"`
-	NextRetryAt *string `json:"next_retry_at,omitempty"`
-	NextCheckAt *string `json:"next_check_at,omitempty"`
+	// RetryEligible uses the manual HTTP retry validator, not the broader
+	// workflow continuation policy in Resume. Missing previews fail closed.
+	RetryEligible      bool     `json:"retry_eligible,omitempty"`
+	RetryReopenedSteps []string `json:"retry_reopened_steps,omitempty"`
+	StepName           string   `json:"step_name"`
+	Status             string   `json:"status"`
+	Kind               string   `json:"kind"`
+	Attempt            int      `json:"attempt"`
+	RetryBase          int      `json:"retry_base"`
+	NextRetryAt        *string  `json:"next_retry_at,omitempty"`
+	NextCheckAt        *string  `json:"next_check_at,omitempty"`
 }
 
 type WorkflowResumePreview struct {

@@ -1,0 +1,150 @@
+package apidserver_test
+
+import (
+	"encoding/json"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/routemonitor"
+)
+
+// ADR-498: independent advisory intent, MFA/read-write scopes and strict budget input.
+func TestProductionRouteMonitorAPIConfigurationScopeAndWorker(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "production-routes-api")
+	base := "/v1/apps/" + slug + "/route-monitor"
+	rec := e.Do(t, "GET", base, nil, nil)
+	var c api.RouteMonitorConfig
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &c) != nil || routemonitor.ValidateConfig(c) != nil || c.Enabled {
+		t.Fatalf("default %d %s", rec.Code, rec.Body)
+	}
+	budget := int64(100)
+	req := api.SetRouteMonitorRequest{Enabled: true, ExpectedRevision: &c.Revision, Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget, MaxP95MS: 300}}}
+	previewReq := api.PreviewRouteMonitorRequest{Routes: req.Routes}
+	rec = e.Do(t, "POST", base+"/preview", previewReq, nil)
+	var preview api.RouteMonitorPreview
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &preview) != nil || routemonitor.ValidatePreviewForRequest(preview, previewReq) != nil || preview.CurrentRevision != 0 || preview.Report.Status != "unknown" {
+		t.Fatalf("preview %d %s", rec.Code, rec.Body)
+	}
+	rec = e.Do(t, "GET", base, nil, nil)
+	var unchanged api.RouteMonitorConfig
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &unchanged) != nil || unchanged.Revision != 0 || unchanged.Enabled || len(unchanged.Routes) != 0 {
+		t.Fatalf("preview changed saved configuration: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.Do(t, "PUT", base, req, nil)
+	if rec.Code != 200 {
+		t.Fatalf("set %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.Do(t, "PUT", base, req, nil); rec.Code != 409 {
+		t.Fatal("stale update accepted")
+	}
+	rec = e.Do(t, "GET", base+"/report", nil, nil)
+	var report api.RouteMonitorReport
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &report) != nil || report.Status != "unknown" || routemonitor.ValidateReport(report) != nil {
+		t.Fatalf("report %d %s", rec.Code, rec.Body)
+	}
+	if n, err := (*e.S()).DrainRouteMonitors(t.Context()); err != nil || n != 1 {
+		t.Fatalf("worker %d %v", n, err)
+	}
+	if rec := e.Do(t, "GET", base+"/incidents", nil, nil); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"incidents":[]`) {
+		t.Fatal("unknown created incident")
+	}
+	for _, query := range []string{"?limit=0", "?limit=11", "?limit=1&limit=2", "?before=bad", "?route=checkout"} {
+		if rec := e.Do(t, "GET", base+"/incidents"+query, nil, nil); rec.Code != 400 {
+			t.Fatalf("bad query %s accepted: %d", query, rec.Code)
+		}
+	}
+	if rec := e.Do(t, "GET", base+"/incidents/"+uuid.NewString(), nil, nil); rec.Code != 404 {
+		t.Fatal("missing incident leaked")
+	}
+	key, hash, _ := api.GenerateAPIKey()
+	if _, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "monitor-read", []string{api.ScopeAppsRead}); err != nil {
+		t.Fatal(err)
+	}
+	(*e.Key()) = key
+	if rec := e.Do(t, "GET", base, nil, nil); rec.Code != 200 {
+		t.Fatal("read scope rejected")
+	}
+	rec = e.Do(t, "POST", base+"/preview", previewReq, nil)
+	if rec.Code != 200 {
+		t.Fatalf("read scope could not preview: %d %s", rec.Code, rec.Body)
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &preview) != nil || preview.ConfigChangeResetsObservationAnchor {
+		t.Fatalf("identical proposal should preserve its saved anchor: %s", rec.Body)
+	}
+	if rec := e.Do(t, "PUT", base, req, nil); rec.Code != 403 {
+		t.Fatal("read scope wrote intent")
+	}
+	if rec := e.Do(t, "GET", "/v1/apps/missing-production-app/route-monitor", nil, nil); rec.Code != 404 {
+		t.Fatal("app scope leak")
+	}
+}
+func TestProductionRouteMonitorAPIMFAPlanAndStrictInput(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanFree)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "production-free")
+	base := "/v1/apps/" + slug + "/route-monitor"
+	req := api.SetRouteMonitorRequest{Enabled: true, ExpectedRevision: new(int64), Routes: []api.RouteMonitorRoute{{Method: "GET", Path: "/", MaxP95MS: 100}}}
+	if rec := e.Do(t, "PUT", base, req, nil); rec.Code != 402 {
+		t.Fatalf("free enabled: %d %s", rec.Code, rec.Body)
+	}
+	req.Enabled = false
+	if rec := e.Do(t, "PUT", base, req, nil); rec.Code != 200 {
+		t.Fatal("downgrade disable unavailable")
+	}
+	if rec := e.Do(t, "GET", base+"/incidents", nil, nil); rec.Code != 402 {
+		t.Fatal("entitlement bypassed")
+	}
+	pro := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.MustSeedEdgeRuleApp(t, pro, "production-strict")
+	path := "/v1/apps/" + app + "/route-monitor"
+	for _, body := range []string{`{"enabled":true,"expected_revision":0,"routes":[{"method":"POST","path":"/checkout"}]}`, `{"enabled":true,"expected_revision":0,"routes":[{"method":"POST","path":"/checkout","max_p95_ms":100,"typo":1}]}`, `{"enabled":true,"routes":[{"method":"POST","path":"/checkout","max_p95_ms":100}]}`, `{"enabled":true,"expected_revision":0,"routes":null}`} {
+		request := httptest.NewRequest("PUT", path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+(*pro.Key()))
+		rec := httptest.NewRecorder()
+		(*pro.S()).Handler().ServeHTTP(rec, request)
+		if rec.Code != 400 {
+			t.Fatalf("input accepted %d %s", rec.Code, rec.Body)
+		}
+	}
+	previewRequest := httptest.NewRequest("POST", path+"/preview", strings.NewReader(`{"routes":[{"method":"GET","path":"/","max_p95_ms":100,"typo":1}]}`))
+	previewRequest.Header.Set("Authorization", "Bearer "+(*pro.Key()))
+	previewRec := httptest.NewRecorder()
+	(*pro.S()).Handler().ServeHTTP(previewRec, previewRequest)
+	if previewRec.Code != 400 {
+		t.Fatalf("preview accepted unknown route-budget field: %d %s", previewRec.Code, previewRec.Body)
+	}
+	mfa := apidserver.SetupWithMFA(t, api.PlanPro, false, false)
+	mfa.GenerateEnrolledAccount(t)
+	pending := mfa.MfaIssueWithPending(t, true)
+	for _, suffix := range []string{"", "/report", "/incidents", "/incidents/" + uuid.NewString()} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/v1/apps/mfa-app/route-monitor"+suffix, nil)
+		r.AddCookie(pending)
+		(*mfa.H()).ServeHTTP(rec, r)
+		if rec.Code != 403 {
+			t.Fatalf("MFA bypass %s %d", suffix, rec.Code)
+		}
+	}
+	previewRequest = httptest.NewRequest("POST", "/v1/apps/mfa-app/route-monitor/preview", strings.NewReader(`{"routes":[{"method":"GET","path":"/","max_p95_ms":100}]}`))
+	previewRequest.AddCookie(pending)
+	previewRec = httptest.NewRecorder()
+	(*mfa.H()).ServeHTTP(previewRec, previewRequest)
+	if previewRec.Code != 403 {
+		t.Fatalf("MFA bypassed preview: %d", previewRec.Code)
+	}
+}
+func TestProductionRouteMonitorWebhookSubscription(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "production-route-hooks")
+	req := webhookReq()
+	req.EventFilter = []string{"routes.monitor.violated", "routes.monitor.recovered"}
+	hook := mustCreateWebhook(t, e, slug, req)
+	if len(hook.EventFilter) != 2 {
+		t.Fatal("production route transition subscriptions lost")
+	}
+}

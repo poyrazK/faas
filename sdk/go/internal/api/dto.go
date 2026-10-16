@@ -88,7 +88,7 @@ type CreateAppRequest struct {
 	ServiceReliability    map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	Visibility            string                              `json:"visibility,omitempty"`
 	Type                  string                              `json:"type,omitempty"`    // "app" (default) | "function"
-	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine for functions
+	Runtime               string                              `json:"runtime,omitempty"` // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB                 int                                 `json:"ram_mb,omitempty"`  // 0 => plan default
 	VCPU                  int                                 `json:"vcpu,omitempty"`    // 0 => plan default; explicit values must match the plan shape
 	CPUMillicores         int                                 `json:"cpu_millicores,omitempty"`
@@ -101,6 +101,7 @@ type CreateAppRequest struct {
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Pause                  string                `json:"pause,omitempty"`
 	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
 	Tracing                *TracingConfig        `json:"tracing,omitempty"`
 	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
@@ -144,15 +145,17 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                  `json:"max_retries,omitempty"`
-	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
-	ServiceReplicas  *ServiceReplicas      `json:"service_replicas,omitempty"`
-	HealthPath       *string               `json:"health_path,omitempty"`
-	HealthPathWakes  *bool                 `json:"health_path_wakes,omitempty"`
-	SessionAffinity  *bool                 `json:"session_affinity,omitempty"`
+	// Pause replaces the declared pause value; "" restores the default.
+	Pause            *string          `json:"pause,omitempty"`
+	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
+	MaxRetries       *int             `json:"max_retries,omitempty"`
+	RetryPolicy      *RetryPolicyDTO  `json:"retry_policy,omitempty"`
+	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	HealthPath       *string          `json:"health_path,omitempty"`
+	HealthPathWakes  *bool            `json:"health_path_wakes,omitempty"`
+	SessionAffinity  *bool            `json:"session_affinity,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -2646,4 +2649,74 @@ type ServiceRolloutHandoffResponse struct {
 	UpdatedAt               *time.Time                 `json:"updated_at,omitempty"`
 	AcknowledgedAt          *time.Time                 `json:"acknowledged_at,omitempty"`
 	CompletedAt             *time.Time                 `json:"completed_at,omitempty"`
+}
+
+type EventOrderingBlocker struct {
+	EventSource    string     `json:"event_source"`
+	EventID        string     `json:"event_id"`
+	SubscriptionID string     `json:"subscription_id"`
+	AcceptedAt     time.Time  `json:"accepted_at"`
+	State          string     `json:"state"`
+	NextAttemptAt  *time.Time `json:"next_attempt_at,omitempty"`
+	AgeSeconds     float64    `json:"age_seconds"`
+	ReceiptURL     string     `json:"receipt_url"`
+}
+
+type EventBacklogRecipient struct {
+	DeliveryControlReason string                `json:"-"`
+	OrderingBlocker       *EventOrderingBlocker `json:"ordering_blocker,omitempty"`
+	EventSource           string                `json:"event_source"`
+	EventID               string                `json:"event_id"`
+	EventType             string                `json:"event_type"`
+	AcceptedAt            time.Time             `json:"accepted_at"`
+	AppID                 string                `json:"app_id"`
+	AppSlug               string                `json:"app_slug"`
+	TargetAvailable       bool                  `json:"target_available"`
+	SubscriptionID        string                `json:"subscription_id"`
+	ConsumerKind          string                `json:"consumer_kind"`
+	Origin                string                `json:"origin"`
+	WorkflowName          string                `json:"workflow_name,omitempty"`
+	RoutingMode           string                `json:"routing_mode"`
+	State                 string                `json:"state"`
+	CapacityScope         string                `json:"capacity_scope,omitempty"`
+	Attempts              int                   `json:"attempts"`
+	CapacityDeferrals     int                   `json:"capacity_deferrals"`
+	NextAttemptAt         *time.Time            `json:"next_attempt_at,omitempty"`
+	LeaseUntil            *time.Time            `json:"lease_until,omitempty"`
+	PendingAgeSeconds     float64               `json:"pending_age_seconds"`
+	WaitingReason         string                `json:"waiting_reason"`
+	ReceiptURL            string                `json:"receipt_url"`
+	FanoutHistoryURL      string                `json:"fanout_history_url,omitempty"`
+}
+
+type EventBacklogConsumer struct {
+	PendingWaitingReasons             map[string]int64 `json:"pending_waiting_reasons,omitempty"`
+	CapacityConsumerWaitingRecipients int64            `json:"capacity_consumer_waiting_recipients"`
+	CapacityAppWaitingRecipients      int64            `json:"capacity_app_waiting_recipients"`
+	CapacityAccountWaitingRecipients  int64            `json:"capacity_account_waiting_recipients"`
+	OrderingWaitingRecipients         int64            `json:"ordering_waiting_recipients"`
+	AppID                             string           `json:"app_id"`
+	AppSlug                           string           `json:"app_slug"`
+	TargetAvailable                   bool             `json:"target_available"`
+	SubscriptionID                    string           `json:"subscription_id"`
+	ConsumerKind                      string           `json:"consumer_kind"`
+	WaitingRecipients                 int64            `json:"waiting_recipients"`
+	PendingRecipients                 int64            `json:"pending_recipients"`
+	ProcessingRecipients              int64            `json:"processing_recipients"`
+	CapacityWaitingRecipients         int64            `json:"capacity_waiting_recipients"`
+	OldestAcceptedAt                  time.Time        `json:"oldest_accepted_at"`
+	OldestAgeSeconds                  float64          `json:"oldest_age_seconds"`
+}
+
+// Counts cover matching live recipients, independently of the recipient page.
+// WindowAt anchors acceptance/age filtering; ObservedAt describes this read.
+type EventBacklogResponse struct {
+	ObservedAt           time.Time               `json:"observed_at"`
+	WindowAt             time.Time               `json:"window_at"`
+	Coverage             string                  `json:"coverage"`
+	Recipients           []EventBacklogRecipient `json:"recipients"`
+	Consumers            []EventBacklogConsumer  `json:"consumers"`
+	UnattributedReceipts int64                   `json:"unattributed_receipts"`
+	NextAfter            string                  `json:"next_after,omitempty"`
+	NextConsumersAfter   string                  `json:"next_consumers_after,omitempty"`
 }

@@ -3,7 +3,7 @@ import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
-import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
+import { traceRequest, markRequest, markQueryShape, requestID, runtimeFailure } from './logging.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, servingContracts, limits } from './config.mjs'
 
@@ -53,11 +53,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     let payload
     try { payload = await verify(token) } catch { return problem(res, 401, 'token_invalid') }
     if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+    if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
+    if (payload.gregale_read_only === true && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
     if (guarded) {
       if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
       if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
       if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
     }
+    if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
     if (req.url === '/__gregale/schema') {
       if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
       try {
@@ -65,6 +68,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) })
       } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
     }
+    if (!await admitRefreshRequest(config, req, res)) return
     try {
       // Only the binding login may become the SQL role. External role claims
       // cannot select an administrator, owner or another application's role.
@@ -82,6 +86,26 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1')
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
+}
+
+// A deliberate pause is an admission decision, not an engine failure.
+// PostgREST recovers its pool/schema cache for HTTP 503 responses, so block
+// known paused traffic here. Its SQL pre-request hook still fences races.
+async function admitRefreshRequest(config, req, res) {
+  if (!config.coordinatedRefresh) return true
+  try {
+    if (typeof config.refreshStatus !== 'function') throw new Error('Refresh reader unavailable')
+    const gate = await config.refreshStatus(req.headers['x-gregale-refresh-token'])
+    if (!gate || typeof gate.paused !== 'boolean' || !/^[a-f0-9]{64}$/.test(gate.fingerprint ?? '')) throw new Error('Invalid refresh state')
+    if (gate.paused && gate.owns_pause !== true) {
+      problem(res, 503, 'data_api_refresh_paused')
+      return false
+    }
+    return true
+  } catch {
+    problem(res, 503, 'data_api_refresh_unavailable')
+    return false
+  }
 }
 
 function problem(res, status, code) {

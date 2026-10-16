@@ -1,4 +1,4 @@
-//go:build metal && !promotionacceptance
+//go:build metal && !promotionacceptance && !managed_postgres_native
 
 package e2etest
 

@@ -50,6 +50,28 @@ type nativeQualificationProducer struct {
 	restore          *nativeQualificationRestoreRecord
 }
 
+// The first-delivery capability is issued before the physical target is bound.
+// Only the binding fields may change when comparing it with the durable producer.
+func sameNativeQualificationRestoreClaim(claim, bound nativeQualificationRestoreRecord) bool {
+	if bound.NativeGeneration == "" || bound.NativeLease == (Lease{}) {
+		return false
+	}
+	// Journal serialization strips time.Time's monotonic clock and may change
+	// its location. Equal compares the same instant across that boundary.
+	if !claim.AcceptedAt.Equal(bound.AcceptedAt) || !claim.Deadline.Equal(bound.Deadline) {
+		return false
+	}
+	bound.AcceptedAt, bound.Deadline = claim.AcceptedAt, claim.Deadline
+	if claim.NativeGeneration == "" {
+		if claim.NativeLease != (Lease{}) {
+			return false
+		}
+		bound.NativeGeneration = ""
+		bound.NativeLease = Lease{}
+	}
+	return claim == bound
+}
+
 func (p *nativeQualificationProducer) bind(ctx context.Context, owner *nativeLaunchJournal, lease Lease) (string, error) {
 	if p.restore != nil {
 		r, err := owner.qualifications(p.Execution.NodeID).restores().bindNative(ctx, *p.restore, lease)
@@ -90,7 +112,7 @@ func (j *nativeQualificationRestoreJournal) producer(ctx context.Context, instan
 	if err != nil {
 		return nil, err
 	}
-	if r.Execution != permit.Execution || r.Generation != permit.Generation || r.KernelBootID != permit.KernelBootID || r.Capture != permit.Capture ||
+	if r.Execution != permit.Execution || r.Generation != permit.Generation || r.KernelBootID != permit.KernelBootID || !r.Capture.Equal(permit.Capture) ||
 		!r.AcceptedAt.Equal(permit.AcceptedAt) || !r.Deadline.Equal(permit.Deadline) ||
 		r.Execution.InstanceID != instance || !r.CreateStarted || r.Revoked || !j.incoming.clock().Before(r.Deadline) {
 		return nil, errors.New("native qualification restore: target producer changed, expired or was revoked")

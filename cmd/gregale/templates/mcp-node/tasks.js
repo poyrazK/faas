@@ -4,6 +4,8 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
+const TASK_TOOL_NAME_PATTERN = /^[\x21-\x7e]{1,128}$/;
+const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
 // Only this explicit handler error opts into retries. Messages are never persisted.
@@ -78,7 +80,7 @@ function inputMethodsFor(clientCapabilities) {
   return methods;
 }
 
-export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, workerConcurrency = 1, shutdownTimeoutMs = 30_000, maxAttempts = 3, retryBaseDelayMs = 1000, retryMaxDelayMs = 60_000, workerEnabled = true, keepAlive = false, onError = () => {} }) {
+export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDrain = () => {}, pollIntervalMs = 2000, workerConcurrency = 1, shutdownTimeoutMs = 30_000, maxAttempts = 3, retryBaseDelayMs = 1000, retryMaxDelayMs = 60_000, workerEnabled = true, keepAlive = false, onError = () => {} }) {
   if (!store || typeof store.initialize !== 'function' || typeof store.claim !== 'function') throw new Error('MCP Tasks require a durable task store');
   if (!handlers || typeof handlers !== 'object' || Array.isArray(handlers)) throw new Error('MCP Tasks require a handler registry');
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 500 || pollIntervalMs > 30_000) throw new Error('MCP task polling must be between 500 and 30000 milliseconds');
@@ -88,6 +90,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
 
   validateMcpTaskRetryPolicy({ maxAttempts, retryBaseDelayMs, retryMaxDelayMs });
 
+  handlers = Object.freeze({...handlers});
   const supportedHandlers = mcpTaskHandlerInventory(handlers);
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
@@ -275,6 +278,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
       clearInterval(heartbeat);
       controller.abort();
     };
+    abandon.task = task;
     executions.add(abandon);
 
     try {
@@ -328,7 +332,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
     // database or interrupt normal claim processing under sustained load.
     lastWorkerHeartbeat = now;
     try {
-      workerHeartbeatPending = Promise.resolve(store.workerHeartbeat(workerID, supportedHandlers));
+      workerHeartbeatPending = Promise.resolve(store.workerHeartbeat(workerID, supportedHandlers, deploymentID));
       await workerHeartbeatPending;
     } catch { reportError(); }
     finally { workerHeartbeatPending = undefined; }
@@ -367,6 +371,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
 
   return {
     workerID,
+    canCreate: name => Object.hasOwn(handlers,name),
     async start() {
       if (stopping) throw new Error('A stopped Task runtime cannot be restarted');
       if (!closed) return;
@@ -392,9 +397,13 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         let registryTimer;
         let registryBusy = false;
         let expired = false;
+        let expiredTasks = [];
+        const deadlineAt = new Date(Date.now()+shutdownTimeoutMs).toISOString();
+        try { onDrain({state:'draining',activeTasks:executions.size,deadline:deadlineAt}); } catch { reportError(); }
         const deadline = new Promise(resolve => {
           deadlineTimer = setTimeout(() => {
             expired = true;
+            expiredTasks=[...executions].map(abandon=>abandon.task);
             for (const abandon of executions) abandon();
             reportError();
             resolve();
@@ -429,15 +438,20 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         await Promise.race([finish, deadline]);
         clearTimeout(deadlineTimer);
         clearInterval(registryTimer);
-        // Timed-out registrations and execution leases expire naturally. Late
-        // handler completion cannot publish a terminal result after abandonment.
+        if (expiredTasks.length && typeof store.releaseMany === 'function') {
+          try { await store.releaseMany(expiredTasks); } catch { reportError(); }
+        }
+        try { onDrain({state:expired?'timed_out':'completed',unfinishedTasks:expiredTasks.length,deadline:deadlineAt}); } catch { reportError(); }
+        // Lease expiry remains the fallback if database cleanup is unavailable.
         return { timedOut: expired };
       })();
       return stopping;
     },
     async create(toolName, args, authInfo, authMode, clientCapabilities = {}) {
+      if (stopping) throw new Error('MCP task runtime is draining');
       const handler = handlers[toolName];
       if (!handler || typeof handler.execute !== 'function') throw new Error('MCP task tool is not registered');
+      handler.validate?.(args);
       const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities) });
       if (workerEnabled) void drain();
       return {
@@ -537,12 +551,75 @@ export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canA
   }, ({ taskId }, ctx) => runtime.update(taskId, ctx.mcpReq.inputResponses, authInfo, authMode, canAccessTool));
 }
 
-export const mcpTaskHandlers = Object.freeze({
-  build_report: Object.freeze({
-    version: '1',
-    async execute({ report, steps }, { signal }) {
+const registeredMcpTaskHandlers = Object.create(null);
+export const mcpTaskHandlers = new Proxy(registeredMcpTaskHandlers, {
+  set() { throw new TypeError('Register task handlers with registerMcpTaskHandler()'); },
+  defineProperty() { throw new TypeError('Register task handlers with registerMcpTaskHandler()'); },
+  deleteProperty() { throw new TypeError('Task handlers cannot be removed while the runtime is configured'); },
+});
+
+// Register handlers before starting the web or worker runtime. Keep the active
+// version stable across all processes sharing a queue and retain old versions
+// until their queued tasks have drained.
+export function registerMcpTaskHandler(name, handler) {
+  if (typeof name !== 'string' || !TASK_TOOL_NAME_PATTERN.test(name)) throw new TypeError('MCP task tool name must contain 1 to 128 visible ASCII characters');
+  if (!handler || typeof handler !== 'object' || Array.isArray(handler)
+    || typeof handler.version !== 'string' || !TASK_HANDLER_VERSION_PATTERN.test(handler.version)
+    || typeof handler.validate !== 'function' || typeof handler.execute !== 'function') {
+    throw new TypeError('MCP task handlers require a version, validate function, and execute function');
+  }
+  const previousVersions = handler.previousVersions ?? {};
+  if (!previousVersions || typeof previousVersions !== 'object' || Array.isArray(previousVersions)) throw new TypeError('MCP task previousVersions must be an object');
+  for (const [version, execute] of Object.entries(previousVersions)) {
+    if (!TASK_HANDLER_VERSION_PATTERN.test(version) || version === handler.version || typeof execute !== 'function') {
+      throw new TypeError('Invalid MCP task previous handler version');
+    }
+  }
+  if (Object.hasOwn(registeredMcpTaskHandlers, name)) throw new Error(`MCP task handler ${name} is already registered`);
+  registeredMcpTaskHandlers[name] = Object.freeze({
+    version: handler.version,
+    previousVersions: Object.freeze({ ...previousVersions }),
+    validate: handler.validate,
+    execute: handler.execute,
+  });
+  return mcpTaskHandlers[name];
+}
+
+registerMcpTaskHandler('build_report', {
+    version: '2',
+    previousVersions: {
+      '1': async ({ report, steps }, { signal }) => {
+        for (let step = 0; step < steps; step++) await delay(200, undefined, { signal });
+        return { content: [{ type: 'text', text: `Report ${report} is ready after ${steps} steps.` }] };
+      },
+    },
+    validate(args) {
+      if (!args || typeof args !== 'object' || Array.isArray(args)
+        || typeof args.report !== 'string' || !args.report.trim() || args.report.length > 80
+        || !Number.isInteger(args.steps) || args.steps < 1 || args.steps > 20
+        || (args.request_approval !== undefined && typeof args.request_approval !== 'boolean')) {
+        throw new Error('Invalid build_report task arguments');
+      }
+    },
+    async execute({ report, steps, request_approval }, { signal, requestInput }) {
+      if (request_approval) {
+        const response = await requestInput('approval', {
+          method: 'elicitation/create',
+          params: {
+            mode: 'form',
+            message: 'Approve generating this report?',
+            requestedSchema: {
+              type: 'object',
+              properties: { approved: { type: 'boolean', title: 'Approve report generation' } },
+              required: ['approved'],
+            },
+          },
+        });
+        if (response.action !== 'accept' || response.content?.approved !== true) {
+          return { content: [{ type: 'text', text: 'Report was not approved.' }] };
+        }
+      }
       for (let step = 0; step < steps; step++) await delay(200, undefined, { signal });
       return { content: [{ type: 'text', text: `Report ${report} is ready after ${steps} steps.` }] };
     },
-  }),
 });

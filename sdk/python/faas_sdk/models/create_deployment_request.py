@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_deployment_request_native_rollout import (
+    CreateDeploymentRequestNativeRollout,
+    check_create_deployment_request_native_rollout,
+)
 from ..models.create_deployment_request_tag_type_1 import (
     CreateDeploymentRequestTagType1,
     check_create_deployment_request_tag_type_1,
@@ -21,6 +25,7 @@ from ..models.create_deployment_request_tag_type_3_type_1 import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_release_review import AppReleaseReview
     from ..models.canary_preset_spec import CanaryPresetSpec
     from ..models.create_deployment_overrides import CreateDeploymentOverrides
     from ..models.sidecar import Sidecar
@@ -41,6 +46,12 @@ class CreateDeploymentRequest:
 
     """
 
+    native_rollout: CreateDeploymentRequestNativeRollout | Unset = UNSET
+    """Reviewed native activation. Requires expected_review, matching target execution mode, an unprotected
+    environment and omitted traffic_percent. Services switch through readiness, routing acknowledgement and drain
+    barriers. Workers activate the newest live generation; this is not zero-traffic staging."""
+    expected_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     image: str | Unset = UNSET
     """registry.gregale.dev/...@sha256:... — digest-pinned OCI reference."""
     overrides: CreateDeploymentOverrides | None | Unset = UNSET
@@ -88,6 +99,9 @@ class CreateDeploymentRequest:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to
     false."""
+    mcp_task_migration_override: bool | Unset = UNSET
+    """One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need
+    handler versions it does not provide."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."""
     full_rootfs_allow_auto: bool | None | Unset = UNSET
@@ -101,6 +115,14 @@ class CreateDeploymentRequest:
     def to_dict(self) -> dict[str, Any]:
         from ..models.canary_preset_spec import CanaryPresetSpec
         from ..models.create_deployment_overrides import CreateDeploymentOverrides
+
+        native_rollout: str | Unset = UNSET
+        if not isinstance(self.native_rollout, Unset):
+            native_rollout = self.native_rollout
+
+        expected_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.expected_review, Unset):
+            expected_review = self.expected_review.to_dict()
 
         image = self.image
 
@@ -197,6 +219,8 @@ class CreateDeploymentRequest:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        mcp_task_migration_override = self.mcp_task_migration_override
+
         disable_startup_cpu_boost: bool | None | Unset
         if isinstance(self.disable_startup_cpu_boost, Unset):
             disable_startup_cpu_boost = UNSET
@@ -218,6 +242,10 @@ class CreateDeploymentRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if native_rollout is not UNSET:
+            field_dict["native_rollout"] = native_rollout
+        if expected_review is not UNSET:
+            field_dict["expected_review"] = expected_review
         if image is not UNSET:
             field_dict["image"] = image
         if overrides is not UNSET:
@@ -248,6 +276,8 @@ class CreateDeploymentRequest:
             field_dict["canary"] = canary
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if mcp_task_migration_override is not UNSET:
+            field_dict["mcp_task_migration_override"] = mcp_task_migration_override
         if disable_startup_cpu_boost is not UNSET:
             field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if full_rootfs_allow_auto is not UNSET:
@@ -259,12 +289,27 @@ class CreateDeploymentRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_release_review import AppReleaseReview
         from ..models.canary_preset_spec import CanaryPresetSpec
         from ..models.create_deployment_overrides import CreateDeploymentOverrides
         from ..models.sidecar import Sidecar
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
+        _native_rollout = d.pop("native_rollout", UNSET)
+        native_rollout: CreateDeploymentRequestNativeRollout | Unset
+        if isinstance(_native_rollout, Unset):
+            native_rollout = UNSET
+        else:
+            native_rollout = check_create_deployment_request_native_rollout(_native_rollout)
+
+        _expected_review = d.pop("expected_review", UNSET)
+        expected_review: AppReleaseReview | Unset
+        if isinstance(_expected_review, Unset):
+            expected_review = UNSET
+        else:
+            expected_review = AppReleaseReview.from_dict(_expected_review)
+
         image = d.pop("image", UNSET)
 
         def _parse_overrides(data: object) -> CreateDeploymentOverrides | None | Unset:
@@ -441,6 +486,8 @@ class CreateDeploymentRequest:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
+
         def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -469,6 +516,8 @@ class CreateDeploymentRequest:
         full_rootfs_override = _parse_full_rootfs_override(d.pop("full_rootfs_override", UNSET))
 
         create_deployment_request = cls(
+            native_rollout=native_rollout,
+            expected_review=expected_review,
             image=image,
             overrides=overrides,
             require_signed=require_signed,
@@ -484,6 +533,7 @@ class CreateDeploymentRequest:
             pr_number=pr_number,
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
+            mcp_task_migration_override=mcp_task_migration_override,
             disable_startup_cpu_boost=disable_startup_cpu_boost,
             full_rootfs_allow_auto=full_rootfs_allow_auto,
             full_rootfs_override=full_rootfs_override,

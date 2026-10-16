@@ -326,6 +326,17 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 		_, _ = fmt.Fprintf(w, "  Abort canary: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
 		return
 	}
+	if summary.Deployment.TrafficPercent > 0 && summary.Deployment.TrafficPercent < 100 {
+		// H10-10: a plain split has no single previous release either; the
+		// server refuses a plain rollback, and promoting the earlier live
+		// release is the way back, as for a canary.
+		if prev := summary.Previous; prev != nil && prev.Status == statusLive {
+			_, _ = fmt.Fprintf(w, "  Undo split: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+			return
+		}
+		_, _ = fmt.Fprintf(w, "  Undo split: gregale traffic status %s, then gregale traffic promote --app %s --deployment <earlier release>\n", appSlug, appSlug)
+		return
+	}
 	if summary.RollbackTargetID == "" {
 		_, _ = fmt.Fprintln(w, "  Rollback: unavailable (no previous release)")
 		return

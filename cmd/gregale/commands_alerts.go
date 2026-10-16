@@ -122,13 +122,14 @@ func cmdAlertAdd(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
-	metric := fs.String("metric", "", "metric (closed set; includes event_retention_expiring_receipts and event_storage_utilization_pct)")
+	edgeRule := fs.String("edge-rule-id", "", "edge rule id for edge_rule_hits / edge_rule_log_hits (empty = every rule of the app; ADR-1192)")
+	metric := fs.String("metric", "", "metric (closed set; includes MCP task, event retention, and event storage metrics)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
-	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
+	webhookURL := fs.String("webhook-url", "", "webhook URL (required, http(s)://...; https recommended)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
@@ -168,6 +169,7 @@ func cmdAlertAdd(args []string) int {
 		Threshold:                       *threshold,
 		WindowSpec:                      *windowSpec,
 		EventSubscriptionID:             *eventSubscription,
+		EdgeRuleID:                      *edgeRule,
 		FailureSource:                   *failureSource,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
@@ -227,6 +229,9 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, acti
 	}
 	if *action != "" && !api.AllowedAlertRuleAction(*action) {
 		return printErr("Invalid action", fmt.Errorf("--action %q must be webhook|rollback|demote|promote", *action)) == 0
+	}
+	if !api.AlertRuleActionAllowedForMetric(*metric, *action) {
+		return printErr("Invalid action", fmt.Errorf("this metric supports webhook action only")) == 0
 	}
 	return true
 }
@@ -514,6 +519,9 @@ func validateAlertUpdateFlags(metric, comparison, windowSpec, action *string, th
 	}
 	if *action != "" && !api.AllowedAlertRuleAction(*action) {
 		return printErr("Invalid action", fmt.Errorf("--action %q must be webhook|rollback|demote|promote", *action)) == 0
+	}
+	if *metric != "" && *action != "" && !api.AlertRuleActionAllowedForMetric(*metric, *action) {
+		return printErr("Invalid action", fmt.Errorf("this metric supports webhook action only")) == 0
 	}
 	if !math.IsNaN(*threshold) && !api.IsFiniteFloat(*threshold) {
 		return printErr("Invalid threshold", fmt.Errorf("--threshold must be a finite number; got %v", *threshold)) == 0

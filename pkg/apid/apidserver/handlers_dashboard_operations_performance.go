@@ -1,0 +1,269 @@
+package apidserver
+
+import (
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func (s *server) renderAppWorkflowPerformance(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, app state.App) {
+	w.Header().Set("Cache-Control", "no-store")
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		operation.WriteOperationError(w, state.ErrInvalidArgument)
+		return
+	}
+	if q.Has("dimension") {
+		s.renderAppWorkflowPerformanceInstances(r.Context(), w, r, log, acct, app)
+		return
+	}
+	for _, key := range []string{"tenant_id", "workflow", "baseline_token"} {
+		if values := q[key]; len(values) == 1 && values[0] == "" {
+			q.Del(key)
+		}
+	}
+	if !q.Has("scope") {
+		q.Set("scope", api.DefaultEnvScope)
+	}
+	clone := r.Clone(r.Context())
+	u := *r.URL
+	clone.URL = &u
+	clone.URL.RawQuery = q.Encode()
+	opts, err := operation.OperationWorkflowPerformanceOptions(clone, true, app.ID)
+	if err != nil {
+		operation.WriteOperationError(w, err)
+		return
+	}
+	data := dashboard.WorkflowPerformanceData{AppSlug: app.Slug, Scope: opts.Scope, TenantID: opts.TenantID, Workflow: opts.Workflow, ListURL: dashboardCustomerOperationsURL(app.Slug), SummaryURL: dashboardCustomerOperationsURL(app.Slug) + "/performance"}
+	if opts.Workflow != "" {
+		store, ok := s.store.(state.OperationWorkflowPerformanceStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("workflow performance unavailable"))
+			return
+		}
+		summary, err := store.SummarizeAccountWorkflowPerformance(r.Context(), acct.ID, opts)
+		if err != nil {
+			operation.WriteOperationError(w, err)
+			return
+		}
+		data.Summary = &summary
+		data.GapQueueURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_gap_queue"})
+		data.GapProgressGroups = workflowGapProgressLinks(data.SummaryURL, opts, summary)
+		data.NewMissingProgressInstances = workflowNewMissingProgressLinks(data.ListURL, opts, summary.NewMissingProgress)
+		data.MissingProgressInstances = workflowMissingProgressLinks(data.ListURL, opts, summary.MissingProgress)
+		data.MissingConditionGroups = workflowMissingConditionLinks(data.SummaryURL, opts, summary)
+		data.ConditionCoverageInstances = workflowConditionCoverageLinks(data.ListURL, opts, summary.ConditionCoverage)
+		data.BaselineToken = opts.BaselineToken
+		data.CompareRefreshURL, data.RefreshProgressInstances = workflowRefreshProgressLinks(data.SummaryURL, data.ListURL, opts, summary)
+		data.RefreshAgeURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_age"})
+		data.RefreshBlockedURL = workflowPerformanceContributorURL(data.SummaryURL, opts, "ongoing", summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_blocked"})
+		data.RefreshOwnerGroups = workflowConditionRefreshOwnerLinks(data.SummaryURL, opts, summary)
+		data.ActiveConditionGroups = workflowActiveConditionLinks(data.SummaryURL, opts, summary)
+		data.ConditionGroups = workflowConditionOutcomeLinks(data.SummaryURL, opts, summary)
+		if summary.DecisionOutcomes != nil {
+			data.DecisionGroups = workflowDecisionOutcomeLinks(data.SummaryURL, opts, summary)
+			if summary.DecisionOutcomes.RuleComparisons != nil {
+				data.RuleComparisons = workflowRuleComparisonViews(summary.DecisionOutcomes.RuleComparisons, data.ListURL, opts)
+			}
+		}
+		data.EvaluatedAt = dashboardJobsTime(summary.EvaluatedAt)
+		data.Cohorts = []dashboard.WorkflowPerformanceCohort{{Name: "Completed", OperationWorkflowPerformanceCohort: summary.Completed}, {Name: "Ongoing", OperationWorkflowPerformanceCohort: summary.Ongoing}}
+		for index := range data.Cohorts {
+			cohort := &data.Cohorts[index]
+			value := "completed"
+			if index == 1 {
+				value = "ongoing"
+			}
+			cohort.StateTimeURL = workflowPerformanceContributorURL(data.SummaryURL, opts, value, summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "state_time"})
+			cohort.BlockedTimeURL = workflowPerformanceContributorURL(data.SummaryURL, opts, value, summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "blocked_time"})
+			cohort.VerificationWaitURL = workflowPerformanceContributorURL(data.SummaryURL, opts, value, summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "verification_wait"})
+			for _, group := range cohort.States {
+				cohort.StateGroups = append(cohort.StateGroups, dashboard.WorkflowStatePerformanceLink{OperationWorkflowStatePerformance: group, URL: workflowPerformanceContributorURL(data.SummaryURL, opts, value, summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "state", ContractVersion: group.ContractVersion, State: group.State})})
+			}
+			for _, group := range cohort.Blockers {
+				cohort.BlockerGroups = append(cohort.BlockerGroups, dashboard.WorkflowBlockerPerformanceLink{OperationWorkflowBlockerPerformance: group, URL: workflowPerformanceContributorURL(data.SummaryURL, opts, value, summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "blocker", ContractVersion: group.ContractVersion, Operation: group.Operation, Code: group.Code, Owner: group.Owner, Unassigned: group.Owner == ""})})
+			}
+			for _, group := range cohort.VerificationOwners {
+				cohort.VerificationGroups = append(cohort.VerificationGroups, dashboard.WorkflowVerificationPerformanceLink{OperationWorkflowVerificationPerformance: group, URL: workflowPerformanceContributorURL(data.SummaryURL, opts, value, summary.CohortToken, api.OperationWorkflowPerformanceGroup{Dimension: "verification_owner", Owner: group.Owner, Unassigned: group.Owner == ""})})
+			}
+		}
+	}
+	count, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard performance: count apps", "err", err)
+	}
+	page := dashboard.Page{Title: app.Slug + " workflow performance", Body: "workflow_performance", Account: dashboardAccountView(acct, count), Data: data}
+	if err = dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		renderProblem(w, log, err)
+	}
+}
+
+func workflowDecisionOutcomeLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowDecisionOutcomeLink {
+	links := make([]dashboard.WorkflowDecisionOutcomeLink, 0, len(summary.DecisionOutcomes.Groups))
+	for _, value := range summary.DecisionOutcomes.Groups {
+		group := api.OperationWorkflowPerformanceGroup{Dimension: "decision_completion", ContractVersion: value.ContractVersion, Kind: value.Kind, DecisionCode: value.DecisionCode, RuleID: value.RuleID, RuleVersion: value.RuleVersion, GroupID: value.GroupID, PathID: value.PathID, OutcomeCode: value.OutcomeCode}
+		link := dashboard.WorkflowDecisionOutcomeLink{OperationWorkflowDecisionOutcomeGroup: value, CompletionURL: workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)}
+		group.Dimension = "decision_blocked"
+		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)
+		links = append(links, link)
+	}
+	return links
+}
+
+func workflowRuleComparisonViews(summary *api.OperationWorkflowRuleComparisonSummary, listURL string, opts api.OperationWorkflowPerformanceOptions) []dashboard.WorkflowRuleComparison {
+	views := make([]dashboard.WorkflowRuleComparison, 0, len(summary.Comparisons))
+	for _, comparison := range summary.Comparisons {
+		view := dashboard.WorkflowRuleComparison{OperationWorkflowRuleComparison: comparison}
+		for _, version := range comparison.Versions {
+			item := dashboard.WorkflowRuleVersion{OperationWorkflowRuleVersionStatistics: version}
+			for _, outcome := range version.Outcomes {
+				item.Outcomes = append(item.Outcomes, dashboard.WorkflowRuleOutcome{OperationWorkflowRuleVersionOutcome: outcome, Percent: fmt.Sprintf("%d.%02d%%", outcome.ProportionBasisPoints/100, outcome.ProportionBasisPoints%100)})
+			}
+
+			if version.SingleVersion != nil {
+				item.SingleVersion = &dashboard.WorkflowRuleCohort{OperationWorkflowRuleVersionCohort: *version.SingleVersion}
+				for _, outcome := range version.SingleVersion.Outcomes {
+					item.SingleVersion.Outcomes = append(item.SingleVersion.Outcomes, dashboard.WorkflowRuleOutcome{OperationWorkflowRuleVersionOutcome: outcome, Percent: fmt.Sprintf("%d.%02d%%", outcome.ProportionBasisPoints/100, outcome.ProportionBasisPoints%100)})
+				}
+			}
+			view.Versions = append(view.Versions, item)
+		}
+
+		for _, example := range comparison.MultiVersionExamples {
+			query := url.Values{"scope": {opts.Scope}, "tenant_id": {example.PlatformTenantID}, "subject_type": {example.Subject.Type}, "subject_id": {example.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {example.InstanceID}}
+			overlap := dashboard.WorkflowRuleOverlap{OperationWorkflowRuleVersionOverlap: example, HistoryURL: listURL + "?" + query.Encode() + "#workflows"}
+			for _, fact := range example.Evidence {
+				overlap.Evidence = append(overlap.Evidence, dashboard.WorkflowRuleEvidence{OperationWorkflowDecisionOutcomeEvidence: fact, OperationURL: listURL + "/" + url.PathEscape(fact.OperationID)})
+			}
+			view.MultiVersionExamples = append(view.MultiVersionExamples, overlap)
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func workflowConditionOutcomeLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowConditionOutcomeLink {
+	links := []dashboard.WorkflowConditionOutcomeLink{}
+	if summary.ConditionOutcomes == nil {
+		return links
+	}
+	for _, value := range summary.ConditionOutcomes.Groups {
+		group := api.OperationWorkflowPerformanceGroup{Dimension: "condition_completion", ContractVersion: value.ContractVersion, DecisionCode: value.DecisionCode, RuleID: value.RuleID, RuleVersion: value.RuleVersion, ConditionID: value.ConditionID, ConditionDescription: value.ConditionDescription, ConditionResult: value.ConditionResult, OutcomeCode: value.OutcomeCode}
+		link := dashboard.WorkflowConditionOutcomeLink{OperationWorkflowConditionOutcomeGroup: value, CompletionURL: workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)}
+		group.Dimension = "condition_blocked"
+		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "completed", summary.CohortToken, group)
+		links = append(links, link)
+	}
+	return links
+}
+
+func workflowActiveConditionLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowActiveConditionLink {
+	links := []dashboard.WorkflowActiveConditionLink{}
+	if summary.ActiveConditions == nil {
+		return links
+	}
+	for _, value := range summary.ActiveConditions.Groups {
+		group := api.OperationWorkflowPerformanceGroup{Dimension: "active_condition_elapsed", ContractVersion: value.ContractVersion, DecisionCode: value.DecisionCode, RuleID: value.RuleID, RuleVersion: value.RuleVersion, ConditionID: value.ConditionID, ConditionDescription: value.ConditionDescription, ConditionResult: value.ConditionResult}
+		link := dashboard.WorkflowActiveConditionLink{OperationWorkflowActiveConditionGroup: value, ElapsedURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)}
+		group.Dimension = "active_condition_blocked"
+		link.BlockedURL = workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)
+		group.ConditionEvidenceStatus = "overdue"
+		link.OverdueURL = workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, group)
+		links = append(links, link)
+	}
+	return links
+}
+
+func workflowConditionRefreshOwnerLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowConditionRefreshOwnerLink {
+	links := []dashboard.WorkflowConditionRefreshOwnerLink{}
+	if summary.ActiveConditions == nil {
+		return links
+	}
+	for _, group := range summary.ActiveConditions.RefreshOwners {
+		selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_refresh_owner", Owner: group.Owner, Unassigned: group.Unassigned}
+		links = append(links, dashboard.WorkflowConditionRefreshOwnerLink{OperationWorkflowConditionRefreshOwnerGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
+	}
+	return links
+}
+
+func workflowRefreshProgressLinks(path, listPath string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) (string, []dashboard.WorkflowRefreshProgressLink) {
+	q := url.Values{"scope": {opts.Scope}, "workflow": {opts.Workflow}, "baseline_token": {summary.CohortToken}}
+	if opts.TenantID != "" {
+		q.Set("tenant_id", opts.TenantID)
+	}
+	views := []dashboard.WorkflowRefreshProgressLink{}
+	if summary.RefreshProgress != nil {
+		for _, item := range summary.RefreshProgress.Items {
+			history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+			views = append(views, dashboard.WorkflowRefreshProgressLink{OperationWorkflowConditionRefreshProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+		}
+	}
+	return path + "?" + q.Encode(), views
+}
+
+func workflowConditionCoverageLinks(listPath string, opts api.OperationWorkflowPerformanceOptions, coverage *api.OperationWorkflowConditionCoverage) []dashboard.WorkflowConditionCoverageLink {
+	views := []dashboard.WorkflowConditionCoverageLink{}
+	if coverage == nil {
+		return views
+	}
+	for _, item := range coverage.Items {
+		history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+		views = append(views, dashboard.WorkflowConditionCoverageLink{OperationWorkflowConditionCoverageInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+	}
+	return views
+}
+
+func workflowMissingConditionLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowMissingConditionGroupLink {
+	links := []dashboard.WorkflowMissingConditionGroupLink{}
+	if summary.ConditionCoverage == nil {
+		return links
+	}
+	for _, group := range summary.ConditionCoverage.MissingGroups {
+		selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_missing_owner", ContractVersion: group.ContractVersion, State: group.State, Owner: group.Owner, Unassigned: group.Unassigned}
+		links = append(links, dashboard.WorkflowMissingConditionGroupLink{OperationWorkflowMissingConditionGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
+	}
+	return links
+}
+
+func workflowMissingProgressLinks(listPath string, opts api.OperationWorkflowPerformanceOptions, progress *api.OperationWorkflowMissingConditionProgress) []dashboard.WorkflowMissingProgressLink {
+	views := []dashboard.WorkflowMissingProgressLink{}
+	if progress == nil {
+		return views
+	}
+	for _, item := range progress.Items {
+		history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+		views = append(views, dashboard.WorkflowMissingProgressLink{OperationWorkflowMissingConditionProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+	}
+	return views
+}
+
+func workflowNewMissingProgressLinks(listPath string, opts api.OperationWorkflowPerformanceOptions, progress *api.OperationWorkflowNewMissingConditionProgress) []dashboard.WorkflowNewMissingProgressLink {
+	views := []dashboard.WorkflowNewMissingProgressLink{}
+	if progress == nil {
+		return views
+	}
+	for _, item := range progress.Items {
+		history := url.Values{"scope": {opts.Scope}, "tenant_id": {item.PlatformTenantID}, "subject_type": {item.Subject.Type}, "subject_id": {item.Subject.ID}, "workflow": {opts.Workflow}, "workflow_instance_id": {item.State.InstanceID}}
+		views = append(views, dashboard.WorkflowNewMissingProgressLink{OperationWorkflowNewMissingConditionProgressInstance: item, HistoryURL: listPath + "?" + history.Encode() + "#workflows"})
+	}
+	return views
+}
+
+func workflowGapProgressLinks(path string, opts api.OperationWorkflowPerformanceOptions, summary api.OperationWorkflowPerformanceSummary) []dashboard.WorkflowGapProgressGroupLink {
+	links := []dashboard.WorkflowGapProgressGroupLink{}
+	if summary.NewMissingProgress == nil {
+		return links
+	}
+	for _, group := range summary.NewMissingProgress.Groups {
+		selector := api.OperationWorkflowPerformanceGroup{Dimension: "condition_gap_owner", ContractVersion: group.ContractVersion, State: group.State, Owner: group.Owner, Unassigned: group.Unassigned, GapStatus: group.GapStatus}
+		links = append(links, dashboard.WorkflowGapProgressGroupLink{OperationWorkflowGapProgressGroup: group, ContributorsURL: workflowPerformanceContributorURL(path, opts, "ongoing", summary.CohortToken, selector)})
+	}
+	return links
+}

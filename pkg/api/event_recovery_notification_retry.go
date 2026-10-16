@@ -21,7 +21,7 @@ func (r EventRecoveryNotificationRetryRequest) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, t := range r.Targets {
-		if (t.Kind != "admission" && t.Kind != "execution") || !validID(t.WebhookID) || !validID(t.DeliveryID) || t.ExpectedReplayGeneration == nil || *t.ExpectedReplayGeneration < 0 || *t.ExpectedReplayGeneration >= math.MaxInt32 || seen[t.DeliveryID] {
+		if (t.Kind != "admission" && t.Kind != "execution" && t.Kind != "attention") || !validID(t.WebhookID) || !validID(t.DeliveryID) || t.ExpectedReplayGeneration == nil || *t.ExpectedReplayGeneration < 0 || *t.ExpectedReplayGeneration >= math.MaxInt32 || seen[t.DeliveryID] {
 			return fmt.Errorf("each target requires a notification kind, distinct delivery UUID, webhook UUID, and valid expected_replay_generation")
 		}
 		seen[t.DeliveryID] = true

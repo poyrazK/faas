@@ -59,6 +59,26 @@ func TestColdBootConfigNetworklessOmitsInterfaces(t *testing.T) {
 	}
 }
 
+// An app task boots the deployment's signed, node-cached app layer. Its drive1
+// must be a private copy: a hard link lets the task write into the cached layer,
+// and the next prime on that node refuses the layer as tampered (SB-13).
+func TestColdBootConfigAppTaskKeepsPrivateLayer(t *testing.T) {
+	spec := validColdSpec()
+	spec.SkipReady = true
+	spec.AppTask = true
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("app task cold-boot spec rejected: %v", err)
+	}
+	if cfg := BuildColdBootConfig(spec, 0); cfg.EphemeralWritable {
+		t.Fatal("app task config hard-links the cached app layer; it must stage a private copy")
+	}
+	builder := validColdSpec()
+	builder.SkipReady = true
+	if cfg := BuildColdBootConfig(builder, 0); !cfg.EphemeralWritable {
+		t.Fatal("builder config must keep the scratch-image hard-link optimization")
+	}
+}
+
 // adr: 171 — a networkless execution guest must not reference a netns that
 // was never created, while ordinary app wakes keep the --netns argument.
 func TestJailerCommandNetworklessOmitsNetns(t *testing.T) {
@@ -197,6 +217,23 @@ func TestColdBootConfigMarshalsToFirecrackerSchema(t *testing.T) {
 	} {
 		if !strings.Contains(js, key) {
 			t.Errorf("marshalled config missing Firecracker key %s\n%s", key, js)
+		}
+	}
+}
+
+// adr: 983 — the Firecracker 1.17 guest config builds in crypto self-tests,
+// SELinux and audit, which Gregale never uses; they cost ~250 ms of CPU per
+// cold boot on the n2 test node.
+func TestBootArgsSkipUnusedGuestKernelWork(t *testing.T) {
+	for name, spec := range map[string]ColdBootSpec{
+		"cold boot": validColdSpec(),
+		"execution": func() ColdBootSpec { s := validColdSpec(); s.Networkless = true; return s }(),
+	} {
+		args := strings.Fields(BuildColdBootConfig(spec, 0).BootSource.BootArgs)
+		for _, want := range []string{"cryptomgr.notests", "selinux=0", "audit=0"} {
+			if !slices.Contains(args, want) {
+				t.Errorf("%s boot args missing %s: %q", name, want, args)
+			}
 		}
 	}
 }

@@ -33,7 +33,8 @@ class EventReceiptRecoveryAction:
     method: EventReceiptRecoveryActionMethod
     url: str
     body: ReplayEventFanoutFailureRequest | Unset = UNSET
-    """Identity of one terminal fanout failure to replay."""
+    """Identity of one terminal fanout failure to replay. Use either acceptance and generation guards or
+    recovery_expectation; combining the guard formats is invalid."""
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

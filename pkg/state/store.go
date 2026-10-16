@@ -235,6 +235,10 @@ var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
 // rollout state machine owns traffic until the canary completes or aborts.
 var ErrTrafficChangeDuringCanary = errors.New("state: traffic change blocked during active canary")
 
+// ErrMCPTaskCompatibilityGate means a stable cutover would retire the last
+// worker that can claim at least one queued MCP handler version.
+var ErrMCPTaskCompatibilityGate = errors.New("state: MCP task compatibility rollout gate blocked cutover")
+
 // sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
 // dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
 func sameDeploymentID(a, b string) bool {
@@ -999,6 +1003,16 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	OperatorObservabilityReader
+	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
+	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
+	FinishMCPTaskPromotionRecovery(context.Context, string, int64, string) (bool, error)
+	RetryMCPTaskPromotionRecovery(context.Context, string, string) error
+	MCPTaskPromotionHoldAgeSeconds(context.Context, string, string, time.Time) (float64, error)
+	MarkMCPTaskRecoveryDeploymentLive(context.Context, string, bool) error
+	ReconcileObsoleteMCPTaskHolds(context.Context, string) ([]Deployment, error)
+	DeploymentWorkerDrainStatus(context.Context, string) (*DeploymentWorkerDrainStatus, error)
+	MCPTaskPromotionHold(context.Context, string) (*MCPTaskPromotionHold, error)
 	// Boot and restore read one owned configuration/secret snapshot.
 	RuntimeAppValuesStore
 	RuntimeScalingStateStore
@@ -1891,6 +1905,10 @@ type Store interface {
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
 	ClearScenarioTestChaosPlan(ctx context.Context, accountID, runID string) error
 	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
+	// ScenarioTestDNSChaosByHostIP returns an active run policy only when a
+	// live guest address belongs to a registered test member and the target is
+	// in that same run. The source identity is checked in the same lookup.
+	ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, hostIP, targetWorkload string) (ScenarioTestDNSChaosPolicy, error)
 	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
 	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.
@@ -2559,7 +2577,9 @@ type Store interface {
 	// UpsertGitHubInstall persists the OAuth handshake state for one
 	// account's GitHub App install (PR-C). Idempotent on
 	// (AccountID, InstallationID) so a retry of the OAuth
-	// flow doesn't crash on the unique-PK constraint. The account row
+	// flow doesn't crash on the unique-PK constraint.
+	// Returns ErrConflict if another account owns the installation;
+	// reconnecting must never transfer ownership implicitly. The account row
 	// itself must exist (the FK enforces this); pre-CASCADE deletes
 	// of an account surface as ErrNotFound here so the caller can
 	// distinguish "account doesn't exist" from a transient write
@@ -4290,6 +4310,13 @@ type Store interface {
 	// DeleteCustomMetric removes one gauge by name so a customer can
 	// retire a metric without waiting for the app to be deleted.
 	DeleteCustomMetric(ctx context.Context, appID, name string) error
+	// PutMCPTaskCompatibilityReport replaces the app's bounded aggregate
+	// handler-version snapshot. It contains counts only, with no task IDs or
+	// payloads; observedAt is assigned by apid when it accepts the report.
+	PutMCPTaskCompatibilityReport(ctx context.Context, appID string, report MCPTaskCompatibilityReport) error
+	// GetMCPTaskCompatibilityReport returns the last accepted snapshot or
+	// ErrNotFound when the observer has not published one yet.
+	GetMCPTaskCompatibilityReport(ctx context.Context, appID string) (MCPTaskCompatibilityReport, error)
 	// QueueStateForQueue returns the same live counters scoped to one named
 	// queue binding. Queue names are exact matches; the empty queue name is
 	// reserved for the legacy app-wide queue returned by QueueState.
@@ -6502,6 +6529,11 @@ type Store interface {
 	// sqlc v1.31's "ambiguous column" parser; PR-B documents the
 	// Go-side composition in pkg/state/pgstore.go).
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error)
+
+	// RequestTelemetryErrorsByRoute backs the regression detector's
+	// error-rate signal: per-route represented requests and HTTP 5xx counts
+	// for one deployment and window.
+	RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error)
 
 	// RequestTelemetryAnalyticsSummary and RequestTelemetryAnalyticsByRoute
 	// back the customer-facing aggregated request analytics endpoint. Both

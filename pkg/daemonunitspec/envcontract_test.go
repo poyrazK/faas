@@ -80,11 +80,12 @@ func scanLiterals(t *testing.T, root string, dirs []string) map[string]map[strin
 	return found
 }
 
-// apidOwnedPkgs are apid domains lifted out of cmd/apid by ADR-977. Only apid
+// apidOwnedPkgs are apid packages outside cmd/apid (ADR-977): the server
+// package cmd/apid wraps, and the domains lifted out of it. Only apid
 // imports them, so their env reads belong to apid, not "shared". List a
 // package here only if no other daemon imports it (pkg/apid/apidsource is
 // also used by githubd and stays shared).
-var apidOwnedPkgs = []string{"pkg/apid/durable/", "pkg/apid/receivers/"}
+var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/"}
 
 func ownerOf(rel string) string {
 	for _, prefix := range apidOwnedPkgs {
@@ -248,7 +249,7 @@ func TestEnvContract_DeliveryIsWired(t *testing.T) {
 	renderers := readTree(t, root, []string{"cmd/gregalectl", "pkg/manifest", "pkg/renderer"}, func(p string) bool {
 		return strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go")
 	})
-	runtimeCfg, err := os.ReadFile(filepath.Join(root, "cmd/apid/runtime_config.go"))
+	runtimeCfg, err := os.ReadFile(filepath.Join(root, "pkg/apid/apidserver/runtime_config.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +290,7 @@ func TestEnvContract_DeliveryIsWired(t *testing.T) {
 			}
 		case EnvSourceRuntimeConfig:
 			if !bytes.Contains(runtimeCfg, []byte(`"`+v.Name+`"`)) {
-				t.Errorf("%s: Source=runtime-config but cmd/apid/runtime_config.go does not map it", v.Name)
+				t.Errorf("%s: Source=runtime-config but pkg/apid/apidserver/runtime_config.go does not map it", v.Name)
 			}
 		}
 	}
@@ -389,4 +390,21 @@ func renderEnvContractDoc() string {
 		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s | `%s` | %s |\n", v.Name, strings.Join(v.Owners, ", "), v.Source, required, v.Default, v.Validate, note)
 	}
 	return b.String()
+}
+
+func TestEnvContractDurableObjectManagementRemainsOptIn(t *testing.T) {
+	// ADR-989..998: shipping the management code must not enable an
+	// unqualified durable-object feature through daemon environment defaults.
+	contract := EnvContractByName()
+	for _, suffix := range []string{
+		"BROWSER_SESSIONS_ENABLED", "QUOTA_MIGRATION_ENABLED", "QUOTA_POLICY_ENABLED",
+		"REGISTRY_CLEANUP_ENABLED", "REGISTRY_CLEANUP_WORKER_ENABLED", "REGISTRY_ENABLED",
+		"RETIREMENT_ENABLED", "SOCKETS_ENABLED", "TENANT_QUOTAS_ENABLED",
+	} {
+		name := "FAAS_DURABLE_ENTITY_" + suffix
+		v, ok := contract[name]
+		if !ok || v.Source != EnvSourceDefault || v.Default != "0" || v.Required || len(v.Owners) != 1 || v.Owners[0] != "apid" {
+			t.Errorf("%s must remain optional and disabled for apid: %+v", name, v)
+		}
+	}
 }
