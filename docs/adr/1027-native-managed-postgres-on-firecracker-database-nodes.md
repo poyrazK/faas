@@ -844,6 +844,23 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     `gregale:credential:v1:<scope>:<access>`. The scope is shared by all
     roles of one database. The Data API starter's migrations find their
     `data_api` login from their migration login's marker, as on Neon.
+- **Source suspension (ADR-1370 §4, groundwork for slice 14).** A cutover
+  suspends every binding identity on its source before the data step.
+  Natively, `suspendRoles` sets each role NOLOGIN and terminates its
+  backends. pgproxyd logs in as the role after authenticating the client,
+  so no session opens, pooled or not.
+  - The verifiers and passwords stay, so `resumeRoles` lets the same
+    credentials back in when an activation aborts before publish.
+  - `rolesIdle` is the zero-sessions observation: it raises
+    `object_in_use` while a role keeps a session or a prepared transaction.
+  - Revocation sets NOLOGIN too, so resume re-enables only the roles it is
+    given.
+  - The `CredentialSuspender` interface itself is ADR-1370 slice 7, on
+    `main`; slice 14 wraps these.
+  - A disposable PostgreSQL 16 test suspends two of three bindings. Their
+    sessions end and their logins fail with `28000`. The third keeps its
+    session, all verifiers stay, and the same passwords log in after a
+    resume.
 - **Data API credentials (ADR-650).** A backend with `data_api_enabled`
   issues `data_api` logins and advertises them. The login is
   `gregale_api_<hash>`:
