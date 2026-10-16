@@ -470,7 +470,9 @@ func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentCl
 		config := ProjectEnvironmentConfig{ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
 			EnvironmentSlug: clone.TargetSlug, Version: 1, ConfigHash: frozen.Hash,
 			Values: append([]byte(nil), frozen.Values...), CreatedAt: now}
+		before := m.latestProjectEnvironmentConfigValuesLocked(clone.ProjectID, clone.TargetSlug)
 		m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.TargetSlug)] = []ProjectEnvironmentConfig{config}
+		m.projectConfigRuntimeChangeLocked(clone.ProjectID, clone.TargetSlug, before, config.Values, now)
 		return ProjectEnvironmentCloneResult{ConfigurationCopied: true}
 	}
 	source := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.SourceSlug)]
@@ -479,7 +481,9 @@ func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentCl
 	}
 	config := cloneProjectEnvironmentConfig(source[len(source)-1])
 	config.ID, config.EnvironmentSlug, config.Version, config.CreatedAt = newID(), clone.TargetSlug, 1, now
+	before := m.latestProjectEnvironmentConfigValuesLocked(clone.ProjectID, clone.TargetSlug)
 	m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.TargetSlug)] = []ProjectEnvironmentConfig{config}
+	m.projectConfigRuntimeChangeLocked(clone.ProjectID, clone.TargetSlug, before, config.Values, now)
 	return ProjectEnvironmentCloneResult{ConfigurationCopied: true}
 }
 

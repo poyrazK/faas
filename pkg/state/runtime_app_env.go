@@ -11,6 +11,11 @@ import (
 type RuntimeAppEnvSnapshot struct {
 	AccountID, AppID, DeploymentID, Scope, EnvironmentID string
 	Values                                               []AppEnv
+	// Inherited holds the project environment configuration variables the
+	// deployment inherits (ADR-1136), sorted by key, without the keys the app
+	// sets itself in the same scope. They are delivered below the app's own
+	// values and are not part of runtime receipts.
+	Inherited []AppEnv
 }
 
 type RuntimeAppEnvStore interface {

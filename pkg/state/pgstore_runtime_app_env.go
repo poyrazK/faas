@@ -20,7 +20,28 @@ func (s *PgStore) RuntimeAppEnvForDeployment(ctx context.Context, accountID, app
 	if err != nil {
 		return RuntimeAppEnvSnapshot{}, mapErr(err)
 	}
-	return decodeRuntimeAppEnvSnapshot(accountID, appID, deploymentID, row.Scope, row.EnvironmentID, row.Values)
+	snapshot, err := decodeRuntimeAppEnvSnapshot(accountID, appID, deploymentID, row.Scope, row.EnvironmentID, row.Values)
+	if err != nil {
+		return RuntimeAppEnvSnapshot{}, err
+	}
+	if snapshot.Inherited, err = decodeInheritedProjectEnv(snapshot, row.ProjectConfig); err != nil {
+		return RuntimeAppEnvSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// decodeInheritedProjectEnv reads the project_config column of the runtime
+// snapshot queries (ADR-1136): the latest configuration version of the
+// project environment the deployment's scope maps to, or an empty object.
+func decodeInheritedProjectEnv(snapshot RuntimeAppEnvSnapshot, raw []byte) ([]AppEnv, error) {
+	var project struct {
+		Values    json.RawMessage `json:"values"`
+		CreatedAt time.Time       `json:"created_at"`
+	}
+	if err := json.Unmarshal(raw, &project); err != nil {
+		return nil, ErrConflict
+	}
+	return inheritedProjectEnv(snapshot.AccountID, snapshot.AppID, snapshot.Scope, snapshot.Values, project.Values, project.CreatedAt.UTC())
 }
 
 func decodeRuntimeAppEnvSnapshot(accountID, appID, deploymentID, scope, environmentID string, raw []byte) (RuntimeAppEnvSnapshot, error) {

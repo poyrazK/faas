@@ -36,6 +36,9 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 	if err := json.Unmarshal(row.ReloadSignals, &result.SecretGrants.SidecarReloadSignals); err != nil {
 		return RuntimeAppValuesSnapshot{}, ErrConflict
 	}
+	if result.Inherited, err = decodeInheritedProjectEnv(owner, row.ProjectConfig); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
 	var secrets []runtimeAppSealedSecretRow
 	if err := json.Unmarshal(row.Secrets, &secrets); err != nil {
 		return RuntimeAppValuesSnapshot{}, ErrConflict

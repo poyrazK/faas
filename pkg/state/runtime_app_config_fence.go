@@ -49,15 +49,51 @@ func NewRuntimeAppConfigFence(snapshot RuntimeAppValuesSnapshot) (RuntimeAppConf
 		variables = append(variables, variable{row.Key, row.Value, row.CreatedAt.UTC()})
 	}
 	sort.Slice(variables, func(i, j int) bool { return variables[i].Key < variables[j].Key })
-	hash, err := runtimeConfigurationHash(struct {
-		Secret        RuntimeAppSecretFence
-		Configuration RuntimeAppConfiguration
-		Variables     []variable
-	}{secret, snapshot.Configuration, variables})
+	inherited, err := runtimeInheritedVariables(snapshot, keys)
+	if err != nil {
+		return RuntimeAppConfigFence{}, err
+	}
+	var hash string
+	if len(inherited) == 0 {
+		// A deployment that inherits nothing keeps the fingerprint it had
+		// before ADR-1136, so running and paused instances stay valid.
+		hash, err = runtimeConfigurationHash(struct {
+			Secret        RuntimeAppSecretFence
+			Configuration RuntimeAppConfiguration
+			Variables     []variable
+		}{secret, snapshot.Configuration, variables})
+	} else {
+		hash, err = runtimeConfigurationHash(struct {
+			Secret        RuntimeAppSecretFence
+			Configuration RuntimeAppConfiguration
+			Variables     []variable
+			Inherited     []inheritedVariable
+		}{secret, snapshot.Configuration, variables, inherited})
+	}
 	if err != nil {
 		return RuntimeAppConfigFence{}, err
 	}
 	return RuntimeAppConfigFence{SecretFence: secret, Fingerprint: hash}, nil
+}
+
+type inheritedVariable struct{ Key, Value string }
+
+// runtimeInheritedVariables validates the inherited project variables
+// (ADR-1136) and returns them for the fence. Only keys and values count: a new
+// configuration version that delivers the same values keeps the fingerprint.
+func runtimeInheritedVariables(snapshot RuntimeAppValuesSnapshot, own map[string]bool) ([]inheritedVariable, error) {
+	inherited := make([]inheritedVariable, 0, len(snapshot.Inherited))
+	seen := map[string]bool{}
+	for _, row := range snapshot.Inherited {
+		if row.AccountID != snapshot.AccountID || row.AppID != snapshot.AppID || row.Scope != snapshot.Scope ||
+			api.ValidateEnvKey(row.Key) != nil || own[row.Key] || seen[row.Key] {
+			return nil, ErrConflict
+		}
+		seen[row.Key] = true
+		inherited = append(inherited, inheritedVariable{row.Key, row.Value})
+	}
+	sort.Slice(inherited, func(i, j int) bool { return inherited[i].Key < inherited[j].Key })
+	return inherited, nil
 }
 
 func runtimeAppConfiguration(settings ProjectEnvironmentWorkloadSettings, specID string, artifact projectCloneArtifact, layers []DeploymentSidecarLayer) (RuntimeAppConfiguration, error) {
