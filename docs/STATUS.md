@@ -89,6 +89,22 @@ separate these process checks from native VM qualification. Native execution is
 pending: this workspace lacks KVM. Function hooks execute in one worker; this
 does not qualify VM-wide pool draining or durable post-response `waitUntil`.
 
+## Node background completion foundation — 2026-10-16
+
+ADR-1346 adds a negotiated response/execution completion protocol. Portable
+runner and generated-adapter tests cover early HTTP/1 and HTTP/2 response EOF,
+registered promises and children, rejection, central plan limits, neighbour
+isolation, deadlines/disconnect cleanup, crash recovery and recycle retention.
+Worker slots remain occupied through actual completion or cancellation cleanup;
+uncooperative workers are retired after the existing acknowledgement grace.
+Production runner mains leave activation disabled. Acknowledged VM registration,
+VM-wide checkpoint protection, Python background execution and native snapshot
+qualification remain separate work. No deployment or durable execution is
+claimed. See [ADR-1346](adr/1346-function-background-completion-protocol.md) and
+the [acceptance procedure](ops/function-backend-concurrency-acceptance.md).
+[Portable evidence](ops/evidence/20261016-function-background-completion/REPORT.md)
+records the disabled activation boundary and native prerequisite failures.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)

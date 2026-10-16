@@ -118,7 +118,7 @@ func (m *mux) fail(err error) {
 }
 
 // expectAck registers a completion fence for id's cancellation. It reports false
-// when the worker is already gone and there is nothing to cancel.
+// when the response pipe has failed; the caller must finish worker retirement.
 func (m *mux) expectAck(id string) (<-chan struct{}, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -128,6 +128,12 @@ func (m *mux) expectAck(id string) (<-chan struct{}, bool) {
 	done := make(chan struct{})
 	m.cancels[id] = done
 	return done, true
+}
+
+func (m *mux) failed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.err != nil
 }
 
 const idPrefix = `{"__faas_id":"`
@@ -236,6 +242,10 @@ func (p *pool) demux(w *worker) {
 func (p *pool) cancel(ctx context.Context, w *worker, id string, grace time.Duration) {
 	done, ok := w.mux.expectAck(id)
 	if !ok {
+		// EOF can mean stdout closed while the interpreter still runs.
+		// Do not release execution ownership before retirement has waited
+		// for process exit, including a concurrent demux retirement.
+		p.retire(w)
 		return
 	}
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
@@ -246,6 +256,9 @@ func (p *pool) cancel(ctx context.Context, w *worker, id string, grace time.Dura
 	}
 	select {
 	case <-done:
+		if w.mux.failed() {
+			p.retire(w)
+		}
 	case <-sendCtx.Done():
 		log.Printf("workerpool: worker %d did not finish cancelling a request within %s; restarting it", w.cmd.Process.Pid, grace)
 		p.retire(w)

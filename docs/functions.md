@@ -307,10 +307,16 @@ hook path before calling a resource hook. A hook runs in one worker, so it
 cannot prove that pools in every worker have drained. The single HTTP-process
 PostgreSQL starter remains the reference for checkpoint pool ownership.
 
-The completion fence covers the handler and its response stream. Await work
-that must finish with the invocation; the generated Node `waitUntil` scaffold
-is not qualified for keeping an instance alive after its response. Use a
-durable queue for detached work that must survive worker replacement.
+The production completion fence covers the handler and its response stream.
+Await work that must finish with the invocation. A negotiated Node background
+completion protocol now has portable coverage for real `ctx.waitUntil()`
+promises, early HTTP response completion, task limits and cancellation cleanup.
+Production runners keep that protocol disabled until acknowledged VM lifetime
+registration and VM-wide checkpoint protection are implemented and qualified.
+The default Node `waitUntil` scaffold therefore still provides no instance
+lifetime guarantee. Use a durable queue for work that must survive worker or
+VM replacement; bounded post-response work does not provide durable execution.
 
-See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md)
+See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md),
+[ADR-1346](adr/1346-function-background-completion-protocol.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

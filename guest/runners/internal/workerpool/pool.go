@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -56,9 +57,9 @@ func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (h
 // OpenIfSupported sends request to a reused worker and returns the worker's
 // response lines: one complete response, or a streamed response's head and
 // the frames after it (ADR-999). The caller reads what it needs and then
-// closes the Lines, healthy only when the response ended cleanly, since a
-// worker left mid-response would hand its remaining frames to the next
-// request. handled=false asks the caller to retain the legacy one-shot path.
+// closes the Lines, healthy only when the response ended cleanly (and, when
+// negotiated, execution completed). A worker left mid-response would hand its
+// remaining frames to the next request. handled=false retains the one-shot path.
 func OpenIfSupported(ctx context.Context, spec Spec, request any) (lines *Lines, handled bool, err error) {
 	if !supportsPersistentProtocol(spec) {
 		return nil, false, nil
@@ -74,16 +75,38 @@ type Lines struct {
 	w    *worker
 	// s and id name the request on a shared worker; s is nil on an
 	// exclusive one, whose stdout carries only this request.
-	s    *stream
-	id   string
-	once sync.Once
+	s          *stream
+	id         string
+	once       sync.Once
+	released   chan struct{}
+	completion bool
+	completed  atomic.Bool
 }
 
 // Next returns the worker's next stdout line, or ctx's error once the
 // invocation is canceled or out of time.
 func (l *Lines) Next() ([]byte, error) {
+	return l.NextContext(l.ctx)
+}
+
+// NextContext reads with a new lifetime after a completed HTTP response. Calls
+// must remain sequential; only the invocation's owner may read its frames.
+func (l *Lines) NextContext(ctx context.Context) ([]byte, error) {
+	line, err := l.next(ctx)
+	if l.completion && err == nil {
+		var frame struct {
+			Frame string `json:"frame"`
+		}
+		if json.Unmarshal(line, &frame) == nil && frame.Frame == "complete" {
+			l.completed.Store(true)
+		}
+	}
+	return line, err
+}
+
+func (l *Lines) next(ctx context.Context) ([]byte, error) {
 	if l.s != nil {
-		return l.s.next(l.ctx)
+		return l.s.next(ctx)
 	}
 	type readResult struct {
 		line []byte
@@ -95,20 +118,26 @@ func (l *Lines) Next() ([]byte, error) {
 		result <- readResult{line: line, err: readErr}
 	}()
 	select {
-	case <-l.ctx.Done():
-		return nil, l.ctx.Err()
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case got := <-result:
 		return got.line, got.err
 	}
 }
+
+// Released closes after execution has finished, cancellation cleanup has been
+// acknowledged, or the worker has been retired. A response alone is not enough.
+func (l *Lines) Released() <-chan struct{} { return l.released }
 
 // Close returns the worker to its pool, or retires it when healthy is false.
 // A shared worker keeps serving its other requests: an unhealthy close
 // cancels only this one.
 func (l *Lines) Close(healthy bool) {
 	l.once.Do(func() {
+		healthy = healthy && (!l.completion || l.completed.Load())
 		if l.s == nil {
 			l.pool.release(l.w, healthy)
+			close(l.released)
 			return
 		}
 		l.w.mux.unregister(l.id)
@@ -117,12 +146,14 @@ func (l *Lines) Close(healthy bool) {
 			// has finished cleanup or the worker has been retired.
 			grace := cancelAckGrace
 			go func() {
+				defer close(l.released)
 				defer l.pool.release(l.w, true)
 				l.pool.cancel(l.ctx, l.w, l.id, grace)
 			}()
 			return
 		}
 		l.pool.release(l.w, true)
+		close(l.released)
 	})
 }
 
@@ -297,7 +328,7 @@ func (p *pool) start(ctx context.Context, generation uint64) (*worker, error) {
 	}
 	w.generation = generation
 	p.slots = w.slots
-	if w.slots > 1 {
+	if w.slots > 1 || w.completion {
 		w.mux = newMux()
 		w.active = 1
 		p.shared = append(p.shared, w)
@@ -416,15 +447,27 @@ func (p *pool) open(ctx context.Context, request any) (*Lines, error) {
 	if err != nil {
 		return nil, err
 	}
+	completion := false
+	if request, ok := request.(interface{ RequiresCompletion() bool }); ok {
+		completion = request.RequiresCompletion()
+	}
+	if completion && !w.completion {
+		p.release(w, true)
+		return nil, errors.New("workerpool: adapter does not support execution completion")
+	}
 	if w.mux != nil {
-		return p.openShared(ctx, w, payload)
+		lines, err := p.openShared(ctx, w, payload)
+		if lines != nil {
+			lines.completion = completion
+		}
+		return lines, err
 	}
 	payload = append(payload, '\n')
 	if _, err := w.stdin.Write(payload); err != nil {
 		p.release(w, false)
 		return nil, fmt.Errorf("workerpool: write request: %w", err)
 	}
-	return &Lines{ctx: ctx, pool: p, w: w}, nil
+	return &Lines{ctx: ctx, pool: p, w: w, released: make(chan struct{})}, nil
 }
 
 func (p *pool) openShared(ctx context.Context, w *worker, payload []byte) (*Lines, error) {
@@ -441,7 +484,7 @@ func (p *pool) openShared(ctx context.Context, w *worker, payload []byte) (*Line
 		p.releaseSlot(w)
 		return nil, err
 	}
-	return &Lines{ctx: ctx, pool: p, w: w, s: s, id: id}, nil
+	return &Lines{ctx: ctx, pool: p, w: w, s: s, id: id, released: make(chan struct{})}, nil
 }
 
 type worker struct {
@@ -451,10 +494,13 @@ type worker struct {
 	once       sync.Once
 	generation uint64
 	// slots is how many requests the worker serves at once, from its ready
-	// handshake; 1 is the exclusive protocol.
+	// handshake; 1 is exclusive unless completion uses request IDs.
 	slots int
-	// mux is set on a shared worker (slots > 1). The pool's mutex guards
-	// active, gone and removed.
+	// completion version 1 separates a response from execution completion and
+	// uses request IDs even on a one-slot worker.
+	completion bool
+	// mux is set when slots > 1 or execution completion uses request IDs.
+	// The pool's mutex guards active, gone and removed.
 	mux     *mux
 	active  int
 	gone    bool
@@ -490,8 +536,9 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			return
 		}
 		var handshake struct {
-			Ready       bool `json:"__faas_ready"`
-			Concurrency int  `json:"concurrency"`
+			Ready             bool `json:"__faas_ready"`
+			Concurrency       int  `json:"concurrency"`
+			CompletionVersion int  `json:"completion_version"`
 		}
 		if err := json.Unmarshal(line, &handshake); err != nil {
 			ready <- fmt.Errorf("decode ready handshake: %w", err)
@@ -502,6 +549,7 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			return
 		}
 		w.slots = min(max(handshake.Concurrency, 1), maxWorkerSlots)
+		w.completion = handshake.CompletionVersion == 1
 		ready <- nil
 	}()
 	select {

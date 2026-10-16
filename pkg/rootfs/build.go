@@ -1108,7 +1108,7 @@ const concurrency = process.env.FAAS_PERSISTENT_WORKER === "1"
   ? Math.min(Math.max(Number.parseInt(process.env.FAAS_FUNCTION_CONCURRENCY || "1", 10) || 1, 1), 256)
   : 1;
 if (process.env.FAAS_PERSISTENT_WORKER === "1") {
-  process.stdout.write(JSON.stringify({ __faas_ready: true, concurrency }) + "\n");
+  process.stdout.write(JSON.stringify({ __faas_ready: true, concurrency, completion_version: 1 }) + "\n");
 }
 
 // Response frames (ADR-999): one line is a complete response; a "head" line
@@ -1116,12 +1116,17 @@ if (process.env.FAAS_PERSISTENT_WORKER === "1") {
 // one request's output: its id, whether its stream has started, and whether
 // the runner cancelled it.
 const output = (id) => {
-  const out = { streaming: false, cancelled: false, controller: new AbortController() };
+  const out = { streaming: false, cancelled: false, controller: new AbortController(), background: null };
   out.emit = (frame) => {
+    if (out.background && out.background.deadline === undefined &&
+        (frame.frame === undefined || frame.frame === "end" || frame.frame === "error")) {
+      out.background.deadline = Date.now() + out.background.timeout;
+    }
     if (!out.cancelled) process.stdout.write(JSON.stringify(id === undefined ? frame : { __faas_id: id, ...frame }) + "\n");
   };
   return out;
 };
+` + nodeFunctionBackground + `
 const toBuffer = (piece) => Buffer.isBuffer(piece) ? piece
   : piece instanceof Uint8Array ? Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength)
   : Buffer.from(String(piece));
@@ -1191,6 +1196,7 @@ async function handleOne(input, out) {
   let invocationID = "";
   try {
   const env = typeof input === "string" ? JSON.parse(input) : input;
+  setupBackground(env, out);
   const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
   let body = raw;
   if (raw === "") {
@@ -1221,15 +1227,7 @@ async function handleOne(input, out) {
     lifecycle_hook: env.lifecycle_hook || "",
     signal: out.controller.signal,
     log,
-    // Workers-style handlers commonly call ctx.waitUntil(). The runner's
-    // existing tail host is fed by its runtime shim; keep this adapter
-    // compatible when that shim is present and otherwise retain the
-    // promise's rejection on stderr instead of crashing the worker.
-    waitUntil(promise) {
-      if (promise && typeof promise.then === "function") {
-        Promise.resolve(promise).catch((err) => console.error(err));
-      }
-    },
+    waitUntil(promise) { registerBackground(out, promise); },
   };
   let value;
   if (typeof fetchHandler === "function") {
@@ -1311,6 +1309,8 @@ async function handleOne(input, out) {
       headers: { "content-type": "application/json; charset=utf-8" },
       body_b64: Buffer.from(responseBody).toString("base64"),
     });
+  } finally {
+    await drainBackground(out);
   }
 }
 
@@ -1321,12 +1321,12 @@ const inflight = new Map();
 const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of lines) {
   if (!line.trim()) continue;
-  if (concurrency <= 1) {
-    await handleOne(line, output(undefined));
+  let request;
+  try { request = JSON.parse(line); } catch (_) { await handleOne(line, output(undefined)); continue; }
+  if (!request || typeof request !== "object") {
+    await handleOne(request, output(undefined));
     continue;
   }
-  let request;
-  try { request = JSON.parse(line); } catch (err) { console.error(err); continue; }
   if (typeof request.__faas_cancel === "string") {
     const id = request.__faas_cancel;
     const out = inflight.get(id);
@@ -1340,7 +1340,11 @@ for await (const line of lines) {
     } else process.stdout.write(JSON.stringify({ __faas_cancelled: id }) + "\n");
     continue;
   }
-  const id = String(request.__faas_id);
+  if (typeof request.__faas_id !== "string") {
+    await handleOne(request, output(undefined));
+    continue;
+  }
+  const id = request.__faas_id;
   const out = output(id);
   inflight.set(id, out);
   out.done = handleOne(request, out).finally(() => inflight.delete(id));

@@ -1,9 +1,10 @@
 # Function backend concurrency acceptance
 
-This gate completes the shared-worker implementation in PR #4768 with
-request-scoped cancellation and PostgreSQL integration (ADR-1345). The setting
-remains opt-in and takes effect after redeployment. This guide does not enable
-production traffic or certify Vercel performance parity.
+This guide covers shared-worker cancellation and PostgreSQL integration
+(ADR-1345), plus the Node background-completion foundation (ADR-1346).
+Shared-worker concurrency is opt-in and takes effect after redeployment.
+The new background-completion contract is disabled in production runners.
+This guide does not enable production traffic or certify Vercel performance parity.
 
 ## Portable checks
 
@@ -17,6 +18,18 @@ The cleanup barrier tests drive the generated adapters in real interpreters.
 They prove out-of-order responses, per-request stream routing, cancellation
 after async cleanup, Fetch signal/body cancellation, occupied-slot accounting
 and worker recycle behavior. They do not require KVM.
+
+The background tests also exercise the actual runner and H2C listener with
+generated Node adapters. Held promises prove response EOF over HTTP/1 and HTTP/2
+before execution completes, including event, streaming and Fetch handlers.
+Nested work, rejection, per-plan aggregate admission across interpreters,
+structural task caps, timeout and disconnect cleanup, uncooperative-worker
+retirement, single-slot negotiation and recycle retention must pass. Cancellation
+keeps task admission until cleanup or worker retirement, and a completed HTTP
+request is not replayed after worker death. These tests inject trusted runtime
+wiring; there is no production environment/manifest opt-in. They require local
+socket access as well as interpreter subprocesses. Shortened package-internal
+deadline fixtures do not change public plan limits.
 
 For real SQL integration, supply a **disposable** PostgreSQL cluster with
 TLS, SCRAM password authentication and a test administrator allowed to create
@@ -99,6 +112,10 @@ excludes guest/kernel/runner overhead and p95 is the largest of eight samples.
 Run the [PostgreSQL native gate](managed-postgres-native-acceptance.md)
 separately for the shipped HTTP starter's real checkpoint/restore/thaw evidence.
 It does not qualify function pools spread across several workers. VM-wide
-function pool draining and post-response `waitUntil` accounting remain separate
-targets. Native acceptance of this revision is pending; this workspace has
-no `/dev/kvm`.
+function pool draining and host-side post-response lifetime accounting remain
+separate targets. The process-local background-completion foundation does not
+satisfy either gate. Before activating it, add acknowledged owner-mediated VM
+registration and test the atomic quiescence boundary across all interpreter
+processes, lost acknowledgements, duplicate terminal events, runner/worker
+death, real capture/restore/thaw and deadline expiry. Native acceptance of this
+revision is pending; this workspace has no `/dev/kvm`.
