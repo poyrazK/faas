@@ -118,6 +118,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
+	// serving vmmd cannot materialize; the post-switch imaged stages them.
+	deferLegacyParentBases bool
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -517,6 +520,14 @@ func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 // opt-in prevents a partially rolled-out fleet from queueing tasks forever.
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 	h.releasePhaseEnabled = enabled
+	return h
+}
+
+// WithLegacyParentDeferral is for the rolling pre-stage only. A child base
+// whose parent the serving (previous-release) vmmd cannot materialize is left
+// for the serving imaged, which stages it against the new vmmd before ready.
+func (h *Handler) WithLegacyParentDeferral(enabled bool) *Handler {
+	h.deferLegacyParentBases = enabled
 	return h
 }
 
