@@ -1,9 +1,15 @@
--- filename: 20261016105757540_promotion_worker_sets.sql
+-- filename: 20261016144159591_promotion_worker_sets.sql
 
 -- +goose Up
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='promotion_worker_set_shape') THEN
 ALTER TABLE project_environment_promotion_health ADD CONSTRAINT promotion_worker_set_shape CHECK (
  NOT (payload->'policy' ? 'workers') OR
  (jsonb_typeof(payload#>'{policy,workers}')='array' AND jsonb_array_length(payload#>'{policy,workers}') BETWEEN 2 AND 8 AND NOT (payload->'policy' ? 'worker')));
+ END IF;
+END $$;
+-- +goose StatementEnd
 CREATE OR REPLACE VIEW project_promotion_worker_targets AS
  SELECT p.id promotion_id,p.project_id,p.account_id,pin.app_id,pin.deployment_id
  FROM project_environment_promotions p JOIN project_environment_promotion_health h ON h.promotion_id=p.id
@@ -25,7 +31,7 @@ CREATE OR REPLACE VIEW project_promotion_worker_targets AS
 -- An older controller cannot publish a multi-worker operation without all
 -- per-worker startup guards in this same transaction and health generation.
 -- +goose StatementBegin
-CREATE FUNCTION guard_promotion_worker_set_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_promotion_worker_set_publication() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE h record; restoring boolean;
 BEGIN
  SELECT generation,payload INTO h FROM project_environment_promotion_health WHERE promotion_id=NEW.id;
@@ -39,7 +45,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER promotion_worker_set_publication_gate BEFORE UPDATE OF target_release_set_id,restored_target_release_set_id ON project_environment_promotions FOR EACH ROW EXECUTE FUNCTION guard_promotion_worker_set_publication();
+CREATE OR REPLACE TRIGGER promotion_worker_set_publication_gate BEFORE UPDATE OF target_release_set_id,restored_target_release_set_id ON project_environment_promotions FOR EACH ROW EXECUTE FUNCTION guard_promotion_worker_set_publication();
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

@@ -1,7 +1,7 @@
 -- +goose Up
 -- A derived hold, scoped to the promotion's frozen worker policy. It authorizes
 -- startup only; queue admission remains owned by the active release graph.
-CREATE VIEW project_promotion_worker_targets AS
+CREATE OR REPLACE VIEW project_promotion_worker_targets AS
  SELECT p.id promotion_id,p.project_id,p.account_id,pin.app_id,pin.deployment_id
  FROM project_environment_promotions p JOIN project_environment_promotion_health h ON h.promotion_id=p.id
  JOIN project_environment_promotion_workload_specs pin ON pin.promotion_id=p.id AND pin.app_id::text=h.payload#>>'{policy,worker,app_id}'

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_release_secret_bundles (
+CREATE TABLE IF NOT EXISTS project_release_secret_bundles (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
  request_id text NOT NULL CHECK(request_id ~ '^[a-f0-9]{32}$'),
@@ -9,15 +9,15 @@ CREATE TABLE project_release_secret_bundles (
  created_at timestamptz NOT NULL DEFAULT now() CHECK(isfinite(created_at)),
  PRIMARY KEY(account_id,request_id)
 );
-CREATE INDEX project_release_secret_bundles_project_created ON project_release_secret_bundles(project_id,created_at);
-CREATE TABLE deployment_release_secret_snapshots (
+CREATE INDEX IF NOT EXISTS project_release_secret_bundles_project_created ON project_release_secret_bundles(project_id,created_at);
+CREATE TABLE IF NOT EXISTS deployment_release_secret_snapshots (
  deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
  values_json jsonb NOT NULL CHECK(jsonb_typeof(values_json)='array'),
  created_at timestamptz NOT NULL DEFAULT now() CHECK(isfinite(created_at))
 );
 -- Immutable logical versions; key reseals require a separate qualified workflow.
 -- +goose StatementBegin
-CREATE FUNCTION reject_pinned_release_secret_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION reject_pinned_release_secret_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE selected_app uuid; selected_scope text;
 BEGIN
  selected_app := COALESCE(NEW.app_id,OLD.app_id);
@@ -41,7 +41,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER release_secret_snapshot_owned BEFORE INSERT OR UPDATE OR DELETE ON app_secrets
+CREATE OR REPLACE TRIGGER release_secret_snapshot_owned BEFORE INSERT OR UPDATE OR DELETE ON app_secrets
  FOR EACH ROW EXECUTE FUNCTION reject_pinned_release_secret_mutation();
 -- +goose Down
 -- +goose StatementBegin

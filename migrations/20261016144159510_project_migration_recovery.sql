@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_migration_recoveries (
+CREATE TABLE IF NOT EXISTS project_migration_recoveries (
  account_id uuid NOT NULL,
  attempt_id text NOT NULL CHECK(attempt_id ~ '^[a-f0-9]{32}$'),
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -1,14 +1,20 @@
 -- +goose Up
-ALTER TABLE project_environment_promotion_health DROP CONSTRAINT project_environment_promotion_health_phase_check;
-ALTER TABLE project_environment_promotion_health ADD CONSTRAINT project_environment_promotion_health_phase_check CHECK (phase IN ('migrating','preflight','cutover','verifying','finalizing','rolling_back','restoring','aborted','succeeded','failed','conflicted','rollback_failed'));
-CREATE TABLE project_environment_promotion_controls (
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='project_environment_promotion_health_phase_check' AND strpos(pg_get_constraintdef(oid), '''restoring''') > 0) THEN
+  ALTER TABLE project_environment_promotion_health DROP CONSTRAINT IF EXISTS project_environment_promotion_health_phase_check;
+  ALTER TABLE project_environment_promotion_health ADD CONSTRAINT project_environment_promotion_health_phase_check CHECK (phase IN ('migrating','preflight','cutover','verifying','finalizing','rolling_back','restoring','aborted','succeeded','failed','conflicted','rollback_failed'));
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS project_environment_promotion_controls (
  promotion_id uuid NOT NULL REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
  request_id text NOT NULL CHECK (request_id ~ '^[a-f0-9]{32}$'),
  payload jsonb NOT NULL CHECK (jsonb_typeof(payload)='object' AND payload#>>'{request,request_id}'=request_id AND (payload#>>'{request,expected_generation}')::bigint>0 AND payload->>'action' IN ('abort','recover') AND payload->>'status' IN ('pending','aborted','restored','blocked') AND payload ?& ARRAY['request','action','status','operator_account_id','requested_at','deadline'] AND octet_length(payload::text)<=4096),
  PRIMARY KEY(promotion_id,request_id)
 );
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_control() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_control() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
   IF EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
@@ -24,9 +30,9 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER immutable_promotion_control BEFORE UPDATE OR DELETE ON project_environment_promotion_controls FOR EACH ROW EXECUTE FUNCTION protect_promotion_control();
+CREATE OR REPLACE TRIGGER immutable_promotion_control BEFORE UPDATE OR DELETE ON project_environment_promotion_controls FOR EACH ROW EXECUTE FUNCTION protect_promotion_control();
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_health_control() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_health_control() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.payload ? 'control' AND NOT NEW.payload ? 'control' OR
   (NEW.payload ? 'control' AND NOT EXISTS(SELECT 1 FROM project_environment_promotion_controls c WHERE c.promotion_id=NEW.promotion_id AND c.request_id=NEW.payload#>>'{control,request,request_id}' AND c.payload=NEW.payload->'control')) THEN
@@ -35,7 +41,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER promotion_health_control_gate BEFORE UPDATE ON project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION protect_promotion_health_control();
+CREATE OR REPLACE TRIGGER promotion_health_control_gate BEFORE UPDATE ON project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION protect_promotion_health_control();
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION protect_promotion_health_status() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE health_phase text;
@@ -67,7 +73,7 @@ CREATE OR REPLACE VIEW project_promotion_worker_targets AS
  AND d.status NOT IN ('failed','cancelled');
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_promotion_control_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_promotion_control_publication() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE h record; publication_token text;
 BEGIN
  SELECT generation,phase,payload INTO h FROM project_environment_promotion_health WHERE promotion_id=NEW.id;
@@ -87,7 +93,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER promotion_control_publication_gate BEFORE UPDATE OF target_release_set_id,restored_target_release_set_id ON project_environment_promotions FOR EACH ROW EXECUTE FUNCTION guard_promotion_control_publication();
+CREATE OR REPLACE TRIGGER promotion_control_publication_gate BEFORE UPDATE OF target_release_set_id,restored_target_release_set_id ON project_environment_promotions FOR EACH ROW EXECUTE FUNCTION guard_promotion_control_publication();
 
 -- +goose Down
 -- +goose StatementBegin

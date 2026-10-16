@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http/httptest"
@@ -161,7 +162,7 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 				if err != nil || active.ID != baseline.ID {
 					t.Fatal("early code/config cutover")
 				}
-				if _, err := store.ProjectEnvironmentConfigLatest(t.Context(), account.ID, original.ProjectID, "production"); err != state.ErrNotFound {
+				if _, err := store.ProjectEnvironmentConfigLatest(t.Context(), account.ID, original.ProjectID, "production"); !errors.Is(err, state.ErrNotFound) {
 					t.Fatal("configuration changed before candidates were ready")
 				}
 			}

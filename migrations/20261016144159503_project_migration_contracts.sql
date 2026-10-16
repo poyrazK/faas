@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_migration_contracts (
+CREATE TABLE IF NOT EXISTS project_migration_contracts (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
  attempt_id text NOT NULL CHECK(attempt_id ~ '^[a-f0-9]{32}$'),
@@ -24,14 +24,14 @@ CREATE TABLE project_migration_contracts (
  CHECK((task_id IS NULL AND request_id IS NULL AND generation IS NULL AND release_id IS NULL AND config_version IS NULL AND config_hash IS NULL AND cardinality(retired_deployment_ids)=0)
  OR (task_id IS NOT NULL AND runtime_fingerprint IS NOT NULL AND expansion_task_id IS NOT NULL AND request_id IS NOT NULL AND generation IS NOT NULL AND release_id IS NOT NULL AND config_version IS NOT NULL AND config_hash IS NOT NULL))
 );
-CREATE INDEX project_migration_contracts_project ON project_migration_contracts(project_id);
-CREATE INDEX project_migration_contracts_retired ON project_migration_contracts USING gin(retired_deployment_ids);
-CREATE VIEW project_migration_retired_deployments AS
+CREATE INDEX IF NOT EXISTS project_migration_contracts_project ON project_migration_contracts(project_id);
+CREATE INDEX IF NOT EXISTS project_migration_contracts_retired ON project_migration_contracts USING gin(retired_deployment_ids);
+CREATE OR REPLACE VIEW project_migration_retired_deployments AS
 SELECT DISTINCT unnest(retired_deployment_ids) AS deployment_id FROM project_migration_contracts;
-CREATE VIEW project_migration_pending_contracts AS
+CREATE OR REPLACE VIEW project_migration_pending_contracts AS
 SELECT c.* FROM project_migration_contracts c LEFT JOIN app_tasks t ON t.id=c.task_id
 WHERE c.task_id IS NOT NULL AND (t.id IS NULL OR t.status IN ('queued','restoring','running'));
-CREATE VIEW project_migration_task_admission AS
+CREATE OR REPLACE VIEW project_migration_task_admission AS
 SELECT t.id FROM app_tasks t JOIN apps a ON a.id=t.app_id
 WHERE NOT EXISTS(SELECT 1 FROM project_migration_retired_deployments f WHERE f.deployment_id=t.deployment_id)
 AND NOT EXISTS(SELECT 1 FROM project_migration_pending_contracts c WHERE c.project_id=a.project_id AND c.task_id<>t.id)
@@ -42,7 +42,7 @@ AND NOT EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.task_id=t.id 
  WHERE newer.project_id=c.project_id AND newer.environment_slug='production' AND newer.version>v.version)))));
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_project_migration_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_project_migration_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE project uuid; deployment uuid;
 BEGIN
  IF TG_TABLE_NAME='deployments' THEN deployment:=NEW.id; ELSE deployment:=NEW.deployment_id; END IF;
@@ -74,16 +74,16 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER project_migration_instance_fence BEFORE INSERT OR UPDATE OF state,deployment_id ON instances FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_deployment_fence BEFORE INSERT OR UPDATE OF status,traffic_percent ON deployments FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_task_fence BEFORE INSERT OR UPDATE OF status ON app_tasks FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_revision_fence BEFORE INSERT OR UPDATE ON deployment_revision_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_operation_fence BEFORE INSERT OR UPDATE ON customer_operation_code_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_workflow_fence BEFORE INSERT OR UPDATE ON workflow_code_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_worker_fence BEFORE INSERT OR UPDATE ON project_worker_release_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
-CREATE TRIGGER project_migration_member_fence BEFORE INSERT OR UPDATE ON project_release_members FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_instance_fence BEFORE INSERT OR UPDATE OF state,deployment_id ON instances FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_deployment_fence BEFORE INSERT OR UPDATE OF status,traffic_percent ON deployments FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_task_fence BEFORE INSERT OR UPDATE OF status ON app_tasks FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_revision_fence BEFORE INSERT OR UPDATE ON deployment_revision_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_operation_fence BEFORE INSERT OR UPDATE ON customer_operation_code_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_workflow_fence BEFORE INSERT OR UPDATE ON workflow_code_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_worker_fence BEFORE INSERT OR UPDATE ON project_worker_release_pins FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
+CREATE OR REPLACE TRIGGER project_migration_member_fence BEFORE INSERT OR UPDATE ON project_release_members FOR EACH ROW EXECUTE FUNCTION guard_project_migration_retirement();
 -- +goose StatementBegin
-CREATE FUNCTION guard_project_migration_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_project_migration_publication() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.project_id=NEW.project_id) THEN RETURN NEW; END IF;
  PERFORM 1 FROM projects WHERE id=NEW.project_id FOR UPDATE;
@@ -99,8 +99,8 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER project_migration_publication_fence BEFORE INSERT OR UPDATE OF active ON project_release_sets FOR EACH ROW EXECUTE FUNCTION guard_project_migration_publication();
-CREATE TRIGGER project_migration_configuration_fence BEFORE INSERT ON project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION guard_project_migration_publication();
+CREATE OR REPLACE TRIGGER project_migration_publication_fence BEFORE INSERT OR UPDATE OF active ON project_release_sets FOR EACH ROW EXECUTE FUNCTION guard_project_migration_publication();
+CREATE OR REPLACE TRIGGER project_migration_configuration_fence BEFORE INSERT ON project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION guard_project_migration_publication();
 
 -- +goose Down
 -- +goose StatementBegin

@@ -11,7 +11,7 @@ import (
 )
 
 func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Account, project state.Project, req *scanPlanRequest, apps []state.App, scan reposcan.Result) *api.Problem {
-	source, _, err := s.stageApplyTarball(ctx, req.ScanDir, acct.ID, project.ID, apps[0])
+	source, _, err := s.stageApplyTarball(ctx, req.ScanDir, acct.ID, project.ID, apps[0], false)
 	if err != nil {
 		return api.ErrValidation("migration source could not be inspected")
 	}

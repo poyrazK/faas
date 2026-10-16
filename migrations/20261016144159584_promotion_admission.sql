@@ -1,6 +1,15 @@
 -- +goose Up
-ALTER TABLE project_environment_promotion_health DROP CONSTRAINT project_environment_promotion_health_phase_check;
-ALTER TABLE project_environment_promotion_health ADD CONSTRAINT project_environment_promotion_health_phase_check CHECK (phase IN ('queued','migrating','preflight','cutover','verifying','finalizing','rolling_back','restoring','aborted','succeeded','failed','conflicted','rollback_failed'));
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='project_environment_promotion_health_phase_check' AND strpos(pg_get_constraintdef(oid), '''queued''') > 0) THEN
+  ALTER TABLE project_environment_promotion_health DROP CONSTRAINT IF EXISTS project_environment_promotion_health_phase_check;
+  ALTER TABLE project_environment_promotion_health ADD CONSTRAINT project_environment_promotion_health_phase_check CHECK (phase IN ('queued','migrating','preflight','cutover','verifying','finalizing','rolling_back','restoring','aborted','succeeded','failed','conflicted','rollback_failed'));
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='promotion_admission_payload') THEN
 ALTER TABLE project_environment_promotion_health ADD CONSTRAINT promotion_admission_payload CHECK (
  NOT (payload ? 'admission') OR (jsonb_typeof(payload->'admission')='object'
  AND (payload->'admission') ?& ARRAY['queued_at','wait_deadline','reason']
@@ -8,12 +17,17 @@ ALTER TABLE project_environment_promotion_health ADD CONSTRAINT promotion_admiss
  AND isfinite((payload#>>'{admission,wait_deadline}')::timestamptz)
  AND (payload#>>'{admission,wait_deadline}')::timestamptz>(payload#>>'{admission,queued_at}')::timestamptz
  AND (payload#>>'{admission,started_at}' IS NULL OR isfinite((payload#>>'{admission,started_at}')::timestamptz))) IS TRUE);
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='promotion_queued_payload') THEN
 ALTER TABLE project_environment_promotion_health ADD CONSTRAINT promotion_queued_payload CHECK (
  phase<>'queued' OR (payload ? 'admission' AND payload#>>'{admission,started_at}' IS NULL
  AND payload->>'started_at'=payload#>>'{admission,queued_at}' AND payload->>'deadline'=payload#>>'{admission,wait_deadline}') IS TRUE);
-CREATE INDEX promotion_admission_inventory ON project_environment_promotion_health(phase,promotion_id);
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE INDEX IF NOT EXISTS promotion_admission_inventory ON project_environment_promotion_health(phase,promotion_id);
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.payload ? 'admission' AND (
   NOT NEW.payload ? 'admission'
@@ -36,7 +50,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER promotion_admission_gate BEFORE UPDATE ON project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION protect_promotion_admission();
+CREATE OR REPLACE TRIGGER promotion_admission_gate BEFORE UPDATE ON project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION protect_promotion_admission();
 CREATE OR REPLACE VIEW project_promotion_health_work AS
  SELECT p.id promotion_id,p.account_id,p.project_slug,p.to_environment,h.next_check_at,h.last_claimed_at,h.lease_until,
  (h.phase IN ('restoring','rolling_back') OR EXISTS(SELECT 1 FROM project_environment_promotion_migration_recoveries r WHERE r.promotion_id=p.id AND r.status IN ('quiescing','verifying'))) urgent

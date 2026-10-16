@@ -87,7 +87,7 @@ func (s *server) replyAcceptedSubmission(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	w.Header().Set("Idempotent-Replayed", "true")
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
 // A fresh saved attempt may reuse an older retry key. Link it durably to the

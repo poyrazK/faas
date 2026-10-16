@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_submissions (
+CREATE TABLE IF NOT EXISTS project_submissions (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  attempt_id text NOT NULL CHECK (attempt_id ~ '^[0-9a-f]{32}$'),
  fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),

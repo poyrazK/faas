@@ -251,7 +251,7 @@ func TestPromotionHealthAPIAdmissionAndPreflight(t *testing.T) {
 				}
 				return
 			}
-			p, workloads, err = store.ProjectEnvironmentPromotionByID(t.Context(), account.ID, project.Slug, "staging", p.ID)
+			p, _, err = store.ProjectEnvironmentPromotionByID(t.Context(), account.ID, project.Slug, "staging", p.ID)
 			mustSnapshotPromotionAPI(t, err)
 			h, err = store.ProjectEnvironmentPromotionHealth(t.Context(), account.ID, p.ID)
 			mustSnapshotPromotionAPI(t, err)

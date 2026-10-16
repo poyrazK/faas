@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_worker_job_evidence (
+CREATE TABLE IF NOT EXISTS project_worker_job_evidence (
  invocation_id uuid NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
  replay_generation bigint NOT NULL CHECK(replay_generation>=0),
  attempt integer NOT NULL CHECK(attempt>0),
@@ -13,6 +13,6 @@ CREATE TABLE project_worker_job_evidence (
  PRIMARY KEY(invocation_id,replay_generation,attempt),
  CHECK((outcome='running')=(finished_at IS NULL))
 );
-CREATE INDEX project_worker_job_evidence_window ON project_worker_job_evidence(app_id,binding_id,deployment_id,started_at);
+CREATE INDEX IF NOT EXISTS project_worker_job_evidence_window ON project_worker_job_evidence(app_id,binding_id,deployment_id,started_at);
 -- +goose Down
 DROP TABLE project_worker_job_evidence;

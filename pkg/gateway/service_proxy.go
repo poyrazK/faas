@@ -460,8 +460,6 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
 		resolveRelease:            cfg.ResolveRelease,
 		authorizeBound:            cfg.AuthorizeBound,
-		observeCall:               cfg.ObserveCall,
-		resolveEnvironmentBinding: cfg.ResolveEnvironmentBinding,
 		devBridge:                 cfg.DevBridge,
 		forward:                   cfg.Forward,
 		rawForward:                cfg.RawForward,

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_release_canaries (
+CREATE TABLE IF NOT EXISTS project_release_canaries (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
  attempt_id text NOT NULL,
@@ -9,9 +9,9 @@ CREATE TABLE project_release_canaries (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(account_id,attempt_id)
 );
-CREATE UNIQUE INDEX project_release_canaries_running ON project_release_canaries(project_id) WHERE status='running';
-CREATE INDEX project_release_canaries_routing ON project_release_canaries(project_id,created_at DESC) WHERE status IN ('running','needs_operator');
-CREATE VIEW project_worker_canary_targets AS
+CREATE UNIQUE INDEX IF NOT EXISTS project_release_canaries_running ON project_release_canaries(project_id) WHERE status='running';
+CREATE INDEX IF NOT EXISTS project_release_canaries_routing ON project_release_canaries(project_id,created_at DESC) WHERE status IN ('running','needs_operator');
+CREATE OR REPLACE VIEW project_worker_canary_targets AS
 SELECT DISTINCT a.id AS app_id,m.deployment_id FROM project_release_canaries c
 JOIN project_submissions s ON s.account_id=c.account_id AND s.attempt_id=c.attempt_id
 JOIN apps a ON a.id=c.worker_app_id AND a.project_id=c.project_id AND a.account_id=c.account_id AND a.status='active'

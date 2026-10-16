@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE deployment_cron_activations (
+CREATE TABLE IF NOT EXISTS deployment_cron_activations (
  app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
  upload_id text REFERENCES upload_sessions(id) ON DELETE SET NULL,
  session_id text NOT NULL CHECK (session_id ~ '^[0-9a-f]{32}$'),

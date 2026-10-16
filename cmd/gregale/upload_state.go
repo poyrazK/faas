@@ -209,7 +209,8 @@ func isUploadSessionCap(err error) bool {
 // counts against the per-app cap of five until its 24 h TTL: after five
 // failed submissions of edited sources the app could not deploy at all
 // (production-us hunt #9, "Too many upload sessions"). A state another local
-// deploy holds locked is left alone.
+// deploy holds locked is left alone. Uncertain commits retain their recovery
+// evidence, and a failed cancellation never removes a local receipt.
 func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePath string) int {
 	dir := filepath.Dir(keepStatePath)
 	files, err := os.ReadDir(dir)
@@ -223,7 +224,7 @@ func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePat
 			continue
 		}
 		state, found, err := loadResumableUploadState(path)
-		if err != nil || !found || state.AppSlug != slug || state.APIBase != apiBase() || state.UploadID == "" {
+		if err != nil || !found || state.AppSlug != slug || state.APIBase != c.BaseURL() || state.UploadID == "" || state.CommitAttempted {
 			continue
 		}
 		lock := flock.New(path+".lock", flock.SetPermissions(0o600))
@@ -231,7 +232,19 @@ func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePat
 			_ = lock.Close()
 			continue
 		}
-		cancelUploadBestEffort(ctx, c, state.UploadID)
+		// Re-read after locking: the previous owner may have attempted commit
+		// between discovery and our acquisition of its recovery lock.
+		current, currentFound, currentErr := loadResumableUploadState(path)
+		if currentErr != nil || !currentFound || current.UploadID != state.UploadID || current.CommitAttempted || current.APIBase != c.BaseURL() || current.AppSlug != slug {
+			_ = lock.Unlock()
+			_ = lock.Close()
+			continue
+		}
+		if err := c.CancelUpload(ctx, state.UploadID); err != nil {
+			_ = lock.Unlock()
+			_ = lock.Close()
+			continue
+		}
 		removeResumableUploadState(path)
 		_ = lock.Unlock()
 		_ = lock.Close()

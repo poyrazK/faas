@@ -1,6 +1,6 @@
 -- +goose Up
-CREATE INDEX project_worker_release_pins_app_target ON project_worker_release_pins(app_id,deployment_id);
-CREATE VIEW project_worker_pinned_targets AS
+CREATE INDEX IF NOT EXISTS project_worker_release_pins_app_target ON project_worker_release_pins(app_id,deployment_id);
+CREATE OR REPLACE VIEW project_worker_pinned_targets AS
 SELECT DISTINCT p.app_id,p.deployment_id FROM project_worker_release_pins p
 JOIN invocations root ON root.id=p.root_invocation_id AND root.app_id=p.app_id AND root.queue_binding_id=p.binding_id
 JOIN apps a ON a.id=p.app_id AND a.account_id=root.account_id AND a.status='active'

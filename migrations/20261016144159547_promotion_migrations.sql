@@ -1,7 +1,14 @@
 -- +goose Up
-ALTER TABLE project_environment_promotion_health DROP CONSTRAINT project_environment_promotion_health_phase_check;
-ALTER TABLE project_environment_promotion_health ADD CONSTRAINT project_environment_promotion_health_phase_check CHECK (phase IN ('migrating','preflight','cutover','verifying','finalizing','rolling_back','succeeded','failed','conflicted','rollback_failed'));
-CREATE TABLE project_environment_promotion_migrations (
+-- Preserve a later phase expansion when this migration's ledger row is replayed.
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_health'::regclass AND conname='project_environment_promotion_health_phase_check' AND strpos(pg_get_constraintdef(oid), '''migrating''') > 0) THEN
+  ALTER TABLE project_environment_promotion_health DROP CONSTRAINT IF EXISTS project_environment_promotion_health_phase_check;
+  ALTER TABLE project_environment_promotion_health ADD CONSTRAINT project_environment_promotion_health_phase_check CHECK (phase IN ('migrating','preflight','cutover','verifying','finalizing','rolling_back','succeeded','failed','conflicted','rollback_failed'));
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS project_environment_promotion_migrations (
  promotion_id uuid PRIMARY KEY REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
  task_id uuid UNIQUE REFERENCES app_tasks(id) DEFERRABLE INITIALLY DEFERRED,
  runtime_fingerprint text NOT NULL DEFAULT '' CHECK (runtime_fingerprint='' OR runtime_fingerprint ~ '^[a-f0-9]{64}$'),
@@ -9,7 +16,7 @@ CREATE TABLE project_environment_promotion_migrations (
  CHECK ((task_id IS NULL)=(runtime_fingerprint=''))
 );
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_migration_capture() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_migration_capture() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
   IF EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
@@ -23,9 +30,9 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER immutable_promotion_migration BEFORE DELETE OR UPDATE ON project_environment_promotion_migrations FOR EACH ROW EXECUTE FUNCTION protect_promotion_migration_capture();
+CREATE OR REPLACE TRIGGER immutable_promotion_migration BEFORE DELETE OR UPDATE ON project_environment_promotion_migrations FOR EACH ROW EXECUTE FUNCTION protect_promotion_migration_capture();
 -- +goose StatementBegin
-CREATE FUNCTION guard_promotion_migration_task() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_promotion_migration_task() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE project uuid; owner record;
 BEGIN
  IF NEW.kind<>'release' THEN RETURN NEW; END IF;
@@ -47,9 +54,9 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER promotion_migration_task_gate BEFORE INSERT OR UPDATE OF status ON app_tasks FOR EACH ROW EXECUTE FUNCTION guard_promotion_migration_task();
-DROP INDEX project_environment_promotion_health_pending;
-CREATE INDEX project_environment_promotion_health_pending ON project_environment_promotion_health(promotion_id) WHERE phase IN ('migrating','preflight','cutover','verifying','finalizing','rolling_back');
+CREATE OR REPLACE TRIGGER promotion_migration_task_gate BEFORE INSERT OR UPDATE OF status ON app_tasks FOR EACH ROW EXECUTE FUNCTION guard_promotion_migration_task();
+DROP INDEX IF EXISTS project_environment_promotion_health_pending;
+CREATE INDEX IF NOT EXISTS project_environment_promotion_health_pending ON project_environment_promotion_health(promotion_id) WHERE phase IN ('migrating','preflight','cutover','verifying','finalizing','rolling_back');
 
 -- +goose Down
 -- +goose StatementBegin

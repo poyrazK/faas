@@ -1,11 +1,17 @@
 -- +goose Up
 ALTER TABLE project_environment_promotion_migrations
- ADD COLUMN runtime_node_id uuid REFERENCES compute_nodes(id),
- ADD COLUMN runtime_instance_id uuid,
- ADD COLUMN runtime_lease_token uuid,
- ADD COLUMN destroyed_at timestamptz CHECK (destroyed_at IS NULL OR isfinite(destroyed_at)),
- ADD CONSTRAINT promotion_migration_runtime_complete CHECK ((runtime_node_id IS NULL)=(runtime_instance_id IS NULL) AND (runtime_instance_id IS NULL)=(runtime_lease_token IS NULL));
-CREATE TABLE project_environment_promotion_migration_recoveries (
+ ADD COLUMN IF NOT EXISTS runtime_node_id uuid REFERENCES compute_nodes(id),
+ ADD COLUMN IF NOT EXISTS runtime_instance_id uuid,
+ ADD COLUMN IF NOT EXISTS runtime_lease_token uuid,
+ ADD COLUMN IF NOT EXISTS destroyed_at timestamptz CHECK (destroyed_at IS NULL OR isfinite(destroyed_at));
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_promotion_migrations'::regclass AND conname='promotion_migration_runtime_complete') THEN
+  ALTER TABLE project_environment_promotion_migrations ADD CONSTRAINT promotion_migration_runtime_complete CHECK ((runtime_node_id IS NULL)=(runtime_instance_id IS NULL) AND (runtime_instance_id IS NULL)=(runtime_lease_token IS NULL));
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS project_environment_promotion_migration_recoveries (
  promotion_id uuid NOT NULL REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
  request_id text NOT NULL CHECK (request_id ~ '^[a-f0-9]{32}$'),
  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
@@ -14,9 +20,9 @@ CREATE TABLE project_environment_promotion_migration_recoveries (
  created_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(promotion_id,request_id)
 );
-CREATE UNIQUE INDEX promotion_migration_one_recovery ON project_environment_promotion_migration_recoveries(promotion_id) WHERE status<>'blocked';
+CREATE UNIQUE INDEX IF NOT EXISTS promotion_migration_one_recovery ON project_environment_promotion_migration_recoveries(promotion_id) WHERE status<>'blocked';
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_migration_recovery() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_migration_recovery() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
   IF EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
@@ -32,9 +38,9 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER immutable_promotion_migration_recovery BEFORE DELETE OR UPDATE ON project_environment_promotion_migration_recoveries FOR EACH ROW EXECUTE FUNCTION protect_promotion_migration_recovery();
+CREATE OR REPLACE TRIGGER immutable_promotion_migration_recovery BEFORE DELETE OR UPDATE ON project_environment_promotion_migration_recoveries FOR EACH ROW EXECUTE FUNCTION protect_promotion_migration_recovery();
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_migration_runtime() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_migration_runtime() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.destroyed_at IS NOT NULL AND NEW.destroyed_at IS DISTINCT FROM OLD.destroyed_at OR
   EXISTS(SELECT 1 FROM app_tasks WHERE id=OLD.task_id AND started_at IS NOT NULL) AND
@@ -44,7 +50,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER immutable_promotion_migration_runtime BEFORE UPDATE ON project_environment_promotion_migrations FOR EACH ROW EXECUTE FUNCTION protect_promotion_migration_runtime();
+CREATE OR REPLACE TRIGGER immutable_promotion_migration_runtime BEFORE UPDATE ON project_environment_promotion_migrations FOR EACH ROW EXECUTE FUNCTION protect_promotion_migration_runtime();
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION protect_promotion_health_status() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE health_phase text;
@@ -58,7 +64,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE VIEW project_promotion_migration_resolved_tasks AS
+CREATE OR REPLACE VIEW project_promotion_migration_resolved_tasks AS
  SELECT m.task_id FROM project_environment_promotion_migrations m
  JOIN project_environment_promotion_migration_recoveries r ON r.promotion_id=m.promotion_id
  WHERE r.status IN ('resumed','resolved') AND m.destroyed_at IS NOT NULL AND m.runtime_lease_token=m.prepared_lease_token;

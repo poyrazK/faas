@@ -246,22 +246,6 @@ func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := map[string]string{"demo": "old-1", "demo ": "old-2", "other": "old-other"}
-	for label, uploadID := range stale {
-		app := strings.TrimSpace(label)
-		archive := fmt.Sprintf("%064x", len(uploadID)+len(label))
-		statePath, err := uploadStatePath(app, archive, optionsHash)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := saveResumableUploadState(statePath, resumableUploadState{
-			Version: resumableUploadStateVersion, UploadID: uploadID, AppSlug: app, APIBase: apiBase(),
-			ArchivePath: filepath.Join(dir, uploadID+".tar.gz"), ArchiveSize: 9, ArchiveSHA256: archive,
-			DeployOptionsSHA256: optionsHash, TotalSize: 9, ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
 
 	var cancelled []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +274,23 @@ func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	stale := map[string]string{"demo": "old-1", "demo ": "old-2", "other": "old-other"}
+	for label, uploadID := range stale {
+		app := strings.TrimSpace(label)
+		archive := fmt.Sprintf("%064x", len(uploadID)+len(label))
+		statePath, err := uploadStatePath(app + archive + optionsHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := saveResumableUploadState(statePath, resumableUploadState{
+			Version: resumableUploadStateVersion, UploadID: uploadID, AppSlug: app, APIBase: srv.URL,
+			ArchivePath: filepath.Join(dir, uploadID+".tar.gz"), ArchiveSize: 9, ArchiveSHA256: archive,
+			DeployOptionsSHA256: optionsHash, TotalSize: 9, ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	dep, _, supported, err := DeployResumableTarball(api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil), context.Background(), "demo", path, nil)
 	if err != nil || !supported || dep.ID != "dep-1" {
 		t.Fatalf("deploy = %+v supported=%v err=%v", dep, supported, err)
@@ -298,7 +299,7 @@ func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
 	if got := strings.Join(cancelled, ","); got != "old-1,old-2" {
 		t.Fatalf("cancelled %q, want only this app's unresumable sessions old-1,old-2", got)
 	}
-	otherPath, err := uploadStatePath("other", fmt.Sprintf("%064x", len("old-other")+len("other")), optionsHash)
+	otherPath, err := uploadStatePath("other" + fmt.Sprintf("%064x", len("old-other")+len("other")) + optionsHash)
 	if err != nil {
 		t.Fatal(err)
 	}

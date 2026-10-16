@@ -1,13 +1,20 @@
 -- +goose Up
 ALTER TABLE apps
- ADD COLUMN deployment_cron_revision bigint NOT NULL DEFAULT 0 CHECK (deployment_cron_revision >= 0),
- ADD COLUMN deployment_cron_owner text NOT NULL DEFAULT '' CHECK (deployment_cron_owner = '' OR deployment_cron_owner ~ '^[0-9a-f]{32}$'),
- ADD COLUMN deployment_cron_fingerprint text NOT NULL DEFAULT '' CHECK (deployment_cron_fingerprint = '' OR deployment_cron_fingerprint ~ '^[0-9a-f]{64}$'),
- ADD COLUMN deployment_cron_before jsonb CHECK (deployment_cron_before IS NULL OR jsonb_typeof(deployment_cron_before) = 'array'),
- ADD CONSTRAINT apps_deployment_cron_ownership CHECK ((deployment_cron_owner = '') = (deployment_cron_fingerprint = '') AND (deployment_cron_owner = '') = (deployment_cron_before IS NULL));
+ ADD COLUMN IF NOT EXISTS deployment_cron_revision bigint NOT NULL DEFAULT 0 CHECK (deployment_cron_revision >= 0),
+ ADD COLUMN IF NOT EXISTS deployment_cron_owner text NOT NULL DEFAULT '' CHECK (deployment_cron_owner = '' OR deployment_cron_owner ~ '^[0-9a-f]{32}$'),
+ ADD COLUMN IF NOT EXISTS deployment_cron_fingerprint text NOT NULL DEFAULT '' CHECK (deployment_cron_fingerprint = '' OR deployment_cron_fingerprint ~ '^[0-9a-f]{64}$'),
+ ADD COLUMN IF NOT EXISTS deployment_cron_before jsonb CHECK (deployment_cron_before IS NULL OR jsonb_typeof(deployment_cron_before) = 'array');
 
 -- +goose StatementBegin
-CREATE FUNCTION fence_deployment_cron_intent() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_cron_ownership') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_ownership CHECK ((deployment_cron_owner = '') = (deployment_cron_fingerprint = '') AND (deployment_cron_owner = '') = (deployment_cron_before IS NULL));
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION fence_deployment_cron_intent() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE parent record; old_app uuid; new_app uuid; http_intent boolean;
 BEGIN
  IF TG_OP <> 'INSERT' THEN old_app := OLD.app_id; END IF;
@@ -25,7 +32,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER crons_fence_deployment_intent AFTER INSERT OR DELETE OR UPDATE OF
+CREATE OR REPLACE TRIGGER crons_fence_deployment_intent AFTER INSERT OR DELETE OR UPDATE OF
  app_id,schedule,path,enabled,timezone,skip_if_running,command,command_shell,
  command_timeout_seconds,command_max_output_bytes,retry_max,retry_backoff_seconds,
  schedule_policy,failure_rules,created_at ON crons

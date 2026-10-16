@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE deployment_cron_outcomes (
+CREATE TABLE IF NOT EXISTS deployment_cron_outcomes (
  deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
  session_id text NOT NULL CHECK (session_id ~ '^[0-9a-f]{32}$'),
  revision bigint NOT NULL CHECK (revision>0),
@@ -14,7 +14,8 @@ FROM deployment_cron_activations c JOIN apps a ON a.id=c.app_id
 LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
 LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
 JOIN deployments d ON d.app_id=c.app_id AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
-WHERE c.status<>'canceled';
+WHERE c.status<>'canceled'
+ON CONFLICT (deployment_id) DO NOTHING;
 
 -- +goose Down
 DROP TABLE deployment_cron_outcomes;

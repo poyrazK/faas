@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_environment_promotion_health (
+CREATE TABLE IF NOT EXISTS project_environment_promotion_health (
  promotion_id uuid PRIMARY KEY REFERENCES project_environment_promotions(id) ON DELETE CASCADE,
  generation bigint NOT NULL CHECK (generation >= 1),
  phase text NOT NULL CHECK (phase IN ('preflight','cutover','verifying','finalizing','rolling_back','succeeded','failed','conflicted','rollback_failed')),
@@ -7,10 +7,10 @@ CREATE TABLE project_environment_promotion_health (
  lease_token uuid,
  lease_until timestamptz NOT NULL DEFAULT '-infinity'
 );
-CREATE INDEX project_environment_promotion_health_pending ON project_environment_promotion_health(promotion_id)
+CREATE INDEX IF NOT EXISTS project_environment_promotion_health_pending ON project_environment_promotion_health(promotion_id)
  WHERE phase IN ('preflight','cutover','verifying','finalizing','rolling_back');
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_health_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_health_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.payload->'policy' IS DISTINCT FROM OLD.payload->'policy' THEN
   RAISE EXCEPTION 'promotion health policy is immutable' USING ERRCODE='23514';
@@ -18,10 +18,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER immutable_promotion_health_policy BEFORE UPDATE ON project_environment_promotion_health
+CREATE OR REPLACE TRIGGER immutable_promotion_health_policy BEFORE UPDATE ON project_environment_promotion_health
 FOR EACH ROW EXECUTE FUNCTION protect_promotion_health_policy();
 -- +goose StatementBegin
-CREATE FUNCTION protect_promotion_health_status() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_promotion_health_status() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE health_phase text;
 BEGIN
  SELECT phase INTO health_phase FROM project_environment_promotion_health WHERE promotion_id=OLD.id;
@@ -35,7 +35,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER promotion_health_owns_status BEFORE UPDATE OF status ON project_environment_promotions
+CREATE OR REPLACE TRIGGER promotion_health_owns_status BEFORE UPDATE OF status ON project_environment_promotions
 FOR EACH ROW EXECUTE FUNCTION protect_promotion_health_status();
 
 -- +goose Down

@@ -69,7 +69,7 @@ CREATE OR REPLACE VIEW release_secret_rekey_documents AS
  UNION ALL SELECT 'capture',account_id::text||'/'||attempt_id,payload FROM project_release_config_intents
  UNION ALL SELECT 'deployment',deployment_id::text,values_json FROM deployment_release_secret_snapshots
  UNION ALL SELECT 'promotion',promotion_id::text,payload FROM project_environment_promotion_release_config WHERE payload ? 'secrets';
-CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON project_environment_promotion_release_config FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
+CREATE OR REPLACE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON project_environment_promotion_release_config FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
 
 -- +goose Down
 -- +goose StatementBegin

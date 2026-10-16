@@ -1,11 +1,11 @@
 -- +goose Up
-CREATE TABLE release_secret_key_retirements (
+CREATE TABLE IF NOT EXISTS release_secret_key_retirements (
  kid text PRIMARY KEY CHECK(kid ~ '^age1[0-9a-z]{58}$'),
  retired_at timestamptz NOT NULL DEFAULT now() CHECK(isfinite(retired_at))
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION release_secret_document_envelopes(payload jsonb, kind text) RETURNS SETOF jsonb
+CREATE OR REPLACE FUNCTION release_secret_document_envelopes(payload jsonb, kind text) RETURNS SETOF jsonb
 LANGUAGE sql IMMUTABLE AS $$
  SELECT value FROM jsonb_array_elements(CASE WHEN kind='capture' THEN '[]'::jsonb ELSE payload END)
  UNION ALL SELECT jsonb_path_query(payload,'$.workloads[*].live_secrets[*]') WHERE kind='capture'
@@ -17,7 +17,7 @@ $$;
 -- This projection deliberately omits delivery observations. It keeps every
 -- sealed configuration field and timestamp for a compare-and-swap fence.
 -- +goose StatementBegin
-CREATE FUNCTION release_secret_app_document(s app_secrets) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION release_secret_app_document(s app_secrets) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT jsonb_build_array(jsonb_build_object('key',(s).key,'kid',coalesce((s).kid,''),
  'ciphertext',encode((s).ciphertext,'base64'),'value_hash',coalesce((s).value_hash,''),
  'secret_class',(s).secret_class,'secret_version',(s).secret_version,'delivery_version',(s).delivery_version,
@@ -30,7 +30,7 @@ CREATE FUNCTION release_secret_app_document(s app_secrets) RETURNS jsonb LANGUAG
 $$;
 -- +goose StatementEnd
 
-CREATE VIEW release_secret_rekey_documents AS
+CREATE OR REPLACE VIEW release_secret_rekey_documents AS
  SELECT 'app'::text AS kind, s.account_id::text||'/'||s.app_id::text||'/'||s.scope||'/'||s.key AS id,
  release_secret_app_document(s) AS payload FROM app_secrets s
  UNION ALL SELECT 'bundle',account_id::text||'/'||request_id,values_json FROM project_release_secret_bundles
@@ -38,7 +38,7 @@ CREATE VIEW release_secret_rekey_documents AS
  UNION ALL SELECT 'deployment',deployment_id::text,values_json FROM deployment_release_secret_snapshots;
 
 -- +goose StatementBegin
-CREATE FUNCTION release_secret_without_envelopes(payload jsonb, kind text) RETURNS jsonb
+CREATE OR REPLACE FUNCTION release_secret_without_envelopes(payload jsonb, kind text) RETURNS jsonb
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE result jsonb:=payload; workloads jsonb; w jsonb; entries jsonb; field text; idx integer:=0;
 BEGIN
@@ -62,16 +62,16 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TABLE release_secret_key_retirement_fence (
+CREATE TABLE IF NOT EXISTS release_secret_key_retirement_fence (
  singleton boolean PRIMARY KEY CHECK(singleton),
  generation bigint NOT NULL DEFAULT 0 CHECK(generation>=0)
 );
-INSERT INTO release_secret_key_retirement_fence(singleton) VALUES(true);
+INSERT INTO release_secret_key_retirement_fence(singleton) VALUES(true) ON CONFLICT (singleton) DO NOTHING;
 
 -- Retirement owns the exclusive side of this lock; writes own the shared side
 -- until commit. A writer that sealed before retirement cannot publish afterward.
 -- +goose StatementBegin
-CREATE FUNCTION guard_release_secret_key_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_release_secret_key_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE document jsonb; kind text;
 BEGIN
  PERFORM pg_advisory_xact_lock_shared(hashtextextended('release-secret-key-retirement',0));
@@ -88,13 +88,13 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON app_secrets FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
-CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON project_release_secret_bundles FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
-CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON deployment_release_secret_snapshots FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
-CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON project_release_config_intents FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
+CREATE OR REPLACE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON app_secrets FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
+CREATE OR REPLACE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON project_release_secret_bundles FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
+CREATE OR REPLACE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON deployment_release_secret_snapshots FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
+CREATE OR REPLACE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON project_release_config_intents FOR EACH ROW EXECUTE FUNCTION guard_release_secret_key_retirement();
 
 -- +goose StatementBegin
-CREATE FUNCTION protect_release_secret_envelope_update() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_release_secret_envelope_update() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF current_setting('faas.release_secret_rekey',true)='on'
   AND to_jsonb(OLD)-'values_json'=to_jsonb(NEW)-'values_json'
@@ -102,8 +102,8 @@ BEGIN
  RAISE EXCEPTION 'release secret versions are immutable' USING ERRCODE='23514',CONSTRAINT='release_secret_version_immutable';
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER immutable_release_secret_envelopes BEFORE UPDATE ON project_release_secret_bundles FOR EACH ROW EXECUTE FUNCTION protect_release_secret_envelope_update();
-CREATE TRIGGER immutable_release_secret_envelopes BEFORE UPDATE ON deployment_release_secret_snapshots FOR EACH ROW EXECUTE FUNCTION protect_release_secret_envelope_update();
+CREATE OR REPLACE TRIGGER immutable_release_secret_envelopes BEFORE UPDATE ON project_release_secret_bundles FOR EACH ROW EXECUTE FUNCTION protect_release_secret_envelope_update();
+CREATE OR REPLACE TRIGGER immutable_release_secret_envelopes BEFORE UPDATE ON deployment_release_secret_snapshots FOR EACH ROW EXECUTE FUNCTION protect_release_secret_envelope_update();
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION protect_release_configuration_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
