@@ -196,10 +196,10 @@ adaptive health-gated canary and first-wake 5xx rollback by default
 rollout to reach 100% before the command returns, use the safe path:
 
 ```bash
-gregale deploy --safe
+gregale deploy --rollout safe
 ```
 
-`--safe` selects Gregale's adaptive 1% → 10% → 50% → 100% rollout, where
+`--rollout safe` (formerly `--safe`) selects Gregale's adaptive 1% → 10% → 50% → 100% rollout, where
 each stage advances as soon as the evidence is clean after a minute, enables
 first-wake 5xx auto-rollback, and waits for the rollout to reach 100% traffic
 before returning success. The server's smoke verification, configured health
@@ -210,8 +210,8 @@ a safe deploy.
 Preview the safe-release plan before uploading:
 
 ```bash
-gregale deploy --safe --dry-run
-gregale deploy --safe --dry-run --json | jq '.diff.safe_release'
+gregale deploy --rollout safe --dry-run
+gregale deploy --rollout safe --dry-run --json | jq '.diff.safe_release'
 ```
 
 The preview shows the next rollout step, the actionable alert-gate status,
@@ -229,7 +229,7 @@ gregale alerts add --app APP_ID --name release-errors \
 ```
 
 The always-on circuit breaker gates every canary even without an alert rule;
-an alert rule adds your own signal on top. Without `--safe`, a canary deploy
+an alert rule adds your own signal on top. Outside a terminal and without `--rollout safe`, a canary deploy
 (defaulted or explicit) returns once the candidate is live; inspect or wait
 for the full rollout with:
 

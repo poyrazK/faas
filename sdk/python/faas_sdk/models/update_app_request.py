@@ -302,7 +302,9 @@ class UpdateAppRequest:
         | UpdateAppRequestReleasePolicyType2Type1
         | UpdateAppRequestReleasePolicyType3Type1
     ) = UNSET
-    """Set the default rollout for production releases (ADR-1160). Omit for no change."""
+    """Set the default rollout for production releases (ADR-1160, ADR-1352). Omit for no change."""
+    release_probe_paths: list[str] | None | Unset = UNSET
+    """Replace the paths the default rollout probe checks (ADR-1351). An empty list restores /. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -709,6 +711,15 @@ class UpdateAppRequest:
         else:
             release_policy = self.release_policy
 
+        release_probe_paths: list[str] | None | Unset
+        if isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = UNSET
+        elif isinstance(self.release_probe_paths, list):
+            release_probe_paths = self.release_probe_paths
+
+        else:
+            release_probe_paths = self.release_probe_paths
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -959,6 +970,8 @@ class UpdateAppRequest:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if release_policy is not UNSET:
             field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -1780,6 +1793,23 @@ class UpdateAppRequest:
 
         release_policy = _parse_release_policy(d.pop("release_policy", UNSET))
 
+        def _parse_release_probe_paths(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                release_probe_paths_type_0 = cast(list[str], data)
+
+                return release_probe_paths_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        release_probe_paths = _parse_release_probe_paths(d.pop("release_probe_paths", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -2127,6 +2157,7 @@ class UpdateAppRequest:
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             egress_ports=egress_ports,

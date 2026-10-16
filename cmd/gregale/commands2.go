@@ -207,7 +207,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -303,7 +303,7 @@ func cmdApp(args []string) int {
 	preAuthMode := fs.String("pre-auth", "", "pre-auth source limit mode: off|observe|enforce")
 	preAuthRPS := fs.Int("pre-auth-rps", 0, "pre-auth requests per second per source")
 	preAuthBurst := fs.Int("pre-auth-burst", 0, "pre-auth burst per source")
-	releasePolicy := fs.String("release-policy", "", "default rollout for production releases: safe|immediate")
+	releasePolicy := fs.String("release-policy", "", "default rollout for production releases: safe|fast|immediate")
 	releaseProbePaths := fs.String("release-probe-paths", "", "comma-separated GET paths (at most 3) the default rollout probe checks instead of /; empty restores /")
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
@@ -632,7 +632,7 @@ func cmdApp(args []string) int {
 	if explicit["release-policy"] {
 		v := *releasePolicy
 		if v == "" || !api.ValidReleasePolicy(v) {
-			return printErr("Invalid --release-policy", fmt.Errorf("must be 'safe' or 'immediate'; got %q", v))
+			return printErr("Invalid --release-policy", fmt.Errorf("must be 'safe', 'fast' or 'immediate'; got %q", v))
 		}
 		req.ReleasePolicy = &v
 	}
@@ -1164,7 +1164,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string) error {
 	var unsupported []string
 	for _, name := range []string{
-		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
+		"traffic-percent", "no-traffic", "rollout", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
 		"wait", "no-wait", "timeout", "app-protocol",
 	} {
@@ -2385,9 +2385,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// required only when --canary-preset=custom. The CLI parses
 	// + validates BEFORE the network round-trip so a typo
 	// surfaces as an exit-2 error instead of a 422.
-	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|adaptive|custom); empty = the app release policy (safe: adaptive for a live app; none opts out)")
-	canaryStages := fs.String("canary-stages", "", "comma-separated percent@duration pairs for --canary-preset=custom (e.g. \"1@30s,10@2m,100@0s\")")
-	safeDeploy := fs.Bool("safe", false, "deploy with the adaptive health-gated rollout and first-wake 5xx rollback, and wait for 100%")
+	rolloutChoice := fs.String("rollout", "", "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate (all at once); default: the app's release policy")
+	canaryPreset := fs.String("canary-preset", "", "deprecated: use --rollout. Canary preset name (none|slow|balanced|aggressive|1-10-50-100|adaptive|custom)")
+	canaryStages := fs.String("canary-stages", "", "deprecated: use --rollout; still the way to run a custom ladder with --canary-preset=custom (e.g. \"1@30s,10@2m,100@0s\")")
+	safeDeploy := fs.Bool("safe", false, "deprecated: use --rollout safe")
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
 	// --no-allow-unauthenticated analogue). Same flag pair as
 	// cmdApp / cmdAppScale. Mirrors the --warm-snapshot /
@@ -2538,6 +2539,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["rollout"] {
+		if err := applyRolloutFlag(*rolloutChoice, explicit, safeDeploy, canaryPreset); err != nil {
+			return printErr("Invalid rollout policy", err)
+		}
+	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
 	if sourceModeErr != nil {
@@ -2680,7 +2686,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "rollout", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2820,7 +2826,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested {
 		var unsupported []string
 		for _, name := range []string{
-			"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe",
+			"traffic-percent", "no-traffic", "rollout", "canary-preset", "canary-stages", "safe",
 			"rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
@@ -4229,6 +4235,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			quiet:           streamLogsOnJSON || execution.compactProgress,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 			waitForRollout:  *safeDeploy,
+			followRollout:   !*noTraffic && followRolloutByDefault(),
 			darkDeploy:      *noTraffic,
 		})
 		if code == 0 {
@@ -4325,6 +4332,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		quiet:           streamLogsOnJSON || execution.compactProgress,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		waitForRollout:  *safeDeploy,
+		followRollout:   !*noTraffic && followRolloutByDefault(),
 		darkDeploy:      *noTraffic,
 	})
 	if code == 0 {
@@ -7165,7 +7173,11 @@ type streamDeployOptions struct {
 	quiet           bool
 	waitTimeout     time.Duration
 	waitForRollout  bool
-	darkDeploy      bool
+	// followRollout follows a canary rollout to its end for a person at a
+	// terminal (ADR-1352); unlike waitForRollout, Ctrl-C or the deadline
+	// detaches with exit 0 because the rollout runs on Gregale.
+	followRollout bool
+	darkDeploy    bool
 }
 
 func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) (exit int) {
@@ -7209,7 +7221,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	}
 	terminalDeploymentWithFailure := func(d api.DeploymentResponse, phase, reason string) int {
-		if opts.waitForRollout && d.Status == statusLive {
+		if (opts.waitForRollout || opts.followRollout) && d.Status == statusLive {
 			// The SSE terminal frame contains only lifecycle status on some
 			// server versions. Refresh once so the rollout fields are present
 			// before deciding whether safe deploy is actually complete.
@@ -7217,6 +7229,13 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 			if !deploymentRolloutComplete(d) {
 				recoveryStage = "rollout"
 				final, ok := waitForDeploymentRollout(waitCtx, c, d)
+				if !ok && !opts.waitForRollout {
+					// ADR-1352: following was a courtesy; the release is
+					// live and its rollout keeps running on Gregale.
+					finishWaiting()
+					printRolloutDetached(d)
+					return 0
+				}
 				if !ok {
 					if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 						finishWaiting()

@@ -1,8 +1,9 @@
 from typing import Literal
 
-CreateAppRequestReleasePolicy = Literal["immediate", "safe"]
+CreateAppRequestReleasePolicy = Literal["fast", "immediate", "safe"]
 
 CREATE_APP_REQUEST_RELEASE_POLICY_VALUES: set[CreateAppRequestReleasePolicy] = {
+    "fast",
     "immediate",
     "safe",
 }

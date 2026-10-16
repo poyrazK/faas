@@ -166,9 +166,13 @@ export type UpdateAppRequest = {
    */
   revision_pin_ttl_seconds?: number | null;
   /**
-   * Set the default rollout for production releases (ADR-1160). Omit for no change.
+   * Set the default rollout for production releases (ADR-1160, ADR-1352). Omit for no change.
    */
-  release_policy?: 'safe' | 'immediate';
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Replace the paths the default rollout probe checks (ADR-1351). An empty list restores /. Omit for no change.
+   */
+  release_probe_paths?: any[] | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

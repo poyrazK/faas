@@ -1,8 +1,9 @@
 from typing import Literal
 
-AppResponseReleasePolicy = Literal["immediate", "safe"]
+AppResponseReleasePolicy = Literal["fast", "immediate", "safe"]
 
 APP_RESPONSE_RELEASE_POLICY_VALUES: set[AppResponseReleasePolicy] = {
+    "fast",
     "immediate",
     "safe",
 }

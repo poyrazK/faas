@@ -182,19 +182,23 @@ is guaranteed to be live.
 ## Progressive rollouts
 
 Instead of moving all traffic at once, shift it in stages and let the platform
-promote only while the app stays healthy:
+promote only while the app stays healthy. `--rollout` picks how a release
+reaches traffic ([ADR-1352](adr/1352-one-rollout-flag-and-live-rollout.md)):
 
 ```bash
-gregale deploy --canary-preset balanced
+gregale deploy --rollout safe        # adaptive 1% -> 10% -> 50% -> 100%, rollback, wait for 100%
+gregale deploy --rollout fast        # 5% -> 50% -> 100%, a minute each
+gregale deploy --rollout immediate   # all traffic at once
 ```
 
-`balanced` sends 1% of traffic to the new revision for 2 minutes, then 10%,
-then 50%, then 100%. `adaptive` uses the same ladder but moves on as soon as
-the evidence is clean (see [Safe by default](#safe-by-default)). `slow` and
-`aggressive` trade speed against exposure, and
-`--canary-preset custom --canary-stages "5@1m,25@5m,100@0s"` defines your own
-ladder. Preview how a preset would behave against your app's recent traffic
-before deploying:
+Without `--rollout`, the app's release policy decides: `safe` by default,
+or whatever `gregale app my-api --release-policy safe|fast|immediate` set.
+`safe` is the `adaptive` ladder, which moves on as soon as the evidence is
+clean (see [Safe by default](#safe-by-default)). Custom ladders still use
+`--canary-preset custom --canary-stages "5@1m,25@5m,100@0s"`; `--canary-preset`,
+`--canary-stages` and `--safe` remain for existing scripts but are
+deprecated. Preview how a ladder would behave against your app's recent
+traffic before deploying:
 
 ```bash
 gregale canary simulate my-api --canary-preset balanced
@@ -202,9 +206,9 @@ gregale canary simulate my-api --canary-preset balanced
 
 Promotion is health-gated. If an alert rule with a `rollback` or `demote`
 action is firing, the ladder holds at its current stage rather than advancing.
-`gregale deploy --safe` combines the adaptive ladder with automatic rollback
-when the new revision returns 5xx responses in its first window.
-`--rollback-on-5xx` adds the same rollback to any deploy.
+The `safe` and `fast` rollouts add automatic rollback when the new revision
+returns 5xx responses in its first window; `--rollback-on-5xx` adds the same
+rollback to any deploy, and `--rollback-on-5xx=false` skips it.
 
 The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
@@ -230,8 +234,12 @@ the probes below) with no regression, no OOM kills, and no liveness restarts
 reaches 100% in 3 to 5 minutes. When the evidence isn't in after 2 minutes,
 the stage follows the rules below.
 
-`gregale deploy` returns once the candidate is live at 1% and prints how to
-follow the rollout. Use `--safe` to wait for 100% instead.
+At a terminal, `gregale deploy` follows the rollout live, printing each stage
+and why it advanced, until the release reaches 100% or is aborted. Press
+Ctrl-C to stop watching: the rollout keeps running, and
+`gregale deployment wait <id> --rollout` picks it up again. In CI, with
+`--json`, or with `--no-wait`, deploy returns once the candidate is live at
+1% and prints how to follow it; `--rollout safe` always waits for 100%.
 
 A quiet app may not send enough requests to compare the two revisions, so
 while the rollout runs Gregale sends `GET /` twenty times a minute to both the
@@ -271,13 +279,13 @@ aborted and traffic returns to the previous revision, even with no traffic.
 Opt out when you need an immediate cutover:
 
 ```bash
-gregale deploy --canary-preset none            # this deploy only
+gregale deploy --rollout immediate             # this deploy only
 gregale deploy --rollback-on-5xx=false         # skip the automatic rollback
 gregale app my-api --release-policy immediate  # every future deploy
 ```
 
-Any explicit `--canary-preset`, `--traffic-percent`, or `--rollback-on-5xx`
-always wins over the default.
+An explicit `--rollout`, `--traffic-percent`, or `--rollback-on-5xx` (or the
+deprecated `--canary-preset`) always wins over the default.
 
 ### Why a rollout advanced, waits, or stopped
 

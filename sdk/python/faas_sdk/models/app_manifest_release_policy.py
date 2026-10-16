@@ -1,8 +1,9 @@
 from typing import Literal
 
-AppManifestReleasePolicy = Literal["immediate", "safe"]
+AppManifestReleasePolicy = Literal["fast", "immediate", "safe"]
 
 APP_MANIFEST_RELEASE_POLICY_VALUES: set[AppManifestReleasePolicy] = {
+    "fast",
     "immediate",
     "safe",
 }

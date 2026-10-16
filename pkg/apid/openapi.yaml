@@ -61900,9 +61900,9 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; immediate moves all traffic at once."
+          description: "Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1352); immediate moves all traffic at once."
           type: string
-          enum: [safe, immediate]
+          enum: [safe, fast, immediate]
         release_probe_paths:
           description: "Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1351). No queries, fragments, wildcards or parameters."
           type: array
@@ -63948,9 +63948,9 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Default rollout for production releases that name no rollout policy (ADR-1160). Omit for safe."
+          description: "Default rollout for production releases that name no rollout policy (ADR-1160, ADR-1352). Omit for safe."
           type: string
-          enum: [safe, immediate]
+          enum: [safe, fast, immediate]
         release_probe_paths:
           description: "Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1351)."
           type: array
@@ -64621,9 +64621,9 @@ components:
           minimum: 0
           maximum: 604800
         release_policy:
-          description: "Set the default rollout for production releases (ADR-1160). Omit for no change."
+          description: "Set the default rollout for production releases (ADR-1160, ADR-1352). Omit for no change."
           type: [string, "null"]
-          enum: [safe, immediate, null]
+          enum: [safe, fast, immediate, null]
         release_probe_paths:
           description: "Replace the paths the default rollout probe checks (ADR-1351). An empty list restores /. Omit for no change."
           type: [array, "null"]
@@ -65364,9 +65364,9 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Effective default rollout for production releases (ADR-1160)."
+          description: "Effective default rollout for production releases (ADR-1160, ADR-1352)."
           type: string
-          enum: [safe, immediate]
+          enum: [safe, fast, immediate]
         release_probe_paths:
           description: "Paths the default rollout probe checks; absent means / (ADR-1351)."
           type: array

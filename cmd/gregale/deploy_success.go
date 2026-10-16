@@ -200,8 +200,8 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
 		// ADR-1160: a production release rolls out behind the health-gated
 		// canary by default, so name both ways out of it.
-		if appOK && app.ReleasePolicy == api.ReleasePolicySafe {
-			PrintProgress(osStdout, "Safe release is this app's default: skip it once with --canary-preset none, or always with gregale app %s --release-policy immediate", appSlug)
+		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate {
+			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
 		}
 	} else if darkDeploy {
 		if final.TrafficPercent != 0 {

@@ -186,7 +186,9 @@ class AppManifest:
     revision_pin_ttl_seconds: int | Unset = 0
     """Configured revision pin window in seconds; zero disables pinning."""
     release_policy: AppManifestReleasePolicy | Unset = UNSET
-    """Effective default rollout for production releases (ADR-1160)."""
+    """Effective default rollout for production releases (ADR-1160, ADR-1352)."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Paths the default rollout probe checks; absent means / (ADR-1351)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -369,6 +371,10 @@ class AppManifest:
         if not isinstance(self.release_policy, Unset):
             release_policy = self.release_policy
 
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -448,6 +454,8 @@ class AppManifest:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if release_policy is not UNSET:
             field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
 
         return field_dict
 
@@ -827,6 +835,8 @@ class AppManifest:
         else:
             release_policy = check_app_manifest_release_policy(_release_policy)
 
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
+
         app_manifest = cls(
             entrypoint=entrypoint,
             profiling=profiling,
@@ -865,6 +875,7 @@ class AppManifest:
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
         )
 
         app_manifest.additional_properties = d

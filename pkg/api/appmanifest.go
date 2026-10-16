@@ -276,7 +276,8 @@ type AppManifest struct {
 	// ReleasePolicy selects how a production release with a serving
 	// predecessor rolls out when the deploy names no rollout policy
 	// (ADR-1160). Empty or "safe" is the adaptive health-gated canary with
-	// first-wake 5xx rollback; "immediate" moves all traffic at once.
+	// first-wake 5xx rollback; "fast" the aggressive ladder with the same
+	// rollback (ADR-1352); "immediate" moves all traffic at once.
 	ReleasePolicy string `json:"release_policy,omitempty"`
 	// ReleaseProbePaths are up to ReleaseProbePathsMax concrete GET paths the
 	// default rollout probe checks instead of "/" (ADR-1351).
@@ -289,10 +290,15 @@ const ManagedVersionAffinityCookieName = "__Host-gregale_version"
 const (
 	ReleasePolicySafe      = "safe"
 	ReleasePolicyImmediate = "immediate"
+	// ReleasePolicyFast rolls out on FastReleaseCanaryPreset (ADR-1352).
+	ReleasePolicyFast = "fast"
 	// DefaultReleaseCanaryPreset is the ladder a safe release uses when the
 	// deploy names none; it is the same ladder `gregale deploy --safe` uses.
 	// "adaptive" is the balanced ladder paced by evidence (ADR-1321).
 	DefaultReleaseCanaryPreset = "adaptive"
+	// FastReleaseCanaryPreset is the ladder for release_policy and
+	// `deploy --rollout` fast: 5% -> 50% -> 100%, a minute each (ADR-1352).
+	FastReleaseCanaryPreset = "aggressive"
 )
 
 // ValidProbePath reports whether path is a concrete absolute path a synthetic
@@ -325,16 +331,26 @@ func ValidateReleaseProbePaths(paths []string) error {
 
 // ValidReleasePolicy reports whether p is an accepted release_policy value.
 func ValidReleasePolicy(p string) bool {
-	return p == "" || p == ReleasePolicySafe || p == ReleasePolicyImmediate
+	return p == "" || p == ReleasePolicySafe || p == ReleasePolicyFast || p == ReleasePolicyImmediate
 }
 
 // EffectiveReleasePolicy returns the policy a deploy uses, mapping the
 // unset value to the safe default.
 func EffectiveReleasePolicy(p string) string {
-	if p == ReleasePolicyImmediate {
-		return ReleasePolicyImmediate
+	if p == ReleasePolicyImmediate || p == ReleasePolicyFast {
+		return p
 	}
 	return ReleasePolicySafe
+}
+
+// ReleasePolicyCanaryPreset is the ladder the default fills for a policy
+// that rolls out on a canary (ADR-1352): adaptive for safe, aggressive for
+// fast.
+func ReleasePolicyCanaryPreset(p string) string {
+	if p == ReleasePolicyFast {
+		return FastReleaseCanaryPreset
+	}
+	return DefaultReleaseCanaryPreset
 }
 
 // ManagedReleaseContextCookieName stores the immutable project release
@@ -802,7 +818,7 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		return fmt.Errorf("app manifest: revision_pin_ttl_seconds must be between 0 and %d", RevisionPinMaxTTLSeconds)
 	}
 	if !ValidReleasePolicy(m.ReleasePolicy) {
-		return fmt.Errorf("app manifest: release_policy must be %q or %q", ReleasePolicySafe, ReleasePolicyImmediate)
+		return fmt.Errorf("app manifest: release_policy must be %q, %q or %q", ReleasePolicySafe, ReleasePolicyFast, ReleasePolicyImmediate)
 	}
 	if err := ValidateReleaseProbePaths(m.ReleaseProbePaths); err != nil {
 		return fmt.Errorf("app manifest: %w", err)

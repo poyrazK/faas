@@ -52,6 +52,9 @@ func TestApplyDefaultReleasePolicy(t *testing.T) {
 	}{
 		{name: "production release with a serving predecessor is safe", store: serving,
 			want: PolicySafe, wantCanary: api.DefaultReleaseCanaryPreset, wantRollback: ptrBool(true)},
+		{name: "fast app policy fills the aggressive ladder", store: serving,
+			app:  state.App{Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyFast}},
+			want: PolicySafe, wantCanary: api.FastReleaseCanaryPreset, wantRollback: ptrBool(true)},
 		{name: "first deploy stays immediate", store: releasePolicyFakeStore{leaseOK: true}},
 		{name: "immediate app policy opts out", store: serving,
 			app: state.App{Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyImmediate}}},

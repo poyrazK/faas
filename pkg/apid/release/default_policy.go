@@ -78,7 +78,7 @@ func ApplyDefault(ctx context.Context, store any, log *slog.Logger, app state.Ap
 			"app_id", app.ID)
 		return PolicySafeUnavailable
 	}
-	req.Canary = &api.CanaryPresetSpec{Preset: api.DefaultReleaseCanaryPreset}
+	req.Canary = &api.CanaryPresetSpec{Preset: api.ReleasePolicyCanaryPreset(app.Manifest.ReleasePolicy)}
 	return PolicySafe
 }
 

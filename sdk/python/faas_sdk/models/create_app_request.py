@@ -177,7 +177,9 @@ class CreateAppRequest:
     revision_pin_ttl_seconds: int | Unset = 0
     """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     release_policy: CreateAppRequestReleasePolicy | Unset = UNSET
-    """Default rollout for production releases that name no rollout policy (ADR-1160). Omit for safe."""
+    """Default rollout for production releases that name no rollout policy (ADR-1160, ADR-1352). Omit for safe."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1351)."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -367,6 +369,10 @@ class CreateAppRequest:
         if not isinstance(self.release_policy, Unset):
             release_policy = self.release_policy
 
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -488,6 +494,8 @@ class CreateAppRequest:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if release_policy is not UNSET:
             field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -744,6 +752,8 @@ class CreateAppRequest:
         else:
             release_policy = check_create_app_request_release_policy(_release_policy)
 
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -824,6 +834,7 @@ class CreateAppRequest:
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
