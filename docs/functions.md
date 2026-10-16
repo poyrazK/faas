@@ -136,6 +136,89 @@ After each function deploys, Gregale applies its manifest settings:
   provider. Later deploys update the delivery path. Endpoints that are no
   longer listed are reported but never deleted, because deleting one would
   break the URL the provider calls.
+- **`queue_bindings`**: queues whose messages are pushed to the function,
+  with the same fields as an app's `queue_bindings:` (`name`, `queue_name`,
+  `max_concurrency`, `enabled`, `retry_policy`). A function consumes by
+  push, so `mode` defaults to `push` and `workload_class` to `http`. The
+  function's bindings match the list by name: one you remove is deleted,
+  and `queue_bindings: []` removes them all. Without the key, bindings
+  made by hand are left alone.
+- **`event_triggers`**: event subscriptions that deliver to the function,
+  with the same fields as a top-level `event_triggers:` entry except `app:`.
+  They are added and updated on each deploy but, as for any app, never
+  removed by one.
+
+```yaml
+functions:
+  - name: invoices
+    root: functions/invoices
+    queue_bindings:
+      - name: jobs
+        queue_name: invoice-jobs
+        max_concurrency: 4
+    event_triggers:
+      - source: billing.*
+        type: invoice.paid
+```
+
+### Per-function settings
+
+A function can also set its app's resources and configuration. Gregale puts
+them on the function's app before its deployment is built, creating the app
+first when the function is new:
+
+```yaml
+functions:
+  - name: users
+    root: functions/users
+    ram_mb: 512                   # within the plan's RAM per app
+    request_timeout_s: 120        # within the plan's request ceiling
+    min_instances: 1              # applied after the deploy (Pro and Scale)
+    concurrency: 16               # requests one worker serves at once
+    env:
+      LOG_LEVEL: info
+    secrets_from_env: [DATABASE_URL, STRIPE_KEY]
+```
+
+- An omitted key leaves the app's current setting alone.
+- **`env`** sets plain values. Keys the manifest does not list are kept;
+  remove one with `gregale env unset`, or set `prune_env: true` to make
+  `env:` the function's whole env: each deploy then removes every other
+  key and prints which. Secrets and environment-scoped values are never
+  removed this way.
+- **`secrets_from_env`** names secrets whose values are read from your
+  environment when you deploy and sealed; the values never go in the file.
+  A name you have not exported keeps the secret the app already has. A
+  secret the app has never had stops that function before it deploys.
+- **`concurrency`** is the function's `function_concurrency`; see
+  [Concurrent requests](#concurrent-requests-per-worker).
+
+### One address for a function set
+
+Mark one function `entry: true` and give the others `routes:`, request path
+globs. Requests to the entry function's address, and to its verified custom
+domains, whose path matches a route go to that function; everything else
+goes to the entry function:
+
+```yaml
+functions:
+  - name: web
+    root: functions/web
+    entry: true                   # serves every path no route claims
+  - name: users
+    root: functions/users
+    routes: ["/users", "/users/*"]
+  - name: admin
+    root: functions/admin
+    routes: ["/users/admin/*"]    # the more specific route wins
+```
+
+`/users/*` matches anything below `/users/`; `/users/**` also matches
+`/users` itself. Routes take effect once every function has deployed. Each is
+a `kind=route` edge rule on the entry app named `functions:<function>`;
+`gregale edge-rules list --app <entry app>` shows them. Rules you add by hand keep the default
+priority and are checked first; Gregale only changes and removes the rules it
+named. Add a custom domain to the entry app and deploy again to route it too.
 
 Pass `--no-triggers` to deploy code without changing crons, bucket events or
 webhooks. A function removed from the list keeps its app; the deploy names
@@ -146,4 +229,43 @@ A manifest with `functions:` holds only `functions`, cron `triggers` and
 function after deploying. `functions:` is applied by `gregale deploy`:
 repository deploys connected through GitHub ignore it for a function app and
 refuse it for any other app. The design is recorded in
-[ADR-985](adr/985-multi-function-projects.md).
+[ADR-985](adr/985-multi-function-projects.md); per-function settings and
+routes in [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
+
+## Concurrent requests per worker
+
+A Node or Python function runs your handler in up to four worker processes
+per instance, each serving one request at a time. A handler that mostly
+waits on a database or another service can serve many requests from one
+worker instead:
+
+```bash
+gregale app shop-users --function-concurrency 16
+gregale deploy            # the setting applies from the next deploy
+```
+
+or `concurrency: 16` in a `functions:` entry. Each worker then takes up to
+16 requests at once, and a second worker starts only when the first is full.
+The value can be up to your plan's per-instance concurrency (`gregale app
+<slug> --concurrency`: Free 4, Hobby 5, Pro 25, Scale 80).
+
+- Requests on one worker share its module state. Keep per-request data in
+  local variables, not globals.
+- Node runs any handler this way. CPU-heavy handlers block the event loop
+  for every request on the worker, so leave them at 1.
+- Python runs an `async def handler` as one asyncio task per request, and a
+  plain `def handler` on one thread per request. Threads share Python's
+  global interpreter lock, so this helps handlers that wait, not ones that
+  compute.
+- A request whose client goes away or that runs out of time is cancelled
+  without stopping the worker. Python cancels an async handler's task. A
+  sync handler's thread cannot be stopped: its output is dropped, a
+  generator body stops at its next piece, and the slot frees when the
+  handler returns. Node drops its output, but the promise runs until it
+  settles. A worker that cannot respond to a cancel within 5 seconds is
+  restarted.
+- Go SDK functions keep one request per process. A `binary` function's
+  handler can serve several by advertising them in its ready line, as the
+  shared worker protocol in ADR-1342 describes.
+
+See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).

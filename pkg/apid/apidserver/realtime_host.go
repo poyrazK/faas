@@ -38,7 +38,7 @@ func (h realtimeHost) SecretRecipient() *age.X25519Recipient {
 	if setSecretRecipient == nil {
 		return nil
 	}
-	return setSecretRecipient()
+	return hostSecretRecipient()
 }
 
 func (h realtimeHost) HostIdentitiesForUnseal(ctx context.Context) []*age.X25519Identity {

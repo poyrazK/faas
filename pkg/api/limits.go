@@ -9333,6 +9333,12 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
+// FunctionConcurrencyEnv carries an app's function_concurrency to its
+// generated adapter (ADR-1342). imaged stamps it on function deployments
+// whose setting is above one; the adapter then advertises that many slots
+// per worker.
+const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after

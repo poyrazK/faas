@@ -114,7 +114,7 @@ func (s *server) setJobRegistryCredential(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrPlanJobRegistryCredentialQuota(limits, count))
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal"))
 		return

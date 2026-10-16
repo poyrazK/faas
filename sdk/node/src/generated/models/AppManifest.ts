@@ -79,6 +79,10 @@ export type AppManifest = {
    * Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
+  /**
+   * Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker.
+   */
+  function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;
   worker_replicas?: WorkerScaling;
   /**

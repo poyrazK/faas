@@ -134,13 +134,13 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			if setSecretRecipient == nil {
 				return nil
 			}
-			return setSecretRecipient()
+			return hostSecretRecipient()
 		},
 		func() []byte {
 			if hostHMACKey == nil {
 				return nil
 			}
-			return hostHMACKey()
+			return hostHMACKeyBytes()
 		},
 	)
 	if err != nil {

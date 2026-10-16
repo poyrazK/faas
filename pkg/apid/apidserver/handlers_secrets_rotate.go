@@ -233,13 +233,13 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 // caller-supplied and identity-shaped; the value_hash is computed
 // locally off the plaintext.
 func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits, kid string) *api.Problem {
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	hmacKey := hostHMACKey()
+	hmacKey := hostHMACKeyBytes()
 	if len(hmacKey) == 0 {
 		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",

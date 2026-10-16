@@ -41,7 +41,7 @@ func (s *server) projectEnvironmentClonePostgresInventory(ctx context.Context, l
 	if lease.Operation.Status != state.CloneOperationCapturing || read == nil || setSecretRecipient == nil {
 		return copyinventory.Inventory{}, managedpostgres.ErrUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return copyinventory.Inventory{}, managedpostgres.ErrUnavailable
 	}

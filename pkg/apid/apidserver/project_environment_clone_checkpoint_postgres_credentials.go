@@ -161,7 +161,7 @@ func sealCheckpointPostgresCredential(p state.ProjectEnvironmentCloneCheckpointP
 	if setSecretRecipient == nil || mfaIdentities == nil {
 		return "", nil, errCloneCheckpointUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil || !cloneInventoryCanOpen(recipient, mfaIdentities()) {
 		return "", nil, errCloneCheckpointUnavailable
 	}

@@ -48,7 +48,7 @@ func (h durableHost) SecretRecipient() *age.X25519Recipient {
 	if setSecretRecipient == nil {
 		return nil
 	}
-	return setSecretRecipient()
+	return hostSecretRecipient()
 }
 
 func (h durableHost) ExecutionAPIEnabled() bool { return h.s.executionAPIEnabled }

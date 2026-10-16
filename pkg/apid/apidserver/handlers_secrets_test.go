@@ -596,17 +596,22 @@ func TestSecrets_RecipientMissing_503(t *testing.T) {
 	acct, _, key := mustAccount(t, store, api.PlanHobby)
 	env := testEnv{h: srv.handler(), store: store, key: key, acct: acct}
 	createApp(t, env, "rcp-app")
-	// Note: NOT calling withTestRecipient — leave the var nil.
 	prev := setSecretRecipient
-	setSecretRecipient = func() *age.X25519Recipient { return nil }
 	defer func() { setSecretRecipient = prev }()
-
-	rec := env.do(t, "PUT", "/v1/apps/rcp-app/secrets/X",
-		api.PutAppSecretRequest{Value: "v"}, nil)
-	if rec.Code != 503 {
-		t.Fatalf("PUT with nil recipient: %d %s, want 503", rec.Code, rec.Body.String())
+	// An apid without host.age.pub never sets the var at all; a nil var
+	// used to panic the handler instead of answering 503.
+	for name, recipient := range map[string]func() *age.X25519Recipient{
+		"unset":      nil,
+		"nil result": func() *age.X25519Recipient { return nil },
+	} {
+		setSecretRecipient = recipient
+		rec := env.do(t, "PUT", "/v1/apps/rcp-app/secrets/X",
+			api.PutAppSecretRequest{Value: "v"}, nil)
+		if rec.Code != 503 {
+			t.Fatalf("%s recipient: PUT %d %s, want 503", name, rec.Code, rec.Body.String())
+		}
+		assertProblem(t, rec, 503, api.CodeCapacity)
 	}
-	assertProblem(t, rec, 503, api.CodeCapacity)
 }
 
 func TestSecrets_RoundTripSurvivesRealSealThenOpen(t *testing.T) {

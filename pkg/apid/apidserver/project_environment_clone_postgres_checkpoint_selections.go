@@ -39,7 +39,7 @@ func (s *server) projectEnvironmentClonePostgresCheckpointSelection(ctx context.
 	if l.Operation.Status != state.CloneOperationCapturing || read == nil || setSecretRecipient == nil || s.cloneWorkerAdmission == nil {
 		return checkpointselection.Selection{}, managedpostgres.ErrUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return checkpointselection.Selection{}, managedpostgres.ErrUnavailable
 	}

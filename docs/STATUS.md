@@ -641,6 +641,23 @@ daemon set, daemons at 74b9225c29 with the bridge, runner and test at
 and completed a 40 s async invocation in 40.7 s on its first attempt. Both
 40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
 attempt of that async invocation got a 502 about 32 s in and was retried.
+A function may set `function_concurrency` (ADR-1342): one Node or Python
+worker then serves that many requests at once, multiplexed by an id the
+adapter echoes, and an abandoned request is cancelled without restarting
+its worker. A `functions:` entry can set `ram_mb`, `request_timeout_s`,
+`min_instances`, `concurrency`, `env` and `secrets_from_env`, applied before
+the function's build, and `routes:` behind an `entry: true` function become
+`kind=route` edge rules on the entry app's hosts. Evidence, 2026-10-14 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionConcurrencyMetal`, full
+daemon set at f4a1972f8c): a binary function whose handler speaks the shared
+protocol, deployed with `function_concurrency=8`, answered eight concurrent
+2 s requests in 2.17 s from one worker process, and after a client abandoned
+a request the same worker reported one acknowledged cancel. The `gregale`
+CLI then deployed a two-function manifest: the new `users` function was
+reserved, configured and built with concurrency 4, its sealed
+`USERS_TOKEN` reached the guest, `/users/42` on the entry host reached
+`users` and `/about` reached the entry function, and a repeat deploy left
+exactly one managed route rule.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

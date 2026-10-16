@@ -67,7 +67,7 @@ func (s *server) newCheckpointObjectCredentialValues(ctx context.Context, r stat
 		out.SHA256 = state.ProjectEnvironmentCloneCheckpointObjectCredentialValuesSHA256(out)
 		return out, nil
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if !s.object.ObjectStorageEnabled() || recipient == nil {
 		return zero, objectstorage.ErrUnavailable
 	}

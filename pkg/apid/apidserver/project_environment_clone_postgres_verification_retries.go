@@ -57,7 +57,7 @@ func (s *server) projectEnvironmentClonePostgresVerificationWithRetries(ctx cont
 		if setSecretRecipient == nil {
 			return zero, managedpostgres.ErrUnavailable
 		}
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if !cloneInventoryCanOpen(recipient, w.identities) {
 			return zero, managedpostgres.ErrUnavailable
 		}
