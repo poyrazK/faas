@@ -150,7 +150,10 @@ After preparing source access, start the private worker explicitly with
 `systemctl enable --now faas-apid-data-pipeline-worker`. It has no HTTP listener;
 process failure restarts under systemd. Watch `journalctl -u
 faas-apid-data-pipeline-worker` and pipeline status/freshness. Do not enable this
-unit before configuring the pilot and its keys. An outage exceeding the source
+unit before configuring the pilot and its keys. Native PostgreSQL replication
+continues when this worker stops, while status observations become stale.
+Pause or delete existing pipelines and wait for confirmation before disabling
+the pilot or retiring its worker. An outage exceeding the source
 retention window requires resync, rather than continuing through a WAL gap.
 
 For local acceptance, install the runtime's pinned Node dependencies with
