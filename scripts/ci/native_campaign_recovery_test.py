@@ -11,7 +11,11 @@ from unittest.mock import Mock
 import native_campaign_recovery as drill
 
 
+PROCESS_IDENTITIES = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal") and Path("/proc/self/stat").exists()
+
+
 class RecoveryContracts(unittest.TestCase):
+    @unittest.skipUnless(PROCESS_IDENTITIES, "Linux procfs and pidfd support required")
     def test_pidfd_pins_actual_worker_and_rejects_reused_identity(self):
         child = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
         try:
@@ -33,6 +37,7 @@ class RecoveryContracts(unittest.TestCase):
                 child.wait(timeout=5)
             child.stdin.close()
 
+    @unittest.skipUnless(PROCESS_IDENTITIES, "Linux procfs and pidfd support required")
     def test_foreign_identity_cannot_be_signalled(self):
         with self.assertRaisesRegex(ValueError, "another host"):
             drill.pin_worker({"state": "started", "process": {

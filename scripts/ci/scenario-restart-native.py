@@ -73,6 +73,7 @@ class API:
 
 def runner_configuration():
     require(platform.system() == "Linux" and platform.machine() == "x86_64", "requires native x86_64 Linux")
+    require(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"), "native crash recovery requires Python pidfd support")
     require(Path("/dev/kvm").is_char_device() and os.access("/dev/kvm", os.R_OK | os.W_OK), "requires accessible /dev/kvm on the designated runner")
     marker = Path("/etc/faas/scenario-restart-acceptance-host")
     stamp = Path("/etc/faas/scenario-restart-acceptance-platform-sha")
