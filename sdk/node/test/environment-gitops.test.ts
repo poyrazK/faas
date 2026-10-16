@@ -2,6 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FaaSClient, ProjectsService } from '../src/index.js';
 import type { EnvironmentGitOpsExplanation } from '../src/index.js';
+import type { PreviewEnvironmentGitPromotionResponse } from '../src/index.js';
+
+test('GitOps promotion carries the reviewed hash and requires fresh target qualification', async () => {
+  const sha = 'a'.repeat(40), digest = 'b'.repeat(64), hash = 'c'.repeat(64);
+  const result: PreviewEnvironmentGitPromotionResponse = {
+    project: 'shop', from_environment: 'staging', to_environment: 'production', observed_at: '2026-10-16T12:00:00Z',
+    read_only: true, values_redacted: true, requires_target_qualification: true,
+    origin: { source_id: 'source', revision_id: 'revision', commit_sha: sha, definition_digest: digest,
+      generation: 2, intent_version: 3, graph_id: 'graph', release_set_id: 'release', provider: 'github', repository_id: 123 },
+    target: { source_id: 'target', generation: 4, intent_version: 5, commit_sha: sha, definition_digest: digest,
+      proposed_digest: digest, manifest_path: 'environments/production.yaml' },
+    artifacts: [{ resource: 'workload/api', deployment_id: 'deployment', kind: 'image', image_digest: `sha256:${digest}` }],
+    changes: [], blocking_reasons: [], plan_hash: hash,
+    target_plan: { manager: 'target', revision: `candidate:${sha}`, commit_sha: sha, generation: 4,
+      observed_version: 5, desired_digest: digest, plan_hash: hash, changes: [], blocking_reasons: [] },
+  };
+  const client = new FaaSClient('https://api.example.test', { token: 'token', fetch: async (input, init) => {
+    assert.equal(input instanceof Request ? input.url : String(input), 'https://api.example.test/v1/projects/shop/environments/production/gitops/promotion-plan');
+    assert.equal(init?.method, 'POST');
+    assert.deepEqual(JSON.parse(String(init?.body)), { from_environment: 'staging', target_commit_sha: sha, expected_plan_hash: hash });
+    return Response.json(result);
+  } });
+  try {
+    const preview = await ProjectsService.previewEnvironmentGitPromotion({ slug: 'shop', environment: 'production', requestBody: {
+      from_environment: 'staging', target_commit_sha: sha, expected_plan_hash: hash,
+    } });
+    assert.deepEqual(preview, result);
+  } finally { client.uninstall(); }
+});
 
 test('GitOps status carries scoped diagnostics without inventing serving', async () => {
   const explanation: EnvironmentGitOpsExplanation = {

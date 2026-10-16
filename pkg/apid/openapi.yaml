@@ -29552,6 +29552,48 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/promotion-plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitPromotion
+      summary: Preview image promotion from a proven serving environment release.
+      description: Read-only, value-redacted proposal. Reads both bound sources, source release, current graph evidence,
+        artifacts, target intent and ownership on one snapshot. Source builds without a portable artifact reference
+        are blocked. The hash grants no approval or execution authority; expected_plan_hash rejects changed observations.
+        Target review and fresh qualification remain required.
+      requestBody:
+        required: true
+        description: Source environment, immutable target-manifest commit, and optional previously reviewed observation
+          hash.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitPromotionRequest'
+      responses:
+        '200':
+          description: Read-only promotion proposal; blockers prevent patch and manifest export.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitPromotionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview:
     parameters:
     - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
@@ -58156,6 +58198,237 @@ components:
           maxItems: 100
           items: { type: string }
         details_truncated: { type: boolean }
+    PreviewEnvironmentGitPromotionRequest:
+      type: object
+      description: Read-only environment promotion observation. A saved hash is not approval.
+      additionalProperties: false
+      required:
+      - from_environment
+      - target_commit_sha
+      properties:
+        from_environment:
+          type: string
+          description: Distinct source environment slug.
+        target_commit_sha:
+          type: string
+          description: Verified commit containing the target environment manifest.
+          pattern: ^[a-f0-9]{40}$
+        expected_plan_hash:
+          type: string
+          description: Previously reviewed hash; changed source, release, artifact or target observations return 409.
+          pattern: ^[a-f0-9]{64}$
+    EnvironmentGitPromotionOrigin:
+      type: object
+      description: Scoped identity of the approved source release; graph and release IDs are empty if unproven.
+      additionalProperties: false
+      required:
+      - source_id
+      - revision_id
+      - commit_sha
+      - definition_digest
+      - generation
+      - intent_version
+      - graph_id
+      - release_set_id
+      - provider
+      - repository_id
+      properties:
+        source_id:
+          type: string
+          description: Source binding identity.
+        revision_id:
+          type: string
+          description: Current approved revision identity.
+        commit_sha:
+          type: string
+          description: Approved immutable source commit.
+          pattern: ^([a-f0-9]{40}|[a-f0-9]{64})$
+        definition_digest:
+          type: string
+          description: Approved source definition digest.
+          pattern: ^[a-f0-9]{64}$
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Source approval generation.
+        intent_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed source intent version.
+        graph_id:
+          type: string
+          description: Current qualified graph identity, if present.
+        release_set_id:
+          type: string
+          description: Active source release identity, if present.
+        provider:
+          type: string
+          description: Bound provider.
+          enum:
+          - github
+          - gitlab
+        repository_id:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Immutable provider repository identity.
+    EnvironmentGitPromotionTarget:
+      type: object
+      description: Target binding and manifest observation; no target values are returned.
+      additionalProperties: false
+      required:
+      - source_id
+      - generation
+      - intent_version
+      - commit_sha
+      - definition_digest
+      - proposed_digest
+      - manifest_path
+      properties:
+        source_id:
+          type: string
+          description: Target source binding identity.
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Target source generation.
+        intent_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed target intent version.
+        commit_sha:
+          type: string
+          description: Immutable target manifest commit.
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          description: Required local base definition digest.
+          pattern: ^[a-f0-9]{64}$
+        proposed_digest:
+          type: string
+          description: Digest after replacing only proposed image source contracts.
+          pattern: ^[a-f0-9]{64}$
+        manifest_path:
+          type: string
+          description: Bound target manifest path in Git.
+    EnvironmentGitPromotionArtifact:
+      type: object
+      description: Selected active source deployment identity, without host paths or storage keys.
+      additionalProperties: false
+      required:
+      - resource
+      - deployment_id
+      - kind
+      properties:
+        resource:
+          type: string
+          description: Logical workload resource.
+        deployment_id:
+          type: string
+          description: Exact selected live deployment.
+        build_id:
+          type: string
+          description: Associated build identity, if present.
+        kind:
+          type: string
+          description: Recorded deployment kind.
+        image_digest:
+          type: string
+          description: Recorded immutable image identity, if present.
+    EnvironmentGitPromotionChange:
+      type: object
+      description: Only a workload source contract changes; target configuration and identity are preserved.
+      additionalProperties: false
+      required:
+      - resource
+      - before
+      - after
+      properties:
+        resource:
+          type: string
+          description: Target workload resource whose source contract is proposed to change.
+        before:
+          $ref: '#/components/schemas/EnvironmentWorkloadSource'
+        after:
+          $ref: '#/components/schemas/EnvironmentWorkloadSource'
+    PreviewEnvironmentGitPromotionResponse:
+      type: object
+      description: Read-only, value-redacted promotion proposal. It neither activates a release nor proves target readiness.
+      additionalProperties: false
+      required:
+      - project
+      - from_environment
+      - to_environment
+      - observed_at
+      - read_only
+      - values_redacted
+      - requires_target_qualification
+      - origin
+      - target
+      - artifacts
+      - changes
+      - target_plan
+      - blocking_reasons
+      - plan_hash
+      properties:
+        project:
+          type: string
+          description: Project slug.
+        from_environment:
+          type: string
+          description: Source environment slug.
+        to_environment:
+          type: string
+          description: Target environment slug.
+        observed_at:
+          type: string
+          description: Observation time.
+          format: date-time
+        read_only:
+          type: boolean
+          enum:
+          - true
+          description: Always true; no writes or leases are issued.
+        values_redacted:
+          type: boolean
+          enum:
+          - true
+          description: Configuration values and secret-reference targets are omitted.
+        requires_target_qualification:
+          type: boolean
+          enum:
+          - true
+          description: Source evidence cannot authorize target activation.
+        origin:
+          $ref: '#/components/schemas/EnvironmentGitPromotionOrigin'
+        target:
+          $ref: '#/components/schemas/EnvironmentGitPromotionTarget'
+        artifacts:
+          type: array
+          description: Selected source deployment identities.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionArtifact'
+        changes:
+          type: array
+          description: Image-only source contract proposals.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionChange'
+        target_plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+        blocking_reasons:
+          type: array
+          description: Reasons patch or manifest export is unavailable.
+          items:
+            type: string
+        plan_hash:
+          type: string
+          description: Domain-separated hash of source release, artifacts and target observation; never an execution
+            token.
+          pattern: ^[a-f0-9]{64}$
     PreviewEnvironmentGitPlanResponse:
       type: object
       description: Read-only candidate plan pinned to a source generation and observed intent version. Values are omitted. The plan cannot authorize approval, adoption, deployment or runtime readiness. Re-run after source or environment changes.

@@ -283,6 +283,56 @@ Before adoption, unmanaged edits can change the plan hash while the managed
 intent counter remains zero. The hash includes the actual observed fields;
 candidate plans always require a fresh request and grant no write authority.
 
+## Prepare a promotion proposal
+
+Preview an immutable image promotion from a currently proven serving release:
+
+```sh
+gregale projects environments gitops promotion-plan shop production \
+  --from staging --target-commit "$TARGET_COMMIT" --fail-on-blocked \
+  > promotion-plan.json
+```
+
+`TARGET_COMMIT` identifies the commit containing the production manifest. The
+planner verifies that manifest through the production binding and reads both
+environments on one database snapshot. The output identifies the approved source
+commit, graph, active release and selected deployments. Export requires current
+source verification and matching qualification, activation and serving evidence.
+Both environments must belong to the same project and verified provider
+repository. Missing evidence and source-built workloads are explicit blockers.
+
+Only immutable image `source` contracts are proposed for replacement. Production
+variables, secret references, runtime settings, routes, policies, schedules,
+queue/service bindings, app mappings and additional workloads are preserved.
+The proposal and target field plan omit configuration values and secret-reference
+targets. A source/Dockerfile/function descriptor cannot pin an already built
+artifact across environments, so those workloads cannot export a promotion yet.
+
+Review the plan and reuse its `plan_hash` in a fresh request before exporting:
+
+```sh
+gregale projects environments gitops promotion-plan shop production \
+  --from staging --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH" --format manifest \
+  --manifest environments/production.yaml > proposed-production.json
+```
+
+Manifest export checks the complete local base digest before changing any source
+contract, then verifies the proposed digest. It emits canonical JSON, which is
+also valid YAML; formatting and comments are normalized. The command writes only
+to stdout. Review and commit the resulting manifest through the usual Git flow.
+`--format patch` exports an RFC 6902 proposal envelope instead. Apply that
+envelope's operations only after checking its `base_definition_digest` against
+the parsed target manifest. Both export formats require the reviewed hash and
+refuse blocked proposals. JSON/Markdown previews can use `--fail-on-blocked` to
+print the assessment and exit 2; invalid or stale observations exit 1.
+
+Release, artifact, binding, ownership or target intent changes invalidate a saved
+observation. Neither a proposal nor its hash authorizes deployment. Target review
+and fresh environment-specific qualification remain required; production
+enforcement and dedicated native acceptance retain their existing gates. See
+[ADR-1345](adr/1345-gitops-promotion-proposals.md).
+
 ## Receive drift and source notifications
 
 Subscribe an account receiver explicitly to `environment.gitops.changed`:

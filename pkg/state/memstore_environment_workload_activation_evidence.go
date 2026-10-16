@@ -56,6 +56,10 @@ func (m *MemStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.currentEnvironmentGitOpsWorkloadEvidenceLocked(accountID, sourceID)
+}
+
+func (m *MemStore) currentEnvironmentGitOpsWorkloadEvidenceLocked(accountID, sourceID string) (*EnvironmentWorkloadActivationEvidence, error) {
 	memory, exists := m.environmentGitOps[sourceID]
 	if !exists || memory.source.AccountID != accountID {
 		return nil, ErrNotFound

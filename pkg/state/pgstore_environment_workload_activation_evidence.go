@@ -43,6 +43,10 @@ func (s *PgStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context, 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	return currentEnvironmentGitOpsWorkloadEvidenceTx(ctx, tx, accountID, sourceID)
+}
+
+func currentEnvironmentGitOpsWorkloadEvidenceTx(ctx context.Context, tx sqlc.DBTX, accountID, sourceID string) (*EnvironmentWorkloadActivationEvidence, error) {
 	q := sqlc.New()
 	rawSource, err := q.GetEnvironmentGitSourceByID(ctx, tx, mustPgUUID(sourceID))
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(rawSource.AccountID) != accountID {

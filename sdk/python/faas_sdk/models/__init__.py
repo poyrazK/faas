@@ -1159,6 +1159,11 @@ from .environment_git_ops_run import EnvironmentGitOpsRun
 from .environment_git_ops_run_status import EnvironmentGitOpsRunStatus
 from .environment_git_ops_run_steps_type_0_item import EnvironmentGitOpsRunStepsType0Item
 from .environment_git_ops_status_response import EnvironmentGitOpsStatusResponse
+from .environment_git_promotion_artifact import EnvironmentGitPromotionArtifact
+from .environment_git_promotion_change import EnvironmentGitPromotionChange
+from .environment_git_promotion_origin import EnvironmentGitPromotionOrigin
+from .environment_git_promotion_origin_provider import EnvironmentGitPromotionOriginProvider
+from .environment_git_promotion_target import EnvironmentGitPromotionTarget
 from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
 from .environment_git_review_evidence import EnvironmentGitReviewEvidence
 from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
@@ -3339,6 +3344,8 @@ from .preview_durable_entity_quota_policy_response_200 import PreviewDurableEnti
 from .preview_durable_entity_retirement_response_200 import PreviewDurableEntityRetirementResponse200
 from .preview_environment_git_plan_response import PreviewEnvironmentGitPlanResponse
 from .preview_environment_git_plan_response_provider import PreviewEnvironmentGitPlanResponseProvider
+from .preview_environment_git_promotion_request import PreviewEnvironmentGitPromotionRequest
+from .preview_environment_git_promotion_response import PreviewEnvironmentGitPromotionResponse
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
 from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
@@ -5920,6 +5927,11 @@ __all__ = (
     "EnvironmentGitOpsRunStatus",
     "EnvironmentGitOpsRunStepsType0Item",
     "EnvironmentGitOpsStatusResponse",
+    "EnvironmentGitPromotionArtifact",
+    "EnvironmentGitPromotionChange",
+    "EnvironmentGitPromotionOrigin",
+    "EnvironmentGitPromotionOriginProvider",
+    "EnvironmentGitPromotionTarget",
     "EnvironmentGitProtectedBranchEvidence",
     "EnvironmentGitReviewedMergeEvidence",
     "EnvironmentGitReviewEvidence",
@@ -7888,6 +7900,8 @@ __all__ = (
     "PreviewDurableEntityRetirementResponse200",
     "PreviewEnvironmentGitPlanResponse",
     "PreviewEnvironmentGitPlanResponseProvider",
+    "PreviewEnvironmentGitPromotionRequest",
+    "PreviewEnvironmentGitPromotionResponse",
     "PreviewEnvironmentGitRevisionRequest",
     "PreviewEnvironmentGitRevisionResponse",
     "PreviewEnvironmentMemberResponse",

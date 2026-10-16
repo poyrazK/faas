@@ -14378,7 +14378,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -14469,6 +14469,27 @@ Examples:
 
 ```sh
 gregale projects environments gitops plan shop staging --commit COMMIT_SHA --format markdown --fail-on-blocked
+```
+
+##### projects environments gitops promotion-plan
+
+Preview reviewed image promotion and export a target manifest proposal
+
+`gregale projects environments gitops promotion-plan --from <ENV> --target-commit <SHA> [--format <FORMAT>] [--expected-plan-hash <HASH>] [--manifest <PATH>] [--fail-on-blocked] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | Source environment with a proven serving release | required |
+| `--target-commit <SHA>` | Immutable commit containing the target manifest | required |
+| `--format <FORMAT>` | json (default), markdown, patch or manifest |  |
+| `--expected-plan-hash <HASH>` | Reviewed observation hash; required for patch or manifest export |  |
+| `--manifest <PATH>` | Local target YAML/JSON file; required only for manifest export |  |
+| `--fail-on-blocked` | Exit 2 after printing a blocked plan |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops promotion-plan shop production --from staging --target-commit COMMIT_SHA
 ```
 
 ##### projects environments gitops approve

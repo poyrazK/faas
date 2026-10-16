@@ -3,8 +3,91 @@ import json
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.projects import preview_environment_git_plan
-from faas_sdk.models import PreviewEnvironmentGitRevisionRequest
+from faas_sdk.api.projects import preview_environment_git_plan, preview_environment_git_promotion
+from faas_sdk.models import PreviewEnvironmentGitPromotionRequest, PreviewEnvironmentGitRevisionRequest
+
+
+def test_promotion_preview_preserves_artifact_identity_and_expected_hash() -> None:
+    sha, digest, plan_hash = "a" * 40, "b" * 64, "c" * 64
+    body = {
+        "project": "shop",
+        "from_environment": "staging",
+        "to_environment": "production",
+        "observed_at": "2026-10-16T12:00:00+00:00",
+        "read_only": True,
+        "values_redacted": True,
+        "requires_target_qualification": True,
+        "origin": {
+            "source_id": "source",
+            "revision_id": "revision",
+            "commit_sha": sha,
+            "definition_digest": digest,
+            "generation": 2,
+            "intent_version": 3,
+            "graph_id": "graph",
+            "release_set_id": "release",
+            "provider": "github",
+            "repository_id": 123,
+        },
+        "target": {
+            "source_id": "target",
+            "generation": 4,
+            "intent_version": 5,
+            "commit_sha": sha,
+            "definition_digest": digest,
+            "proposed_digest": digest,
+            "manifest_path": "environments/production.yaml",
+        },
+        "artifacts": [
+            {
+                "resource": "workload/api",
+                "deployment_id": "deployment",
+                "kind": "image",
+                "image_digest": "sha256:" + digest,
+            }
+        ],
+        "changes": [],
+        "blocking_reasons": [],
+        "plan_hash": plan_hash,
+        "target_plan": {
+            "manager": "target",
+            "revision": "candidate:" + sha,
+            "commit_sha": sha,
+            "generation": 4,
+            "observed_version": 5,
+            "desired_digest": digest,
+            "plan_hash": plan_hash,
+            "changes": [],
+            "blocking_reasons": [],
+        },
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/projects/shop/environments/production/gitops/promotion-plan"
+        assert json.loads(request.content) == {
+            "from_environment": "staging",
+            "target_commit_sha": sha,
+            "expected_plan_hash": plan_hash,
+        }
+        return httpx.Response(200, json=body)
+
+    client = FaaSClient(
+        base_url="https://api.example.test", token="token", httpx_args={"transport": httpx.MockTransport(handle)}
+    )
+    try:
+        preview = preview_environment_git_promotion.sync(
+            slug="shop",
+            environment="production",
+            client=client.inner,
+            body=PreviewEnvironmentGitPromotionRequest(
+                from_environment="staging", target_commit_sha=sha, expected_plan_hash=plan_hash
+            ),
+        )
+        assert preview is not None
+        assert preview.to_dict() == body
+    finally:
+        client.close()
 
 
 def test_candidate_preview_preserves_read_only_observation() -> None:
