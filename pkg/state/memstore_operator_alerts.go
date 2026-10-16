@@ -69,21 +69,27 @@ func (m *MemStore) RecordOperatorAlertSnapshot(ctx context.Context, input Operat
 		}
 	}
 	m.operatorAlertCollection = OperatorAlertCollection{s.ObservedAt, s.ObservedAt}
+	m.operatorAlertCollectionOutcomes = append(m.operatorAlertCollectionOutcomes, OperatorAlertCollectionOutcome{AttemptedAt: s.ObservedAt, Outcome: "success"})
 	return nil
 }
 
-func (m *MemStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time) error {
+func (m *MemStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time, reasons ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if at.IsZero() {
 		return ErrInvalidArgument
 	}
+	reason, err := collectionFailureReason(reasons)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	at = at.UTC().Truncate(time.Microsecond)
 	if at.After(m.operatorAlertCollection.LastAttemptAt) {
 		m.operatorAlertCollection.LastAttemptAt = at
+		m.operatorAlertCollectionOutcomes = append(m.operatorAlertCollectionOutcomes, OperatorAlertCollectionOutcome{AttemptedAt: at, Outcome: "failure", Reason: reason})
 	}
 	return nil
 }
@@ -221,6 +227,7 @@ func (m *MemStore) PruneOperatorAlertHistory(ctx context.Context, before time.Ti
 	for _, key := range keys {
 		delete(m.operatorAlertRules, key)
 	}
+	m.pruneAlertCollectionOutcomesLocked(before)
 	if started.After(m.operatorAlertRetention.LastAttemptAt) {
 		m.operatorAlertRetention.LastAttemptAt = started
 		m.operatorAlertRetention.LastSuccessAt = started

@@ -60,6 +60,11 @@ func TestOperatorAlertRetentionStores(t *testing.T) {
 			if err != nil || !delayed.LastAttemptAt.Equal(failedAt) {
 				t.Fatalf("delayed clobbered failure: %+v %v", delayed, err)
 			}
+			// Failure and cleanup receipts use microsecond precision. Make the
+			// later recovery step strictly newer even on the fast memory path.
+			for !time.Now().UTC().Truncate(time.Microsecond).After(failedAt) {
+				time.Sleep(time.Microsecond)
+			}
 			if _, err := store.PruneOperatorAlertHistory(ctx, cutoff, 1); err != nil {
 				t.Fatal(err)
 			}

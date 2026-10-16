@@ -4,16 +4,17 @@ import "time"
 
 // ObsAlertResponseTimes describes retained activation-cohort timing, not an SLA.
 type ObsAlertResponseTimes struct {
-	AsOf             time.Time                  `json:"as_of"`
-	Since            time.Time                  `json:"since"`
-	Scope            string                     `json:"scope"`
-	DurationBasis    string                     `json:"duration_basis"`
-	PercentileMethod string                     `json:"percentile_method"`
-	Limitations      []string                   `json:"limitations"`
-	Collection       ObsAlertCollectionHealth   `json:"collection"`
-	Retention        ObsAlertRetentionHealth    `json:"retention"`
-	Totals           *ObsAlertResponseAggregate `json:"totals"`
-	Groups           []ObsAlertResponseGroup    `json:"groups"`
+	Coverage         *ObsAlertCollectionCoverage `json:"coverage,omitempty"`
+	AsOf             time.Time                   `json:"as_of"`
+	Since            time.Time                   `json:"since"`
+	Scope            string                      `json:"scope"`
+	DurationBasis    string                      `json:"duration_basis"`
+	PercentileMethod string                      `json:"percentile_method"`
+	Limitations      []string                    `json:"limitations"`
+	Collection       ObsAlertCollectionHealth    `json:"collection"`
+	Retention        ObsAlertRetentionHealth     `json:"retention"`
+	Totals           *ObsAlertResponseAggregate  `json:"totals"`
+	Groups           []ObsAlertResponseGroup     `json:"groups"`
 }
 
 type ObsAlertResponseAggregate struct {

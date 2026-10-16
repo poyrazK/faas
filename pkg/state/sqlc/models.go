@@ -6096,6 +6096,12 @@ type OperatorAlertCollection struct {
 	LastSuccessAt pgtype.Timestamptz
 }
 
+type OperatorAlertCollectionOutcome struct {
+	AttemptedAt pgtype.Timestamptz
+	Outcome     string
+	Reason      string
+}
+
 type OperatorAlertEpisode struct {
 	ID                 string
 	SeriesID           string

@@ -41,6 +41,11 @@ func AlertResponseTimes(ctx context.Context, reader state.OperatorAlertResponseT
 	}
 	out.Collection = collectionHealth(snap.Collection, enabled, out.AsOf)
 	out.Retention = retentionHealth(snap.Retention, out.AsOf)
+	coverage, _, err := collectionCoverage(snap.CollectionOutcomes, out.Since, out.AsOf)
+	if err != nil {
+		return out, err
+	}
+	out.Coverage = &coverage
 	if snap.Collection.LastSuccessAt.IsZero() {
 		return out, nil
 	}

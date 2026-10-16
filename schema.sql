@@ -26925,6 +26925,21 @@ CREATE TABLE public.operator_alert_collection (
 
 
 --
+-- Name: operator_alert_collection_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_alert_collection_outcomes (
+    attempted_at timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    reason text NOT NULL,
+    CONSTRAINT operator_alert_collection_outcomes_attempted_at_check CHECK (isfinite(attempted_at)),
+    CONSTRAINT operator_alert_collection_outcomes_check CHECK ((((outcome = 'success'::text) AND (reason = ''::text)) OR ((outcome = 'failure'::text) AND (reason <> ''::text)))),
+    CONSTRAINT operator_alert_collection_outcomes_outcome_check CHECK ((outcome = ANY (ARRAY['success'::text, 'failure'::text]))),
+    CONSTRAINT operator_alert_collection_outcomes_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'collection_failed'::text, 'source_read_failed'::text, 'snapshot_rejected'::text, 'timeout'::text, 'persistence_failed'::text])))
+);
+
+
+--
 -- Name: operator_alert_episodes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37806,6 +37821,14 @@ ALTER TABLE ONLY public.oidc_trust_policies
 
 ALTER TABLE ONLY public.operator_alert_collection
     ADD CONSTRAINT operator_alert_collection_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: operator_alert_collection_outcomes operator_alert_collection_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_collection_outcomes
+    ADD CONSTRAINT operator_alert_collection_outcomes_pkey PRIMARY KEY (attempted_at);
 
 
 --

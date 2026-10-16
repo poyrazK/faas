@@ -26,9 +26,10 @@ type OperatorAlertResponseTimesEpisode struct {
 	AckClockInvalid                 bool
 }
 type OperatorAlertResponseTimesSnapshot struct {
-	Collection OperatorAlertCollection
-	Retention  OperatorAlertRetention
-	Episodes   []OperatorAlertResponseTimesEpisode
+	CollectionOutcomes []OperatorAlertCollectionOutcome
+	Collection         OperatorAlertCollection
+	Retention          OperatorAlertRetention
+	Episodes           []OperatorAlertResponseTimesEpisode
 }
 type OperatorAlertResponseTimesReader interface {
 	OperatorAlertResponseTimes(context.Context, OperatorAlertResponseTimesFilter) (OperatorAlertResponseTimesSnapshot, error)

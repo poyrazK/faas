@@ -35,6 +35,11 @@ func (s *server) obsAlertResponseTimes(w http.ResponseWriter, r *http.Request, c
 			api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Timing cohort exceeds read bounds", "narrow since to read a complete cohort").WithLimit(int64(bound.Limit), int64(bound.Limit+1)))
 			return
 		}
+		var coverageBound *state.OperatorAlertCollectionHistoryLimitError
+		if errors.As(err, &coverageBound) {
+			api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Collection coverage exceeds read bounds", "narrow since to read complete coverage").WithLimit(int64(coverageBound.Limit), int64(coverageBound.Limit+1)))
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not read alert response timing"))
 		return
 	}

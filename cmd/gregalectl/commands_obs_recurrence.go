@@ -59,7 +59,7 @@ func cmdObsRecurrence(args []string) int {
 	}
 
 	_, _ = fmt.Fprintf(osStdout, "recurrence scope=%s since=%s as_of=%s collection=%s retention=%s truncated=%t\n", out.Scope, out.Since.UTC().Format(time.RFC3339), out.AsOf.UTC().Format(time.RFC3339), out.Collection.CollectionState, out.Retention.State, out.Truncated)
-	_, _ = fmt.Fprintln(osStdout, "coverage=retained_only historical_collection_gaps=unknown")
+	writeCollectionCoverage(osStdout, out.Coverage)
 	if out.Totals == nil {
 		_, _ = fmt.Fprintln(osStdout, "totals=unknown (no successful collection)")
 		return 0

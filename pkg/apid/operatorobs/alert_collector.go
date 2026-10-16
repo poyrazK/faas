@@ -25,23 +25,37 @@ var alertComponentPattern = regexp.MustCompile(`^[a-zA-Z0-9_.:-]*$`)
 // observations can manufacture a resolution.
 func CollectAlertsOnce(ctx context.Context, store state.OperatorAlertHistoryStore, client *promql.Client, now time.Time) error {
 	now = now.UTC().Truncate(time.Microsecond)
-	ctx, cancel := context.WithTimeout(ctx, api.ObsAlertCollectionBudget)
+	pollCtx, cancel := context.WithTimeout(ctx, api.ObsAlertCollectionBudget)
 	defer cancel()
-	groups, err := client.AlertRules(ctx)
+	groups, err := client.AlertRules(pollCtx)
+	reason := "source_read_failed"
 	var snapshot state.OperatorAlertSnapshot
 	if err == nil {
 		snapshot, err = alertSnapshot(groups, now)
+		reason = "snapshot_rejected"
 	}
-	if err != nil {
-		if writeErr := store.RecordOperatorAlertFailure(ctx, now); writeErr != nil {
-			return fmt.Errorf("record failed alert collection: %w", writeErr)
-		}
-		return fmt.Errorf("collect platform alert history: %w", err)
+	if err == nil {
+		err = store.RecordOperatorAlertSnapshot(pollCtx, snapshot)
+		reason = "persistence_failed"
 	}
-	if err := store.RecordOperatorAlertSnapshot(ctx, snapshot); err != nil {
-		return fmt.Errorf("persist platform alert history: %w", err)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+		reason = "timeout"
+	}
+	// The poll budget may have expired. Saving its outcome gets a fresh,
+	// independently bounded context; shutdown still leaves missing evidence.
+	failureCtx, cancelFailure := context.WithTimeout(ctx, api.ObsAlertCollectionOutcomeWriteBudget)
+	defer cancelFailure()
+	if writeErr := store.RecordOperatorAlertFailure(failureCtx, now, reason); writeErr != nil {
+		return fmt.Errorf("record failed alert collection: %w", writeErr)
+	}
+	return fmt.Errorf("collect platform alert history: %w", err)
 }
 
 func RunAlertCollector(ctx context.Context, store state.OperatorAlertHistoryStore, client *promql.Client, log *slog.Logger, metrics *MaintenanceMetrics) {

@@ -78,7 +78,7 @@ func TestCmdObsRecurrence(t *testing.T) {
 		t.Fatalf("zero and null: %s %v", stdout, err)
 	}
 	stdout.Reset()
-	if code := cmdObsRecurrence(args); code != 0 || !strings.Contains(stdout.String(), "repeat_activations=1") || !strings.Contains(stdout.String(), "recovery_gap samples=1") || !strings.Contains(stdout.String(), "historical_collection_gaps=unknown") || !strings.Contains(stdout.String(), "evidence=/v1/admin/obs/") {
+	if code := cmdObsRecurrence(args); code != 0 || !strings.Contains(stdout.String(), "repeat_activations=1") || !strings.Contains(stdout.String(), "recovery_gap samples=1") || !strings.Contains(stdout.String(), "collection_coverage=partial") || !strings.Contains(stdout.String(), "evidence=/v1/admin/obs/") {
 		t.Fatalf("evidence output: %d %s %s", code, stdout, stderr)
 	}
 	before := calls

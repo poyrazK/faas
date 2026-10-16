@@ -28,7 +28,7 @@ func RecurrenceSince(raw string, now time.Time) (time.Time, error) {
 }
 
 func AlertRecurrence(ctx context.Context, reader state.OperatorAlertRecurrenceReader, enabled bool, since, now time.Time) (api.ObsAlertRecurrence, error) {
-	out := api.ObsAlertRecurrence{AsOf: now.UTC().Truncate(time.Microsecond), Since: since.UTC().Truncate(time.Microsecond), Scope: "retained_activation_cohort", PercentileMethod: "nearest_rank_whole_seconds", Items: []api.ObsAlertRecurrenceSeries{}, Limitations: []string{"retained_episodes_only_not_lifetime_counts", "activation_cohort_excludes_older_episodes", "historical_collection_gaps_not_reconstructed", "resolution_is_confirmed_observation_not_exact_recovery_time", "observed_repeats_not_false_positive_or_notification_counts"}}
+	out := api.ObsAlertRecurrence{AsOf: now.UTC().Truncate(time.Microsecond), Since: since.UTC().Truncate(time.Microsecond), Scope: "retained_activation_cohort", PercentileMethod: "nearest_rank_whole_seconds", Items: []api.ObsAlertRecurrenceSeries{}, Limitations: []string{"retained_episodes_only_not_lifetime_counts", "activation_cohort_excludes_older_episodes", "collection_coverage_tracks_cadence_not_continuous_rule_or_metric_availability", "resolution_is_confirmed_observation_not_exact_recovery_time", "observed_repeats_not_false_positive_or_notification_counts"}}
 	if _, err := RecurrenceSince(since.Format(time.RFC3339Nano), now); err != nil {
 		return out, err
 	}
@@ -39,6 +39,11 @@ func AlertRecurrence(ctx context.Context, reader state.OperatorAlertRecurrenceRe
 		return out, err
 	}
 	out.Collection, out.Retention = collectionHealth(snap.Collection, enabled, out.AsOf), retentionHealth(snap.Retention, out.AsOf)
+	coverage, _, err := collectionCoverage(snap.CollectionOutcomes, out.Since, out.AsOf)
+	if err != nil {
+		return out, err
+	}
+	out.Coverage = &coverage
 	if snap.Collection.LastSuccessAt.IsZero() {
 		return out, nil
 	}

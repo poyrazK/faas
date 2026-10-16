@@ -2817,9 +2817,12 @@ type Querier interface {
 	OperatorAlertCollection(ctx context.Context, db DBTX) (OperatorAlertCollectionRow, error)
 	OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
 	OperatorAlertCollectionLock(ctx context.Context, db DBTX) (OperatorAlertCollectionLockRow, error)
+	OperatorAlertCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertCollectionOutcomesParams) ([]OperatorAlertCollectionOutcome, error)
 	OperatorAlertCollectionSucceeded(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
 	OperatorAlertEpisode(ctx context.Context, db DBTX, id string) (OperatorAlertEpisodeRow, error)
 	OperatorAlertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertEpisodesParams) ([]OperatorAlertEpisodesRow, error)
+	OperatorAlertInsertCollectionOutcome(ctx context.Context, db DBTX, arg OperatorAlertInsertCollectionOutcomeParams) error
+	OperatorAlertPruneCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertPruneCollectionOutcomesParams) error
 	OperatorAlertPruneEpisodes(ctx context.Context, db DBTX, arg OperatorAlertPruneEpisodesParams) (int64, error)
 	OperatorAlertPruneRules(ctx context.Context, db DBTX, arg OperatorAlertPruneRulesParams) error
 	OperatorAlertRecurrenceEpisodes(ctx context.Context, db DBTX, arg OperatorAlertRecurrenceEpisodesParams) ([]OperatorAlertRecurrenceEpisodesRow, error)

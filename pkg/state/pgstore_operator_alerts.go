@@ -76,17 +76,42 @@ func (s *PgStore) RecordOperatorAlertSnapshot(ctx context.Context, input Operato
 	if err := q.OperatorAlertCollectionSucceeded(ctx, tx, at); err != nil {
 		return fmt.Errorf("alert collection success: %w", err)
 	}
+	if err := q.OperatorAlertInsertCollectionOutcome(ctx, tx, sqlc.OperatorAlertInsertCollectionOutcomeParams{AttemptedAt: at, Outcome: "success", Reason: ""}); err != nil {
+		return fmt.Errorf("record collection success: %w", err)
+	}
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time) error {
+func (s *PgStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time, reasons ...string) error {
 	if at.IsZero() {
 		return ErrInvalidArgument
 	}
-	if err := sqlc.New().OperatorAlertCollectionFailed(ctx, s.pool, pgtype.Timestamptz{Time: at.UTC().Truncate(time.Microsecond), Valid: true}); err != nil {
-		return fmt.Errorf("alert collection failure: %w", err)
+	reason, err := collectionFailureReason(reasons)
+	if err != nil {
+		return err
 	}
-	return nil
+	at = at.UTC().Truncate(time.Microsecond)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("collection failure transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	c, err := q.OperatorAlertCollectionLock(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("collection failure lock: %w", err)
+	}
+	if c.LastAttemptAt.Valid && !at.After(c.LastAttemptAt.Time) {
+		return tx.Commit(ctx)
+	}
+	stamp := pgtype.Timestamptz{Time: at, Valid: true}
+	if err := q.OperatorAlertCollectionFailed(ctx, tx, stamp); err != nil {
+		return fmt.Errorf("collection failure status: %w", err)
+	}
+	if err := q.OperatorAlertInsertCollectionOutcome(ctx, tx, sqlc.OperatorAlertInsertCollectionOutcomeParams{AttemptedAt: stamp, Outcome: "failure", Reason: reason}); err != nil {
+		return fmt.Errorf("record collection failure: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PgStore) OperatorAlertCollectionStatus(ctx context.Context) (OperatorAlertCollection, error) {
@@ -177,6 +202,9 @@ func (s *PgStore) PruneOperatorAlertHistory(ctx context.Context, before time.Tim
 	}
 	if err := q.OperatorAlertPruneRules(ctx, tx, sqlc.OperatorAlertPruneRulesParams{Before: pgtype.Timestamptz{Time: before, Valid: true}, BatchSize: int32(limit)}); err != nil {
 		return 0, fmt.Errorf("prune alert rules: %w", err)
+	}
+	if err := q.OperatorAlertPruneCollectionOutcomes(ctx, tx, sqlc.OperatorAlertPruneCollectionOutcomesParams{Before: pgtype.Timestamptz{Time: before, Valid: true}, BatchSize: api.ObsAlertCollectionHistoryPruneBatch}); err != nil {
+		return 0, fmt.Errorf("prune collection outcomes: %w", err)
 	}
 	if err := q.OperatorAlertRetentionSucceeded(ctx, tx, sqlc.OperatorAlertRetentionSucceededParams{At: pgtype.Timestamptz{Time: started, Valid: true}, Pruned: count}); err != nil {
 		return 0, fmt.Errorf("record alert retention success: %w", err)

@@ -63,7 +63,7 @@ type OperatorAlertHistoryReader interface {
 type OperatorAlertHistoryStore interface {
 	OperatorAlertHistoryReader
 	RecordOperatorAlertSnapshot(context.Context, OperatorAlertSnapshot) error
-	RecordOperatorAlertFailure(context.Context, time.Time) error
+	RecordOperatorAlertFailure(context.Context, time.Time, ...string) error
 	PruneOperatorAlertHistory(context.Context, time.Time, int) (int, error)
 }
 

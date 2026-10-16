@@ -55,11 +55,16 @@ func cmdObsResponseTimes(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs response-times: invalid response")
 		return 1
 	}
+	if out.Coverage != nil && (!validCollectionCoverage(*out.Coverage) || !out.Coverage.Since.Equal(out.Since) || !out.Coverage.AsOf.Equal(out.AsOf)) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs response-times: invalid coverage")
+		return 1
+	}
 	if *jsonOut || jsonOutput || jsonFlagEnabled(args) {
 		return emitOperatorJSON(out)
 	}
 	_, _ = fmt.Fprintf(osStdout, "response_times scope=%s since=%s as_of=%s collection=%s retention=%s\n", out.Scope, out.Since.UTC().Format(time.RFC3339), out.AsOf.UTC().Format(time.RFC3339), out.Collection.CollectionState, out.Retention.State)
 	_, _ = fmt.Fprintf(osStdout, "percentile_method=%s coverage=retained_only\n", out.PercentileMethod)
+	writeCollectionCoverage(osStdout, out.Coverage)
 	if out.Totals == nil {
 		_, _ = fmt.Fprintln(osStdout, "totals=unknown (no successful collection)")
 		return 0

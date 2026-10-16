@@ -9,6 +9,9 @@ func validObsRecurrence(out api.ObsAlertRecurrence) bool {
 	if out.AsOf.IsZero() || out.Since.IsZero() || !out.Since.Before(out.AsOf) || out.AsOf.Sub(out.Since) > api.ObsAlertRecurrenceWindowMax || out.Scope != "retained_activation_cohort" || out.PercentileMethod != "nearest_rank_whole_seconds" || out.Items == nil || out.Limitations == nil || out.Collection.State == "" || out.Collection.CollectionState == "" || out.Retention.State == "" {
 		return false
 	}
+	if out.Coverage != nil && (!validCollectionCoverage(*out.Coverage) || !out.Coverage.Since.Equal(out.Since) || !out.Coverage.AsOf.Equal(out.AsOf)) {
+		return false
+	}
 	if out.Totals == nil {
 		return out.Collection.LastSuccessAt == nil && len(out.Items) == 0 && !out.Truncated
 	}

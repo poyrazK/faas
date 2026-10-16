@@ -763,6 +763,38 @@ observations remain explicit.
 These are retained observations, not lifetime counts, false-positive scores or
 notification volume. An episode outside the activation window or removed by
 retention does not contribute a predecessor. Confirmed resolution is the time
-recovery was observed, not exact repair time. Current collection health cannot
-prove uninterrupted historical coverage; historical collection gaps remain
-unknown. This command reads evidence without changing alert or silence policy.
+recovery was observed, not exact repair time. Prospective collection-cadence coverage accompanies recurrence reports.
+Periods before outcome recording, expired evidence and missing observations
+remain unknown; recent poll outcomes do not prove uninterrupted availability. This command reads evidence without changing alert or silence policy.
+
+
+### Inspect collection history and monitoring blind spots
+
+Run `gregalectl obs collection-history --json` or add `--since RFC3339` for a
+window up to 30 days (default 24 hours). It shows prospective success/failure
+outcomes and unknown intervals. No older history is inferred from the latest
+collection timestamps. The history survives restart and is retained for 30 days;
+cleanup removes at most 5000 expired outcomes per existing retention pass.
+
+A recorded outcome supplies at most 60 seconds of cadence evidence, ending
+sooner when the next outcome arrives. Missing polls, process downtime and
+unrecordable storage failures become unknown after that evidence expires.
+Known failure intervals use only closed codes: `collection_failed`,
+`source_read_failed`, `snapshot_rejected`, `timeout` or `persistence_failed`.
+Unknown intervals use `no_recent_outcome`; they do not identify a cause.
+
+The three duration totals partition the requested window exactly in
+microseconds. Success/failure counts include attempts on both window boundaries;
+a retained earlier outcome may contribute carry-in duration without increasing
+those counts. The full totals precede at most 200 coalesced intervals, newest
+first; `total_intervals` and `truncated` make omitted older intervals explicit.
+More than 100000 read outcomes returns a bounded error requiring a narrower
+window. The carry-in read is also bounded by the 30-day retention horizon.
+
+Recurrence and response-time reports include coverage from their same database
+snapshot. Historical episode statistics remain retained observations. An
+`observed` cadence window means recent successful poll evidence covered the
+window under this freshness model, not continuous service availability,
+expected-rule inventory completeness or full metric coverage. Older servers
+may omit this added metadata; the CLI displays coverage as unknown in that case.
+Disabled collection now does not erase its retained historical outcomes.

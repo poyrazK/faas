@@ -419,3 +419,18 @@ SELECT e.id,e.rule_key,e.series_id,e.name,e.severity,e.component,e.started_at,e.
 FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
 WHERE e.started_at>=sqlc.arg(since)::timestamptz AND e.started_at<=sqlc.arg(as_of)::timestamptz
 ORDER BY e.started_at DESC,e.id DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: OperatorAlertInsertCollectionOutcome :exec
+INSERT INTO operator_alert_collection_outcomes(attempted_at,outcome,reason)
+VALUES (sqlc.arg(attempted_at)::timestamptz,sqlc.arg(outcome)::text,sqlc.arg(reason)::text);
+
+-- name: OperatorAlertCollectionOutcomes :many
+SELECT attempted_at,outcome,reason FROM operator_alert_collection_outcomes
+WHERE attempted_at>=sqlc.arg(since)::timestamptz AND attempted_at<=sqlc.arg(as_of)::timestamptz
+ORDER BY attempted_at LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: OperatorAlertPruneCollectionOutcomes :exec
+DELETE FROM operator_alert_collection_outcomes WHERE attempted_at IN (
+ SELECT attempted_at FROM operator_alert_collection_outcomes WHERE attempted_at<sqlc.arg(before)::timestamptz
+ ORDER BY attempted_at LIMIT sqlc.arg(batch_size)::integer
+);

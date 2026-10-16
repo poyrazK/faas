@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObsAlertCollectionCoverage } from './ObsAlertCollectionCoverage.js';
 import type { ObsAlertCollectionHealth } from './ObsAlertCollectionHealth.js';
 import type { ObsAlertRecurrenceSeries } from './ObsAlertRecurrenceSeries.js';
 import type { ObsAlertRecurrenceTotals } from './ObsAlertRecurrenceTotals.js';
@@ -10,6 +11,10 @@ import type { ObsAlertRetentionHealth } from './ObsAlertRetentionHealth.js';
  * Retained activation-cohort recurrence evidence with complete totals and a ranked preview.
  */
 export type ObsAlertRecurrence = {
+  /**
+   * Prospective collection cadence evidence from the same snapshot; absent on older servers and never proof of complete alert history.
+   */
+  coverage?: ObsAlertCollectionCoverage;
   as_of: string;
   since: string;
   scope: 'retained_activation_cohort';

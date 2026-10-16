@@ -19,6 +19,7 @@ import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { ObsAlertCollectionHistory } from '../models/ObsAlertCollectionHistory.js';
 import type { ObsAlertRecurrence } from '../models/ObsAlertRecurrence.js';
 import type { ObsAlertResponseTimes } from '../models/ObsAlertResponseTimes.js';
 import type { ObsAlertTriageHistory } from '../models/ObsAlertTriageHistory.js';
@@ -1066,6 +1067,57 @@ export class AdminService {
     });
   }
   /**
+   * Inspect prospective collection outcomes and missing-observation intervals.
+   * Requires operator read scope, MFA and the operator allowlist. Accepts one
+   * optional nonempty since timestamp, default 24 hours and maximum 30 days.
+   * Reads prospective immutable collection outcomes from one read-only
+   * snapshot with a five-second budget. Success commits atomically with
+   * retained episode changes; failures contain closed sanitized reason codes.
+   * Each outcome supplies at most 60 seconds of collection cadence evidence,
+   * ending sooner at the next outcome. Missing intervals, periods before
+   * recording began, expired evidence and unrecordable outages remain unknown.
+   * These intervals are not continuous availability or proof of expected
+   * rule inventory, metric coverage or complete incident history.
+   * Microsecond duration partitions cover the full half-open [since, as_of)
+   * window exactly. Counts include outcomes at since and as_of; a retained
+   * carry-in outcome can contribute duration without increasing those counts.
+   * Outcomes before the 30-day retention horizon or after as_of are excluded.
+   * More than 100000 read outcomes returns 400 requiring a narrower since.
+   * Totals precede a newest-first preview of at most 200 coalesced intervals
+   * with explicit truncation. Current disabled configuration does not erase
+   * historical evidence. No lifecycle or triage writes occur on GET.
+   *
+   * @returns ObsAlertCollectionHistory Exact cadence coverage totals and a bounded newest-first collection interval preview.
+   * @throws ApiError
+   */
+  public static getObsAlertCollectionHistory({
+    since,
+  }: {
+    /**
+     * Inclusive collection-outcome lower bound for a prospective retained coverage window.
+     */
+    since?: string,
+  }): CancelablePromise<ObsAlertCollectionHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/collection-history',
+      query: {
+        'since': since,
+      },
+      errors: {
+        400: `Invalid collection-history query or read exceeding 100000 outcomes; narrow since.`,
+        401: `code: unauthorized`,
+        403: `Collection-history read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Collection history could not be read within its bounded storage deadline.`,
+      },
+    });
+  }
+  /**
    * Diagnose current alert-rule evaluation health.
    * Requires operator read scope, MFA and the operator allowlist. Accepts no
    * query parameters. Assesses the complete bounded Prometheus alert-rule
@@ -1160,7 +1212,9 @@ export class AdminService {
    * Each preview includes at most five recent episodes newest first with
    * explicit truncation. One read-only database snapshot has a five-second
    * budget. Current collection and retention metadata do not reconstruct
-   * historical collection gaps. Reads perform no lifecycle or triage writes.
+   * expected inventory or per-rule coverage gaps. Prospective cadence evidence
+   * accompanies this report; its own 100000-outcome bound also requires a
+   * narrower since on overflow. Reads perform no lifecycle or triage writes.
    *
    * @returns ObsAlertRecurrence Complete bounded recurrence totals and a ranked series preview with evidence coverage.
    * @throws ApiError
@@ -1205,6 +1259,8 @@ export class AdminService {
    * require a narrower since; results are never silently sampled. Reads
    * share one database snapshot and a five-second query budget. Retention
    * and collection metadata do not guarantee a complete historical window.
+   * Prospective cadence coverage is read in the same snapshot. Its separate
+   * 100000-outcome read bound also returns 400 requiring a narrower since.
    *
    * @returns ObsAlertResponseTimes Retained-cohort timing totals and bounded severity/component aggregates.
    * @throws ApiError

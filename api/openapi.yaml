@@ -44995,6 +44995,47 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/collection-history:
+    get:
+      tags: [admin]
+      operationId: getObsAlertCollectionHistory
+      summary: Inspect prospective collection outcomes and missing-observation intervals.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts one
+        optional nonempty since timestamp, default 24 hours and maximum 30 days.
+        Reads prospective immutable collection outcomes from one read-only
+        snapshot with a five-second budget. Success commits atomically with
+        retained episode changes; failures contain closed sanitized reason codes.
+        Each outcome supplies at most 60 seconds of collection cadence evidence,
+        ending sooner at the next outcome. Missing intervals, periods before
+        recording began, expired evidence and unrecordable outages remain unknown.
+        These intervals are not continuous availability or proof of expected
+        rule inventory, metric coverage or complete incident history.
+        Microsecond duration partitions cover the full half-open [since, as_of)
+        window exactly. Counts include outcomes at since and as_of; a retained
+        carry-in outcome can contribute duration without increasing those counts.
+        Outcomes before the 30-day retention horizon or after as_of are excluded.
+        More than 100000 read outcomes returns 400 requiring a narrower since.
+        Totals precede a newest-first preview of at most 200 coalesced intervals
+        with explicit truncation. Current disabled configuration does not erase
+        historical evidence. No lifecycle or triage writes occur on GET.
+      parameters:
+        - in: query
+          name: since
+          description: Inclusive collection-outcome lower bound for a prospective retained coverage window.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Exact cadence coverage totals and a bounded newest-first collection interval preview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertCollectionHistory' }
+        '400': { description: Invalid collection-history query or read exceeding 100000 outcomes; narrow since. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Collection-history read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Collection history could not be read within its bounded storage deadline. }
+
   /v1/admin/obs/rule-health:
     get:
       tags: [admin]
@@ -45084,7 +45125,9 @@ paths:
         Each preview includes at most five recent episodes newest first with
         explicit truncation. One read-only database snapshot has a five-second
         budget. Current collection and retention metadata do not reconstruct
-        historical collection gaps. Reads perform no lifecycle or triage writes.
+        expected inventory or per-rule coverage gaps. Prospective cadence evidence
+        accompanies this report; its own 100000-outcome bound also requires a
+        narrower since on overflow. Reads perform no lifecycle or triage writes.
       parameters:
         - in: query
           name: since
@@ -45119,6 +45162,8 @@ paths:
         require a narrower since; results are never silently sampled. Reads
         share one database snapshot and a five-second query budget. Retention
         and collection metadata do not guarantee a complete historical window.
+        Prospective cadence coverage is read in the same snapshot. Its separate
+        100000-outcome read bound also returns 400 requiring a narrower since.
       parameters:
         - in: query
           name: since
@@ -64515,11 +64560,64 @@ components:
       properties:
         incident_id: { type: string }
         triage: { $ref: '#/components/schemas/ObsAlertTriage' }
+    ObsAlertCollectionCoverage:
+      type: object
+      description: Exact prospective cadence-evidence partition of a requested retained window; no continuous-availability claim.
+      required: [since, as_of, scope, state, max_age_seconds, retention_seconds, window_microseconds, successful_observation_microseconds, failed_observation_microseconds, unknown_microseconds, successes, failures, limitations]
+      properties:
+        since: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        scope: { type: string, enum: [recorded_collection_cadence] }
+        state:
+          type: string
+          enum: [observed, partial, unknown]
+          description: Observed means every interval has recent successful outcome evidence; partial includes failed or missing intervals; unknown has no fresh duration evidence.
+        max_age_seconds: { type: integer, format: int64, const: 60 }
+        retention_seconds: { type: integer, format: int64, const: 2592000 }
+        window_microseconds: { type: integer, format: int64, minimum: 1, maximum: 2592000000000 }
+        successful_observation_microseconds: { type: integer, format: int64, minimum: 0, maximum: 2592000000000 }
+        failed_observation_microseconds: { type: integer, format: int64, minimum: 0, maximum: 2592000000000 }
+        unknown_microseconds: { type: integer, format: int64, minimum: 0, maximum: 2592000000000 }
+        successes: { type: integer, format: int64, minimum: 0, maximum: 100000 }
+        failures: { type: integer, format: int64, minimum: 0, maximum: 100000 }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsAlertCollectionHistoryInterval:
+      type: object
+      description: Half-open coalesced interval of fresh outcome evidence or unknown observation coverage.
+      required: [from, until, state, reason]
+      properties:
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        state: { type: string, enum: [success, failure, unknown] }
+        reason:
+          type: string
+          enum: ['', collection_failed, source_read_failed, snapshot_rejected, timeout, persistence_failed, no_recent_outcome]
+          description: Empty on successful observations; failures retain only closed codes; unknown intervals have no_recent_outcome without an inferred cause.
+    ObsAlertCollectionHistory:
+      type: object
+      description: Complete bounded collection cadence totals with a newest-first interval preview and current collection metadata.
+      required: [coverage, collection, items, total_intervals, limit, truncated]
+      properties:
+        coverage: { $ref: '#/components/schemas/ObsAlertCollectionCoverage' }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ObsAlertCollectionHistoryInterval' }
+        total_intervals: { type: integer, minimum: 1, maximum: 200001 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean, description: Whether older coalesced intervals are omitted from this preview while coverage totals remain complete. }
     ObsAlertRecurrence:
       type: object
       description: Retained activation-cohort recurrence evidence with complete totals and a ranked preview.
       required: [as_of, since, scope, percentile_method, limitations, collection, retention, totals, items, truncated]
       properties:
+        coverage:
+          description: Prospective collection cadence evidence from the same snapshot; absent on older servers and never proof of complete alert history.
+          $ref: '#/components/schemas/ObsAlertCollectionCoverage'
         as_of: { type: string, format: date-time }
         since: { type: string, format: date-time }
         scope: { type: string, enum: [retained_activation_cohort] }
@@ -64616,6 +64714,9 @@ components:
       description: Atomic retained activation-cohort timing with explicit evidence and sample limitations.
       required: [as_of, since, scope, duration_basis, percentile_method, limitations, collection, retention, totals, groups]
       properties:
+        coverage:
+          description: Collection cadence evidence captured with this timing cohort; older servers omit it and retained timing samples do not imply complete monitoring.
+          $ref: '#/components/schemas/ObsAlertCollectionCoverage'
         as_of: { type: string, format: date-time }
         since: { type: string, format: date-time }
         scope: { type: string, enum: [retained_activation_cohort] }

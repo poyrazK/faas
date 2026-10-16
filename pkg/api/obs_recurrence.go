@@ -4,16 +4,17 @@ import "time"
 
 // ObsAlertRecurrence describes observed repeats in a retained activation cohort.
 type ObsAlertRecurrence struct {
-	AsOf             time.Time                  `json:"as_of"`
-	Since            time.Time                  `json:"since"`
-	Scope            string                     `json:"scope"`
-	PercentileMethod string                     `json:"percentile_method"`
-	Limitations      []string                   `json:"limitations"`
-	Collection       ObsAlertCollectionHealth   `json:"collection"`
-	Retention        ObsAlertRetentionHealth    `json:"retention"`
-	Totals           *ObsAlertRecurrenceTotals  `json:"totals"`
-	Items            []ObsAlertRecurrenceSeries `json:"items"`
-	Truncated        bool                       `json:"truncated"`
+	Coverage         *ObsAlertCollectionCoverage `json:"coverage,omitempty"`
+	AsOf             time.Time                   `json:"as_of"`
+	Since            time.Time                   `json:"since"`
+	Scope            string                      `json:"scope"`
+	PercentileMethod string                      `json:"percentile_method"`
+	Limitations      []string                    `json:"limitations"`
+	Collection       ObsAlertCollectionHealth    `json:"collection"`
+	Retention        ObsAlertRetentionHealth     `json:"retention"`
+	Totals           *ObsAlertRecurrenceTotals   `json:"totals"`
+	Items            []ObsAlertRecurrenceSeries  `json:"items"`
+	Truncated        bool                        `json:"truncated"`
 }
 
 type ObsAlertRecurrenceTotals struct {

@@ -21,9 +21,10 @@ type OperatorAlertRecurrenceEpisode struct {
 }
 
 type OperatorAlertRecurrenceSnapshot struct {
-	Collection OperatorAlertCollection
-	Retention  OperatorAlertRetention
-	Episodes   []OperatorAlertRecurrenceEpisode
+	CollectionOutcomes []OperatorAlertCollectionOutcome
+	Collection         OperatorAlertCollection
+	Retention          OperatorAlertRetention
+	Episodes           []OperatorAlertRecurrenceEpisode
 }
 
 type OperatorAlertRecurrenceReader interface {

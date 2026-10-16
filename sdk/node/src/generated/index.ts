@@ -1134,7 +1134,10 @@ export type { ObjectVersionRetentionResult } from './models/ObjectVersionRetenti
 export type { ObjectWriteProtection } from './models/ObjectWriteProtection.js';
 export type { ObjectWriteReceipt } from './models/ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './models/ObjectWriteReceiptList.js';
+export type { ObsAlertCollectionCoverage } from './models/ObsAlertCollectionCoverage.js';
 export type { ObsAlertCollectionHealth } from './models/ObsAlertCollectionHealth.js';
+export type { ObsAlertCollectionHistory } from './models/ObsAlertCollectionHistory.js';
+export type { ObsAlertCollectionHistoryInterval } from './models/ObsAlertCollectionHistoryInterval.js';
 export type { ObsAlertEpisode } from './models/ObsAlertEpisode.js';
 export type { ObsAlertRecurrence } from './models/ObsAlertRecurrence.js';
 export type { ObsAlertRecurrenceDuration } from './models/ObsAlertRecurrenceDuration.js';

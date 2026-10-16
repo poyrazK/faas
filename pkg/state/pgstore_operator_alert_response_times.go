@@ -33,6 +33,10 @@ func (s *PgStore) OperatorAlertResponseTimes(ctx context.Context, input Operator
 		return out, fmt.Errorf("response timing retention: %w", err)
 	}
 	out.Retention = pgAlertRetention(retention)
+	out.CollectionOutcomes, err = pgAlertCollectionOutcomes(ctx, q, tx, f.Since, f.Now)
+	if err != nil {
+		return out, err
+	}
 	if out.Collection.LastSuccessAt.IsZero() {
 		return out, tx.Commit(ctx)
 	}

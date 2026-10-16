@@ -83,6 +83,38 @@ func (q *Queries) OperatorAlertCollectionLock(ctx context.Context, db DBTX) (Ope
 	return i, err
 }
 
+const operatorAlertCollectionOutcomes = `-- name: OperatorAlertCollectionOutcomes :many
+SELECT attempted_at,outcome,reason FROM operator_alert_collection_outcomes
+WHERE attempted_at>=$1::timestamptz AND attempted_at<=$2::timestamptz
+ORDER BY attempted_at LIMIT $3::integer
+`
+
+type OperatorAlertCollectionOutcomesParams struct {
+	Since    pgtype.Timestamptz
+	AsOf     pgtype.Timestamptz
+	RowLimit int32
+}
+
+func (q *Queries) OperatorAlertCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertCollectionOutcomesParams) ([]OperatorAlertCollectionOutcome, error) {
+	rows, err := db.Query(ctx, operatorAlertCollectionOutcomes, arg.Since, arg.AsOf, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertCollectionOutcome{}
+	for rows.Next() {
+		var i OperatorAlertCollectionOutcome
+		if err := rows.Scan(&i.AttemptedAt, &i.Outcome, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAlertCollectionSucceeded = `-- name: OperatorAlertCollectionSucceeded :exec
 UPDATE operator_alert_collection SET last_attempt_at = $1, last_success_at = $1 WHERE singleton
 `
@@ -273,6 +305,39 @@ func (q *Queries) OperatorAlertEpisodes(ctx context.Context, db DBTX, arg Operat
 		return nil, err
 	}
 	return items, nil
+}
+
+const operatorAlertInsertCollectionOutcome = `-- name: OperatorAlertInsertCollectionOutcome :exec
+INSERT INTO operator_alert_collection_outcomes(attempted_at,outcome,reason)
+VALUES ($1::timestamptz,$2::text,$3::text)
+`
+
+type OperatorAlertInsertCollectionOutcomeParams struct {
+	AttemptedAt pgtype.Timestamptz
+	Outcome     string
+	Reason      string
+}
+
+func (q *Queries) OperatorAlertInsertCollectionOutcome(ctx context.Context, db DBTX, arg OperatorAlertInsertCollectionOutcomeParams) error {
+	_, err := db.Exec(ctx, operatorAlertInsertCollectionOutcome, arg.AttemptedAt, arg.Outcome, arg.Reason)
+	return err
+}
+
+const operatorAlertPruneCollectionOutcomes = `-- name: OperatorAlertPruneCollectionOutcomes :exec
+DELETE FROM operator_alert_collection_outcomes WHERE attempted_at IN (
+ SELECT attempted_at FROM operator_alert_collection_outcomes WHERE attempted_at<$1::timestamptz
+ ORDER BY attempted_at LIMIT $2::integer
+)
+`
+
+type OperatorAlertPruneCollectionOutcomesParams struct {
+	Before    pgtype.Timestamptz
+	BatchSize int32
+}
+
+func (q *Queries) OperatorAlertPruneCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertPruneCollectionOutcomesParams) error {
+	_, err := db.Exec(ctx, operatorAlertPruneCollectionOutcomes, arg.Before, arg.BatchSize)
+	return err
 }
 
 const operatorAlertPruneEpisodes = `-- name: OperatorAlertPruneEpisodes :execrows

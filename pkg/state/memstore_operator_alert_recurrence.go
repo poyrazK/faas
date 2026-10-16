@@ -20,6 +20,10 @@ func (m *MemStore) OperatorAlertRecurrence(ctx context.Context, input OperatorAl
 	defer m.mu.Unlock()
 	out.Collection = m.operatorAlertCollection
 	out.Retention = m.operatorAlertRetentionStatusLocked(f.Now)
+	out.CollectionOutcomes, err = m.operatorAlertCollectionOutcomesLocked(f.Since, f.Now)
+	if err != nil {
+		return out, err
+	}
 	if out.Collection.LastSuccessAt.IsZero() {
 		return out, nil
 	}
