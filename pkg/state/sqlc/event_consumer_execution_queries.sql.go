@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceEventExecutionReconciliations = `-- name: AdvanceEventExecutionReconciliations :execrows
+WITH pending AS (
+ SELECT c.subscription_id FROM event_execution_coverage c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+ WHERE c.reconciliation_requested_at IS NOT NULL AND NOT c.ledger_baseline_known
+ AND NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id)))
+ ORDER BY c.reconciliation_requested_at,c.subscription_id
+ FOR UPDATE OF c SKIP LOCKED LIMIT $1::integer
+), ready AS (
+ SELECT c.subscription_id FROM event_execution_coverage c JOIN pending p USING(subscription_id)
+ WHERE NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id)))
+)
+UPDATE event_execution_coverage c SET ledger_started_at=greatest(clock_timestamp(),c.ledger_started_at,c.reconciliation_requested_at,c.ledger_lost_through_at+interval '1 microsecond'),ledger_baseline_known=true
+FROM ready WHERE c.subscription_id=ready.subscription_id
+`
+
+func (q *Queries) AdvanceEventExecutionReconciliations(ctx context.Context, db DBTX, batchLimit int32) (int64, error) {
+	result, err := db.Exec(ctx, advanceEventExecutionReconciliations, batchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const associateEventExecutionRoot = `-- name: AssociateEventExecutionRoot :one
 WITH baseline AS (
  INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known)
@@ -87,6 +116,34 @@ FROM invocations i WHERE i.id=$1::uuid AND i.state='completed' AND i.completed_a
 
 func (q *Queries) CaptureAssociatedEventCompletion(ctx context.Context, db DBTX, invocationID pgtype.UUID) error {
 	_, err := db.Exec(ctx, captureAssociatedEventCompletion, invocationID)
+	return err
+}
+
+const createEventExecutionLineageRetryJob = `-- name: CreateEventExecutionLineageRetryJob :exec
+INSERT INTO event_execution_lineage_retry_jobs(subscription_id,request_id,account_id,app_id,state,snapshot,created_at,updated_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'pending',$5::jsonb,$6::timestamptz,$6::timestamptz,$7::timestamptz)
+`
+
+type CreateEventExecutionLineageRetryJobParams struct {
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Snapshot       []byte
+	CreatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
+func (q *Queries) CreateEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg CreateEventExecutionLineageRetryJobParams) error {
+	_, err := db.Exec(ctx, createEventExecutionLineageRetryJob,
+		arg.SubscriptionID,
+		arg.RequestID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Snapshot,
+		arg.CreatedAt,
+		arg.RetainUntil,
+	)
 	return err
 }
 
@@ -386,6 +443,1231 @@ func (q *Queries) EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg E
 	return i, err
 }
 
+const eventExecutionLineageBackfillAssociated = `-- name: EventExecutionLineageBackfillAssociated :one
+SELECT EXISTS(SELECT 1 FROM event_execution_roots WHERE root_invocation_id=$1::uuid AND account_id=$2::uuid AND app_id=$3::uuid AND subscription_id=$4::uuid AND outbox_id=$5::bigint AND accepted_at=$6::timestamptz)
+`
+
+type EventExecutionLineageBackfillAssociatedParams struct {
+	InvocationID   pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	OutboxID       int64
+	AcceptedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) EventExecutionLineageBackfillAssociated(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillAssociatedParams) (bool, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageBackfillAssociated,
+		arg.InvocationID,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.OutboxID,
+		arg.AcceptedAt,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const eventExecutionLineageBackfillCaseExists = `-- name: EventExecutionLineageBackfillCaseExists :one
+SELECT EXISTS(SELECT 1 FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id=$4::bigint)
+`
+
+type EventExecutionLineageBackfillCaseExistsParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	OutboxID       int64
+}
+
+func (q *Queries) EventExecutionLineageBackfillCaseExists(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillCaseExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageBackfillCaseExists,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.OutboxID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const eventExecutionLineageBackfillJobs = `-- name: EventExecutionLineageBackfillJobs :many
+SELECT c.subscription_id,c.account_id,c.app_id,c.lineage_repair_progress FROM event_execution_coverage c
+JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+WHERE c.lineage_repair_progress->'case_backfill'->>'status' IN ('pending','waiting_for_retry_jobs')
+ORDER BY (c.lineage_repair_progress->'case_backfill'->>'updated_at')::timestamptz,c.subscription_id
+FOR UPDATE OF c SKIP LOCKED LIMIT $1::integer
+`
+
+type EventExecutionLineageBackfillJobsRow struct {
+	SubscriptionID        pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	LineageRepairProgress []byte
+}
+
+func (q *Queries) EventExecutionLineageBackfillJobs(ctx context.Context, db DBTX, jobLimit int32) ([]EventExecutionLineageBackfillJobsRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageBackfillJobs, jobLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageBackfillJobsRow{}
+	for rows.Next() {
+		var i EventExecutionLineageBackfillJobsRow
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.AccountID,
+			&i.AppID,
+			&i.LineageRepairProgress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventExecutionLineageBackfillReceipts = `-- name: EventExecutionLineageBackfillReceipts :many
+SELECT o.payload, o.id AS outbox_id,o.created_at AS accepted_at,o.source,o.event_id,
+ coalesce(o.payload->>'accountid',o.payload->>'account_id',o.account_id::text)::text AS invocation_account_id
+FROM event_fanout_outbox o
+CROSS JOIN LATERAL (
+ SELECT captured.recipient,'acceptance'::text AS origin FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) captured(recipient)
+ UNION ALL
+ SELECT added.recipient,'backfill'::text FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+) s
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
+WHERE o.account_id=$1::uuid AND s.recipient->>'app_id'=$2::uuid::text
+ AND s.recipient->>'id'=$3::text AND NOT s.recipient ? 'workflow' AND NOT s.recipient ? 'object_notification'
+ AND CASE WHEN s.origin='backfill' OR o.recipient_claims THEN coalesce(r.state,o.recipient_progress->(s.recipient->>'id')->>'state','pending') ELSE coalesce(o.recipient_progress->(s.recipient->>'id')->>'state','pending') END='enqueued'
+ AND o.id>$4::bigint AND o.id<=$5::bigint
+ORDER BY o.id ASC LIMIT $6::integer FOR SHARE OF o
+`
+
+type EventExecutionLineageBackfillReceiptsParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  string
+	AfterOutboxID   int64
+	ThroughOutboxID int64
+	RootLimit       int32
+}
+
+type EventExecutionLineageBackfillReceiptsRow struct {
+	Payload             []byte
+	OutboxID            int64
+	AcceptedAt          pgtype.Timestamptz
+	Source              string
+	EventID             string
+	InvocationAccountID string
+}
+
+// Admission roots include settled receipts and materialized backfill recipients.
+func (q *Queries) EventExecutionLineageBackfillReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillReceiptsParams) ([]EventExecutionLineageBackfillReceiptsRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageBackfillReceipts,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.AfterOutboxID,
+		arg.ThroughOutboxID,
+		arg.RootLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageBackfillReceiptsRow{}
+	for rows.Next() {
+		var i EventExecutionLineageBackfillReceiptsRow
+		if err := rows.Scan(
+			&i.Payload,
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.Source,
+			&i.EventID,
+			&i.InvocationAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventExecutionLineageBackfillRetryPending = `-- name: EventExecutionLineageBackfillRetryPending :one
+SELECT EXISTS(SELECT 1 FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND state IN ('pending','paused') AND retain_until>clock_timestamp())
+`
+
+type EventExecutionLineageBackfillRetryPendingParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) EventExecutionLineageBackfillRetryPending(ctx context.Context, db DBTX, arg EventExecutionLineageBackfillRetryPendingParams) (bool, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageBackfillRetryPending, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const eventExecutionLineageBackfillUpper = `-- name: EventExecutionLineageBackfillUpper :one
+SELECT coalesce(max(id),0)::bigint FROM event_fanout_outbox WHERE account_id=$1::uuid
+`
+
+func (q *Queries) EventExecutionLineageBackfillUpper(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageBackfillUpper, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventExecutionLineageCaseReceipt = `-- name: EventExecutionLineageCaseReceipt :many
+SELECT o.payload, o.id AS outbox_id,o.created_at AS accepted_at,o.source,o.event_id,
+ coalesce(o.payload->>'accountid',o.payload->>'account_id',o.account_id::text)::text AS invocation_account_id
+FROM event_fanout_outbox o
+CROSS JOIN LATERAL (
+ SELECT captured.recipient,'acceptance'::text AS origin FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) captured(recipient)
+ UNION ALL
+ SELECT added.recipient,'backfill'::text FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+) s
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
+WHERE o.account_id=$1::uuid AND s.recipient->>'app_id'=$2::uuid::text
+ AND s.recipient->>'id'=$3::text AND NOT s.recipient ? 'workflow' AND NOT s.recipient ? 'object_notification'
+ AND CASE WHEN s.origin='backfill' OR o.recipient_claims THEN coalesce(r.state,o.recipient_progress->(s.recipient->>'id')->>'state','pending') ELSE coalesce(o.recipient_progress->(s.recipient->>'id')->>'state','pending') END='enqueued'
+ AND o.id=$4::bigint
+ORDER BY o.id ASC LIMIT 1 FOR SHARE OF o
+`
+
+type EventExecutionLineageCaseReceiptParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+	OutboxID       int64
+}
+
+type EventExecutionLineageCaseReceiptRow struct {
+	Payload             []byte
+	OutboxID            int64
+	AcceptedAt          pgtype.Timestamptz
+	Source              string
+	EventID             string
+	InvocationAccountID string
+}
+
+// Admission roots include settled receipts and materialized backfill recipients.
+func (q *Queries) EventExecutionLineageCaseReceipt(ctx context.Context, db DBTX, arg EventExecutionLineageCaseReceiptParams) ([]EventExecutionLineageCaseReceiptRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageCaseReceipt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.OutboxID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageCaseReceiptRow{}
+	for rows.Next() {
+		var i EventExecutionLineageCaseReceiptRow
+		if err := rows.Scan(
+			&i.Payload,
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.Source,
+			&i.EventID,
+			&i.InvocationAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventExecutionLineageRepairAmbiguous = `-- name: EventExecutionLineageRepairAmbiguous :one
+SELECT EXISTS(SELECT 1 FROM event_fanout_outbox o
+WHERE o.account_id=$1::uuid AND o.source=$2::text AND o.event_id=$3::text
+ AND coalesce(o.payload->>'accountid',o.payload->>'account_id',o.account_id::text)=$4::text
+ AND o.id<>$5::bigint AND o.created_at<=$6::timestamptz
+ AND (EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r WHERE r->>'id'=$7::text AND r->>'app_id'=$8::uuid::text)
+ OR EXISTS(SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id AND r.subscription_id=$7::text AND r.recipient->>'app_id'=$8::uuid::text))) AS ambiguous
+`
+
+type EventExecutionLineageRepairAmbiguousParams struct {
+	AccountID           pgtype.UUID
+	EventSource         string
+	EventID             string
+	InvocationAccountID string
+	OutboxID            int64
+	CreatedAt           pgtype.Timestamptz
+	SubscriptionID      string
+	AppID               pgtype.UUID
+}
+
+func (q *Queries) EventExecutionLineageRepairAmbiguous(ctx context.Context, db DBTX, arg EventExecutionLineageRepairAmbiguousParams) (bool, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRepairAmbiguous,
+		arg.AccountID,
+		arg.EventSource,
+		arg.EventID,
+		arg.InvocationAccountID,
+		arg.OutboxID,
+		arg.CreatedAt,
+		arg.SubscriptionID,
+		arg.AppID,
+	)
+	var ambiguous bool
+	err := row.Scan(&ambiguous)
+	return ambiguous, err
+}
+
+const eventExecutionLineageRepairExistingRoot = `-- name: EventExecutionLineageRepairExistingRoot :one
+SELECT subscription_id,account_id,app_id,accepted_at,outbox_id FROM event_execution_roots
+WHERE root_invocation_id=$1::uuid AND root_created_at=$2::timestamptz
+`
+
+type EventExecutionLineageRepairExistingRootParams struct {
+	InvocationID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+type EventExecutionLineageRepairExistingRootRow struct {
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	AcceptedAt     pgtype.Timestamptz
+	OutboxID       int64
+}
+
+func (q *Queries) EventExecutionLineageRepairExistingRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairExistingRootParams) (EventExecutionLineageRepairExistingRootRow, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRepairExistingRoot, arg.InvocationID, arg.CreatedAt)
+	var i EventExecutionLineageRepairExistingRootRow
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.AccountID,
+		&i.AppID,
+		&i.AcceptedAt,
+		&i.OutboxID,
+	)
+	return i, err
+}
+
+const eventExecutionLineageRepairJobs = `-- name: EventExecutionLineageRepairJobs :many
+SELECT c.subscription_id,c.account_id,c.app_id,c.lineage_repair_progress FROM event_execution_coverage c
+JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+WHERE c.reconciliation_requested_at IS NOT NULL AND NOT c.ledger_baseline_known
+AND EXISTS(SELECT 1 FROM event_fanout_outbox o WHERE o.account_id=c.account_id
+ AND o.id>coalesce((c.lineage_repair_progress->>'cursor')::bigint,0)
+ AND (EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r WHERE r->>'id'=c.subscription_id::text AND r->>'app_id'=c.app_id::text)
+ OR EXISTS(SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id AND r.subscription_id=c.subscription_id::text AND r.recipient->>'app_id'=c.app_id::text)))
+ORDER BY coalesce((c.lineage_repair_progress->>'last_scan')::timestamptz,c.reconciliation_requested_at),c.subscription_id
+FOR UPDATE OF c SKIP LOCKED LIMIT $1::integer
+`
+
+type EventExecutionLineageRepairJobsRow struct {
+	SubscriptionID        pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	LineageRepairProgress []byte
+}
+
+func (q *Queries) EventExecutionLineageRepairJobs(ctx context.Context, db DBTX, jobLimit int32) ([]EventExecutionLineageRepairJobsRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageRepairJobs, jobLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageRepairJobsRow{}
+	for rows.Next() {
+		var i EventExecutionLineageRepairJobsRow
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.AccountID,
+			&i.AppID,
+			&i.LineageRepairProgress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventExecutionLineageRepairReceipts = `-- name: EventExecutionLineageRepairReceipts :many
+SELECT o.payload, o.id AS outbox_id,o.created_at AS accepted_at,o.source,o.event_id,
+ coalesce(o.payload->>'accountid',o.payload->>'account_id',o.account_id::text)::text AS invocation_account_id
+FROM event_fanout_outbox o
+CROSS JOIN LATERAL (
+ SELECT captured.recipient,'acceptance'::text AS origin FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) captured(recipient)
+ UNION ALL
+ SELECT added.recipient,'backfill'::text FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+) s
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
+WHERE o.account_id=$1::uuid AND s.recipient->>'app_id'=$2::uuid::text
+ AND s.recipient->>'id'=$3::text AND NOT s.recipient ? 'workflow' AND NOT s.recipient ? 'object_notification'
+ AND CASE WHEN s.origin='backfill' OR o.recipient_claims THEN coalesce(r.state,o.recipient_progress->(s.recipient->>'id')->>'state','pending') ELSE coalesce(o.recipient_progress->(s.recipient->>'id')->>'state','pending') END='enqueued'
+ AND o.id>$4::bigint
+ORDER BY o.id ASC LIMIT $5::integer FOR SHARE OF o
+`
+
+type EventExecutionLineageRepairReceiptsParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+	AfterOutboxID  int64
+	RootLimit      int32
+}
+
+type EventExecutionLineageRepairReceiptsRow struct {
+	Payload             []byte
+	OutboxID            int64
+	AcceptedAt          pgtype.Timestamptz
+	Source              string
+	EventID             string
+	InvocationAccountID string
+}
+
+// Admission roots include settled receipts and materialized backfill recipients.
+func (q *Queries) EventExecutionLineageRepairReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageRepairReceiptsParams) ([]EventExecutionLineageRepairReceiptsRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageRepairReceipts,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.AfterOutboxID,
+		arg.RootLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageRepairReceiptsRow{}
+	for rows.Next() {
+		var i EventExecutionLineageRepairReceiptsRow
+		if err := rows.Scan(
+			&i.Payload,
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.Source,
+			&i.EventID,
+			&i.InvocationAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventExecutionLineageRepairRoot = `-- name: EventExecutionLineageRepairRoot :one
+SELECT id,created_at,replay_root_invocation_id,replay_root_created_at,source,method,path,payload FROM invocations
+WHERE id=$1::uuid AND account_id=$2::uuid AND app_id=$3::uuid FOR UPDATE
+`
+
+type EventExecutionLineageRepairRootParams struct {
+	InvocationID pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+type EventExecutionLineageRepairRootRow struct {
+	ID                     pgtype.UUID
+	CreatedAt              pgtype.Timestamptz
+	ReplayRootInvocationID pgtype.UUID
+	ReplayRootCreatedAt    pgtype.Timestamptz
+	Source                 string
+	Method                 string
+	Path                   string
+	Payload                []byte
+}
+
+func (q *Queries) EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairRootParams) (EventExecutionLineageRepairRootRow, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRepairRoot, arg.InvocationID, arg.AccountID, arg.AppID)
+	var i EventExecutionLineageRepairRootRow
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
+		&i.Source,
+		&i.Method,
+		&i.Path,
+		&i.Payload,
+	)
+	return i, err
+}
+
+const eventExecutionLineageRetryControlSequence = `-- name: EventExecutionLineageRetryControlSequence :one
+SELECT coalesce(max(sequence),0)::bigint FROM event_execution_lineage_retry_control_receipts
+WHERE subscription_id=$1::uuid AND job_request_id=$2::uuid
+`
+
+type EventExecutionLineageRetryControlSequenceParams struct {
+	SubscriptionID pgtype.UUID
+	JobRequestID   pgtype.UUID
+}
+
+func (q *Queries) EventExecutionLineageRetryControlSequence(ctx context.Context, db DBTX, arg EventExecutionLineageRetryControlSequenceParams) (int64, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRetryControlSequence, arg.SubscriptionID, arg.JobRequestID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventExecutionLineageRetryHealthJobs = `-- name: EventExecutionLineageRetryHealthJobs :many
+SELECT request_id,state,created_at,updated_at,retain_until,
+ (snapshot->>'processed')::integer AS processed,
+ jsonb_array_length(snapshot->'items')::integer AS selected,
+ (snapshot->>'last_progress_at')::timestamptz AS last_progress_at
+FROM event_execution_lineage_retry_jobs
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND state IN ('pending','paused')
+ AND created_at<=$4::timestamptz AND retain_until>$4::timestamptz
+ORDER BY retain_until,updated_at,request_id LIMIT $5::integer
+`
+
+type EventExecutionLineageRetryHealthJobsParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+	JobLimit       int32
+}
+
+type EventExecutionLineageRetryHealthJobsRow struct {
+	RequestID      pgtype.UUID
+	State          string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+	Processed      int32
+	Selected       int32
+	LastProgressAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventExecutionLineageRetryHealthJobs(ctx context.Context, db DBTX, arg EventExecutionLineageRetryHealthJobsParams) ([]EventExecutionLineageRetryHealthJobsRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageRetryHealthJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+		arg.JobLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageRetryHealthJobsRow{}
+	for rows.Next() {
+		var i EventExecutionLineageRetryHealthJobsRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetainUntil,
+			&i.Processed,
+			&i.Selected,
+			&i.LastProgressAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventExecutionLineageRetryJobIdentity = `-- name: EventExecutionLineageRetryJobIdentity :one
+SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND request_id=$4::uuid
+`
+
+type EventExecutionLineageRetryJobIdentityParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) EventExecutionLineageRetryJobIdentity(ctx context.Context, db DBTX, arg EventExecutionLineageRetryJobIdentityParams) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRetryJobIdentity,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const eventExecutionLineageRetryResult = `-- name: EventExecutionLineageRetryResult :one
+SELECT expected_revision,result FROM event_execution_lineage_retries WHERE subscription_id=$1::uuid AND outbox_id=$2::bigint AND request_id=$3::uuid AND retain_until>clock_timestamp()
+`
+
+type EventExecutionLineageRetryResultParams struct {
+	SubscriptionID pgtype.UUID
+	OutboxID       int64
+	RequestID      pgtype.UUID
+}
+
+type EventExecutionLineageRetryResultRow struct {
+	ExpectedRevision int64
+	Result           []byte
+}
+
+func (q *Queries) EventExecutionLineageRetryResult(ctx context.Context, db DBTX, arg EventExecutionLineageRetryResultParams) (EventExecutionLineageRetryResultRow, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRetryResult, arg.SubscriptionID, arg.OutboxID, arg.RequestID)
+	var i EventExecutionLineageRetryResultRow
+	err := row.Scan(&i.ExpectedRevision, &i.Result)
+	return i, err
+}
+
+const getEventExecutionLineageBackfillProgress = `-- name: GetEventExecutionLineageBackfillProgress :one
+SELECT lineage_repair_progress FROM event_execution_coverage WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+`
+
+type GetEventExecutionLineageBackfillProgressParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) GetEventExecutionLineageBackfillProgress(ctx context.Context, db DBTX, arg GetEventExecutionLineageBackfillProgressParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getEventExecutionLineageBackfillProgress, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var lineage_repair_progress []byte
+	err := row.Scan(&lineage_repair_progress)
+	return lineage_repair_progress, err
+}
+
+const getEventExecutionLineageRetryControlReceipt = `-- name: GetEventExecutionLineageRetryControlReceipt :one
+SELECT subscription_id, job_request_id, command_id, account_id, app_id, action, expected_created_at, sequence, result, recorded_at, retain_until FROM event_execution_lineage_retry_control_receipts
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND job_request_id=$4::uuid AND command_id=$5::uuid
+`
+
+type GetEventExecutionLineageRetryControlReceiptParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	JobRequestID   pgtype.UUID
+	CommandID      pgtype.UUID
+}
+
+func (q *Queries) GetEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryControlReceiptParams) (EventExecutionLineageRetryControlReceipt, error) {
+	row := db.QueryRow(ctx, getEventExecutionLineageRetryControlReceipt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.JobRequestID,
+		arg.CommandID,
+	)
+	var i EventExecutionLineageRetryControlReceipt
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.JobRequestID,
+		&i.CommandID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Action,
+		&i.ExpectedCreatedAt,
+		&i.Sequence,
+		&i.Result,
+		&i.RecordedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const getEventExecutionLineageRetryJob = `-- name: GetEventExecutionLineageRetryJob :one
+SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND request_id=$4::uuid AND retain_until>clock_timestamp()
+`
+
+type GetEventExecutionLineageRetryJobParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) GetEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, getEventExecutionLineageRetryJob,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const getEventExecutionReconciliation = `-- name: GetEventExecutionReconciliation :one
+SELECT coalesce(c.ledger_baseline_known,false)::boolean AS ledger_baseline_known,c.ledger_started_at,c.reconciliation_requested_at,c.lineage_repair_progress,
+ EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id))) AS unattributed_execution_present
+FROM (SELECT $3::uuid AS subscription_id) target
+LEFT JOIN event_execution_coverage c ON c.subscription_id=target.subscription_id
+ AND c.account_id=$1::uuid AND c.app_id=$2::uuid
+`
+
+type GetEventExecutionReconciliationParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+type GetEventExecutionReconciliationRow struct {
+	LedgerBaselineKnown          bool
+	LedgerStartedAt              pgtype.Timestamptz
+	ReconciliationRequestedAt    pgtype.Timestamptz
+	LineageRepairProgress        []byte
+	UnattributedExecutionPresent bool
+}
+
+func (q *Queries) GetEventExecutionReconciliation(ctx context.Context, db DBTX, arg GetEventExecutionReconciliationParams) (GetEventExecutionReconciliationRow, error) {
+	row := db.QueryRow(ctx, getEventExecutionReconciliation, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var i GetEventExecutionReconciliationRow
+	err := row.Scan(
+		&i.LedgerBaselineKnown,
+		&i.LedgerStartedAt,
+		&i.ReconciliationRequestedAt,
+		&i.LineageRepairProgress,
+		&i.UnattributedExecutionPresent,
+	)
+	return i, err
+}
+
+const insertEventExecutionLineageBackfillCase = `-- name: InsertEventExecutionLineageBackfillCase :execrows
+INSERT INTO event_execution_lineage_cases(diagnostic_id,subscription_id,outbox_id,account_id,app_id,accepted_at,root_invocation_id,root_created_at,status,reason,recorded_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,$6::timestamptz,$7::text,$8::timestamptz,$9::text,$10::text,clock_timestamp(),clock_timestamp()+make_interval(secs=>$11::integer))
+ON CONFLICT(subscription_id,outbox_id) DO NOTHING
+`
+
+type InsertEventExecutionLineageBackfillCaseParams struct {
+	DiagnosticID     pgtype.UUID
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	RootInvocationID string
+	RootCreatedAt    pgtype.Timestamptz
+	Status           string
+	Reason           string
+	RetentionSeconds int32
+}
+
+func (q *Queries) InsertEventExecutionLineageBackfillCase(ctx context.Context, db DBTX, arg InsertEventExecutionLineageBackfillCaseParams) (int64, error) {
+	result, err := db.Exec(ctx, insertEventExecutionLineageBackfillCase,
+		arg.DiagnosticID,
+		arg.SubscriptionID,
+		arg.OutboxID,
+		arg.AccountID,
+		arg.AppID,
+		arg.AcceptedAt,
+		arg.RootInvocationID,
+		arg.RootCreatedAt,
+		arg.Status,
+		arg.Reason,
+		arg.RetentionSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const listEventExecutionLineageCases = `-- name: ListEventExecutionLineageCases :many
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id>$4::bigint AND retain_until>clock_timestamp()
+ORDER BY outbox_id LIMIT $5::integer
+`
+
+type ListEventExecutionLineageCasesParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	AfterOutboxID  int64
+	PageLimit      int32
+}
+
+func (q *Queries) ListEventExecutionLineageCases(ctx context.Context, db DBTX, arg ListEventExecutionLineageCasesParams) ([]EventExecutionLineageCase, error) {
+	rows, err := db.Query(ctx, listEventExecutionLineageCases,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.AfterOutboxID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageCase{}
+	for rows.Next() {
+		var i EventExecutionLineageCase
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.OutboxID,
+			&i.AccountID,
+			&i.AppID,
+			&i.AcceptedAt,
+			&i.RootInvocationID,
+			&i.RootCreatedAt,
+			&i.Status,
+			&i.Reason,
+			&i.Revision,
+			&i.RetryCount,
+			&i.RecordedAt,
+			&i.RetainUntil,
+			&i.DiagnosticID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventExecutionLineageRetryControlReceipts = `-- name: ListEventExecutionLineageRetryControlReceipts :many
+SELECT subscription_id, job_request_id, command_id, account_id, app_id, action, expected_created_at, sequence, result, recorded_at, retain_until FROM event_execution_lineage_retry_control_receipts
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND job_request_id=$4::uuid
+ AND expected_created_at=$5::timestamptz AND retain_until>statement_timestamp()
+ AND sequence>$6::bigint
+ AND ($7::text='' OR action=$7::text)
+ AND ($8::text='' OR result->>'actor_id'=$8::text)
+ AND ($9::text='' OR result->>'credential_type'=$9::text)
+ORDER BY sequence LIMIT $10::integer
+`
+
+type ListEventExecutionLineageRetryControlReceiptsParams struct {
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	SubscriptionID       pgtype.UUID
+	JobRequestID         pgtype.UUID
+	ExpectedCreatedAt    pgtype.Timestamptz
+	AfterSequence        int64
+	ActionFilter         string
+	ActorIDFilter        string
+	CredentialTypeFilter string
+	PageLimit            int32
+}
+
+func (q *Queries) ListEventExecutionLineageRetryControlReceipts(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryControlReceiptsParams) ([]EventExecutionLineageRetryControlReceipt, error) {
+	rows, err := db.Query(ctx, listEventExecutionLineageRetryControlReceipts,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.JobRequestID,
+		arg.ExpectedCreatedAt,
+		arg.AfterSequence,
+		arg.ActionFilter,
+		arg.ActorIDFilter,
+		arg.CredentialTypeFilter,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageRetryControlReceipt{}
+	for rows.Next() {
+		var i EventExecutionLineageRetryControlReceipt
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.JobRequestID,
+			&i.CommandID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Action,
+			&i.ExpectedCreatedAt,
+			&i.Sequence,
+			&i.Result,
+			&i.RecordedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventExecutionLineageRetryJobs = `-- name: ListEventExecutionLineageRetryJobs :many
+SELECT request_id,subscription_id,app_id,state,
+ jsonb_array_length(snapshot->'items')::integer AS selected,
+ (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until,
+ (snapshot->>'last_progress_at')::timestamptz AS last_progress_at
+FROM event_execution_lineage_retry_jobs
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND retain_until>$4::timestamptz
+ AND ($5::text='' OR state=$5::text)
+ AND ($6::text='' OR (state IN ('pending','paused') AND created_at<=$4::timestamptz AND (
+  ($6::text IN ('any','stalled') AND state='pending' AND updated_at<=$7::timestamptz)
+  OR ($6::text IN ('any','retention_risk') AND retain_until<=$8::timestamptz))))
+ AND (NOT $9::boolean OR (created_at,request_id)<($10::timestamptz,$11::uuid))
+ORDER BY created_at DESC,request_id DESC LIMIT $12::integer
+`
+
+type ListEventExecutionLineageRetryJobsParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  pgtype.UUID
+	NowAt           pgtype.Timestamptz
+	Status          string
+	AttentionFilter string
+	StalledBefore   pgtype.Timestamptz
+	RetentionBefore pgtype.Timestamptz
+	HasAfter        bool
+	AfterCreatedAt  pgtype.Timestamptz
+	AfterRequestID  pgtype.UUID
+	PageLimit       int32
+}
+
+type ListEventExecutionLineageRetryJobsRow struct {
+	RequestID      pgtype.UUID
+	SubscriptionID pgtype.UUID
+	AppID          pgtype.UUID
+	State          string
+	Selected       int32
+	Processed      int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+	LastProgressAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryJobsParams) ([]ListEventExecutionLineageRetryJobsRow, error) {
+	rows, err := db.Query(ctx, listEventExecutionLineageRetryJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+		arg.Status,
+		arg.AttentionFilter,
+		arg.StalledBefore,
+		arg.RetentionBefore,
+		arg.HasAfter,
+		arg.AfterCreatedAt,
+		arg.AfterRequestID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventExecutionLineageRetryJobsRow{}
+	for rows.Next() {
+		var i ListEventExecutionLineageRetryJobsRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.SubscriptionID,
+			&i.AppID,
+			&i.State,
+			&i.Selected,
+			&i.Processed,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetainUntil,
+			&i.LastProgressAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockEventExecutionLineageCase = `-- name: LockEventExecutionLineageCase :one
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id=$4::bigint AND retain_until>clock_timestamp() FOR UPDATE
+`
+
+type LockEventExecutionLineageCaseParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	OutboxID       int64
+}
+
+func (q *Queries) LockEventExecutionLineageCase(ctx context.Context, db DBTX, arg LockEventExecutionLineageCaseParams) (EventExecutionLineageCase, error) {
+	row := db.QueryRow(ctx, lockEventExecutionLineageCase,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.OutboxID,
+	)
+	var i EventExecutionLineageCase
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.OutboxID,
+		&i.AccountID,
+		&i.AppID,
+		&i.AcceptedAt,
+		&i.RootInvocationID,
+		&i.RootCreatedAt,
+		&i.Status,
+		&i.Reason,
+		&i.Revision,
+		&i.RetryCount,
+		&i.RecordedAt,
+		&i.RetainUntil,
+		&i.DiagnosticID,
+	)
+	return i, err
+}
+
+const lockEventExecutionLineageCoverage = `-- name: LockEventExecutionLineageCoverage :one
+SELECT subscription_id,account_id,app_id,lineage_repair_progress FROM event_execution_coverage
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid FOR UPDATE
+`
+
+type LockEventExecutionLineageCoverageParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+type LockEventExecutionLineageCoverageRow struct {
+	SubscriptionID        pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	LineageRepairProgress []byte
+}
+
+func (q *Queries) LockEventExecutionLineageCoverage(ctx context.Context, db DBTX, arg LockEventExecutionLineageCoverageParams) (LockEventExecutionLineageCoverageRow, error) {
+	row := db.QueryRow(ctx, lockEventExecutionLineageCoverage, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var i LockEventExecutionLineageCoverageRow
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.AccountID,
+		&i.AppID,
+		&i.LineageRepairProgress,
+	)
+	return i, err
+}
+
+const lockEventExecutionLineageRetryJob = `-- name: LockEventExecutionLineageRetryJob :one
+SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND request_id=$4::uuid AND retain_until>clock_timestamp()
+FOR UPDATE
+`
+
+type LockEventExecutionLineageRetryJobParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) LockEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg LockEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, lockEventExecutionLineageRetryJob,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const lockNextEventExecutionLineageRetryJob = `-- name: LockNextEventExecutionLineageRetryJob :one
+SELECT j.subscription_id, j.request_id, j.account_id, j.app_id, j.state, j.snapshot, j.created_at, j.updated_at, j.retain_until FROM event_execution_lineage_retry_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id AND a.status<>'deleted'
+WHERE j.state='pending' AND j.retain_until>clock_timestamp()
+ORDER BY j.updated_at,j.subscription_id,j.request_id FOR UPDATE OF j SKIP LOCKED LIMIT 1
+`
+
+func (q *Queries) LockNextEventExecutionLineageRetryJob(ctx context.Context, db DBTX) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, lockNextEventExecutionLineageRetryJob)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const previewEventExecutionLineageRetries = `-- name: PreviewEventExecutionLineageRetries :many
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND outbox_id>$4::bigint AND retain_until>clock_timestamp()
+ AND status IN ('unresolved','conflict') AND ($5::text='' OR reason=$5::text)
+ORDER BY outbox_id LIMIT $6::integer
+`
+
+type PreviewEventExecutionLineageRetriesParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	AfterOutboxID  int64
+	Reason         string
+	PageLimit      int32
+}
+
+func (q *Queries) PreviewEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PreviewEventExecutionLineageRetriesParams) ([]EventExecutionLineageCase, error) {
+	rows, err := db.Query(ctx, previewEventExecutionLineageRetries,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.AfterOutboxID,
+		arg.Reason,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageCase{}
+	for rows.Next() {
+		var i EventExecutionLineageCase
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.OutboxID,
+			&i.AccountID,
+			&i.AppID,
+			&i.AcceptedAt,
+			&i.RootInvocationID,
+			&i.RootCreatedAt,
+			&i.Status,
+			&i.Reason,
+			&i.Revision,
+			&i.RetryCount,
+			&i.RecordedAt,
+			&i.RetainUntil,
+			&i.DiagnosticID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneEventExecutionLineageCases = `-- name: PruneEventExecutionLineageCases :execrows
+DELETE FROM event_execution_lineage_cases WHERE (subscription_id,outbox_id) IN (SELECT subscription_id,outbox_id FROM event_execution_lineage_cases c WHERE retain_until<=$1::timestamptz AND NOT EXISTS(SELECT 1 FROM event_execution_lineage_retries r WHERE r.subscription_id=c.subscription_id AND r.outbox_id=c.outbox_id) ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT $2::integer)
+`
+
+type PruneEventExecutionLineageCasesParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventExecutionLineageCases(ctx context.Context, db DBTX, arg PruneEventExecutionLineageCasesParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventExecutionLineageCases, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneEventExecutionLineageRetries = `-- name: PruneEventExecutionLineageRetries :execrows
+DELETE FROM event_execution_lineage_retries WHERE (subscription_id,outbox_id,request_id) IN (SELECT subscription_id,outbox_id,request_id FROM event_execution_lineage_retries WHERE retain_until<=$1::timestamptz ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT $2::integer)
+`
+
+type PruneEventExecutionLineageRetriesParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetriesParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventExecutionLineageRetries, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneEventExecutionLineageRetryJobs = `-- name: PruneEventExecutionLineageRetryJobs :execrows
+DELETE FROM event_execution_lineage_retry_jobs WHERE (subscription_id,request_id) IN (
+ SELECT subscription_id,request_id FROM event_execution_lineage_retry_jobs WHERE retain_until<=$1::timestamptz
+ ORDER BY retain_until FOR UPDATE SKIP LOCKED LIMIT $2::integer)
+`
+
+type PruneEventExecutionLineageRetryJobsParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetryJobsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventExecutionLineageRetryJobs, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneEventExecutionOutcomes = `-- name: PruneEventExecutionOutcomes :execrows
 DELETE FROM event_execution_outcomes WHERE (invocation_id,invocation_created_at,replay_generation,attempt,kind) IN (
  SELECT invocation_id,invocation_created_at,replay_generation,attempt,kind FROM event_execution_outcomes
@@ -431,4 +1713,232 @@ func (q *Queries) PruneEventExecutionRoots(ctx context.Context, db DBTX, arg Pru
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordEventExecutionLineageCase = `-- name: RecordEventExecutionLineageCase :execrows
+INSERT INTO event_execution_lineage_cases(subscription_id,outbox_id,account_id,app_id,accepted_at,root_invocation_id,root_created_at,status,reason,recorded_at,retain_until)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,$5::timestamptz,$6::text,$7::timestamptz,$8::text,$9::text,clock_timestamp(),clock_timestamp()+make_interval(secs=>$10::integer))
+ON CONFLICT(subscription_id,outbox_id) DO UPDATE SET status=excluded.status,reason=excluded.reason,revision=event_execution_lineage_cases.revision+1,root_created_at=coalesce(event_execution_lineage_cases.root_created_at,excluded.root_created_at),recorded_at=excluded.recorded_at,retain_until=greatest(event_execution_lineage_cases.retain_until,excluded.retain_until)
+WHERE event_execution_lineage_cases.account_id=excluded.account_id AND event_execution_lineage_cases.app_id=excluded.app_id AND event_execution_lineage_cases.accepted_at=excluded.accepted_at
+`
+
+type RecordEventExecutionLineageCaseParams struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	RootInvocationID string
+	RootCreatedAt    pgtype.Timestamptz
+	Status           string
+	Reason           string
+	RetentionSeconds int32
+}
+
+func (q *Queries) RecordEventExecutionLineageCase(ctx context.Context, db DBTX, arg RecordEventExecutionLineageCaseParams) (int64, error) {
+	result, err := db.Exec(ctx, recordEventExecutionLineageCase,
+		arg.SubscriptionID,
+		arg.OutboxID,
+		arg.AccountID,
+		arg.AppID,
+		arg.AcceptedAt,
+		arg.RootInvocationID,
+		arg.RootCreatedAt,
+		arg.Status,
+		arg.Reason,
+		arg.RetentionSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordEventExecutionLineageRetryControlReceipt = `-- name: RecordEventExecutionLineageRetryControlReceipt :exec
+INSERT INTO event_execution_lineage_retry_control_receipts(subscription_id,job_request_id,command_id,account_id,app_id,action,expected_created_at,sequence,result,recorded_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::text,$7::timestamptz,$8::bigint,$9::jsonb,$10::timestamptz,$11::timestamptz)
+`
+
+type RecordEventExecutionLineageRetryControlReceiptParams struct {
+	SubscriptionID    pgtype.UUID
+	JobRequestID      pgtype.UUID
+	CommandID         pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Action            string
+	ExpectedCreatedAt pgtype.Timestamptz
+	Sequence          int64
+	Result            []byte
+	RecordedAt        pgtype.Timestamptz
+	RetainUntil       pgtype.Timestamptz
+}
+
+func (q *Queries) RecordEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg RecordEventExecutionLineageRetryControlReceiptParams) error {
+	_, err := db.Exec(ctx, recordEventExecutionLineageRetryControlReceipt,
+		arg.SubscriptionID,
+		arg.JobRequestID,
+		arg.CommandID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Action,
+		arg.ExpectedCreatedAt,
+		arg.Sequence,
+		arg.Result,
+		arg.RecordedAt,
+		arg.RetainUntil,
+	)
+	return err
+}
+
+const requestEventExecutionReconciliation = `-- name: RequestEventExecutionReconciliation :exec
+INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known,reconciliation_requested_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,clock_timestamp(),false,clock_timestamp(),false,clock_timestamp()
+ON CONFLICT(subscription_id) DO UPDATE SET reconciliation_requested_at=coalesce(event_execution_coverage.reconciliation_requested_at,excluded.reconciliation_requested_at)
+WHERE event_execution_coverage.account_id=excluded.account_id AND event_execution_coverage.app_id=excluded.app_id AND NOT event_execution_coverage.ledger_baseline_known
+`
+
+type RequestEventExecutionReconciliationParams struct {
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error {
+	_, err := db.Exec(ctx, requestEventExecutionReconciliation, arg.SubscriptionID, arg.AccountID, arg.AppID)
+	return err
+}
+
+const saveEventExecutionLineageBackfill = `-- name: SaveEventExecutionLineageBackfill :exec
+UPDATE event_execution_coverage SET lineage_repair_progress=jsonb_set(lineage_repair_progress,'{case_backfill}',$1::jsonb,true)
+WHERE account_id=$2::uuid AND app_id=$3::uuid AND subscription_id=$4::uuid
+`
+
+type SaveEventExecutionLineageBackfillParams struct {
+	Backfill       []byte
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) SaveEventExecutionLineageBackfill(ctx context.Context, db DBTX, arg SaveEventExecutionLineageBackfillParams) error {
+	_, err := db.Exec(ctx, saveEventExecutionLineageBackfill,
+		arg.Backfill,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	return err
+}
+
+const saveEventExecutionLineageRepairProgress = `-- name: SaveEventExecutionLineageRepairProgress :exec
+UPDATE event_execution_coverage SET lineage_repair_progress=lineage_repair_progress || ($1::jsonb - 'case_backfill') || jsonb_build_object('last_scan',clock_timestamp())
+WHERE subscription_id=$2::uuid AND account_id=$3::uuid AND app_id=$4::uuid
+`
+
+type SaveEventExecutionLineageRepairProgressParams struct {
+	Progress       []byte
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) SaveEventExecutionLineageRepairProgress(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRepairProgressParams) error {
+	_, err := db.Exec(ctx, saveEventExecutionLineageRepairProgress,
+		arg.Progress,
+		arg.SubscriptionID,
+		arg.AccountID,
+		arg.AppID,
+	)
+	return err
+}
+
+const saveEventExecutionLineageRetry = `-- name: SaveEventExecutionLineageRetry :exec
+INSERT INTO event_execution_lineage_retries(subscription_id,outbox_id,request_id,expected_revision,result,retain_until)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::bigint,$5::jsonb,$6::timestamptz)
+`
+
+type SaveEventExecutionLineageRetryParams struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	RequestID        pgtype.UUID
+	ExpectedRevision int64
+	Result           []byte
+	RetainUntil      pgtype.Timestamptz
+}
+
+func (q *Queries) SaveEventExecutionLineageRetry(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRetryParams) error {
+	_, err := db.Exec(ctx, saveEventExecutionLineageRetry,
+		arg.SubscriptionID,
+		arg.OutboxID,
+		arg.RequestID,
+		arg.ExpectedRevision,
+		arg.Result,
+		arg.RetainUntil,
+	)
+	return err
+}
+
+const saveEventExecutionLineageRetryJob = `-- name: SaveEventExecutionLineageRetryJob :exec
+UPDATE event_execution_lineage_retry_jobs SET state=$1::text,snapshot=$2::jsonb,updated_at=clock_timestamp()
+WHERE subscription_id=$3::uuid AND request_id=$4::uuid
+`
+
+type SaveEventExecutionLineageRetryJobParams struct {
+	State          string
+	Snapshot       []byte
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) SaveEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRetryJobParams) error {
+	_, err := db.Exec(ctx, saveEventExecutionLineageRetryJob,
+		arg.State,
+		arg.Snapshot,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	return err
+}
+
+const updateEventExecutionLineageCaseRetry = `-- name: UpdateEventExecutionLineageCaseRetry :one
+UPDATE event_execution_lineage_cases SET root_created_at=coalesce(root_created_at,$1::timestamptz),status=$2::text,reason=$3::text,revision=revision+1,retry_count=retry_count+1,recorded_at=clock_timestamp(),retain_until=greatest(retain_until,clock_timestamp()+make_interval(secs=>$4::integer))
+WHERE subscription_id=$5::uuid AND outbox_id=$6::bigint RETURNING subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id
+`
+
+type UpdateEventExecutionLineageCaseRetryParams struct {
+	RootCreatedAt    pgtype.Timestamptz
+	Status           string
+	Reason           string
+	RetentionSeconds int32
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+}
+
+func (q *Queries) UpdateEventExecutionLineageCaseRetry(ctx context.Context, db DBTX, arg UpdateEventExecutionLineageCaseRetryParams) (EventExecutionLineageCase, error) {
+	row := db.QueryRow(ctx, updateEventExecutionLineageCaseRetry,
+		arg.RootCreatedAt,
+		arg.Status,
+		arg.Reason,
+		arg.RetentionSeconds,
+		arg.SubscriptionID,
+		arg.OutboxID,
+	)
+	var i EventExecutionLineageCase
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.OutboxID,
+		&i.AccountID,
+		&i.AppID,
+		&i.AcceptedAt,
+		&i.RootInvocationID,
+		&i.RootCreatedAt,
+		&i.Status,
+		&i.Reason,
+		&i.Revision,
+		&i.RetryCount,
+		&i.RecordedAt,
+		&i.RetainUntil,
+		&i.DiagnosticID,
+	)
+	return i, err
 }

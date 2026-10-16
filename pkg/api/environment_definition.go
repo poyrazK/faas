@@ -15,7 +15,14 @@ type EnvironmentDefinition struct {
 	Environment string `json:"environment"`
 	// Retain is the only supported queue pruning disposition. It retires
 	// admission/dispatch while preserving accepted work and receipt identity.
-	QueuePruningPolicy string                     `json:"queue_pruning_policy,omitempty"`
+	QueuePruningPolicy string `json:"queue_pruning_policy,omitempty"`
+	// Workload pruning is retain-only. Retirement closes the environment's
+	// admission and serving lanes while retaining identities, configuration,
+	// artifacts and accepted work for an explicitly reviewed recovery.
+	WorkloadPruningPolicy string `json:"workload_pruning_policy,omitempty"`
+	// Recoveries pin the original retained app UUID by logical workload name.
+	// Recovery still requires fresh preparation, qualification and activation.
+	WorkloadRecoveries map[string]string          `json:"workload_recoveries,omitempty"`
 	Configuration      map[string]json.RawMessage `json:"configuration,omitempty"`
 	// An explicit empty map represents an empty environment. Missing or null
 	// membership is invalid; deletion still requires a reviewed prune plan.

@@ -83,6 +83,24 @@ func (e DataAPICredentialEvidence) Validate() error {
 	return nil
 }
 
+// AuthCredentialEvidence proves the ADR-1190 contract: the login acts as the
+// auth schemas' owner (so GoTrue's RLS-enabled tables stay writable), cannot
+// reach customer schemas or administer the database, and rotates/retires.
+type AuthCredentialEvidence struct {
+	SchemaOwned           bool `json:"schema_owned"`
+	CustomerIsolated      bool `json:"customer_isolated"`
+	PasswordRecovered     bool `json:"password_recovered"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+	Revoked               bool `json:"revoked"`
+}
+
+func (e AuthCredentialEvidence) Validate() error {
+	if !e.SchemaOwned || !e.CustomerIsolated || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 func (e ReadOnlyCredentialEvidence) Validate() error {
 	if !e.Restricted || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
 		return ErrUnavailable
@@ -105,6 +123,7 @@ type QualificationReport struct {
 	CredentialAccess     []CredentialAccess           `json:"credential_access"`
 	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
 	DataAPICredentials   *DataAPICredentialEvidence   `json:"data_api_credentials,omitempty"`
+	AuthCredentials      *AuthCredentialEvidence      `json:"auth_credentials,omitempty"`
 	ClassResize          bool                         `json:"class_resize"`
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
@@ -290,12 +309,12 @@ func ValidateQualificationReport(report QualificationReport) error {
 		return ErrInvalid
 	}
 	requiredChecks := requiredProviderQualificationChecks[:]
-	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 4 {
+	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 5 {
 		return ErrInvalid
 	}
 	seenAccess := make(map[CredentialAccess]bool, len(report.CredentialAccess))
 	for _, access := range report.CredentialAccess {
-		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI) {
+		if seenAccess[access] || !access.Known() {
 			return ErrInvalid
 		}
 		seenAccess[access] = true
@@ -314,6 +333,14 @@ func ValidateQualificationReport(report QualificationReport) error {
 			return ErrUnavailable
 		}
 	} else if report.DataAPICredentials != nil {
+		return ErrInvalid
+	}
+	if seenAccess[CredentialAuth] {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "auth_credentials_probe")
+		if report.AuthCredentials == nil || report.AuthCredentials.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.AuthCredentials != nil {
 		return ErrInvalid
 	}
 	if report.ClassResize {
@@ -422,6 +449,8 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		case errors.Is(err, ErrUnavailable):
 			if contains(artifact.Report.CredentialAccess, CredentialDataAPI) && (artifact.Report.DataAPICredentials == nil || artifact.Report.DataAPICredentials.Validate() != nil) {
 				add("data_api_evidence_missing")
+			} else if contains(artifact.Report.CredentialAccess, CredentialAuth) && (artifact.Report.AuthCredentials == nil || artifact.Report.AuthCredentials.Validate() != nil) {
+				add("auth_evidence_missing")
 			} else if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
 				add("credential_privileges_evidence_missing")
 			} else if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.DataVerified || !artifact.Report.Restore.CredentialsIsolated || !artifact.Report.Restore.Deleted) {
@@ -879,6 +908,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 	}
+	if contains(capabilities.CredentialAccess, CredentialAuth) {
+		prober, ok := provider.(AuthCredentialProber)
+		if !ok {
+			record("auth_credentials_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeAuthCredentials(ctx, providerResourceID)
+		report.AuthCredentials = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("auth_credentials_probe", probeErr) {
+			return report, resultErr
+		}
+	}
 	if capabilities.ClassResize {
 		prober, ok := provider.(ComputeResizeProber)
 		if !ok {
@@ -949,6 +993,10 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		restoreTargetProviderResourceID = restored.ProviderResourceID
 		report.Restore.Restored = true
 		record("restore_observed", nil)
+		// The creation was just verified independently; readiness and the
+		// idempotent replay confirm that verification instead of remapping a
+		// drifting historical position (ADR-1259).
+		restoreRequest.Verification = restored.RestoreVerification
 		ready, readyErr := qualifyProviderReadyWithRestore(ctx, provider, restoreTargetProviderResourceID, options.PollInterval, &restoreRequest)
 		if readyErr == nil && (ready.ProviderResourceID != restoreTargetProviderResourceID || ready.Spec != options.Spec) {
 			readyErr = ErrUnavailable
@@ -1069,7 +1117,7 @@ func QualifyLifecycle(parent context.Context, service *Service, bindings *Bindin
 		recordQualificationFailure(&report, "lifecycle_identity", ErrInvalid, &resultErr)
 		return report, resultErr
 	}
-	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration && options.Access != CredentialDataAPI {
+	if !options.Access.Known() {
 		recordQualificationFailure(&report, "lifecycle_access", ErrInvalid, &resultErr)
 		return report, resultErr
 	}

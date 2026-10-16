@@ -24,7 +24,7 @@ type freezer interface {
 }
 
 type thawer interface {
-	Thaw(ctx context.Context, instance string) error
+	ThawWith(ctx context.Context, instance string, opts fcvm.ThawOptions) error
 }
 
 // frozenGate lets a forward wait out a freeze in progress and learn whether
@@ -96,12 +96,16 @@ func (s *Server) ThawInstance(ctx context.Context, req *vmmdpb.ThawInstanceReque
 			return nil, grpcerr.ToStatus(p)
 		}
 	}
-	err := t.Thaw(ctx, req.GetInstance())
+	err := t.ThawWith(ctx, req.GetInstance(), fcvm.ThawOptions{RunResumeHook: req.GetRunAfterRestore()})
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	return &vmmdpb.ThawInstanceResponse{Instance: req.GetInstance(), ImageHealthcheckVerified: req.GetImageHealthcheckRequired()}, nil
+	return &vmmdpb.ThawInstanceResponse{
+		Instance:                 req.GetInstance(),
+		ImageHealthcheckVerified: req.GetImageHealthcheckRequired(),
+		AfterRestoreRan:          req.GetRunAfterRestore(),
+	}, nil
 }
 
 // prepareGuest runs before a forward dials its guest; the caller has marked

@@ -10,10 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -115,23 +112,10 @@ func writeIdentityGuestError(w http.ResponseWriter, status int, code string) {
 	_ = json.NewEncoder(w).Encode(workloadIdentityGuestResponse{Error: code})
 }
 
+// dialWorkloadIdentityHost uses the runtime config dialer: net.FileConn does
+// not support AF_VSOCK, so a plain socket + FileConn never connects.
 func dialWorkloadIdentityHost() (net.Conn, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: workloadIdentityHostPort}); err != nil {
-		_ = unix.Close(fd)
-		return nil, err
-	}
-	file := os.NewFile(uintptr(fd), "workload-identity-vsock")
-	conn, err := net.FileConn(file)
-	_ = file.Close()
-	if err != nil {
-		_ = unix.Close(fd)
-		return nil, err
-	}
-	return conn, nil
+	return dialRuntimeConfigVsock(workloadIdentityHostPort, 4*time.Second)
 }
 
 func writeIdentityFrame(w io.Writer, body []byte) error {

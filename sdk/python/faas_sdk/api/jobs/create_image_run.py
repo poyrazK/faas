@@ -81,6 +81,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -117,7 +122,10 @@ def sync_detailed(
     set) and `args` replaces the image CMD. Runs, logs and cancellation
     use `/v1/jobs/{job}/runs`. Free accounts get 402
     `jobs_not_allowed`; the route returns 404 until the operator sets
-    `FAAS_IMAGE_RUNS=1`.
+    `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+    response carries a one-time `attach` credential for
+    `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
+    for Idempotency-Key replay.
 
     Args:
         idempotency_key (str | Unset):
@@ -162,7 +170,10 @@ def sync(
     set) and `args` replaces the image CMD. Runs, logs and cancellation
     use `/v1/jobs/{job}/runs`. Free accounts get 402
     `jobs_not_allowed`; the route returns 404 until the operator sets
-    `FAAS_IMAGE_RUNS=1`.
+    `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+    response carries a one-time `attach` credential for
+    `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
+    for Idempotency-Key replay.
 
     Args:
         idempotency_key (str | Unset):
@@ -202,7 +213,10 @@ async def asyncio_detailed(
     set) and `args` replaces the image CMD. Runs, logs and cancellation
     use `/v1/jobs/{job}/runs`. Free accounts get 402
     `jobs_not_allowed`; the route returns 404 until the operator sets
-    `FAAS_IMAGE_RUNS=1`.
+    `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+    response carries a one-time `attach` credential for
+    `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
+    for Idempotency-Key replay.
 
     Args:
         idempotency_key (str | Unset):
@@ -245,7 +259,10 @@ async def asyncio(
     set) and `args` replaces the image CMD. Runs, logs and cancellation
     use `/v1/jobs/{job}/runs`. Free accounts get 402
     `jobs_not_allowed`; the route returns 404 until the operator sets
-    `FAAS_IMAGE_RUNS=1`.
+    `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+    response carries a one-time `attach` credential for
+    `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
+    for Idempotency-Key replay.
 
     Args:
         idempotency_key (str | Unset):

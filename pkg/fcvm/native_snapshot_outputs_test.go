@@ -270,7 +270,7 @@ func TestNativeSnapshotOutputsRefuseChangedCaptureBeforeProduction(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			if capture != f.capture {
+			if !capture.Equal(f.capture) {
 				writeTamperedNativeQualificationCapture(t, f.q, f.incoming, capture)
 			}
 			if names, err := f.v.stageNativeSnapshotOutputs(ctx, lease, directory); err == nil || names != (nativeSnapshotOutputNames{}) || f.b.prepares != 0 {

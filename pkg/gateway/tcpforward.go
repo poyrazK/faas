@@ -130,7 +130,10 @@ func (f TCPForwarder) serveConn(ctx context.Context, conn net.Conn, target Targe
 	}
 	if awaitDial {
 		if err := awaitTCPGuestDial(stream); err != nil {
-			return unreachable("%v", err)
+			// Keep vmmd's status as the cause: a frozen guest (ADR-1151) is
+			// withdrawn and thawed, not quarantined.
+			handBack.Store(true)
+			return fmt.Errorf("%w: %w", ErrTCPGuestUnreachable, err)
 		}
 	}
 

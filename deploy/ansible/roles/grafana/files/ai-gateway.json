@@ -118,7 +118,7 @@
       "title": "AI settlement writes (5m)",
       "id": 9,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
-      "description": "Usage settlements recorded, failed against Postgres (state_error), or unavailable. Anything but recorded means caps and reports under-count. ADR-998.",
+      "description": "Usage settlements recorded, retried after a failed attempt, failed on every attempt (state_error), or unavailable. state_error and unavailable mean caps and reports under-count. ADR-998, ADR-1120.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (event) (rate(outbound_ai_usage_record_events_total[5m]))", "legendFormat": "{{event}}", "refId": "A"}

@@ -12,6 +12,7 @@ import (
 )
 
 type environmentGitOpsMemory struct {
+	retirements    map[string]EnvironmentWorkloadRetirement
 	source         EnvironmentGitSource
 	revisions      map[string]EnvironmentDesiredRevision
 	runs           map[string]EnvironmentGitOpsRun
@@ -29,6 +30,7 @@ type environmentGitOpsMemory struct {
 	qualifications map[string]EnvironmentWorkloadQualificationRequest
 	poll           environmentGitSourcePoll
 	approvals      map[string]EnvironmentGitRevisionApproval
+	notifications  environmentGitNotificationState
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -291,6 +293,11 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 		}
 	}
 	completed := now.UTC()
+	var notificationPlan api.EnvironmentGitOpsPlan
+	_ = json.Unmarshal(plan, &notificationPlan)
+	if err := m.environmentGitNotificationLocked(memory, "drift", environmentGitReportNotificationStatus(status, notificationPlan), run.ID, errorCode, notificationPlan, now); err != nil {
+		return err
+	}
 	var incomingSteps []EnvironmentGitOpsStep
 	_ = json.Unmarshal(steps, &incomingSteps)
 	if len(incomingSteps) == 0 && len(run.Steps) > 2 {

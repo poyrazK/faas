@@ -178,6 +178,43 @@ func TestWorkerScopedDemandLifecycle(t *testing.T) {
 	testWorkerScopedDemandLifecycle(t, state.NewMemStore())
 }
 
+type busyOnceWorkerAdmissionStore struct {
+	state.Store
+	createAttempts int
+}
+
+func (s *busyOnceWorkerAdmissionStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, status string, ramMB int, nodeID, wakeID, mode string) (state.Instance, error) {
+	s.createAttempts++
+	if s.createAttempts == 1 {
+		return state.Instance{}, state.ErrApplicationStandardRuntimeBusy
+	}
+	return s.Store.CreateInstanceWithMode(ctx, appID, deploymentID, status, ramMB, nodeID, wakeID, mode)
+}
+
+func TestWorkerScopedDemandRetriesTransientRuntimeAdmissionLock(t *testing.T) {
+	ctx := context.Background()
+	base := state.NewMemStore()
+	account, app, deps := seedWorkerScopes(t, base, api.PlanPro)
+	seedScopedWorker(t, base, app, deps["staging"])
+	enqueueScopedDemand(t, base, account, app, "default", "", 21)
+	enqueueScopedDemand(t, base, account, app, "staging", "", 1)
+
+	store := &busyOnceWorkerAdmissionStore{Store: base}
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatalf("reconcile after transient runtime admission lock: %v", err)
+	}
+
+	counts := scopedWorkerCounts(t, store, app.ID)
+	if counts["default"] != 2 || counts["staging"] != 1 || vmm.coldBoots != 2 || store.createAttempts != 3 {
+		t.Fatalf("reconciled pools=%v boots=%d create attempts=%d", counts, vmm.coldBoots, store.createAttempts)
+	}
+}
+
 func TestWorkerScopedCooldownDoesNotHoldColdNeighbor(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, deps := seedWorkerScopes(t, store, api.PlanPro)

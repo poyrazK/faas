@@ -467,6 +467,11 @@ AI metrics keep the bounded integration label and never include model names:
 OpenTelemetry GenAI attributes (`gen_ai.system`, `gen_ai.response.model` and
 `gen_ai.usage.*`).
 
+A call's usage settles once, keyed by its admission lease: outboundd makes up
+to three 5-second attempts, and a retry after a commit that landed changes
+nothing. `outbound_ai_usage_record_events_total` counts `recorded`, `retried`,
+`state_error` (every attempt failed) and `unavailable` (ADR-1120).
+
 Apps reach these integrations through the app relay below, so stock SDKs work
 with only a base URL:
 

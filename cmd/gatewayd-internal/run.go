@@ -929,6 +929,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	applyInvocationAttemptHeaders(req.Header, inv)
 	if state.InvocationHasOperation(inv) {
 		var proof map[string]string
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
@@ -2899,6 +2900,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
 		handler.WithEdgeRuleHitRecorder(hitCounter)
+		// ADR-831 amendment 5: off-path WAF detections become events too.
+		wafInspector.WithEventRecorder(hitCounter)
 		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
@@ -3228,6 +3231,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
 					FlagEvidenceJson:                     row.FlagEvidenceJSON,
+					ContentOutcome:                       row.ContentOutcome,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
@@ -3431,6 +3435,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
@@ -3500,6 +3505,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		attachMux := http.NewServeMux()
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
 			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		// ADR-1330: an interactive image run's task uses the same session.
+		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
 		// ADR-1163: live job task output follows the task VM on its node.
 		logsMux := http.NewServeMux()
@@ -3844,6 +3852,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	// wakeAheadPersisted closes after the ADR-1132 learner snapshot's final
+	// write, so shutdown can wait for it.
+	var wakeAheadPersisted chan struct{}
 	// guestServices is the same proxy, typed, so the ADR-576 TCP path shares
 	// its identity, authorizer, endpoint leases, wake and breaker.
 	var guestServices *gateway.ServiceProxy
@@ -3860,6 +3871,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
 		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics())
+		// ADR-1132: the measured evidence survives restarts and deploys
+		// through a node-local snapshot instead of being relearned.
+		wakeAheadPersisted = make(chan struct{})
+		go func(dir string) {
+			defer close(wakeAheadPersisted)
+			gateway.PersistWakeAhead(ctx, wakeAheadLearner, dir, api.ServiceWakeAheadSnapshotInterval, nil, log)
+		}(envOrGateway("FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", gateway.DefaultWakeAheadStateDir))
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
@@ -3890,6 +3908,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			EvictEndpoint:      serviceEndpointEvictor(deps.backend),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
 				releaseID, deploymentID, err := pgStore.ResolveServiceRelease(ctx, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID)
@@ -4279,6 +4298,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// upgrade wire real shutdown without touching call sites.
 		for _, s := range servers {
 			_ = s.Shutdown(shutdownCtx)
+		}
+		if wakeAheadPersisted != nil {
+			select {
+			case <-wakeAheadPersisted:
+			case <-shutdownCtx.Done():
+			}
 		}
 		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
 		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).

@@ -46,6 +46,10 @@ import (
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
 
+const CodeApplicationStandardVersionStale = "application_standard_version_stale"
+
+const CodeApplicationStandardsPending = "application_standards_pending"
+
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
 const dashboardBillingURL = "https://gregale.dev/dashboard/billing"
@@ -804,6 +808,10 @@ const (
 	CodeInstanceBusy          = "instance_busy"
 	CodeFrozenInstanceRefused = "frozen_instance_refused"
 	CodeInstanceFrozen        = "instance_frozen"
+	// CodeFrozenCompressUnavailable refuses to compress a frozen instance on
+	// a host without memory-only swap (zswap with writeback disabled, ADR-906
+	// decision 6); schedd parks it instead.
+	CodeFrozenCompressUnavailable = "frozen_compress_unavailable"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1021,6 +1029,8 @@ const (
 	// first" rather than retry blindly. Renders 409 Conflict,
 	// matching the rest of state.ErrConflict's 4xx family.
 	CodeDeploymentScopeCollision = "deployment_scope_collision"
+	// ADR-1239: app/release review changed before the atomic candidate insert.
+	CodeReleaseReviewChanged = "release_review_changed"
 
 	// Trusted cosign signers (issue #472 / ADR-054). Same shape as
 	// the env-var quota — config cap, not a credential one — but a
@@ -1655,8 +1665,10 @@ const (
 	// "unavailable" code covers every other failure mode (expired,
 	// already used, unknown) — the CLI does not need to distinguish
 	// them, and returning a single code avoids probing.
-	CodeCliAuthPending     = "cli_auth_code_pending"
-	CodeCliAuthUnavailable = "cli_auth_code_unavailable"
+	CodeCliAuthPending             = "cli_auth_code_pending"
+	CodeCliAuthUnavailable         = "cli_auth_code_unavailable"
+	CodeBrowserApprovalPending     = "browser_approval_pending"
+	CodeBrowserApprovalUnavailable = "browser_approval_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -1931,7 +1943,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked:
+	case CodeProfileGateBlocked, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
@@ -2021,7 +2033,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
-		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused:
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
 	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
@@ -2232,9 +2244,9 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeAppRenameFailed:
 		return http.StatusConflict
-	case CodeCliAuthPending:
+	case CodeCliAuthPending, CodeBrowserApprovalPending:
 		return http.StatusNotFound
-	case CodeCliAuthUnavailable:
+	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap:
 		return http.StatusForbidden

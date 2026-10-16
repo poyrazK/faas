@@ -364,6 +364,11 @@ func TestCmdStatus_DegradedSource(t *testing.T) {
 	if !strings.Contains(stdout.String(), "degraded") {
 		t.Errorf("degraded source should be visible: %q", stdout.String())
 	}
+	// H10-46: a missing p95 is not proof that nothing woke; the query needs
+	// 20 wakes in 30 minutes.
+	if !strings.Contains(stdout.String(), "fewer than 20 wakes in the last 30 min") {
+		t.Errorf("missing p95 should name its threshold: %q", stdout.String())
+	}
 }
 
 // TestCmdStatus_JSONEmitsRawSnapshot covers issue #63 §2: the --json

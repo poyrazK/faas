@@ -13,9 +13,10 @@ import (
 func (s *server) createImageRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, _ := s.store.(imagerun.Store)
 	h := imagerun.Handler{
-		Enabled: s.imageRunsEnabled,
-		Store:   store,
-		Audit:   s.audit.Emit,
+		Enabled:            s.imageRunsEnabled,
+		InteractiveEnabled: s.interactiveImageRunsEnabled,
+		Store:              store,
+		Audit:              s.audit.Emit,
 		Notify: func(ctx context.Context, channel, payload string) error {
 			if s.notif == nil {
 				return nil

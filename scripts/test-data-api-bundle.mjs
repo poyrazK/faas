@@ -27,7 +27,11 @@ async function main() {
     assert.equal(run('tar', ['-tzf', join(bundleDir, archive.file)]).trim(), 'gregale')
     run('tar', ['-xzf', join(bundleDir, archive.file), '-C', bin, '--no-same-owner'])
     const app = join(work, 'notes')
-    run(join(bin, 'gregale'), ['init', '--template', 'data-api-starter', '--path', app], { cwd: work, stdio: 'inherit' })
+    const activation = run(join(bin, 'gregale'), ['--json', 'data-api', 'onboard', '--path', app, '--bundle', join(bundleDir, 'data-api-bundle.json')], { cwd: work, stdio: ['ignore', 'pipe', 'inherit'] }).trim().split('\n').map(line => JSON.parse(line))
+    assert.deepEqual(activation.map(({ step, status }) => [step, status]), [
+      ['scaffold', 'passed'], ['install', 'passed'], ['verify', 'passed'], ['local_activation', 'passed']
+    ])
+    assert.ok(activation.every(event => event.event === 'onboarding_step' && Number.isSafeInteger(event.duration_ms) && event.duration_ms >= 0))
     // Use the shipped CLI's embedded tools and an empty npm cache; neither the
     // SDK source tree nor its developer node_modules participates in installation.
     const env = { ...process.env, npm_config_cache: join(work, 'pin-cache'), npm_config_offline: 'false' }

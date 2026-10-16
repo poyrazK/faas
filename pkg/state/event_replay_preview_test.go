@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -233,10 +234,15 @@ func TestPgEventReplayPreviewTargetMutationAndLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "UPDATE apps SET account_id=$1 WHERE id=$2", foreign.ID, app); err != nil {
-		t.Fatal(err)
+	if _, err := pool.Exec(ctx, "UPDATE apps SET account_id=$1 WHERE id=$2", foreign.ID, app); err == nil {
+		t.Fatal("application creating account identity changed")
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "application_standard_app_account_identity" {
+			t.Fatalf("account identity guard=%v", err)
+		}
 	}
-	if _, err := s.PreviewEventReplay(ctx, account, q); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("transferred target=%v", err)
+	if _, err := s.PreviewEventReplay(ctx, foreign.ID, q); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("foreign account target=%v", err)
 	}
 }

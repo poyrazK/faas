@@ -314,6 +314,11 @@ the task finishes (ADR-1163).
 
 ## Image runs
 
+> **Preview.** Image runs are enabled by the platform operator. Until
+> `FAAS_IMAGE_RUNS=1` is set on the control plane, `POST /v1/image-runs`
+> returns 404. Interactive runs (`-it`) also need `FAAS_INTERACTIVE_IMAGE_RUNS=1`;
+> without it they return 501.
+
 `gregale run --image IMAGE [ARG...]` runs one command from an OCI image in a
 fresh microVM, the way `docker run` does (ADR-1161):
 
@@ -342,4 +347,25 @@ plan's maximum) and concurrent tasks. Plans cache a limited number of images
 (`api.ImageRunCachedImages`: Hobby 3, Pro 10, Scale 25); starting a run for a
 new image evicts the least recently used cached image that has no queued or
 running work. Free plans do not include Jobs or image runs. Output streams
-while the command runs (ADR-1163); image runs have no interactive stdin yet.
+while the command runs (ADR-1163).
+
+### Interactive image runs
+
+`gregale run -it --image IMAGE [ARG...]` attaches your terminal to the
+command, the way `docker run -it` does (ADR-1330):
+
+```sh
+gregale run -it --image alpine sh
+gregale run -i --image python:3.12-slim python -c 'print(input())' < answer.txt
+```
+
+`-i` connects stdin; `-t` also gives the command a terminal and needs `-i`.
+Without a terminal on your side, `-t` is dropped with a warning. The run's VM
+waits up to 60 seconds for the session before it starts the command, and the
+run's timeout (at most an hour) bounds the session. The CLI exits with the
+command's exit code. Ctrl-C before the session starts cancels the run; after
+that it reaches the remote terminal. Closing the session ends the command
+(the task finishes `cancelled`). Interactive runs keep no output: `jobs logs`
+is empty for them, and a failed interactive run cannot be replayed or
+retried; start a new run instead.
+`--detach` and `--json` do not apply.

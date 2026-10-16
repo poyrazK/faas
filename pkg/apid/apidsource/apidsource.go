@@ -151,6 +151,9 @@ type HostingPhaseObserver interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
+	ReviewedRolloutMode string
+	ExpectedReview      *api.AppReleaseReview
+	ReviewedSettings    *state.ProjectEnvironmentWorkloadSettings
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
@@ -265,6 +268,7 @@ type EnqueueParams struct {
 type EnqueueResult struct {
 	DeploymentID string
 	BuildID      string
+	StagedReview *api.AppReleaseReview
 }
 
 // sourceBackendFromEnv enables the split-box source handoff only when the
@@ -513,6 +517,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
+		ExpectedReview:       p.ExpectedReview,
+		ReviewedRolloutMode:  p.ReviewedRolloutMode,
+		ReviewedSettings:     p.ReviewedSettings,
 		ID:                   deploymentID,
 		AppID:                p.AppID,
 		Kind:                 p.Kind,
@@ -760,7 +767,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	p.Log.Info("apidsource.Enqueue: build enqueued",
 		"deployment", d.ID, "app", p.AppID, "kind", p.Kind, "build", build.ID, "source", source)
 
-	return EnqueueResult{DeploymentID: d.ID, BuildID: build.ID}, nil
+	return EnqueueResult{DeploymentID: d.ID, BuildID: build.ID, StagedReview: d.StagedReview}, nil
 }
 
 var githubDeliveryNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/github-delivery/v1"))

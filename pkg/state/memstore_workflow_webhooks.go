@@ -33,7 +33,7 @@ func (m *MemStore) SaveWebhookAutomationBinding(_ context.Context, opts WebhookA
 	if previous.Version != opts.ExpectedVersion {
 		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
 	}
-	if _, exists := m.exclusiveTriggerBindings["inbound_webhook\x00"+endpoint.ID]; exists {
+	if _, exists := m.exclusiveTriggerBindings["inbound_webhook\x00"+endpoint.ID]; exists || m.operationWebhookBoundLocked(endpoint.ID) {
 		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
 	}
 	for _, binding := range m.workflowCallbackWebhookBindings {
