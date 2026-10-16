@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs; phone sign-in by SMS), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -370,6 +370,21 @@ the token on sign-up, password and magic-link sign-in, recovery and the start
 of a passkey sign-in; the hosted pages render the provider's widget and add a
 fresh token to each of those requests. Only when CAPTCHA is on does the pages'
 policy allow the provider's script, frame, style and connection origins.
+
+### Phone sign-in
+
+Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,
+MessageBird, Textlocal and Vonage), which call the provider's HTTPS API with
+the customer's account, so tenant egress needs no exception and Gregale sells
+no messages. `GOTRUE_SMS_*` secrets join the pass-through settings, and a
+typed setting writes one provider's account, sender and secret and removes
+every other provider's. Codes last five minutes rather than GoTrue's 60
+seconds, which a delayed text can outlast, and the message names the app.
+Texting costs the customer money and attracts SMS pumping, so the CLI warns
+when phone sign-in is on without CAPTCHA; GoTrue's per-instance limit of 30
+messages an hour and one code a minute per number also apply. A confirmed
+phone number publishes `auth.user.confirmed` with `channel: phone`; the
+number itself is never in an event.
 
 ### Scale to zero
 
