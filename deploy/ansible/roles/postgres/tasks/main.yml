@@ -132,6 +132,8 @@
     state: present
   become: true
   become_user: postgres
+  # A warm standby is read-only; it receives the role from the primary.
+  when: not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — require a password for split-box database clients
   ansible.builtin.assert:
@@ -142,7 +144,9 @@
       faas_postgres_password must be provided through Ansible Vault (or an
       equivalent secret source) when faas_postgres_allowed_cidrs is non-empty;
       refusing to expose a split-box PostgreSQL listener without host auth.
-  when: (faas_postgres_allowed_cidrs | default([]) | length) > 0
+  when:
+    - (faas_postgres_allowed_cidrs | default([]) | length) > 0
+    - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — create database `faas`
   community.postgresql.postgresql_db:
@@ -151,6 +155,7 @@
     state: present
   become: true
   become_user: postgres
+  when: not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — make /run/postgresql writable for faas (peer auth)
   ansible.builtin.file:
@@ -203,6 +208,10 @@
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
+      {% if faas_postgres_standby_address | default('') %}
+      # ADR-1344 §8: the warm standby streams WAL from this address only.
+      host    replication     replicator      {{ faas_postgres_standby_address }}/{{ '128' if ':' in faas_postgres_standby_address else '32' }}            scram-sha-256
+      {% endif %}
       host    all             all             127.0.0.1/32            reject
       host    all             all             ::1/128                 reject
   register: pg_hba
@@ -411,6 +420,125 @@
   register: pg_keepalives
   failed_when: false
   notify: reload postgresql
+
+# ADR-1344 §8 warm standby, primary side. Everything below is keyed off
+# faas_postgres_standby_address, which the manifest renders only when it
+# declares postgresql.standby; without it these tasks change nothing.
+#
+# The slot keeps WAL until the standby has it, so a short outage of the
+# standby or the link never forces a reseed. max_slot_wal_keep_size caps that
+# retention: past it the slot is invalidated (FaasPostgresStandbySlotLost)
+# and the standby must be reseeded, but the primary's disk never fills.
+- name: postgres — cap WAL kept for the standby slot (reload-only) — ADR-1344
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?max_slot_wal_keep_size\\s*="
+    line: "max_slot_wal_keep_size = {{ faas_postgres_max_slot_wal_keep_size | default('16GB') }}"
+    create: false
+  failed_when: false  # chroot/CI may not have the conf file
+  notify: reload postgresql
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# Only an active setting is removed; the stock commented default stays.
+- name: postgres — remove the standby WAL cap without a standby (reload-only) — ADR-1344
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^max_slot_wal_keep_size\\s*="
+    state: absent
+  failed_when: false  # chroot/CI may not have the conf file
+  notify: reload postgresql
+  when:
+    - not (faas_postgres_standby_address | default(''))
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — require the replication password for the standby — ADR-1344
+  ansible.builtin.assert:
+    that:
+      - faas_postgres_replication_password is defined
+      - faas_postgres_replication_password | string | length >= 16
+    fail_msg: >-
+      postgresql.standby is declared, so the primary needs
+      faas_postgres_replication_password (Ansible Vault, at least 16
+      characters) for the replicator role.
+    quiet: true
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — create replication role `replicator` — ADR-1344
+  community.postgresql.postgresql_user:
+    name: replicator
+    password: "{{ faas_postgres_replication_password }}"
+    role_attr_flags: LOGIN,REPLICATION
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — create the standby's physical replication slot — ADR-1344
+  community.postgresql.postgresql_slot:
+    name: faas_standby
+    slot_type: physical
+    state: present
+  become: true
+  become_user: postgres
+  when:
+    - faas_postgres_standby_address | default('')
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# Removing postgresql.standby from the manifest must also drop the slot: an
+# abandoned slot holds WAL up to max_slot_wal_keep_size, and once that line is
+# gone, without limit. A connected standby reconnects within moments of its
+# walsender ending, so the replicator login is closed first; then the
+# walsender is ended and the slot dropped. Declaring a standby again restores
+# the login (the replicator task above).
+- name: postgres — look for an abandoned standby slot — ADR-1344
+  ansible.builtin.command:
+    argv: [psql, -X, -A, -t, -c, "SELECT slot_name FROM pg_replication_slots WHERE slot_name = 'faas_standby'"]
+  become: true
+  become_user: postgres
+  register: postgres_abandoned_standby_slot
+  changed_when: false
+  failed_when: false  # chroot/CI has no running cluster
+  when:
+    - not (faas_postgres_standby_address | default(''))
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — drop the abandoned standby slot — ADR-1344
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - "DO $$BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'replicator') THEN ALTER ROLE replicator NOLOGIN; END IF; END$$"
+      - -c
+      - "SELECT pg_terminate_backend(active_pid, 5000) FROM pg_replication_slots WHERE slot_name = 'faas_standby' AND active_pid IS NOT NULL"
+      - -c
+      - "SELECT pg_drop_replication_slot('faas_standby')"
+  become: true
+  become_user: postgres
+  changed_when: true
+  when:
+    - not (faas_postgres_standby_address | default(''))
+    - not (faas_postgres_standby_mode | default(false) | bool)
+    - (postgres_abandoned_standby_slot.stdout | default('') | trim) == 'faas_standby'
+
+# postgres_standby writes this file on a standby: the primary's connection,
+# its slot and the primary's hot-standby limits. Once the host is promoted and
+# converged as the primary, its own settings must win again.
+- name: postgres — remove standby settings from a primary — ADR-1344
+  ansible.builtin.file:
+    path: "{{ postgres_config_dir }}/conf.d/90-faas-standby.conf"
+    state: absent
+  notify: restart postgresql
+  when: not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — create WAL archive directory (postgres:postgres 0750)
   ansible.builtin.file:

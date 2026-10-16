@@ -845,6 +845,10 @@ bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honor
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
 
+.PHONY: bootstrap-postgres-standby
+bootstrap-postgres-standby: ## ADR-1344 §8: seed and converge the warm-standby PostgreSQL replica (converge the control plane first).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml
+
 .PHONY: bootstrap-fleet-runner
 bootstrap-fleet-runner: ## Install the pinned trusted runner. Gets a short-lived registration token via gh or the controller environment.
 	@if [ -n "$${FAAS_RUNNER_REGISTRATION_TOKEN:-}" ]; then \
@@ -873,6 +877,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/fleet_runner.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join_control_plane.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143

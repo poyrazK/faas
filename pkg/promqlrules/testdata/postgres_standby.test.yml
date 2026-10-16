@@ -1,0 +1,106 @@
+# ADR-1344 §8: warm-standby replication alerts, fed by the primary's
+# faas-postgres-connection-metrics textfile.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a disconnected standby warns after five minutes
+    interval: 1m
+    input_series:
+      - series: faas_postgres_standby_slot_active{job="node",instance="cp-1:9100"}
+        values: 1 1 0 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasPostgresStandbyDisconnected
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasPostgresStandbyDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: database_availability
+              public_status: internal
+              job: node
+              instance: cp-1:9100
+            exp_annotations:
+              summary: "The warm-standby replica is not streaming from cp-1:9100"
+              description: "The faas_standby slot has had no WAL receiver for 5 minutes. The primary keeps WAL for it up to max_slot_wal_keep_size; until the standby reconnects, a failover would lose everything written since it left."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+  - name: replay lag above 256 MiB warns after ten minutes
+    interval: 1m
+    input_series:
+      - series: faas_postgres_standby_replay_lag_bytes{job="node",instance="cp-1:9100"}
+        values: 1048576 536870912+0x14
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasPostgresStandbyLagHigh
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasPostgresStandbyLagHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: database_availability
+              public_status: internal
+              job: node
+              instance: cp-1:9100
+            exp_annotations:
+              summary: "The warm standby is more than 256 MiB of WAL behind cp-1:9100"
+              description: "The connected standby has not replayed 512MiB of WAL for 10 minutes. A failover now would lose that much committed data; check the link between the providers and the standby's disk."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+  - name: slot retention over half the cap warns, an unlimited cap never does
+    interval: 1m
+    input_series:
+      - series: faas_postgres_standby_slot_retained_bytes{job="node",instance="cp-1:9100"}
+        values: 10737418240+0x14
+      - series: faas_postgres_standby_slot_keep_size_bytes{job="node",instance="cp-1:9100"}
+        values: 17179869184+0x14
+      - series: faas_postgres_standby_slot_retained_bytes{job="node",instance="cp-2:9100"}
+        values: 10737418240+0x14
+      - series: faas_postgres_standby_slot_keep_size_bytes{job="node",instance="cp-2:9100"}
+        values: -1+0x14
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasPostgresStandbySlotRetentionHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: database_availability
+              public_status: internal
+              job: node
+              instance: cp-1:9100
+            exp_annotations:
+              summary: "The warm standby's slot holds over half of max_slot_wal_keep_size on cp-1:9100"
+              description: "The primary keeps 10GiB of WAL for the standby. When it reaches max_slot_wal_keep_size the slot is invalidated and the standby must be reseeded from scratch."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+  - name: a lost slot pages, an unreserved one does not
+    interval: 1m
+    input_series:
+      - series: faas_postgres_standby_slot_wal_status{job="node",instance="cp-1:9100",wal_status="lost"}
+        values: 1+0x5
+      - series: faas_postgres_standby_slot_wal_status{job="node",instance="cp-2:9100",wal_status="unreserved"}
+        values: 1+0x5
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasPostgresStandbySlotLost
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: postgres
+              family: database_availability
+              public_status: internal
+              job: node
+              instance: cp-1:9100
+              wal_status: lost
+            exp_annotations:
+              summary: "The warm standby can no longer catch up with cp-1:9100"
+              description: "The faas_standby slot exceeded max_slot_wal_keep_size and the primary removed WAL the standby still needed. There is no usable failover target until the standby is reseeded."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"

@@ -572,6 +572,19 @@ second provider. Tracking: epic #4700.
   nodes keeps serving warm traffic throughout (§5).
   Targets: RPO of seconds (replication lag) and RTO of about 15–30 minutes.
   The runbook is drilled before launch.
+- **Replica implementation** (2026-10-16):
+  - The manifest's `postgresql.standby` (`name`, `address`, `ssh_host`)
+    declares the standby. It is rendered as its own `postgres_standby`
+    inventory group and converged by `deploy/ansible/postgres_standby.yml`.
+  - Replication is plain physical streaming. The primary holds a
+    `faas_standby` slot capped by `max_slot_wal_keep_size`, and admits the
+    `replicator` role from the standby's overlay address only.
+  - The standby's `pg_basebackup` seed refuses to wipe a cluster that may
+    be a promoted primary.
+  - The second backup repository is a separate decision; the replica does
+    not depend on it.
+  - Alerts: `FaasPostgresStandby*`; runbook:
+    `docs/runbooks/FaasPostgresStandby.md`.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the

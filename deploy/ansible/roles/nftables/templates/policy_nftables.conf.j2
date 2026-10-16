@@ -35,6 +35,9 @@ table inet faas {
     ip saddr {{ cidr }} tcp dport 5432 accept comment "faas postgres from compute"
 {% endfor -%}
 {% endif -%}
+{% if faas_postgres_standby_address | default('') -%}
+    {{ 'ip6' if ':' in faas_postgres_standby_address else 'ip' }} saddr {{ faas_postgres_standby_address }} tcp dport 5432 accept comment "faas postgres replication to the warm standby (ADR-1344)"
+{% endif -%}
 {% if faas_pgbouncer_enabled | default(false) and faas_postgres_allowed_cidrs is defined and faas_postgres_allowed_cidrs -%}
 {% for cidr in faas_postgres_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport {{ faas_pgbouncer_listen_port | default(6432) }} accept comment "faas pgbouncer from compute"

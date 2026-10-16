@@ -994,6 +994,61 @@ groups:
           description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
 
+      # ADR-1344 §8 warm standby. The primary's probe reports its slot only
+      # when the manifest declares postgresql.standby, so these stay silent
+      # on fleets without one.
+      - alert: FaasPostgresStandbyDisconnected
+        expr: faas_postgres_standby_slot_active == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm-standby replica is not streaming from {{ $labels.instance }}"
+          description: "The faas_standby slot has had no WAL receiver for 5 minutes. The primary keeps WAL for it up to max_slot_wal_keep_size; until the standby reconnects, a failover would lose everything written since it left."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbyLagHigh
+        expr: faas_postgres_standby_replay_lag_bytes > 268435456
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby is more than 256 MiB of WAL behind {{ $labels.instance }}"
+          description: "The connected standby has not replayed {{ $value | humanize1024 }}B of WAL for 10 minutes. A failover now would lose that much committed data; check the link between the providers and the standby's disk."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotRetentionHigh
+        expr: faas_postgres_standby_slot_retained_bytes > 0.5 * faas_postgres_standby_slot_keep_size_bytes and faas_postgres_standby_slot_keep_size_bytes > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby's slot holds over half of max_slot_wal_keep_size on {{ $labels.instance }}"
+          description: "The primary keeps {{ $value | humanize1024 }}B of WAL for the standby. When it reaches max_slot_wal_keep_size the slot is invalidated and the standby must be reseeded from scratch."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotLost
+        expr: faas_postgres_standby_slot_wal_status{wal_status="lost"} == 1
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby can no longer catch up with {{ $labels.instance }}"
+          description: "The faas_standby slot exceeded max_slot_wal_keep_size and the primary removed WAL the standby still needed. There is no usable failover target until the standby is reseeded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the
