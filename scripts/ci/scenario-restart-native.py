@@ -1322,7 +1322,7 @@ def main():
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
     args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
-    summary = {"version": 20, "status": "failed", "runs": {}}
+    summary = {"version": 21, "status": "failed", "runs": {}}
     try:
         try:
             api, provenance = runner_configuration()
@@ -1439,6 +1439,14 @@ def main():
             result["verified"] = True
             print("native checkout " + case + ": verified, including cleanup", flush=True)
         require(set(summary["runs"]) == set(CASES) and all(run["verified"] and run["cleanup"]["passed"] for run in summary["runs"].values()), "all thirty-eight native cases and cleanup proofs are required")
+        # A real campaign must survive coordinator/worker loss without replaying
+        # uncertain work; transfer then cleans actual VM-backed sessions.
+        from native_campaign_recovery import run as run_campaign_recovery
+        manifest, project = variants["tcp-seq"]
+        summary["campaign_recovery"] = run_campaign_recovery(
+            args.repo.resolve(), args.out / "campaign-recovery", args.cli.resolve(),
+            api, manifest, project, cleanup_probe)
+        require(summary["campaign_recovery"].get("passed") is True, "native campaign recovery drill did not pass")
         summary["status"] = "passed"
     except (OSError, ValueError, TypeError, KeyError, ET.ParseError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         summary["reason"] = type(error).__name__ + ": " + str(error)

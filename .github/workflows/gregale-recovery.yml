@@ -9,6 +9,8 @@ on:
       - 'go.sum'
       - 'Makefile'
       - 'scripts/ci/gregale_recovery_gate*'
+      - 'scripts/ci/scenario-restart-native*'
+      - 'scripts/ci/native_campaign_recovery*'
       - '.github/workflows/gregale-recovery.yml'
   push:
     branches: [main, codex/gregale-phase-comparison-20261015]
@@ -19,6 +21,8 @@ on:
       - 'go.sum'
       - 'Makefile'
       - 'scripts/ci/gregale_recovery_gate*'
+      - 'scripts/ci/scenario-restart-native*'
+      - 'scripts/ci/native_campaign_recovery*'
       - '.github/workflows/gregale-recovery.yml'
   workflow_dispatch:
 
@@ -64,7 +68,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          for evidence in self-test.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log summary.json; do
+          for evidence in self-test.stderr.log native-harness.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log summary.json; do
             if [[ -f "$RECOVERY_GATE_OUTPUT/$evidence" ]]; then
               echo "::group::$evidence"
               cat "$RECOVERY_GATE_OUTPUT/$evidence"

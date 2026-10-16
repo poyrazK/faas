@@ -128,6 +128,9 @@ def main():
         self_test = run("self-test", [sys.executable, "-m", "unittest", "discover", "-s", "scripts/ci", "-p", "gregale_recovery_gate_test.py"], timeout=60)
         if not self_test["passed"]:
             return 1
+        native_harness = run("native-harness", [sys.executable, "scripts/ci/scenario-restart-native_test.py"], timeout=60)
+        if not native_harness["passed"]:
+            return 1
         toolchain = run("toolchain", [go, "env", "-json", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "CGO_ENABLED"], stdout="toolchain.json")
         if not toolchain["passed"]:
             return 1
@@ -150,7 +153,9 @@ def main():
             run("format-diff", [gofmt, "-d"] + files, stdout="formatting.diff")
         summary["source_sha256"] = {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-            for name in files + ["go.mod", "go.sum", "scripts/ci/gregale_recovery_gate.py"]
+            for name in files + ["go.mod", "go.sum", "scripts/ci/gregale_recovery_gate.py",
+                            "scripts/ci/scenario-restart-native.py", "scripts/ci/scenario-restart-native_test.py",
+                            "scripts/ci/native_campaign_recovery.py", "scripts/ci/native_campaign_recovery_test.py"]
         }
         # Keep compilation/test evidence even if formatting failed.
         with tempfile.TemporaryDirectory(prefix="gregale-recovery-build-") as temporary:

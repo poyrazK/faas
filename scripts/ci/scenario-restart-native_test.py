@@ -14,6 +14,8 @@ from unittest.mock import patch
 import uuid
 import xml.etree.ElementTree as ET
 
+from native_campaign_recovery_test import RecoveryContracts
+
 spec = importlib.util.spec_from_file_location("native", Path(__file__).with_name("scenario-restart-native.py"))
 native = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(native)
@@ -709,7 +711,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_verdict_requires_all_runs_and_probes_cleanup_on_rejection(self):
         repo = Path(__file__).resolve().parents[2]
-        for variant in ("all", "incomplete", "previous-gate", "transport-gate", "invalid"):
+        for variant in ("all", "crash-failed", "incomplete", "previous-gate", "transport-gate", "invalid"):
             with self.subTest(variant=variant), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
                 cli = directory / "gregale"
@@ -765,6 +767,7 @@ class HarnessTests(unittest.TestCase):
                     stack.enter_context(patch.object(sys, 'argv', ['native', '--repo', str(repo), '--out', str(directory), '--cli', str(cli)]))
                     stack.enter_context(patch.object(native, 'runner_configuration', return_value=(object(), {'native_runner': True})))
                     stack.enter_context(patch.object(native, 'manifests', return_value=manifests))
+                    crash = stack.enter_context(patch("native_campaign_recovery.run", return_value={"passed": variant != "crash-failed"}))
                     stack.enter_context(patch.object(native.subprocess, 'run'))
                     stack.enter_context(patch.object(native.subprocess, 'check_output', side_effect=lambda *args, **kwargs: 'a' * 40 if kwargs.get('text') else b''))
                     stack.enter_context(patch.object(native, 'auth_environment', side_effect=lambda case, run_dir: contextlib.nullcontext({})))
@@ -789,10 +792,11 @@ class HarnessTests(unittest.TestCase):
                         with self.assertRaises(SystemExit):
                             native.main()
                 verdict = json.loads((directory / "verdict.json").read_text())
-                self.assertEqual(verdict["version"], 20)
+                self.assertEqual(verdict["version"], 21)
                 self.assertEqual(verdict["status"], "passed" if variant == "all" else "failed")
-                self.assertEqual(cleanup.call_count, {"all": 38, "transport-gate": 37, "incomplete": 3, "previous-gate": 30, "invalid": 1}[variant])
-                self.assertEqual(database_cleanup.call_count, 2 if variant in ("all", "previous-gate", "transport-gate") else 0)
+                self.assertEqual(cleanup.call_count, {"all": 38, "crash-failed": 38, "transport-gate": 37, "incomplete": 3, "previous-gate": 30, "invalid": 1}[variant])
+                self.assertEqual(database_cleanup.call_count, 2 if variant in ("all", "crash-failed", "previous-gate", "transport-gate") else 0)
+                self.assertEqual(crash.call_count, 1 if variant in ("all", "crash-failed") else 0)
                 if variant == "invalid":
                     self.assertFalse(verdict["runs"]["success"]["verified"])
                     self.assertTrue(verdict["runs"]["success"]["cleanup"]["passed"])

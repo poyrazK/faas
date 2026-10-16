@@ -112,3 +112,33 @@ persisting the checkpoint, unlinking the runner lock and unlinking the claim
 lock. It verifies automatic guard release, safe completion on retry, repeatable
 completion checks, preservation of assertion evidence, and rejection of new
 owners or changed checkpoints.
+
+## Native crash/transfer acceptance
+
+`make native-scenario-restart-acceptance` now requires a campaign crash drill
+in addition to the existing 38 scenario cases. It uses the candidate CLI and
+TCP dependency campaign, waits for actual fault matches and verifies both
+journaled sessions, then kills the coordinator. Recovery must refuse release
+while the tracked worker remains alive. The harness pins that worker with a
+Linux pidfd after checking its boot, PID namespace and start identity before
+killing it, so a reused PID cannot receive the signal.
+
+After explicit lock recovery, the saved attempt must remain halted and
+uncertain without a final report. Both source and activated recipient must
+refuse to resume it. The drill exports the journal, activates a recipient in a
+private shared claim directory, and performs scoped journal cleanup there.
+Read-only completion verification must report absent sessions while execution
+and overall recovery remain incomplete. An independent API probe checks all
+recorded session names and app IDs against live instance inventory.
+
+Evidence lives under `campaign-recovery/`: command results and private logs,
+fault-match observations, the portable bundle, recipient, cleanup observations,
+and a verdict. Namespace removal is recorded separately: journal cleanup does
+not revoke scenario registrations or consumer credentials. On failure the
+harness stops its pinned worker and attempts authorized journal cleanup, retains
+the artifacts, and records `cleanup_pending` when cleanup cannot be completed.
+
+Portable tests exercise process identity pinning and rejection of replacement
+sessions or forged completion. They do not certify native VM recovery. The full
+gate still requires the designated native x86_64 KVM host and its configured
+dedicated acceptance account; a cloud workspace without KVM cannot qualify it.
