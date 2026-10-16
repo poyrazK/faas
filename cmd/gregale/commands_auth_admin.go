@@ -295,7 +295,7 @@ func authAdminCall(method, origin, key, path string, body, out any) error {
 	if err != nil {
 		return fmt.Errorf("read the Auth app response: %w", err)
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
 		var problem struct {
 			Code string `json:"code"`
 		}

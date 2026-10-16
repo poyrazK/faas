@@ -32,7 +32,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
-		Ports:      w.Ports,
+		Ports:      append([]int{}, w.Ports...),
 		EnvKeys:    w.EnvKeys,
 		Source:     w.Source,
 		Tier:       w.Tier.String(),
