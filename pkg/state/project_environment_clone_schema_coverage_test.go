@@ -1,4 +1,5 @@
 // adr: 590
+// adr: 1347 — CI configuration needs a strategy; execution authority stays with its source.
 // adr: 623 — pending resize intents belong only to their original database.
 // adr: 738
 // adr: 694
@@ -18,6 +19,29 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// CI definitions and bindings remain configuration; execution receipts,
+		// capabilities, storage tombstones and worker leases are operational.
+		"ci_automation_events":       CloneSchemaOperational,
+		"ci_automation_policies":     CloneSchemaConfiguration,
+		"ci_dispatch_budget":         CloneSchemaOperational,
+		"ci_execution_archives":      CloneSchemaOperational,
+		"ci_execution_check_retries": CloneSchemaOperational,
+		"ci_execution_checks":        CloneSchemaOperational,
+		"ci_execution_profiles":      CloneSchemaConfiguration,
+		"ci_executions":              CloneSchemaOperational,
+		"ci_github_bindings":         CloneSchemaConfiguration,
+		"ci_github_checks":           CloneSchemaOperational,
+		"ci_github_triggers":         CloneSchemaOperational,
+		"ci_job_attempts":            CloneSchemaOperational,
+		"ci_job_runtime":             CloneSchemaOperational,
+		"ci_job_runtime_objects":     CloneSchemaOperational,
+		"ci_managed_objects":         CloneSchemaOperational,
+		"ci_pipeline_revisions":      CloneSchemaConfiguration,
+		"ci_run_events":              CloneSchemaOperational,
+		"ci_runs":                    CloneSchemaOperational,
+		"ci_storage_budget":          CloneSchemaOperational,
+		"ci_worker_health":           CloneSchemaOperational,
+
 		"workflow_initial_recovery_reviews":       CloneSchemaOperational,
 		"profile_deployment_policies":             CloneSchemaConfiguration,
 		"profile_investigations":                  CloneSchemaOperational,

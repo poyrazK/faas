@@ -280,7 +280,7 @@ CREATE TRIGGER reject_ci_retry BEFORE INSERT ON ci_execution_check_retries FOR E
 	if _, _, err := RequestCheckRetry(t.Context(), h.backend.Config, h.store, h.verify, h.account, row.ID, "atomic", CheckRetryRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile("../../migrations/20261016112657277_ci_check_delivery_recovery.sql")
+	data, err := os.ReadFile("../../migrations/20261016175839315_ci_check_delivery_recovery.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11718,5 +11718,313 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "ci_automation_events",
+    "columns": [
+      "account_id",
+      "attempts",
+      "binding_id",
+      "created_at",
+      "event_key",
+      "execution_id",
+      "id",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_generation",
+      "policy_id",
+      "profile_id",
+      "snapshot",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_automation_policies",
+    "columns": [
+      "account_id",
+      "binding_generation",
+      "binding_id",
+      "created_at",
+      "enabled",
+      "generation",
+      "id",
+      "profile_id",
+      "push_branches"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "ci_dispatch_budget",
+    "columns": [
+      "lock_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_execution_archives",
+    "columns": [
+      "account_id",
+      "archived_at",
+      "execution_id",
+      "receipt"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_execution_check_retries",
+    "columns": [
+      "account_id",
+      "applied_at",
+      "execution_id",
+      "generation",
+      "id",
+      "key_digest",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_execution_checks",
+    "columns": [
+      "account_id",
+      "attempts",
+      "check_id",
+      "created_at",
+      "delivered_digest",
+      "delivered_version",
+      "execution_id",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "retry_generation",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_execution_profiles",
+    "columns": [
+      "account_id",
+      "binding_generation",
+      "binding_id",
+      "created_at",
+      "id",
+      "name",
+      "revision_digest",
+      "revision_id",
+      "snapshot",
+      "state",
+      "templates"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "ci_executions",
+    "columns": [
+      "account_id",
+      "archived_at",
+      "commit_sha",
+      "created_at",
+      "fence",
+      "finished_at",
+      "id",
+      "idempotency_key",
+      "lease_until",
+      "mode",
+      "next_reconcile_at",
+      "reconcile_failures",
+      "revision_id",
+      "snapshot",
+      "status",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_github_bindings",
+    "columns": [
+      "account_id",
+      "created_at",
+      "enabled",
+      "generation",
+      "id",
+      "installation_id",
+      "name",
+      "pr_branches",
+      "push_branches",
+      "repository",
+      "repository_id",
+      "revision_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "ci_github_checks",
+    "columns": [
+      "account_id",
+      "attempts",
+      "check_id",
+      "created_at",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "run_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_github_triggers",
+    "columns": [
+      "account_id",
+      "attempts",
+      "binding_id",
+      "created_at",
+      "event_key",
+      "id",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "run_id",
+      "snapshot",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_job_attempts",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "cancel_requested",
+      "created_at",
+      "execution_id",
+      "fence",
+      "job_name",
+      "output",
+      "run_id",
+      "source"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_job_runtime",
+    "columns": [
+      "attempt_id",
+      "cancelled_at",
+      "capability_hash",
+      "created_at",
+      "expires_at",
+      "instance_id",
+      "result",
+      "sealed_at",
+      "transfer_token",
+      "transfer_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_job_runtime_objects",
+    "columns": [
+      "attempt_id",
+      "bytes",
+      "digest",
+      "name",
+      "retained"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_managed_objects",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "bytes",
+      "created_at",
+      "deleted_at",
+      "digest",
+      "execution_id",
+      "expires_at",
+      "id",
+      "job_id",
+      "kind",
+      "object_key",
+      "op_token",
+      "op_until",
+      "ready_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_pipeline_revisions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "definition",
+      "digest",
+      "id",
+      "name"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "ci_run_events",
+    "columns": [
+      "account_id",
+      "created_at",
+      "event_type",
+      "run_id",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_runs",
+    "columns": [
+      "account_id",
+      "blocked_reason",
+      "commit_sha",
+      "created_at",
+      "finished_at",
+      "github_source",
+      "id",
+      "idempotency_key",
+      "pipeline",
+      "plan",
+      "revision_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_storage_budget",
+    "columns": [
+      "lock_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_worker_health",
+    "columns": [
+      "cycle_at",
+      "cycle_sequence",
+      "enabled",
+      "heartbeat_at",
+      "last_error",
+      "ready",
+      "slot",
+      "started_at",
+      "success_at",
+      "token",
+      "worker"
+    ],
+    "kind": "operational"
   }
 ]

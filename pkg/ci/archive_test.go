@@ -286,7 +286,7 @@ func TestCIArchiveConcurrentRequestsAndRollback(t *testing.T) {
 	if created.Load() != 1 || h.count(t, "SELECT count(*) FROM ci_execution_archives") != 1 {
 		t.Fatal("concurrent archive duplicated receipt")
 	}
-	data, err := os.ReadFile("../../migrations/20261016114852532_ci_execution_archival.sql")
+	data, err := os.ReadFile("../../migrations/20261016175839317_ci_execution_archival.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

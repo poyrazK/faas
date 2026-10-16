@@ -31,7 +31,7 @@ func TestControlPlaneStorePostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, "CREATE TABLE accounts (id uuid PRIMARY KEY)"); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile("../../migrations/20261015093714001_internal_ci.sql")
+	data, err := os.ReadFile("../../migrations/20261016175839285_internal_ci.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestControlPlaneStorePostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	githubMigration, err := os.ReadFile("../../migrations/20261015110400001_ci_github_sources.sql")
+	githubMigration, err := os.ReadFile("../../migrations/20261016175839290_ci_github_sources.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

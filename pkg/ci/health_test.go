@@ -247,7 +247,7 @@ func TestCIHealthWorkerRestartFencingAndBoundedSlots(t *testing.T) {
 	if _, err := h.pool.Exec(t.Context(), "INSERT INTO ci_worker_health(worker,slot,token,enabled,ready) VALUES ('dispatcher',$1,$2,true,true)", api.CIWorkerHealthSlots, uuid.NewString()); err == nil {
 		t.Fatal("schema disagrees with diagnostic slot cap")
 	}
-	migration, err := os.ReadFile("../../migrations/20261016121221952_ci_health_observability.sql")
+	migration, err := os.ReadFile("../../migrations/20261016175839322_ci_health_observability.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

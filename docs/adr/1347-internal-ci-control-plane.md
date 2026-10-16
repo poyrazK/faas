@@ -42,7 +42,7 @@ admission, trust, secret, resource, and accounting contracts.
 Three account-owned tables retain revisions, runs, and ordered lifecycle events.
 All foreign keys include account ownership and cascade on account deletion.
 Queries are generated through the dedicated SQLC package; its compile-time
-schema projection mirrors migration `20261015093714001`.
+schema projection mirrors migration `20261016175839285`.
 
 Run submission requires a stable account-scoped Idempotency-Key. Identical
 retries return the original receipt, including after cancellation; conflicting

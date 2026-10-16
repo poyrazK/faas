@@ -326,7 +326,7 @@ CREATE TRIGGER reject_ci_check BEFORE INSERT ON ci_execution_checks FOR EACH ROW
 	if h.count(t, "SELECT count(*) FROM ci_executions") != 1 {
 		t.Fatal("execution admission was not atomic with outbox")
 	}
-	data, err := os.ReadFile("../../migrations/20261016110443528_ci_execution_checks.sql")
+	data, err := os.ReadFile("../../migrations/20261016175839313_ci_execution_checks.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

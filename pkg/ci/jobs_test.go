@@ -633,7 +633,7 @@ func TestCIJobs(t *testing.T) {
 		if _, _, err := AdmitJobs(t.Context(), h.backend.Config, h.store, h.verify, h.account, "over-quota", h.req); !errors.Is(err, ErrLimit) {
 			t.Fatalf("quota not enforced: %v", err)
 		}
-		data, err := os.ReadFile("../../migrations/20261015115617001_ci_jobs_adapter.sql")
+		data, err := os.ReadFile("../../migrations/20261016175839296_ci_jobs_adapter.sql")
 		if err != nil {
 			t.Fatal(err)
 		}

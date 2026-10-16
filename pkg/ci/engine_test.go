@@ -63,7 +63,7 @@ func qualificationDatabase(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	// ADR-1341: metadata capture now shares the automation deduplication quota.
-	for _, name := range []string{"20261015093714001_internal_ci.sql", "20261015105155001_ci_execution_qualification.sql", "20261015110400001_ci_github_sources.sql", "20261015160000001_ci_execution_dispatch.sql", "20261016100642065_ci_execution_profiles.sql", "20261016102712482_ci_github_automation.sql", "20261016114852532_ci_execution_archival.sql"} {
+	for _, name := range []string{"20261016175839285_internal_ci.sql", "20261016175839288_ci_execution_qualification.sql", "20261016175839290_ci_github_sources.sql", "20261016175839303_ci_execution_dispatch.sql", "20261016175839307_ci_execution_profiles.sql", "20261016175839311_ci_github_automation.sql", "20261016175839317_ci_execution_archival.sql"} {
 		data, err := os.ReadFile("../../migrations/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -116,7 +116,7 @@ func TestExecutionQualificationPostgres(t *testing.T) {
 	}
 	// ADR-1341: roll back the empty dependent journal before execution storage.
 	// The append-only rollback still preserves the original metadata receipts.
-	for _, name := range []string{"20261016114852532_ci_execution_archival.sql", "20261016102712482_ci_github_automation.sql", "20261015105155001_ci_execution_qualification.sql"} {
+	for _, name := range []string{"20261016175839317_ci_execution_archival.sql", "20261016175839311_ci_github_automation.sql", "20261016175839288_ci_execution_qualification.sql"} {
 		data, err := os.ReadFile("../../migrations/" + name)
 		if err != nil {
 			t.Fatal(err)
