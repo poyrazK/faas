@@ -222,7 +222,10 @@ func (h *Handler) ensureRuntimeRelease(ctx context.Context, releases state.Runti
 	if err != nil {
 		return state.RuntimeRelease{}, err
 	}
-	staging := "base/release-staging/runner-" + runtime + "-" + arch + "-" + uuid.NewString() + ".ext4"
+	// One flat path segment: the verified base producer accepts only
+	// base/<name>.ext4 keys (imagechain.ValidBaseKey), and a nested
+	// release-staging/ key failed every function deploy (H10-102).
+	staging := runtimeReleaseStagingKey(runtime, arch, uuid.NewString())
 	digest := staging + ".digest"
 	defer cleanupRuntimeStaging(ctx, be, staging, digest)
 	// A fresh private key cannot fall back to an unrelated installed base.
@@ -290,6 +293,10 @@ func (h *Handler) replicateRuntimeRelease(ctx context.Context, release state.Run
 		return fmt.Errorf("imaged: replicate runtime base: %w", err)
 	}
 	return nil
+}
+
+func runtimeReleaseStagingKey(runtime, arch, nonce string) string {
+	return "base/release-staging-runner-" + runtime + "-" + arch + "-" + nonce + ".ext4"
 }
 
 func cleanupRuntimeStaging(ctx context.Context, be storage.StorageBackend, key, digest string) {

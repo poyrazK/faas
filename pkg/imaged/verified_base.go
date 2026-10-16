@@ -104,8 +104,33 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 }
 
 // Invalid or missing cache bytes require a verified rebuild before reuse.
+// ext4 builds are not byte-reproducible, so a node's cached copy can be its
+// own earlier build while the current producer records another node's bytes.
+// Adopt the canonical publication first: rebuilding would supersede the shared
+// producer, the other node would then do the same, and every swap stales
+// in-flight scan publications and every snapshot on that base (H10-101).
 func (h *Handler) verifiedBaseArtifactReusable(ctx context.Context, r verifiedBaseRequest, artifact imagechain.BaseArtifact) bool {
-	return checkStoredBaseArtifact(ctx, r.be, artifact) == nil && h.validateBaseArtifact(ctx, r.be, r.key) == nil
+	if checkStoredBaseArtifact(ctx, r.be, artifact) != nil {
+		if !refreshCachedBase(ctx, r.be, artifact.StorageKey) || checkStoredBaseArtifact(ctx, r.be, artifact) != nil {
+			return false
+		}
+	}
+	return h.validateBaseArtifact(ctx, r.be, r.key) == nil
+}
+
+// refreshCachedBase replaces this node's cached copy of key with the canonical
+// parent object. It reports false when key is not cache-backed or the refresh
+// fails; the caller then rebuilds as before.
+func refreshCachedBase(ctx context.Context, be storage.StorageBackend, key string) bool {
+	cache, rel, err := storage.CacheBackendForKey(be, key)
+	if err != nil || cache == nil {
+		return false
+	}
+	rc, err := cache.Refresh(ctx, rel)
+	if err != nil {
+		return false
+	}
+	return rc.Close() == nil
 }
 
 func baseCacheParentMatches(ctx context.Context, store state.BaseImageProducerStore, in state.BaseImageProducerInput, r verifiedBaseRequest) bool {
@@ -248,7 +273,17 @@ func (h *Handler) publishVerifiedBase(ctx context.Context, r verifiedBaseRequest
 	if err := h.validateBaseArtifact(ctx, r.be, r.key); err != nil {
 		return state.BaseImageProducer{}, err
 	}
-	return store.PublishBaseImageProducer(ctx, state.BaseImageProducerInput{ID: uuid.NewString(), Artifact: artifact, SourceReference: prepared.SourceReference, SourceDigest: prepared.SourceDigest, SelectedDigest: prepared.Digest, ImageChain: prepared.Evidence, LayoutVersion: baseLayoutVersion, GuestInitDigest: result.GuestInitDigest, ContentBytes: result.SizeBytes, LayerStart: prepared.LayerStart, Layers: prepared.Layers, ParentProducerID: build.parent.ID, ParentInputHash: build.parent.InputHash, ParentMaterialization: build.materialization})
+	producer, err := store.PublishBaseImageProducer(ctx, state.BaseImageProducerInput{ID: uuid.NewString(), Artifact: artifact, SourceReference: prepared.SourceReference, SourceDigest: prepared.SourceDigest, SelectedDigest: prepared.Digest, ImageChain: prepared.Evidence, LayoutVersion: baseLayoutVersion, GuestInitDigest: result.GuestInitDigest, ContentBytes: result.SizeBytes, LayerStart: prepared.LayerStart, Layers: prepared.Layers, ParentProducerID: build.parent.ID, ParentInputHash: build.parent.InputHash, ParentMaterialization: build.materialization})
+	if err != nil {
+		return state.BaseImageProducer{}, err
+	}
+	// ADR-567: record the published bytes like every other staging path, so
+	// other nodes' convergence adopts them instead of declining a stale
+	// sidecar and keeping their own build (H10-101).
+	if err := h.writeBaseContentSidecar(ctx, r.be, r.key); err != nil {
+		return state.BaseImageProducer{}, err
+	}
+	return producer, nil
 }
 
 func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest, producer state.BaseImageProducer, configDigest string, skipped bool) (BaseStageResult, error) {
