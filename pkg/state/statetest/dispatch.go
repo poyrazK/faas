@@ -74,12 +74,14 @@ var memDispatched = map[string]bool{
 	"ListOutboundAppBindings":                                 true,
 	"ListQueueBindingConsumersForApp":                         true,
 	"ListQueueBindingsForApp":                                 true,
+	"ListRunningInstancesOnDeadNodes":                         true,
 	"ListTCPListenerTLSObservations":                          true,
 	"ListWorkflowScheduleCandidates":                          true,
 	"LiveDeploymentForScope":                                  true,
 	"ManagedPostgresAdmissionFenced":                          true,
 	"MigrateInstanceOwner":                                    true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                   true,
+	"NodeList":                                                true,
 	"ObserveNextWorkflowFailureEligibility":                   true,
 	"ProcessNextEventRecoveryExecutionNotification":           true,
 	"ProcessNextWorkflowRecoveryAutomaticBlockedNotification": true,
@@ -563,6 +565,15 @@ func (s *Mem) ListQueueBindingsForApp(p0 context.Context, p1 string, p2 string) 
 	return s.MemStore.ListQueueBindingsForApp(p0, p1, p2)
 }
 
+func (s *Mem) ListRunningInstancesOnDeadNodes(p0 context.Context, p1 time.Time, p2 int) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListRunningInstancesOnDeadNodes(context.Context, time.Time, int) ([]state.Instance, error)
+	}); ok {
+		return o.ListRunningInstancesOnDeadNodes(p0, p1, p2)
+	}
+	return s.MemStore.ListRunningInstancesOnDeadNodes(p0, p1, p2)
+}
+
 func (s *Mem) ListTCPListenerTLSObservations(p0 context.Context, p1 string) ([]state.TCPListenerTLSObservation, error) {
 	if o, ok := s.over.(interface {
 		ListTCPListenerTLSObservations(context.Context, string) ([]state.TCPListenerTLSObservation, error)
@@ -615,6 +626,15 @@ func (s *Mem) MigrateInstanceOwnerWithRuntimeConfig(p0 context.Context, p1 strin
 		return o.MigrateInstanceOwnerWithRuntimeConfig(p0, p1, p2, p3, p4, p5)
 	}
 	return s.MemStore.MigrateInstanceOwnerWithRuntimeConfig(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) NodeList(p0 context.Context, p1 state.NodeLifecycle) ([]state.ComputeNode, error) {
+	if o, ok := s.over.(interface {
+		NodeList(context.Context, state.NodeLifecycle) ([]state.ComputeNode, error)
+	}); ok {
+		return o.NodeList(p0, p1)
+	}
+	return s.MemStore.NodeList(p0, p1)
 }
 
 func (s *Mem) ObserveNextWorkflowFailureEligibility(p0 context.Context, p1 time.Time) (bool, error) {

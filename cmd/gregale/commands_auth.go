@@ -33,7 +33,7 @@ const (
 
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|import>", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|import|activity>", "auth")
 		return 1
 	}
 	switch args[0] {
@@ -51,12 +51,14 @@ func cmdAuth(args []string) int {
 		return cmdAuthAdminKey(args[1:])
 	case "import":
 		return cmdAuthImport(args[1:])
+	case "activity":
+		return cmdAuthActivity(args[1:])
 	case "login", "logout", "whoami", "token":
 		// `gregale auth` manages an application's own users, not the
 		// Gregale account; other CLIs use the same verbs for account login.
 		return printErr("Not an account command", errors.New("`gregale auth` manages application Auth; use `gregale "+args[0]+"` for your Gregale account"))
 	default:
-		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key or import"))
+		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key, import or activity"))
 	}
 }
 
@@ -226,14 +228,7 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 	}
 	if opts.workflows && !present[authEventsKeyName] {
-		// The key can only publish events: a compromised Auth app cannot
-		// deploy, read secrets or administer the account with it.
-		key, err := client.CreateKey(ctx, "auth-"+app.Slug+"-events", []string{api.ScopeEventsPublish})
-		if err != nil {
-			return fmt.Errorf("mint the workflow events key: %w", err)
-		}
-		if err := client.SetSecretWithScope(ctx, app.Slug, authEventsKeyName, key.Plaintext, opts.scope); err != nil {
-			_ = client.DeleteKey(ctx, key.ID)
+		if err := mintAuthEventsKey(ctx, client, app.Slug, opts.scope); err != nil {
 			return err
 		}
 	}
@@ -373,6 +368,35 @@ func newAuthSigningKey() (string, string, error) {
 		return "", "", fmt.Errorf("encode signing key: %w", err)
 	}
 	return id, string(jwk), nil
+}
+
+// mintAuthEventsKey seals a key that can only publish events, for workflow
+// starts and lifecycle events: a compromised Auth app cannot deploy, read
+// secrets or administer the account with it.
+func mintAuthEventsKey(ctx context.Context, client *api.Client, app, scope string) error {
+	key, err := client.CreateKey(ctx, "auth-"+app+"-events", []string{api.ScopeEventsPublish})
+	if err != nil {
+		return fmt.Errorf("mint the events key: %w", err)
+	}
+	if err := client.SetSecretWithScope(ctx, app, authEventsKeyName, key.Plaintext, scope); err != nil {
+		_ = client.DeleteKey(ctx, key.ID)
+		return err
+	}
+	return nil
+}
+
+// ensureAuthEventsKey mints the events key unless the app already has one.
+func ensureAuthEventsKey(ctx context.Context, client *api.Client, app, scope string) error {
+	list, err := client.ListSecretsWithScope(ctx, app, scope)
+	if err != nil {
+		return err
+	}
+	for _, secret := range list.Secrets {
+		if secret.Key == authEventsKeyName && (secret.Scope == "" || secret.Scope == scope) {
+			return nil
+		}
+	}
+	return mintAuthEventsKey(ctx, client, app, scope)
 }
 
 func randomAuthSecret() (string, error) {

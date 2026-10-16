@@ -124,6 +124,34 @@ func newFrozenFixtureWith(t *testing.T, withSnapshot bool, shape func(*state.App
 	return &frozenFixture{store: store, vmm: vmm, e: e, app: app, dep: dep, ins: ins}
 }
 
+// addPublishedInstance adds a second RUNNING, published instance of the
+// fixture's deployment.
+func (f *frozenFixture) addPublishedInstance(t *testing.T) state.Instance {
+	t.Helper()
+	ctx := t.Context()
+	ins, err := f.store.CreateInstanceWithMode(ctx, f.app.ID, f.dep.ID, string(state.StateWaking), f.app.RAMMB, f.ins.NodeID, uuid.NewString(), string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := f.store.RuntimeAppValuesForDeployment(ctx, f.app.AccountID, f.app.ID, f.dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppConfigFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, err = f.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+		AccountID: f.app.AccountID, AppID: f.app.ID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID,
+		ExpectedState: string(state.StateWaking), Fence: fence.SecretFence, ConfigFence: fence,
+		Netns: "fc-" + ins.ID, HostIP: "10.100.0.3", GuestUID: 20002,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ins
+}
+
 func (f *frozenFixture) state(t *testing.T) state.State {
 	t.Helper()
 	ins, err := f.store.InstanceByID(t.Context(), f.ins.ID)
@@ -310,6 +338,83 @@ func TestThawRunsAfterRestoreWhenDeclared(t *testing.T) {
 				t.Fatalf("unconfirmed after_restore left the frozen row %s, want parked", f.state(t))
 			}
 		})
+	}
+}
+
+// The pause an app declares and the apps switch decide which tier may
+// pause it: quiet pause only for between_requests, the frozen tier for
+// anything but never, and apps other than functions only with the switch.
+func TestPauseTierEligibility(t *testing.T) {
+	normal := string(state.InstanceModeNormal)
+	for _, tc := range []struct {
+		name       string
+		app        state.App
+		mode, net  string
+		appsSwitch bool
+		wantQuiet  bool
+		wantFrozen bool
+	}{
+		{name: "function default", app: state.App{Type: state.AppTypeFunction}, mode: normal, wantQuiet: true, wantFrozen: true},
+		{name: "function never", app: state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Pause: api.PauseNever}}, mode: normal},
+		{name: "function when_idle", app: state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Pause: api.PauseWhenIdle}}, mode: normal, wantFrozen: true},
+		{name: "app default, switch off", app: state.App{Type: state.AppTypeApp}, mode: normal},
+		{name: "app default, switch on", app: state.App{Type: state.AppTypeApp}, mode: normal, appsSwitch: true, wantFrozen: true},
+		{name: "app between_requests", app: state.App{Type: state.AppTypeApp, Manifest: state.AppManifest{Pause: api.PauseBetweenRequests}}, mode: normal, appsSwitch: true, wantQuiet: true, wantFrozen: true},
+		{name: "app never", app: state.App{Type: state.AppTypeApp, Manifest: state.AppManifest{Pause: api.PauseNever}}, mode: normal, appsSwitch: true},
+		{name: "grpc app", app: state.App{Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassGRPC}, mode: normal, appsSwitch: true, wantFrozen: true},
+		{name: "worker class", app: state.App{Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker}, mode: normal, appsSwitch: true},
+		{name: "service mode", app: state.App{Type: state.AppTypeApp}, mode: string(state.InstanceModeService), appsSwitch: true},
+		{name: "mirror", app: state.App{Type: state.AppTypeFunction}, mode: string(state.InstanceModeMirror)},
+		{name: "private network", app: state.App{Type: state.AppTypeFunction}, mode: normal, net: "net-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var e Engine
+			if tc.appsSwitch {
+				e.EnableFrozenTierApps()
+			}
+			if got := quietPauseAfterMS(tc.app, tc.mode, tc.net) > 0; got != tc.wantQuiet {
+				t.Errorf("quiet pause = %v, want %v", got, tc.wantQuiet)
+			}
+			if got := e.frozenTierAllows(tc.app, tc.mode, tc.net); got != tc.wantFrozen {
+				t.Errorf("frozen tier = %v, want %v", got, tc.wantFrozen)
+			}
+		})
+	}
+}
+
+func TestFreezeIdleFreezesAppsWithTheAppsSwitch(t *testing.T) {
+	f := newFrozenFixture(t, true, state.AppTypeApp)
+	f.e.EnableFrozenTier()
+	if handled, _ := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); handled || f.vmm.freezes != 0 {
+		t.Fatal("an app froze without the apps switch")
+	}
+	f.e.EnableFrozenTierApps()
+	if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); err != nil || !handled || f.state(t) != state.StateFrozen {
+		t.Fatalf("FreezeIdle on an app with the switch = %v, %v, state %s; want frozen", handled, err, f.state(t))
+	}
+}
+
+// A session pinned to a frozen VM thaws that VM even when another frozen VM
+// of the deployment would come first.
+func TestFrozenCandidatesPreferTheSessionInstance(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	other := f.addPublishedInstance(t)
+	for _, id := range []string{f.ins.ID, other.ID} {
+		if err := updateInstanceStateCAS(t.Context(), f.store, id, string(state.StateRunning), string(state.StateFrozen)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plain, err := f.e.frozenCandidates(t.Context(), f.app, f.dep)
+	if err != nil || len(plain) != 2 {
+		t.Fatalf("candidates = %v, %v", plain, err)
+	}
+	last := plain[1].ID
+	hinted, err := f.e.frozenCandidates(WithPreferredInstance(t.Context(), last), f.app, f.dep)
+	if err != nil || len(hinted) != 2 || hinted[0].ID != last || hinted[1].ID != plain[0].ID {
+		t.Fatalf("hinted candidates = %v, %v; want %s first", hinted, err, last)
+	}
+	if got, _ := f.e.frozenCandidates(WithPreferredInstance(t.Context(), "elsewhere"), f.app, f.dep); got[0].ID != plain[0].ID {
+		t.Fatal("a hint naming no candidate reordered them")
 	}
 }
 

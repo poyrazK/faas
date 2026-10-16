@@ -6241,6 +6241,7 @@ const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
     WHERE candidate.trigger_id = $1
+ AND EXISTS(SELECT 1 FROM triggers t WHERE t.id=candidate.trigger_id AND NOT environment_workload_admission_retired(t.app_id,t.queue_binding_scope))
       AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
         OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
     ORDER BY candidate.next_fire_at, candidate.id
@@ -6324,6 +6325,7 @@ const claimTriggerRecordsByItems = `-- name: ClaimTriggerRecordsByItems :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
     WHERE candidate.trigger_id = $1
+ AND EXISTS(SELECT 1 FROM triggers t WHERE t.id=candidate.trigger_id AND NOT environment_workload_admission_retired(t.app_id,t.queue_binding_scope))
       AND candidate.item_identifier = ANY($2::text[])
       AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
         OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
@@ -13638,7 +13640,8 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 
 const environmentGitOpsUnqualifiedWorkloads = `-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
-WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
+WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
+ WHERE s.id=r.source_id AND rev.definition->'workloads' ? substring(r.logical_name from 10)) AND EXISTS(SELECT 1 FROM environment_managed_fields f
 WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path IN ('source','source_revision','schedule') OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/') OR starts_with(f.field_path,'queue_bindings/')))
 `
 
@@ -34516,6 +34519,7 @@ SELECT EXISTS (
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM environment_workload_retirements r WHERE d.id=ANY(r.deployment_ids) AND r.phase IN ('planned','retiring','retired','recovering'))
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
       AND (d.rootfs_key = $1::text
@@ -40040,7 +40044,7 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
        created_at, updated_at
-from triggers where enabled = true
+from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 `
 
 type ListEnabledTriggersRow struct {
@@ -46630,6 +46634,16 @@ SELECT lock_clone_deployment_cleanup_borrower_writers()
 
 func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneDeploymentCleanupBorrowerWriters)
+	return err
+}
+
+const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
+LOCK TABLE environment_workload_retirements IN SHARE MODE
+`
+
+// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+func (q *Queries) LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneDeploymentCleanupRetirementWriters)
 	return err
 }
 
@@ -60495,9 +60509,14 @@ SELECT jsonb_build_object(
         WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
     'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
         FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
+    'retirements', coalesce((SELECT jsonb_agg(to_jsonb(r)) FROM (SELECT DISTINCT ON(resource) id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at FROM environment_workload_retirements WHERE source_id=s.id ORDER BY resource,generation DESC) r),'[]'::jsonb),
     'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', q.resource, 'path', q.field_path, 'binding_id', q.binding_id))
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
+         'pending_invocations',(SELECT count(*) FROM invocations i WHERE i.app_id=a.id AND (i.environment_id=e.id OR CASE WHEN coalesce(i.deployment_scope,'') IN ('','default') THEN 'production' ELSE i.deployment_scope END=e.slug) AND i.state='pending'),
+        'in_flight_invocations',(SELECT count(*) FROM invocations i WHERE i.app_id=a.id AND (i.environment_id=e.id OR CASE WHEN coalesce(i.deployment_scope,'') IN ('','default') THEN 'production' ELSE i.deployment_scope END=e.slug) AND i.state='dispatching'),
+        'queued_tasks',(SELECT count(*) FROM job_tasks t JOIN job_runs j ON j.id=t.run_id JOIN app_environment_workload_intents w ON w.job_id=j.job_id WHERE w.app_id=a.id AND w.environment_id=e.id AND t.status='queued'),
+        'in_flight_tasks',(SELECT count(*) FROM job_tasks t JOIN job_runs j ON j.id=t.run_id JOIN app_environment_workload_intents w ON w.job_id=j.job_id WHERE w.app_id=a.id AND w.environment_id=e.id AND t.status='claimed'),
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
         'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
@@ -60553,7 +60572,9 @@ func (q *Queries) ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, a
 
 const observeEnvironmentGitOpsRuntime = `-- name: ObserveEnvironmentGitOpsRuntime :many
 SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots
-FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
+FROM environment_gitops_runtime_targets t WHERE source_id = $1::uuid
+AND EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
+ WHERE s.id=t.source_id AND rev.definition->'workloads' ? substring(t.resource from 10))
 AND account_id = $2::uuid ORDER BY app_id
 `
 
@@ -66103,6 +66124,7 @@ SELECT (jsonb_build_object(
     'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = $1::uuid)
 ) || jsonb_build_object(
     -- ADR-595 application-standard artifact evidence
+    'environment_workload_retirements_route_deployment_id_fkey', (SELECT count(*) FROM environment_workload_retirements WHERE route_deployment_id = $1::uuid),
     'application_standard_snapshot_captures_deployment_id_fkey', (SELECT count(*) FROM application_standard_snapshot_captures WHERE deployment_id = $1::uuid),
     'build_export_publications_deployment_id_fkey', (SELECT count(*) FROM build_export_publications WHERE deployment_id = $1::uuid),
     'deployment_artifact_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_artifact_scan_current WHERE deployment_id = $1::uuid),
@@ -66145,6 +66167,7 @@ func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, opera
 
 const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
 SELECT jsonb_build_object(
+ 'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE $1::uuid=ANY(deployment_ids)),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=$1::uuid::text),
@@ -66231,6 +66254,7 @@ SELECT
  (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=$1::uuid) AS environment_git_sources,
  (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=$1::uuid) AS environment_managed_fields,
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=$1::uuid) AS environment_workload_graphs,
+ (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=$1::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=$1::uuid) AS feature_flag_versions,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
@@ -66265,6 +66289,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	EnvironmentGitSources                int64
 	EnvironmentManagedFields             int64
 	EnvironmentWorkloadGraphs            int64
+	EnvironmentWorkloadRetirements       int64
 	FeatureFlagVersions                  int64
 	InvocationEnvironmentQueueAdmissions int64
 	InvocationWorkEnvironmentAdmissions  int64
@@ -66302,6 +66327,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.EnvironmentGitSources,
 		&i.EnvironmentManagedFields,
 		&i.EnvironmentWorkloadGraphs,
+		&i.EnvironmentWorkloadRetirements,
 		&i.FeatureFlagVersions,
 		&i.InvocationEnvironmentQueueAdmissions,
 		&i.InvocationWorkEnvironmentAdmissions,

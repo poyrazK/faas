@@ -196,6 +196,7 @@ from .app_manifest_execution_mode_type_1 import AppManifestExecutionModeType1
 from .app_manifest_execution_mode_type_2_type_1 import AppManifestExecutionModeType2Type1
 from .app_manifest_execution_mode_type_3_type_1 import AppManifestExecutionModeType3Type1
 from .app_manifest_healthcheck import AppManifestHealthcheck
+from .app_manifest_pause import AppManifestPause
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
@@ -630,6 +631,7 @@ from .create_app_request_cpu_millicores import CreateAppRequestCpuMillicores
 from .create_app_request_crawler_policy import CreateAppRequestCrawlerPolicy
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
+from .create_app_request_pause import CreateAppRequestPause
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
@@ -1149,6 +1151,8 @@ from .environment_definition import EnvironmentDefinition
 from .environment_definition_api_version import EnvironmentDefinitionApiVersion
 from .environment_definition_configuration import EnvironmentDefinitionConfiguration
 from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
+from .environment_definition_workload_pruning_policy import EnvironmentDefinitionWorkloadPruningPolicy
+from .environment_definition_workload_recoveries import EnvironmentDefinitionWorkloadRecoveries
 from .environment_definition_workloads import EnvironmentDefinitionWorkloads
 from .environment_desired_revision import EnvironmentDesiredRevision
 from .environment_field_ownership_request import EnvironmentFieldOwnershipRequest
@@ -1198,6 +1202,9 @@ from .environment_workload_activation_evidence import EnvironmentWorkloadActivat
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
+from .environment_workload_retirement import EnvironmentWorkloadRetirement
+from .environment_workload_retirement_impact import EnvironmentWorkloadRetirementImpact
+from .environment_workload_retirement_phase import EnvironmentWorkloadRetirementPhase
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
@@ -4422,6 +4429,7 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_pause import UpdateAppRequestPause
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
@@ -5072,6 +5080,7 @@ __all__ = (
     "AppManifestExecutionModeType2Type1",
     "AppManifestExecutionModeType3Type1",
     "AppManifestHealthcheck",
+    "AppManifestPause",
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
@@ -5411,6 +5420,7 @@ __all__ = (
     "CreateAppRequestCrawlerPolicy",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestExecutionMode",
+    "CreateAppRequestPause",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
     "CreateAppRequestServiceBindingPolicy",
@@ -5908,6 +5918,8 @@ __all__ = (
     "EnvironmentDefinitionApiVersion",
     "EnvironmentDefinitionConfiguration",
     "EnvironmentDefinitionQueuePruningPolicy",
+    "EnvironmentDefinitionWorkloadPruningPolicy",
+    "EnvironmentDefinitionWorkloadRecoveries",
     "EnvironmentDefinitionWorkloads",
     "EnvironmentDesiredRevision",
     "EnvironmentFieldOwnershipRequest",
@@ -5955,6 +5967,9 @@ __all__ = (
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",
+    "EnvironmentWorkloadRetirement",
+    "EnvironmentWorkloadRetirementImpact",
+    "EnvironmentWorkloadRetirementPhase",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
@@ -8913,6 +8928,7 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestPause",
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",

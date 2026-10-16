@@ -13094,7 +13094,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
 			out = append(out, t)
 		}
 	}
@@ -13355,6 +13355,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 		return Invocation{}, err
 	}
 	inv.DeploymentScope = scope
+	if m.workloadAdmissionRetiredLocked(inv.AppID, scope) {
+		return Invocation{}, ErrEnvironmentWorkloadRetired
+	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
@@ -13549,6 +13552,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	inv, ok := m.invocations[id]
 	if !ok {
 		return Invocation{}, ErrNotFound
+	}
+	if m.workloadAdmissionRetiredLocked(inv.AppID, inv.DeploymentScope) {
+		return Invocation{}, ErrEnvironmentWorkloadRetired
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound

@@ -82,6 +82,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
 | `--authz FILE` | Replace custom roles and policies (see Organizations and roles). |
+| `--events on\|off` | Publish user lifecycle events to your event bus (see Lifecycle events). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
@@ -280,6 +281,38 @@ and `data.input`. Subscribe your workflow to that event type from the Auth
 app's source (`app.<auth app id>`). Repeating a start with the same
 `idempotency_key` returns the original receipt.
 
+## Lifecycle events
+
+Turn on lifecycle events to react to users in a workflow or event worker, for
+example to send a welcome email after confirmation or to clean up after a
+deletion:
+
+```sh
+gregale auth config shop-auth --events on
+```
+
+The Auth app then publishes these events from its source (`app.<auth app id>`):
+
+| Type | When | `data` besides `user_id` |
+| --- | --- | --- |
+| `auth.user.created` | A user signs up, is invited, imported or created | `provider`, `anonymous` |
+| `auth.user.confirmed` | A user confirms their email address | |
+| `auth.user.signed_in` | A new session starts (password, magic link, OAuth, sign-up) | `session_id`, `aal` |
+| `auth.user.banned` | A ban starts | `until` |
+| `auth.user.unbanned` | A ban is lifted | |
+| `auth.user.deleted` | A user is deleted | |
+
+Events carry the user ID and these facts only, never an address or metadata,
+because Gregale stores published events. Look the user up in your own
+`auth.users` table when you need more. Triggers record each change in the same
+transaction, and the Auth app publishes after the request that caused it, so
+publishing never wakes a parked app or keeps your database awake. Delivery is
+at least once: each event's key is unique, and failures are retried with
+backoff for up to three days. Events count towards your plan's event limits
+like any other. `--events on` mints the same `events:publish`-only key that
+`--workflows` uses, if the app has none. `--events off` stops recording and
+drops undelivered events.
+
 ## Manage users and import them
 
 Create an admin key, then open **Manage application Auth users** on the app's
@@ -298,6 +331,18 @@ them (a ban also ends their sessions), and delete them, and browse
 organizations with their members and pending invitations. Deleting the last
 owner of an organization that has other members is refused; organizations
 whose only member was the deleted user are removed with them.
+
+The **Activity** tab lists GoTrue's audit log newest first: sign-ins,
+sign-ups, password resets and changes, and administrator actions such as bans
+and deletions, which are reported against the affected user. A user's panel
+shows their ten most recent entries. Search for an event such as `login`, or
+part of an email address. From a terminal:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
+```
+
+GoTrue v2.197.0 does not record client IP addresses in this log.
 
 `gregale auth admin-key list shop-auth` shows key IDs and
 `gregale auth admin-key revoke shop-auth ID` removes one. Both restart the Auth

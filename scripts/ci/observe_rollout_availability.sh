@@ -44,9 +44,13 @@ sample() {
   local observed_at
   observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   error_file="$(mktemp)"
+  # The connect phase includes the TLS handshake. This observer runs on the
+  # control-plane host it measures, which is CPU-saturated during activation;
+  # a 1 s connect budget failed rc.263 and rc.264 rollouts on handshakes that
+  # finished late on the client (H10-52). The request keeps its total budget.
   if result="$(curl "${curl_args[@]}" \
     --output /dev/null --write-out $'%{http_code}\t%{time_total}\t%{time_connect}\t%{time_starttransfer}' \
-    --connect-timeout 1 --max-time "$timeout" \
+    --connect-timeout "$timeout" --max-time "$timeout" \
     --header 'Cache-Control: no-cache' "$request_url" 2>"$error_file")"; then
     curl_exit=0
   else

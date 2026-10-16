@@ -3741,6 +3741,35 @@
     "kind": "configuration"
   },
   {
+    "table": "environment_workload_retirements",
+    "columns": [
+      "account_id",
+      "acknowledged_gateways",
+      "app_id",
+      "deployment_ids",
+      "environment_id",
+      "expected_gateways",
+      "generation",
+      "id",
+      "job_id",
+      "phase",
+      "plan_hash",
+      "project_id",
+      "queue_binding_ids",
+      "recovered_at",
+      "recovery_generation",
+      "recovery_revision_id",
+      "requested_at",
+      "resource",
+      "retired_at",
+      "revision_id",
+      "route_deployment_id",
+      "route_generation",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_workload_serving_queue_acks",
     "columns": [
       "acknowledged_at",

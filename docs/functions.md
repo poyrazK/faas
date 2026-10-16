@@ -46,7 +46,8 @@ them in under a millisecond. Timers and intervals in your code do not run
 while it is paused, as on AWS Lambda; finish background work with
 `waitUntil()` ([Node](runtimes/node24.md)) before the request ends. At the
 idle timeout a function may be [frozen](cold-wake.md#frozen-instances)
-instead of parked.
+instead of parked. Set `lifecycle.pause` in `gregale.yaml` to `when_idle` to
+keep it running between requests, or to `never` to turn off both.
 
 Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
