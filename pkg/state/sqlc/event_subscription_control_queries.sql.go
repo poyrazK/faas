@@ -210,7 +210,7 @@ func (q *Queries) EventSubscriptionCapacitySet(ctx context.Context, db DBTX, arg
 }
 
 const eventSubscriptionControlGet = `-- name: EventSubscriptionControlGet :one
-SELECT rate_enabled, rate_interval_ms, rate_burst, rate_credit_ms, rate_refilled_at, rate_revision, rate_sequence, subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
+SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries, rate_enabled, rate_interval_ms, rate_burst, rate_credit_ms, rate_refilled_at, rate_revision, rate_sequence FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
 `
 
 type EventSubscriptionControlGetParams struct {
@@ -223,13 +223,6 @@ func (q *Queries) EventSubscriptionControlGet(ctx context.Context, db DBTX, arg 
 	row := db.QueryRow(ctx, eventSubscriptionControlGet, arg.SubscriptionID, arg.AppID, arg.AccountID)
 	var i EventSubscriptionDeliveryControl
 	err := row.Scan(
-		&i.RateEnabled,
-		&i.RateIntervalMs,
-		&i.RateBurst,
-		&i.RateCreditMs,
-		&i.RateRefilledAt,
-		&i.RateRevision,
-		&i.RateSequence,
 		&i.SubscriptionID,
 		&i.AccountID,
 		&i.AppID,
@@ -240,6 +233,13 @@ func (q *Queries) EventSubscriptionControlGet(ctx context.Context, db DBTX, arg 
 		&i.UpdatedAt,
 		&i.PausedAt,
 		&i.MaxPendingDeliveries,
+		&i.RateEnabled,
+		&i.RateIntervalMs,
+		&i.RateBurst,
+		&i.RateCreditMs,
+		&i.RateRefilledAt,
+		&i.RateRevision,
+		&i.RateSequence,
 	)
 	return i, err
 }
@@ -755,7 +755,7 @@ UPDATE event_subscription_delivery_controls SET
  rate_refilled_at=CASE WHEN $1::boolean THEN $6::timestamptz ELSE rate_refilled_at END,
  rate_revision=rate_revision+CASE WHEN $1::boolean THEN 1 ELSE 0 END,
  rate_sequence=rate_sequence+1,updated_at=CASE WHEN $1::boolean THEN $6::timestamptz ELSE updated_at END
-WHERE account_id=$7::uuid AND app_id=$8::uuid AND subscription_id=$9::uuid RETURNING rate_enabled, rate_interval_ms, rate_burst, rate_credit_ms, rate_refilled_at, rate_revision, rate_sequence, subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries
+WHERE account_id=$7::uuid AND app_id=$8::uuid AND subscription_id=$9::uuid RETURNING subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries, rate_enabled, rate_interval_ms, rate_burst, rate_credit_ms, rate_refilled_at, rate_revision, rate_sequence
 `
 
 type EventSubscriptionRateConfigureParams struct {
@@ -784,13 +784,6 @@ func (q *Queries) EventSubscriptionRateConfigure(ctx context.Context, db DBTX, a
 	)
 	var i EventSubscriptionDeliveryControl
 	err := row.Scan(
-		&i.RateEnabled,
-		&i.RateIntervalMs,
-		&i.RateBurst,
-		&i.RateCreditMs,
-		&i.RateRefilledAt,
-		&i.RateRevision,
-		&i.RateSequence,
 		&i.SubscriptionID,
 		&i.AccountID,
 		&i.AppID,
@@ -801,6 +794,13 @@ func (q *Queries) EventSubscriptionRateConfigure(ctx context.Context, db DBTX, a
 		&i.UpdatedAt,
 		&i.PausedAt,
 		&i.MaxPendingDeliveries,
+		&i.RateEnabled,
+		&i.RateIntervalMs,
+		&i.RateBurst,
+		&i.RateCreditMs,
+		&i.RateRefilledAt,
+		&i.RateRevision,
+		&i.RateSequence,
 	)
 	return i, err
 }

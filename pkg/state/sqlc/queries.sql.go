@@ -14804,7 +14804,7 @@ func (q *Queries) EventAckExtend(ctx context.Context, db DBTX, invocationID pgty
 }
 
 const eventAckGet = `-- name: EventAckGet :one
-SELECT invocation_id, attempt, replay_generation, token_digest, phase, completion_digest, rejection_status, lease_seconds, deadline_at, max_attempts, retry_delay_ms FROM event_delivery_acknowledgments WHERE invocation_id=$1
+SELECT invocation_id, attempt, replay_generation, token_digest, phase, completion_digest, lease_seconds, deadline_at, max_attempts, retry_delay_ms, rejection_status FROM event_delivery_acknowledgments WHERE invocation_id=$1
 `
 
 func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryAcknowledgment, error) {
@@ -14817,11 +14817,11 @@ func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.
 		&i.TokenDigest,
 		&i.Phase,
 		&i.CompletionDigest,
-		&i.RejectionStatus,
 		&i.LeaseSeconds,
 		&i.DeadlineAt,
 		&i.MaxAttempts,
 		&i.RetryDelayMs,
+		&i.RejectionStatus,
 	)
 	return i, err
 }
@@ -40281,7 +40281,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.acknowledgment_lease_seconds, s.schema_versions
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -40308,8 +40308,8 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RoutingRetryPolicy,
-			&i.AcknowledgmentLeaseSeconds,
 			&i.SchemaVersions,
+			&i.AcknowledgmentLeaseSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -40739,7 +40739,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, acknowledgment_lease_seconds, schema_versions
+select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -40768,8 +40768,8 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RoutingRetryPolicy,
-			&i.AcknowledgmentLeaseSeconds,
 			&i.SchemaVersions,
+			&i.AcknowledgmentLeaseSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -42117,7 +42117,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.acknowledgment_lease_seconds, s.schema_versions
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -42189,8 +42189,8 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RoutingRetryPolicy,
-			&i.AcknowledgmentLeaseSeconds,
 			&i.SchemaVersions,
+			&i.AcknowledgmentLeaseSeconds,
 		); err != nil {
 			return nil, err
 		}

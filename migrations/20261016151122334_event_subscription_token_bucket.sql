@@ -1,14 +1,14 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE public.event_subscription_delivery_controls
- ADD COLUMN rate_enabled boolean NOT NULL DEFAULT false,
- ADD COLUMN rate_interval_ms bigint NOT NULL DEFAULT 1000 CHECK(rate_interval_ms BETWEEN 10 AND 3600000),
- ADD COLUMN rate_burst bigint NOT NULL DEFAULT 1 CHECK(rate_burst BETWEEN 1 AND 100),
- ADD COLUMN rate_credit_ms bigint NOT NULL DEFAULT 1000 CHECK(rate_credit_ms BETWEEN 0 AND rate_interval_ms*rate_burst),
- ADD COLUMN rate_refilled_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK(isfinite(rate_refilled_at)),
- ADD COLUMN rate_revision bigint NOT NULL DEFAULT 0 CHECK(rate_revision>=0),
- ADD COLUMN rate_sequence bigint NOT NULL DEFAULT 0 CHECK(rate_sequence>=0);
-CREATE TABLE public.event_subscription_rate_commands (
+ ADD COLUMN IF NOT EXISTS rate_enabled boolean NOT NULL DEFAULT false,
+ ADD COLUMN IF NOT EXISTS rate_interval_ms bigint NOT NULL DEFAULT 1000 CHECK(rate_interval_ms BETWEEN 10 AND 3600000),
+ ADD COLUMN IF NOT EXISTS rate_burst bigint NOT NULL DEFAULT 1 CHECK(rate_burst BETWEEN 1 AND 100),
+ ADD COLUMN IF NOT EXISTS rate_credit_ms bigint NOT NULL DEFAULT 1000 CHECK(rate_credit_ms BETWEEN 0 AND rate_interval_ms*rate_burst),
+ ADD COLUMN IF NOT EXISTS rate_refilled_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK(isfinite(rate_refilled_at)),
+ ADD COLUMN IF NOT EXISTS rate_revision bigint NOT NULL DEFAULT 0 CHECK(rate_revision>=0),
+ ADD COLUMN IF NOT EXISTS rate_sequence bigint NOT NULL DEFAULT 0 CHECK(rate_sequence>=0);
+CREATE TABLE IF NOT EXISTS public.event_subscription_rate_commands (
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
  subscription_id uuid NOT NULL REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE,
@@ -20,7 +20,7 @@ CREATE TABLE public.event_subscription_rate_commands (
  retain_until timestamptz NOT NULL CHECK(isfinite(retain_until) AND retain_until>recorded_at),
  PRIMARY KEY(subscription_id,command_id), UNIQUE(subscription_id,sequence)
 );
-CREATE INDEX event_subscription_rate_commands_expiry_idx ON public.event_subscription_rate_commands(retain_until);
+CREATE INDEX IF NOT EXISTS event_subscription_rate_commands_expiry_idx ON public.event_subscription_rate_commands(retain_until);
 
 CREATE OR REPLACE FUNCTION public.event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamp with time zone) RETURNS text
     LANGUAGE sql STABLE

@@ -3327,11 +3327,11 @@ type EventDeliveryAcknowledgment struct {
 	TokenDigest      []byte
 	Phase            string
 	CompletionDigest []byte
-	RejectionStatus  []byte
 	LeaseSeconds     int32
 	DeadlineAt       pgtype.Timestamptz
 	MaxAttempts      int32
 	RetryDelayMs     int64
+	RejectionStatus  []byte
 }
 
 type EventDeliveryCapacity struct {
@@ -3728,8 +3728,8 @@ type EventSubscription struct {
 	CreatedAt                  pgtype.Timestamptz
 	UpdatedAt                  pgtype.Timestamptz
 	RoutingRetryPolicy         []byte
-	AcknowledgmentLeaseSeconds int32
 	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -3753,13 +3753,6 @@ type EventSubscriptionCircuitBreaker struct {
 }
 
 type EventSubscriptionDeliveryControl struct {
-	RateEnabled          bool
-	RateIntervalMs       int64
-	RateBurst            int64
-	RateCreditMs         int64
-	RateRefilledAt       pgtype.Timestamptz
-	RateRevision         int64
-	RateSequence         int64
 	SubscriptionID       pgtype.UUID
 	AccountID            pgtype.UUID
 	AppID                pgtype.UUID
@@ -3770,6 +3763,13 @@ type EventSubscriptionDeliveryControl struct {
 	UpdatedAt            pgtype.Timestamptz
 	PausedAt             pgtype.Timestamptz
 	MaxPendingDeliveries int32
+	RateEnabled          bool
+	RateIntervalMs       int64
+	RateBurst            int64
+	RateCreditMs         int64
+	RateRefilledAt       pgtype.Timestamptz
+	RateRevision         int64
+	RateSequence         int64
 }
 
 type EventSubscriptionRateCommand struct {
