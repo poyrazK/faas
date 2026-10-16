@@ -759,7 +759,11 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 	case 2:
 		printLocalLeafHelp(w, command, selected[0], selected[1])
 	default:
-		return false
+		names := make([]string, len(selected))
+		for i, sub := range selected {
+			names[i] = sub.Name
+		}
+		printLocalPathHelp(w, command, selected[len(selected)-1], names)
 	}
 	return true
 }
@@ -834,7 +838,11 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 }
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
-	usage := localHelpSubcommandPath(command, []string{sub.Name})
+	printLocalPathHelp(w, command, sub, []string{sub.Name})
+}
+
+func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
+	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
 		usage += " <" + sub.subcommandChoice() + ">"
 	}
@@ -864,20 +872,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 }
 
 func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
-	usage := localHelpSubcommandPath(command, []string{parent.Name, leaf.Name})
-	usage = localHelpArguments(usage, leaf.Positionals, leaf.Flags, leaf.FlagsAfterPositionals)
-	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", leaf.Short, usage)
-	if len(leaf.Flags) > 0 {
-		_, _ = fmt.Fprintln(w, "\nFlags:")
-		for _, flag := range leaf.Flags {
-			printLocalHelpFlag(w, flag)
-		}
-	}
-	if len(leaf.Examples) > 0 {
-		_, _ = fmt.Fprintln(w, "\nExamples:")
-		printCLIExamples(w, leaf.Examples)
-	}
-	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+	printLocalPathHelp(w, command, leaf, []string{parent.Name, leaf.Name})
 }
 
 func localHelpCommandPath(command cliCommand) string {

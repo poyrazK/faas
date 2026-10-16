@@ -74,6 +74,11 @@ def _parse_response(
 
         return response_409
 
+    if response.status_code == 410:
+        response_410 = Problem.from_dict(response.json())
+
+        return response_410
+
     if response.status_code == 413:
         response_413 = Problem.from_dict(response.json())
 
@@ -120,9 +125,10 @@ def sync_detailed(
      Requires deploy write scope. Atomically checks the explicit current target and version 2 required-
     case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the
     head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt
-    without moving the head or rechecking. Never executes or checks assertions. At most 20 names per
-    automation, with 100 receipts per name; current suite groups are pinned within the existing suite
-    limit, while linked run retention still applies.
+    without moving the head or rechecking. Never executes or checks assertions. At most 20 active and
+    100 lifetime names per automation, with 100 receipts per name; active current suite groups are
+    pinned within the existing suite limit, while linked run retention still applies. Retired names
+    cannot be reused; original promotion retries return historical receipts without reactivation.
 
     Args:
         slug (str):
@@ -168,9 +174,10 @@ def sync(
      Requires deploy write scope. Atomically checks the explicit current target and version 2 required-
     case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the
     head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt
-    without moving the head or rechecking. Never executes or checks assertions. At most 20 names per
-    automation, with 100 receipts per name; current suite groups are pinned within the existing suite
-    limit, while linked run retention still applies.
+    without moving the head or rechecking. Never executes or checks assertions. At most 20 active and
+    100 lifetime names per automation, with 100 receipts per name; active current suite groups are
+    pinned within the existing suite limit, while linked run retention still applies. Retired names
+    cannot be reused; original promotion retries return historical receipts without reactivation.
 
     Args:
         slug (str):
@@ -211,9 +218,10 @@ async def asyncio_detailed(
      Requires deploy write scope. Atomically checks the explicit current target and version 2 required-
     case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the
     head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt
-    without moving the head or rechecking. Never executes or checks assertions. At most 20 names per
-    automation, with 100 receipts per name; current suite groups are pinned within the existing suite
-    limit, while linked run retention still applies.
+    without moving the head or rechecking. Never executes or checks assertions. At most 20 active and
+    100 lifetime names per automation, with 100 receipts per name; active current suite groups are
+    pinned within the existing suite limit, while linked run retention still applies. Retired names
+    cannot be reused; original promotion retries return historical receipts without reactivation.
 
     Args:
         slug (str):
@@ -257,9 +265,10 @@ async def asyncio(
      Requires deploy write scope. Atomically checks the explicit current target and version 2 required-
     case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the
     head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt
-    without moving the head or rechecking. Never executes or checks assertions. At most 20 names per
-    automation, with 100 receipts per name; current suite groups are pinned within the existing suite
-    limit, while linked run retention still applies.
+    without moving the head or rechecking. Never executes or checks assertions. At most 20 active and
+    100 lifetime names per automation, with 100 receipts per name; active current suite groups are
+    pinned within the existing suite limit, while linked run retention still applies. Retired names
+    cannot be reused; original promotion retries return historical receipts without reactivation.
 
     Args:
         slug (str):

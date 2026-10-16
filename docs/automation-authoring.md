@@ -609,14 +609,14 @@ must be distinct from that resolved baseline; otherwise the command exits 1.
 Invalid receipts fail as protocol errors (3), and missing heads or suite groups
 use normal not-found handling (4), without fallback to a different suite.
 
-There are at most 20 baseline names per automation and 100 retained promotion
+There are at most 20 active and 100 lifetime baseline names per automation, and 100 retained promotion
 receipts per name, newest revision first. Names use 1–63 lowercase ASCII letters,
 digits or hyphens, beginning and ending with a letter or digit. Promotion requests
 are at most 20 KiB; stored receipts at most 32 KiB. Promotion policy JSON must
 fit the existing 16 KiB policy limit after canonical serialization as well as on input. Reuse an existing release-track
 name instead of creating a new name for each build. Automation deletion removes
 its history. Clearing saved cases retains audit receipts but removes evidence.
-Current baseline suite groups are protected from normal suite pruning within the
+Active current baseline suite groups are protected from normal suite pruning within the
 existing 100-group budget; linked run/report retention still applies. Replaced
 groups can be pruned normally. Missing or invalidated evidence blocks gates;
 receipts do not recreate or execute it.
@@ -3847,3 +3847,28 @@ means durable outbox admission, while `no_receivers` never replays to subscriber
 added later. New transitions use current recipients. Automation history retains
 `polling_failed` and `polling_recovered` with their frozen receipts. Apply migration
 `20261014092444767` before deploying the worker.
+
+
+### Retire an unused baseline
+
+Use **Retire this baseline** in the dashboard, review the name and revision, then
+confirm permanent retirement. Or use an explicit stable UUID from the CLI:
+
+```bash
+gregale automations live baseline retire --app billing --name paid-invoice \
+  --baseline-name production --retirement-id 00000000-0000-4000-8000-000000000012 \
+  --expected-revision 3 --confirm-retirement --json
+```
+
+Retirement reserves the name permanently, frees one of the 20 active-name slots,
+and releases its suite retention pin. It does not immediately delete evidence;
+other active names or recovery windows can still pin the same suite. Each
+automation can have at most 100 lifetime names to bound retained audit data.
+
+Name lookup now returns HTTP 410. Named CI gates exit 4 with
+`baseline_retired`, so CI must explicitly choose another active baseline. A gate that resolved the old receipt before retirement keeps its
+snapshot. Active listings omit retired names. Read `baseline history` with the
+retired name to inspect its promotion receipts and attributed retirement receipt.
+Old promotion retries return their historical receipt without reactivation.
+Retry an uncertain retirement with the original UUID and expected revision. A
+revision conflict requires reviewing the new head before submitting a new intent.

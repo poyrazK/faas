@@ -156,10 +156,12 @@ type AutomationConsoleResume struct {
 // AutomationBaselineForm contains only retained evidence and promotion intent.
 type AutomationBaselineForm struct {
 	Name, Error, Policy, PromotionID, Command string
+	RetirementID                              string
 	Revision                                  int64
 	Head                                      *api.AutomationLiveBaseline
 	History                                   *api.AutomationLiveBaselineHistory
 	Request                                   *api.PromoteAutomationLiveBaselineRequest
+	RetirementRequest                         *api.RetireAutomationLiveBaselineRequest
 	Preview                                   *automationgate.Result
 	Ready                                     bool
 }

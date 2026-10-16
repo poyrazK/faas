@@ -32,14 +32,35 @@ func (s *PgStore) GetAutomationLiveBaseline(ctx context.Context, appID, name, al
 	if !api.ValidAutomationLiveBaselineName(alias) {
 		return api.AutomationLiveBaseline{}, ErrNotFound
 	}
-	return getBaselineHeadSQL(ctx, s.pool, appID, name, alias)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return api.AutomationLiveBaseline{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	retired, err := baselineRetirementSQL(ctx, tx, appID, name, alias)
+	if err != nil {
+		return api.AutomationLiveBaseline{}, err
+	}
+	if retired != nil {
+		return api.AutomationLiveBaseline{}, baselineRetiredError()
+	}
+	return getBaselineHeadSQL(ctx, tx, appID, name, alias)
 }
 func (s *PgStore) GetAutomationLiveBaselineHistory(ctx context.Context, appID, name, alias string) (api.AutomationLiveBaselineHistory, error) {
 	out := api.AutomationLiveBaselineHistory{Promotions: []api.AutomationLiveBaseline{}}
 	if !api.ValidAutomationLiveBaselineName(alias) {
 		return out, ErrNotFound
 	}
-	rows, err := sqlc.New().GetAutomationLiveBaselineHistory(ctx, s.pool, sqlc.GetAutomationLiveBaselineHistoryParams{AppID: mustPgUUID(appID), Name: name, BaselineName: alias, Limit: api.AutomationLiveBaselineHistoryLimit})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	out.Retirement, err = baselineRetirementSQL(ctx, tx, appID, name, alias)
+	if err != nil {
+		return out, err
+	}
+	rows, err := sqlc.New().GetAutomationLiveBaselineHistory(ctx, tx, sqlc.GetAutomationLiveBaselineHistoryParams{AppID: mustPgUUID(appID), Name: name, BaselineName: alias, Limit: api.AutomationLiveBaselineHistoryLimit})
 	if err != nil {
 		return out, err
 	}
@@ -116,6 +137,16 @@ func (s *PgStore) PromoteAutomationLiveBaseline(ctx context.Context, appID, name
 	if err = lockManagedSuiteTarget(ctx, tx, appID, name); err != nil {
 		return receipt, err
 	}
+	if err = q.FenceAutomationLiveBaselineMutation(ctx, tx, sqlc.FenceAutomationLiveBaselineMutationParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+		return receipt, err
+	}
+	retired, err := baselineRetirementSQL(ctx, tx, appID, name, alias)
+	if err != nil {
+		return receipt, err
+	}
+	if retired != nil {
+		return receipt, baselineRetiredError()
+	}
 	prior, err := getBaselineHeadSQL(ctx, tx, appID, name, alias)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return receipt, err
@@ -124,6 +155,13 @@ func (s *PgStore) PromoteAutomationLiveBaseline(ctx context.Context, appID, name
 		return receipt, ErrAutomationLiveBaselineConflict
 	}
 	if prior.Revision == 0 {
+		total, countErr := q.CountAutomationLiveBaselineNames(ctx, tx, sqlc.CountAutomationLiveBaselineNamesParams{AppID: mustPgUUID(appID), Name: name})
+		if countErr != nil {
+			return receipt, countErr
+		}
+		if total >= api.AutomationLiveBaselineLifetimeNameLimit {
+			return receipt, baselineLifetimeLimitError(total + 1)
+		}
 		count, countErr := q.CountAutomationLiveBaselines(ctx, tx, sqlc.CountAutomationLiveBaselinesParams{AppID: mustPgUUID(appID), Name: name})
 		if countErr != nil {
 			return receipt, countErr

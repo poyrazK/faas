@@ -99,3 +99,41 @@ func (s BaselineService) List(w http.ResponseWriter, r *http.Request, appID stri
 	}
 	writeJSON(w, http.StatusOK, view)
 }
+
+func (s BaselineService) Retire(w http.ResponseWriter, r *http.Request, appID, actor, key string) {
+	w.Header().Set("Cache-Control", "no-store")
+	store, ok := s.Store.(state.AutomationLiveBaselineRetirementStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("Baseline retirement is unavailable."))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, api.AutomationLiveBaselineRequestMaxBytes)
+	var wire struct {
+		ExpectedRevision *int64 `json:"expected_revision"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.AutomationLiveBaselineRequestMaxBytes, api.AutomationLiveBaselineRequestMaxBytes+1))
+		} else {
+			api.WriteProblem(w, api.ErrValidation("Provide one retirement request with expected_revision only."))
+		}
+		return
+	}
+	if wire.ExpectedRevision == nil || decoder.Decode(new(any)) != io.EOF {
+		api.WriteProblem(w, api.ErrValidation("Provide exactly one retirement request with an explicit expected_revision."))
+		return
+	}
+	receipt, err := store.RetireAutomationLiveBaseline(r.Context(), appID, r.PathValue("name"), r.PathValue("baseline"), r.PathValue("retirement_id"), actor, key, api.RetireAutomationLiveBaselineRequest{ExpectedRevision: *wire.ExpectedRevision})
+	if errors.Is(err, state.ErrAutomationLiveBaselineConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Baseline changed", "Reload the current baseline revision before a new retirement. Retry an uncertain request only with its original retirement ID and expected revision."))
+		return
+	}
+	if err != nil {
+		writeBaselineError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, receipt)
+}

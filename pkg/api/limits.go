@@ -6403,6 +6403,7 @@ const (
 	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
 	AutomationLiveBaselineNameMaxBytes             = 63
 	AutomationLiveBaselineLimit                    = 20
+	AutomationLiveBaselineLifetimeNameLimit        = 100
 	AutomationLiveBaselineHistoryLimit             = 100
 	AutomationLiveBaselineRequestMaxBytes    int64 = 20 << 10
 	AutomationLiveBaselineReceiptMaxBytes    int64 = 32 << 10

@@ -205,6 +205,7 @@ export type { AutomationLiveBaselineCaseHealth } from './models/AutomationLiveBa
 export type { AutomationLiveBaselineHealth } from './models/AutomationLiveBaselineHealth.js';
 export type { AutomationLiveBaselineHistory } from './models/AutomationLiveBaselineHistory.js';
 export type { AutomationLiveBaselinePolicy } from './models/AutomationLiveBaselinePolicy.js';
+export type { AutomationLiveBaselineRetirement } from './models/AutomationLiveBaselineRetirement.js';
 export type { AutomationLiveExpectation } from './models/AutomationLiveExpectation.js';
 export type { AutomationLiveReport } from './models/AutomationLiveReport.js';
 export type { AutomationLiveSuite } from './models/AutomationLiveSuite.js';
@@ -1934,6 +1935,7 @@ export type { RestoreAutomationRevisionRequest } from './models/RestoreAutomatio
 export type { RestoreManagedPostgresDatabaseRequest } from './models/RestoreManagedPostgresDatabaseRequest.js';
 export type { ResumeAutomationFailurePauseRequest } from './models/ResumeAutomationFailurePauseRequest.js';
 export type { ResumeWorkflowRunRequest } from './models/ResumeWorkflowRunRequest.js';
+export type { RetireAutomationLiveBaselineRequest } from './models/RetireAutomationLiveBaselineRequest.js';
 export type { RetryDeploymentRequest } from './models/RetryDeploymentRequest.js';
 export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RevokeExecutionArtifactGrantResponse } from './models/RevokeExecutionArtifactGrantResponse.js';

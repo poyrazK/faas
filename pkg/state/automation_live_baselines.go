@@ -76,5 +76,5 @@ func cloneBaseline(receipt api.AutomationLiveBaseline) api.AutomationLiveBaselin
 }
 
 func baselineLimitError(observed int64) error {
-	return api.NewProblem(409, api.CodeConflict, "Named baseline limit reached", "Reuse an existing baseline name for this automation.").WithLimit(api.AutomationLiveBaselineLimit, observed).WithDocs("https://gregale.dev/docs/automations#baselines")
+	return api.NewProblem(409, api.CodeConflict, "Named baseline limit reached", "Reuse an active baseline name or explicitly retire an unused name for this automation.").WithLimit(api.AutomationLiveBaselineLimit, observed).WithDocs("https://gregale.dev/docs/automations#baselines")
 }

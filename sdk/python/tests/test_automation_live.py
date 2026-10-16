@@ -277,15 +277,46 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     assert "json" not in listing
     payload = {
         "observed_at": "2026-10-16T12:00:00+00:00",
-        "baselines": [{
-            "baseline": receipt,
-            "evidence_status": "usable",
-            "renewal_status": "inconclusive",
-            "outdated": True,
-            "reasons": ["candidate_outdated"],
-            "cases": [{"name": "happy", "run_id": suite_id, "status": "passed"}],
-            "age_seconds": 3601.0,
-            "max_age_seconds": 3600,
-        }],
+        "baselines": [
+            {
+                "baseline": receipt,
+                "evidence_status": "usable",
+                "renewal_status": "inconclusive",
+                "outdated": True,
+                "reasons": ["candidate_outdated"],
+                "cases": [{"name": "happy", "run_id": suite_id, "status": "passed"}],
+                "age_seconds": 3601.0,
+                "max_age_seconds": 3600,
+            }
+        ],
     }
     assert ListAutomationLiveBaselinesResponse.from_dict(payload).to_dict() == payload
+
+
+def test_baseline_retirement_request_and_history_roundtrip():
+    from faas_sdk.api.workflows.retire_automation_live_baseline import _get_kwargs
+    from faas_sdk.models.automation_live_baseline_history import AutomationLiveBaselineHistory
+    from faas_sdk.models.automation_live_baseline_retirement import AutomationLiveBaselineRetirement
+    from faas_sdk.models.retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
+
+    identity = "00000000-0000-4000-8000-000000000014"
+    request = RetireAutomationLiveBaselineRequest(expected_revision=3)
+    kwargs = _get_kwargs("billing", "case/report", "production", identity, body=request)
+    assert kwargs["method"] == "put"
+    assert (
+        kwargs["url"] == f"/v1/apps/billing/automations/case%2Freport/live-baselines/production/retirements/{identity}"
+    )
+    assert kwargs["json"] == {"expected_revision": 3}
+    receipt = {
+        "retirement_id": identity,
+        "app_id": "00000000-0000-4000-8000-000000000001",
+        "name": "case/report",
+        "baseline_name": "production",
+        "revision": 4,
+        "previous_promotion_id": "00000000-0000-4000-8000-000000000013",
+        "actor_account_id": "00000000-0000-4000-8000-000000000002",
+        "retired_at": "2026-10-16T12:00:00+00:00",
+    }
+    assert AutomationLiveBaselineRetirement.from_dict(receipt).to_dict() == receipt
+    history = {"promotions": [], "retirement": receipt}
+    assert AutomationLiveBaselineHistory.from_dict(history).to_dict() == history

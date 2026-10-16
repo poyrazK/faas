@@ -28,6 +28,7 @@ type Operation struct {
 	EndpointID, EventID          string
 	BaselineID                   string
 	BaselineName, PromotionID    string
+	RetirementID                 string
 	Version                      int64
 	Body                         any
 }
@@ -109,6 +110,10 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("action") == "advance-live-suite" {
 		data.Version, _ = strconv.ParseInt(r.PostFormValue("expected_version"), 10, 64)
 		s.continueLiveSuite(w, r, scope, data)
+		return
+	}
+	if r.PathValue("action") == "retire-baseline" {
+		s.retireBaseline(w, r, scope, data)
 		return
 	}
 	if action := r.PathValue("action"); action == "preview-baseline" || action == "promote-baseline" {

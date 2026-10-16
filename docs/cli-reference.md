@@ -5640,13 +5640,28 @@ Start, observe and check saved cases against real execution
 
 #### automations live baseline
 
-Explicitly promote and inspect named baseline audit history
+Manage named baselines and inspect audit history
 
-`gregale automations live baseline <list|show|history|promote>`
+`gregale automations live baseline <retire|list|show|history|promote>`
+
+##### automations live baseline retire
+
+Permanently retire a baseline with audit history and revision protection
+
+`gregale automations live baseline retire --app <SLUG> --name <NAME> --baseline-name <NAME> --retirement-id <UUID> --expected-revision <N> --confirm-retirement`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--retirement-id <UUID>` | stable retirement UUID; preserve for retries | required |
+| `--expected-revision <N>` | current positive baseline revision | required |
+| `--confirm-retirement` | confirm permanent retirement; release slot and evidence pin | required |
 
 ##### automations live baseline list
 
-Discover baseline heads and read retained evidence health; never execute
+Discover active baseline heads and read retained evidence health; never execute
 
 `gregale automations live baseline list --app <SLUG> --name <NAME>`
 

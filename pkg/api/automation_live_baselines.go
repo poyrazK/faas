@@ -49,7 +49,8 @@ type AutomationLiveBaseline struct {
 }
 
 type AutomationLiveBaselineHistory struct {
-	Promotions []AutomationLiveBaseline `json:"promotions"`
+	Promotions []AutomationLiveBaseline          `json:"promotions"`
+	Retirement *AutomationLiveBaselineRetirement `json:"retirement,omitempty"`
 }
 
 func automationLiveBaselinePath(slug, name, baseline string) string {

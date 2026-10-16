@@ -36,6 +36,23 @@ func (s *Service) inspectBaseline(r *http.Request, scope Scope, data *dashboard.
 	}
 	response := s.Host.Request(r, scope, Operation{Kind: "baseline-get", Name: data.Name, BaselineName: form.Name})
 	var head api.AutomationLiveBaseline
+	if response.Status == http.StatusGone {
+		form.Ready = false
+		form.Head = nil
+		form.Command = ""
+		var history api.AutomationLiveBaselineHistory
+		if read(s.Host.Request(r, scope, Operation{Kind: "baseline-history", Name: data.Name, BaselineName: form.Name}), &history) && history.Retirement != nil && history.Retirement.AppID == scope.AppID && history.Retirement.Name == data.Name && history.Retirement.BaselineName == form.Name {
+			valid := len(history.Promotions) > 0 && len(history.Promotions) <= api.AutomationLiveBaselineHistoryLimit
+			for _, receipt := range history.Promotions {
+				valid = valid && baselineInScope(receipt, scope, data.Name, form.Name)
+			}
+			if valid {
+				form.History = &history
+			}
+		}
+		form.Error = "This baseline is permanently retired. Choose an active name for CI. Its retained history remains available."
+		return
+	}
 	if response.Status == http.StatusNotFound {
 		// Only a definite absence permits the initial expected revision of zero.
 		form.Ready = true
@@ -44,6 +61,9 @@ func (s *Service) inspectBaseline(r *http.Request, scope Scope, data *dashboard.
 		return
 	} else {
 		form.Head = &head
+		if form.RetirementID == "" {
+			form.RetirementID = uuid.NewString()
+		}
 		form.Revision = head.Revision
 		form.Ready = true
 		if form.Policy == "" {

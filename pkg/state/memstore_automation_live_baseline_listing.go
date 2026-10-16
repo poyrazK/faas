@@ -19,7 +19,10 @@ func (m *MemStore) ListAutomationLiveBaselines(ctx context.Context, appID, name 
 	if _, ok := m.automations[appID+"/"+name]; !ok {
 		return out, ErrNotFound
 	}
-	for _, records := range m.automationLiveBaselines {
+	for key, records := range m.automationLiveBaselines {
+		if _, retired := m.automationLiveBaselineRetirements[key]; retired {
+			continue
+		}
 		if len(records) == 0 {
 			continue
 		}

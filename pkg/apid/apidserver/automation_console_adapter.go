@@ -57,7 +57,7 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
 	switch operation.Kind {
-	case "baseline-promote", "live-suite-start", "live-suite-advance", "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
+	case "baseline-retire", "baseline-promote", "live-suite-start", "live-suite-advance", "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -84,6 +84,7 @@ func setAutomationConsolePaths(r *http.Request, slug string, operation automatio
 	r.SetPathValue("baseline_id", operation.BaselineID)
 	r.SetPathValue("baseline", operation.BaselineName)
 	r.SetPathValue("promotion_id", operation.PromotionID)
+	r.SetPathValue("retirement_id", operation.RetirementID)
 	if operation.EndpointID != "" {
 		r.SetPathValue("id", operation.EndpointID)
 	}
@@ -114,6 +115,8 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodGet, named + "/live-baselines/" + url.PathEscape(op.BaselineName), h.server.getAutomationLiveBaseline
 	case "baseline-history":
 		return http.MethodGet, named + "/live-baselines/" + url.PathEscape(op.BaselineName) + "/history", h.server.getAutomationLiveBaselineHistory
+	case "baseline-retire":
+		return http.MethodPut, named + "/live-baselines/" + url.PathEscape(op.BaselineName) + "/retirements/" + url.PathEscape(op.RetirementID), h.server.retireAutomationLiveBaseline
 	case "baseline-promote":
 		return http.MethodPut, named + "/live-baselines/" + url.PathEscape(op.BaselineName) + "/promotions/" + url.PathEscape(op.PromotionID), h.server.promoteAutomationLiveBaseline
 	case "live-suite-list":

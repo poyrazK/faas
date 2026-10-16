@@ -91,6 +91,9 @@ func runAutomationLiveGate(ctx context.Context, client *api.Client, o automation
 			if errors.Is(err, errAutomationGateBaselinePolicyMismatch) {
 				return failAutomationLiveGate(o, "baseline_policy_mismatch", "The local policy differs from the named baseline's reviewed promotion policy. Use that policy or explicitly promote the new policy before gating by name.", 7, 409)
 			}
+			if errors.Is(err, errAutomationGateBaselineRetired) {
+				return failAutomationLiveGate(o, "baseline_retired", "The named baseline has been permanently retired. Select an active baseline explicitly; its promotion and retirement audit remain available through baseline history.", 4, 410)
+			}
 			if errors.Is(err, errAutomationGateBaselineInvalid) {
 				return failAutomationLiveGate(o, "invalid_response", "The named baseline receipt is incomplete or inconsistent. No passing result is available.", 3, 502)
 			}

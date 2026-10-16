@@ -79,3 +79,27 @@ func TestBaselineHTTPScopesActorAndSanitizesErrors(t *testing.T) {
 		})
 	}
 }
+
+func (s *baselineHTTPStore) RetireAutomationLiveBaseline(_ context.Context, app, name, alias, id, actor, key string, request api.RetireAutomationLiveBaselineRequest) (api.AutomationLiveBaselineRetirement, error) {
+	s.calls++
+	s.actor, s.key = actor, key
+	return api.AutomationLiveBaselineRetirement{RetirementID: id, AppID: app, Name: name, BaselineName: alias, Revision: request.ExpectedRevision + 1}, s.err
+}
+func TestBaselineRetirementHTTPExplicitIntent(t *testing.T) {
+	for _, body := range []string{`{}`, `{"expected_revision":null}`, `{"expected_revision":1,"actor_account_id":"forged"}`, `{"expected_revision":1,"retired_at":"forged"}`, `{"expected_revision":1} {}`, strings.Repeat(" ", int(api.AutomationLiveBaselineRequestMaxBytes)+1), `{"expected_revision":1}`} {
+		fake := &baselineHTTPStore{}
+		r := httptest.NewRequest("PUT", "/unused", strings.NewReader(body))
+		r.SetPathValue("name", "automation")
+		r.SetPathValue("baseline", "production")
+		r.SetPathValue("retirement_id", "retirement")
+		w := httptest.NewRecorder()
+		BaselineService{Store: fake}.Retire(w, r, "app", "authenticated-actor", "authenticated-key")
+		if body == `{"expected_revision":1}` {
+			if w.Code != 200 || fake.calls != 1 || fake.actor != "authenticated-actor" || fake.key != "authenticated-key" {
+				t.Fatal("retirement actor", w.Code, fake.calls)
+			}
+		} else if w.Code < 400 || fake.calls != 0 {
+			t.Fatal("forged retirement intent", w.Code, fake.calls)
+		}
+	}
+}

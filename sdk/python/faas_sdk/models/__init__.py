@@ -391,6 +391,7 @@ from .automation_live_baseline_health_renewal_status import AutomationLiveBaseli
 from .automation_live_baseline_history import AutomationLiveBaselineHistory
 from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
 from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
+from .automation_live_baseline_retirement import AutomationLiveBaselineRetirement
 from .automation_live_expectation import AutomationLiveExpectation
 from .automation_live_expectation_state import AutomationLiveExpectationState
 from .automation_live_report import AutomationLiveReport
@@ -3683,6 +3684,7 @@ from .restore_automation_revision_request import RestoreAutomationRevisionReques
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
+from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
@@ -5007,6 +5009,7 @@ __all__ = (
     "AutomationLiveBaselineHistory",
     "AutomationLiveBaselinePolicy",
     "AutomationLiveBaselinePolicyVersion",
+    "AutomationLiveBaselineRetirement",
     "AutomationLiveExpectation",
     "AutomationLiveExpectationState",
     "AutomationLiveReport",
@@ -8045,6 +8048,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
+    "RetireAutomationLiveBaselineRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryGithubCheckUpdateConfirm",

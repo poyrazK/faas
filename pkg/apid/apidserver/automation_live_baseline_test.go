@@ -123,6 +123,61 @@ func TestAutomationLiveBaselineAuthenticatedPromotionAndReadOnlyScopes(t *testin
 	if discoveryResponse.Code != 401 {
 		t.Fatal("unauthenticated discovery", discoveryResponse.Code)
 	}
+
+	// Retirement has the same metadata-write authorization, even with runtime off.
+	retirementID := uuid.NewString()
+	retirementPath := path + "/retirements/" + retirementID
+	retirementRequest := api.RetireAutomationLiveBaselineRequest{ExpectedRevision: 2}
+	for _, raw := range []string{`{}`, `{"expected_revision":null}`, `{"expected_revision":2,"actor_account_id":"forged"}`, `{"expected_revision":2} {}`} {
+		got := e.Do(t, http.MethodPut, retirementPath, json.RawMessage(raw), nil)
+		if got.Code != 400 {
+			t.Fatal("malformed retirement", got.Code, got.Body.String())
+		}
+	}
+	for _, scope := range []string{"apps:read", "secrets:read", "deploy:write"} {
+		token, hash, keyErr := api.GenerateAPIKey()
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		key, keyErr := store.CreateAPIKey(t.Context(), app.AccountID, hash, "retire-"+scope, []string{scope})
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		got := e.DoAs(t, http.MethodPut, retirementPath, retirementRequest, nil, token)
+		if scope != "deploy:write" {
+			if got.Code != 403 {
+				t.Fatal("retirement scope", scope, got.Code)
+			}
+			continue
+		}
+		var receipt api.AutomationLiveBaselineRetirement
+		if got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &receipt) != nil || receipt.ActorAPIKeyID != key.ID || receipt.ActorAccountID != app.AccountID || receipt.Revision != 3 || got.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("retirement", got.Code, got.Body.String())
+		}
+		if retry := e.DoAs(t, http.MethodPut, retirementPath, retirementRequest, nil, token); retry.Code != 200 || retry.Body.String() != got.Body.String() {
+			t.Fatal("retirement retry", retry.Code)
+		}
+	}
+	if head := e.Do(t, http.MethodGet, path, nil, nil); head.Code != 410 || !strings.Contains(head.Body.String(), "retired") {
+		t.Fatal("retired CI head", head.Code, head.Body.String())
+	}
+	if reuse := e.Do(t, http.MethodPut, path+"/promotions/"+uuid.NewString(), request, nil); reuse.Code != 410 {
+		t.Fatal("retired name reused", reuse.Code)
+	}
+	retiredHistory := e.Do(t, http.MethodGet, path+"/history", nil, nil)
+	var audit api.AutomationLiveBaselineHistory
+	if retiredHistory.Code != 200 || json.Unmarshal(retiredHistory.Body.Bytes(), &audit) != nil || audit.Retirement == nil || len(audit.Promotions) != 2 || strings.Contains(retiredHistory.Body.String(), "PRIVATE") {
+		t.Fatal("retired audit", retiredHistory.Code)
+	}
+	req = httptest.NewRequest(http.MethodPut, retirementPath, strings.NewReader(`{"expected_revision":2}`))
+	w = httptest.NewRecorder()
+	(*e.H()).ServeHTTP(w, req)
+	if w.Code != 401 {
+		t.Fatal("unauthenticated retirement", w.Code)
+	}
+	if got := e.Do(t, http.MethodPut, strings.Replace(retirementPath, "/automations/baseline/", "/automations/foreign/", 1), retirementRequest, nil); got.Code != 404 {
+		t.Fatal("foreign retirement", got.Code)
+	}
 	runs, _, err := store.ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
 	if err != nil || len(runs) != 1 {
 		t.Fatal("baseline operation admitted work", err, len(runs))

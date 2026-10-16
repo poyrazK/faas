@@ -92,8 +92,24 @@ func (q *Queries) AutomationLiveStep(ctx context.Context, db DBTX, arg Automatio
 	return items, nil
 }
 
-const countAutomationLiveBaselines = `-- name: CountAutomationLiveBaselines :one
+const countAutomationLiveBaselineNames = `-- name: CountAutomationLiveBaselineNames :one
 SELECT count(DISTINCT baseline_name) FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2
+`
+
+type CountAutomationLiveBaselineNamesParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) CountAutomationLiveBaselineNames(ctx context.Context, db DBTX, arg CountAutomationLiveBaselineNamesParams) (int64, error) {
+	row := db.QueryRow(ctx, countAutomationLiveBaselineNames, arg.AppID, arg.Name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countAutomationLiveBaselines = `-- name: CountAutomationLiveBaselines :one
+SELECT count(DISTINCT head.baseline_name) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=$1 AND head.name=$2 AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=head.app_id AND retired.name=head.name AND retired.baseline_name=head.baseline_name)
 `
 
 type CountAutomationLiveBaselinesParams struct {
@@ -109,7 +125,7 @@ func (q *Queries) CountAutomationLiveBaselines(ctx context.Context, db DBTX, arg
 }
 
 const countProtectedAutomationLiveSuites = `-- name: CountProtectedAutomationLiveSuites :one
-SELECT count(*) FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text AND (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz))
+SELECT count(*) FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text AND (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=pin.app_id AND retired.name=pin.name AND retired.baseline_name=pin.baseline_name) AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz))
 `
 
 type CountProtectedAutomationLiveSuitesParams struct {
@@ -150,6 +166,22 @@ type DeleteAutomationLiveVerificationsParams struct {
 
 func (q *Queries) DeleteAutomationLiveVerifications(ctx context.Context, db DBTX, arg DeleteAutomationLiveVerificationsParams) error {
 	_, err := db.Exec(ctx, deleteAutomationLiveVerifications, arg.AppID, arg.Name)
+	return err
+}
+
+const fenceAutomationLiveBaselineMutation = `-- name: FenceAutomationLiveBaselineMutation :exec
+UPDATE workflow_automation_definitions SET updated_at=updated_at WHERE app_id=$1 AND name=$2
+`
+
+type FenceAutomationLiveBaselineMutationParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+// Create a row version so repeatable-read writers waiting on admission locks
+// cannot commit promotion/retirement decisions from an older snapshot.
+func (q *Queries) FenceAutomationLiveBaselineMutation(ctx context.Context, db DBTX, arg FenceAutomationLiveBaselineMutationParams) error {
+	_, err := db.Exec(ctx, fenceAutomationLiveBaselineMutation, arg.AppID, arg.Name)
 	return err
 }
 
@@ -267,6 +299,46 @@ func (q *Queries) GetAutomationLiveBaselinePromotion(ctx context.Context, db DBT
 		&i.SuiteID,
 		&i.Receipt,
 		&i.PromotedAt,
+	)
+	return i, err
+}
+
+const getAutomationLiveBaselineRetirement = `-- name: GetAutomationLiveBaselineRetirement :one
+SELECT retirement_id, app_id, name, baseline_name, receipt FROM workflow_automation_live_baseline_retirements WHERE app_id=$1 AND name=$2 AND baseline_name=$3
+`
+
+type GetAutomationLiveBaselineRetirementParams struct {
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+}
+
+func (q *Queries) GetAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineRetirementParams) (WorkflowAutomationLiveBaselineRetirement, error) {
+	row := db.QueryRow(ctx, getAutomationLiveBaselineRetirement, arg.AppID, arg.Name, arg.BaselineName)
+	var i WorkflowAutomationLiveBaselineRetirement
+	err := row.Scan(
+		&i.RetirementID,
+		&i.AppID,
+		&i.Name,
+		&i.BaselineName,
+		&i.Receipt,
+	)
+	return i, err
+}
+
+const getAutomationLiveBaselineRetirementByID = `-- name: GetAutomationLiveBaselineRetirementByID :one
+SELECT retirement_id, app_id, name, baseline_name, receipt FROM workflow_automation_live_baseline_retirements WHERE retirement_id=$1
+`
+
+func (q *Queries) GetAutomationLiveBaselineRetirementByID(ctx context.Context, db DBTX, retirementID pgtype.UUID) (WorkflowAutomationLiveBaselineRetirement, error) {
+	row := db.QueryRow(ctx, getAutomationLiveBaselineRetirementByID, retirementID)
+	var i WorkflowAutomationLiveBaselineRetirement
+	err := row.Scan(
+		&i.RetirementID,
+		&i.AppID,
+		&i.Name,
+		&i.BaselineName,
+		&i.Receipt,
 	)
 	return i, err
 }
@@ -390,6 +462,29 @@ func (q *Queries) InsertAutomationLiveBaselinePromotion(ctx context.Context, db 
 	return err
 }
 
+const insertAutomationLiveBaselineRetirement = `-- name: InsertAutomationLiveBaselineRetirement :exec
+INSERT INTO workflow_automation_live_baseline_retirements(retirement_id,app_id,name,baseline_name,receipt) VALUES($1,$2,$3,$4,$5)
+`
+
+type InsertAutomationLiveBaselineRetirementParams struct {
+	RetirementID pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Receipt      []byte
+}
+
+func (q *Queries) InsertAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselineRetirementParams) error {
+	_, err := db.Exec(ctx, insertAutomationLiveBaselineRetirement,
+		arg.RetirementID,
+		arg.AppID,
+		arg.Name,
+		arg.BaselineName,
+		arg.Receipt,
+	)
+	return err
+}
+
 const insertAutomationLiveSuite = `-- name: InsertAutomationLiveSuite :one
 INSERT INTO workflow_automation_live_suites(id,app_id,name,automation_version,published_version,deployment_id,cases,managed)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING RETURNING id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed
@@ -487,8 +582,8 @@ func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX,
 }
 
 const listAutomationLiveBaselineHeads = `-- name: ListAutomationLiveBaselineHeads :many
-SELECT DISTINCT ON (baseline_name) promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions
-WHERE app_id=$1 AND name=$2 ORDER BY baseline_name,revision DESC LIMIT $3
+SELECT DISTINCT ON (head.baseline_name) head.promotion_id, head.app_id, head.name, head.baseline_name, head.revision, head.suite_id, head.receipt, head.promoted_at FROM workflow_automation_live_baseline_promotions AS head
+WHERE head.app_id=$1 AND head.name=$2 AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=head.app_id AND retired.name=head.name AND retired.baseline_name=head.baseline_name) ORDER BY head.baseline_name,head.revision DESC LIMIT $3
 `
 
 type ListAutomationLiveBaselineHeadsParams struct {
@@ -686,7 +781,7 @@ func (q *Queries) PruneAutomationLiveBaselineHistory(ctx context.Context, db DBT
 const pruneAutomationLiveSuites = `-- name: PruneAutomationLiveSuites :exec
 DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=$1::uuid AND suite.name=$2::text AND suite.id IN (
  SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text
- ORDER BY (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz)) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
+ ORDER BY (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND NOT EXISTS (SELECT 1 FROM workflow_automation_live_baseline_retirements AS retired WHERE retired.app_id=pin.app_id AND retired.name=pin.name AND retired.baseline_name=pin.baseline_name) AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz)) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
 )
 `
 

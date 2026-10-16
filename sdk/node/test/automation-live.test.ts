@@ -157,3 +157,29 @@ test('baseline discovery is one scoped read and preserves evidence health', asyn
   assert.deepEqual(await WorkflowsService.listAutomationLiveBaselines({ slug: 'billing', name: 'case/report' }), result);
   assert.equal(calls, 1);
 });
+
+test('baseline retirement preserves explicit revision, stable identity and audit history', async t => {
+  const retirementId = '00000000-0000-4000-8000-000000000014';
+  const receipt = { retirement_id: retirementId, app_id: '00000000-0000-4000-8000-000000000001', name: 'case/report', baseline_name: 'production', revision: 4, previous_promotion_id: '00000000-0000-4000-8000-000000000013', actor_account_id: '00000000-0000-4000-8000-000000000002', retired_at: '2026-10-16T12:00:00Z' };
+  const calls: string[] = [];
+  const server = createServer((req, res) => {
+    void (async () => {
+      calls.push(`${req.method} ${req.url}`);
+      assert.equal(req.headers.authorization, 'Bearer token');
+      if (req.method === 'PUT') {
+        const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { expected_revision: 3 });
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(req.method === 'PUT' ? receipt : { promotions: [], retirement: receipt }));
+    })().catch(error => { res.destroy(error); });
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
+  for (let attempt = 0; attempt < 2; attempt++) assert.deepEqual(await WorkflowsService.retireAutomationLiveBaseline({ slug: 'billing', name: 'case/report', baseline: 'production', retirementId, requestBody: { expected_revision: 3 } }), receipt);
+  assert.deepEqual(await WorkflowsService.getAutomationLiveBaselineHistory({ slug: 'billing', name: 'case/report', baseline: 'production' }), { promotions: [], retirement: receipt });
+  const root = '/v1/apps/billing/automations/case%2Freport/live-baselines/production';
+  assert.deepEqual(calls, [`PUT ${root}/retirements/${retirementId}`, `PUT ${root}/retirements/${retirementId}`, `GET ${root}/history`]);
+});

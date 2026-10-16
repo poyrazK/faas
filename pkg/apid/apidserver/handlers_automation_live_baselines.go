@@ -49,3 +49,15 @@ func (s *server) listAutomationLiveBaselines(w http.ResponseWriter, r *http.Requ
 		service.List(w, r, appID)
 	}
 }
+
+func (s *server) retireAutomationLiveBaseline(w http.ResponseWriter, r *http.Request, account state.Account) {
+	service, appID, ok := s.liveBaselineService(w, r, account)
+	if !ok {
+		return
+	}
+	keyID := ""
+	if _, key, authenticated := authmw.AccountFromContext(r); authenticated && key != nil {
+		keyID = key.ID
+	}
+	service.Retire(w, r, appID, account.ID, keyID)
+}

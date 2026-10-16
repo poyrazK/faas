@@ -9143,6 +9143,14 @@ type WorkflowAutomationLiveBaselinePromotion struct {
 	PromotedAt   pgtype.Timestamptz
 }
 
+type WorkflowAutomationLiveBaselineRetirement struct {
+	RetirementID pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Receipt      []byte
+}
+
 type WorkflowAutomationLiveSuite struct {
 	ID                pgtype.UUID
 	AppID             pgtype.UUID

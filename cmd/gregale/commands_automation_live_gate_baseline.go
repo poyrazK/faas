@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -11,11 +12,16 @@ import (
 )
 
 var errAutomationGateBaselinePolicyMismatch = errors.New("named baseline policy differs from local policy")
+var errAutomationGateBaselineRetired = errors.New("named baseline retired")
 var errAutomationGateBaselineInvalid = errors.New("invalid baseline receipt")
 
 func resolveAutomationGateBaseline(ctx context.Context, client *api.Client, o *automationLiveGateOptions) error {
 	receipt, err := client.GetAutomationLiveBaseline(ctx, o.app, o.Name, o.baselineName)
 	if err != nil {
+		var failure *api.APIError
+		if errors.As(err, &failure) && failure.Problem.Status == http.StatusGone {
+			return errAutomationGateBaselineRetired
+		}
 		return err
 	}
 	policy, err := validateAutomationLiveBaselineReceipt(receipt, o.Name, o.baselineName)

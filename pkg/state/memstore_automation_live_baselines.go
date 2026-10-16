@@ -14,6 +14,9 @@ func (m *MemStore) GetAutomationLiveBaseline(ctx context.Context, appID, name, a
 	if err != nil {
 		return api.AutomationLiveBaseline{}, err
 	}
+	if history.Retirement != nil {
+		return api.AutomationLiveBaseline{}, baselineRetiredError()
+	}
 	return history.Promotions[0], nil
 }
 func (m *MemStore) GetAutomationLiveBaselineHistory(ctx context.Context, appID, name, alias string) (api.AutomationLiveBaselineHistory, error) {
@@ -32,6 +35,9 @@ func (m *MemStore) GetAutomationLiveBaselineHistory(ctx context.Context, appID, 
 	records := m.automationLiveBaselines[baselineKey(appID, name, alias)]
 	if len(records) == 0 {
 		return out, ErrNotFound
+	}
+	if receipt, ok := m.automationLiveBaselineRetirements[baselineKey(appID, name, alias)]; ok {
+		out.Retirement = &receipt
 	}
 	for i := len(records) - 1; i >= 0; i-- {
 		out.Promotions = append(out.Promotions, cloneBaseline(records[i]))
@@ -52,7 +58,7 @@ func (m *MemStore) PromoteAutomationLiveBaseline(ctx context.Context, appID, nam
 	if _, ok := m.automations[appID+"/"+name]; !ok {
 		return api.AutomationLiveBaseline{}, ErrNotFound
 	}
-	count := 0
+	count, total := 0, 0
 	for _, records := range m.automationLiveBaselines {
 		for _, receipt := range records {
 			if receipt.PromotionID == promotionID {
@@ -66,11 +72,20 @@ func (m *MemStore) PromoteAutomationLiveBaseline(ctx context.Context, appID, nam
 			}
 		}
 		if len(records) > 0 && records[0].AppID == appID && records[0].Name == name {
-			count++
+			total++
+			if _, retired := m.automationLiveBaselineRetirements[baselineKey(appID, name, records[0].BaselineName)]; !retired {
+				count++
+			}
 		}
 	}
 	mapKey := baselineKey(appID, name, alias)
+	if _, retired := m.automationLiveBaselineRetirements[mapKey]; retired {
+		return api.AutomationLiveBaseline{}, baselineRetiredError()
+	}
 	records := m.automationLiveBaselines[mapKey]
+	if len(records) == 0 && total >= api.AutomationLiveBaselineLifetimeNameLimit {
+		return api.AutomationLiveBaseline{}, baselineLifetimeLimitError(int64(total + 1))
+	}
 	var prior api.AutomationLiveBaseline
 	if len(records) > 0 {
 		prior = records[len(records)-1]
@@ -103,7 +118,10 @@ func (m *MemStore) PromoteAutomationLiveBaseline(ctx context.Context, appID, nam
 	return cloneBaseline(receipt), nil
 }
 func (m *MemStore) liveSuitePinnedLocked(id string) bool {
-	for _, records := range m.automationLiveBaselines {
+	for key, records := range m.automationLiveBaselines {
+		if _, retired := m.automationLiveBaselineRetirements[key]; retired {
+			continue
+		}
 		if len(records) > 0 && records[len(records)-1].Suite.ID == id {
 			return true
 		}
@@ -115,6 +133,7 @@ func (m *MemStore) clearAutomationLiveBaselinesLocked(appID, name string) {
 	for key, records := range m.automationLiveBaselines {
 		if len(records) > 0 && records[0].AppID == appID && records[0].Name == name {
 			delete(m.automationLiveBaselines, key)
+			delete(m.automationLiveBaselineRetirements, key)
 		}
 	}
 }

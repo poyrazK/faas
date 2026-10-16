@@ -7,6 +7,7 @@ import type { AutomationFailurePolicyResponse } from '../models/AutomationFailur
 import type { AutomationHealthResponse } from '../models/AutomationHealthResponse.js';
 import type { AutomationLiveBaseline } from '../models/AutomationLiveBaseline.js';
 import type { AutomationLiveBaselineHistory } from '../models/AutomationLiveBaselineHistory.js';
+import type { AutomationLiveBaselineRetirement } from '../models/AutomationLiveBaselineRetirement.js';
 import type { AutomationLiveSuite } from '../models/AutomationLiveSuite.js';
 import type { AutomationLiveSuiteComparison } from '../models/AutomationLiveSuiteComparison.js';
 import type { AutomationLiveVerification } from '../models/AutomationLiveVerification.js';
@@ -38,6 +39,7 @@ import type { PublishAutomationRequest } from '../models/PublishAutomationReques
 import type { RestoreAutomationRevisionRequest } from '../models/RestoreAutomationRevisionRequest.js';
 import type { ResumeAutomationFailurePauseRequest } from '../models/ResumeAutomationFailurePauseRequest.js';
 import type { ResumeWorkflowRunRequest } from '../models/ResumeWorkflowRunRequest.js';
+import type { RetireAutomationLiveBaselineRequest } from '../models/RetireAutomationLiveBaselineRequest.js';
 import type { RunAutomationTestsRequest } from '../models/RunAutomationTestsRequest.js';
 import type { SaveAutomationDraftRequest } from '../models/SaveAutomationDraftRequest.js';
 import type { SaveAutomationLiveSuiteRequest } from '../models/SaveAutomationLiveSuiteRequest.js';
@@ -2691,6 +2693,7 @@ export class WorkflowsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `This name is permanently retired. Choose an active baseline explicitly; read history for the retirement audit.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2748,7 +2751,7 @@ export class WorkflowsService {
   }
   /**
    * Deliberately promote passing retained evidence to a named baseline.
-   * Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes or checks assertions. At most 20 names per automation, with 100 receipts per name; current suite groups are pinned within the existing suite limit, while linked run retention still applies.
+   * Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes or checks assertions. At most 20 active and 100 lifetime names per automation, with 100 receipts per name; active current suite groups are pinned within the existing suite limit, while linked run retention still applies. Retired names cannot be reused; original promotion retries return historical receipts without reactivation.
    * @returns AutomationLiveBaseline Immutable promotion receipt(s); reads do not certify current evidence validity.
    * @throws ApiError
    */
@@ -2791,6 +2794,63 @@ export class WorkflowsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `This name is permanently retired. Choose an active baseline explicitly; read history for the retirement audit.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Permanently retire a named baseline and release its evidence pin.
+   * Requires deploy write scope and verified email. Atomically compares the positive expected revision and records the authenticated actor. Retirement permanently reserves the name, frees an active-name slot and releases its suite pin for normal retention; no evidence is immediately deleted. Promotion history remains available. Exact retries return the original retirement receipt. Old promotion retries never reactivate the name. At most 20 active and 100 lifetime names per automation.
+   * @returns AutomationLiveBaselineRetirement Attributed immutable retirement receipt.
+   * @throws ApiError
+   */
+  public static retireAutomationLiveBaseline({
+    slug,
+    name,
+    baseline,
+    retirementId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    name: string,
+    /**
+     * Named release track within this app and automation; does not change execution routing.
+     */
+    baseline: string,
+    /**
+     * Stable caller-selected retirement UUID; preserve this ID and expected revision for uncertain retries.
+     */
+    retirementId: string,
+    requestBody: RetireAutomationLiveBaselineRequest,
+  }): CancelablePromise<AutomationLiveBaselineRetirement> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/retirements/{retirement_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'baseline': baseline,
+        'retirement_id': retirementId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `This name is permanently retired. Choose an active baseline explicitly; read history for the retirement audit.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

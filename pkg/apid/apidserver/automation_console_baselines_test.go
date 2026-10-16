@@ -139,6 +139,57 @@ func TestAutomationConsoleBaselinePreviewPromotionAndConflict(t *testing.T) {
 	if candidatePage.Code != 200 || !strings.Contains(candidatePage.Body.String(), "--baseline-name") || !strings.Contains(candidatePage.Body.String(), candidateID) {
 		t.Fatal("missing named gate command", candidatePage.Code)
 	}
+
+	retirementMatch := regexp.MustCompile(`name="retirement_id" value="([^"]+)"`).FindStringSubmatch(candidatePage.Body.String())
+	if len(retirementMatch) != 2 {
+		t.Fatal("missing stable retirement id")
+	}
+	retirementForm := url.Values{"name": {"baseline"}, "baseline_name": {"production"}, "baseline_revision": {"1"}, "retirement_id": {html.UnescapeString(retirementMatch[1])}, "confirm_retirement": {"yes"}}
+	request = httptest.NewRequest(http.MethodPost, base+"/retire-baseline", strings.NewReader(retirementForm.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.AddCookie(cookie)
+	denied = httptest.NewRecorder()
+	(*e.H()).ServeHTTP(denied, request)
+	if denied.Code != 400 {
+		t.Fatal("retirement accepted without csrf", denied.Code)
+	}
+	retirementForm.Del("confirm_retirement")
+	unconfirmed := consolePost(e, cookie, candidatePage, base+"/retire-baseline", retirementForm)
+	if unconfirmed.Code != 400 {
+		t.Fatal("retirement accepted without confirmation", unconfirmed.Code)
+	}
+	retirementForm.Set("confirm_retirement", "yes")
+	retirementForm.Set("baseline_revision", "2")
+	stale := consolePost(e, cookie, unconfirmed, base+"/retire-baseline", retirementForm)
+	if stale.Code != 409 {
+		t.Fatal("stale retirement", stale.Code)
+	}
+	retirementForm.Set("baseline_revision", "1")
+	retired := consolePost(e, cookie, stale, base+"/retire-baseline", retirementForm)
+	if retired.Code != 200 || !strings.Contains(retired.Body.String(), "retired at revision 2") {
+		t.Fatal("dashboard retirement", retired.Code, retired.Body.String())
+	}
+	if replay := consolePost(e, cookie, retired, base+"/retire-baseline", retirementForm); replay.Code != 200 {
+		t.Fatal("dashboard retirement retry", replay.Code)
+	}
+	retiredPage := apidserver.RestartProgressDashboardGET(e, cookie, base+query)
+	if retiredPage.Code != 200 || !strings.Contains(retiredPage.Body.String(), "permanently retired") || !strings.Contains(retiredPage.Body.String(), "Retired revision 2") || strings.Contains(retiredPage.Body.String(), "Preview promotion") || strings.Contains(retiredPage.Body.String(), "CI command for the selected candidate") {
+		t.Fatal("unsafe retired dashboard", retiredPage.Code)
+	}
+	if head := e.Do(t, http.MethodGet, path, nil, nil); head.Code != 410 {
+		t.Fatal("retired dashboard head", head.Code)
+	}
+	var active api.ListAutomationLiveBaselinesResponse
+	if got := e.Do(t, http.MethodGet, root+"/live-baselines", nil, nil); got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &active) != nil || len(active.Baselines) != 0 {
+		t.Fatal("retired catalog", got.Code)
+	}
+	form.Set("promotion_id", html.UnescapeString(match[1]))
+	if replay := consolePost(e, cookie, retiredPage, base+"/promote-baseline", form); replay.Code != 200 {
+		t.Fatal("historical promotion retry", replay.Code)
+	}
+	if head := e.Do(t, http.MethodGet, path, nil, nil); head.Code != 410 {
+		t.Fatal("historical retry reactivated name", head.Code)
+	}
 	runs, _, err := store.ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
 	if err != nil || len(runs) != 1 {
 		t.Fatal("dashboard baseline flow admitted work", err, len(runs))
