@@ -14376,15 +14376,31 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 #### projects environments gitops
 
-Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
+Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
 Inspect the source and recent reconciliation attempts
 
 `gregale projects environments gitops status <project> <environment>`
+
+##### projects environments gitops explain
+
+Explain recorded workload progress and safe next actions
+
+`gregale projects environments gitops explain [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | Output the read-only assessment as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops explain shop production
+```
 
 ##### projects environments gitops bind
 
