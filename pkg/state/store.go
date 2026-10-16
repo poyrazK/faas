@@ -1009,6 +1009,7 @@ type Store interface {
 	OperatorAlertTriageHistoryReader
 	OperatorAlertWorkloadReader
 	OperatorAlertResponseTimesReader
+	OperatorAlertRecurrenceReader
 	OperatorAlertRetentionStore
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)

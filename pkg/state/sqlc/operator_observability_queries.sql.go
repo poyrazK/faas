@@ -313,6 +313,83 @@ func (q *Queries) OperatorAlertPruneRules(ctx context.Context, db DBTX, arg Oper
 	return err
 }
 
+const operatorAlertRecurrenceEpisodes = `-- name: OperatorAlertRecurrenceEpisodes :many
+SELECT e.id,e.rule_key,e.series_id,e.name,e.severity,e.component,e.started_at,e.resolved_at,
+ coalesce(e.account_id::text,'')::text AS account_id,coalesce(e.app_id::text,'')::text AS app_id,coalesce(e.node_id::text,'')::text AS node_id,
+ CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+  WHEN $1::boolean AND c.last_success_at IS NOT NULL AND c.last_attempt_at=c.last_success_at
+   AND c.last_success_at>=$2::timestamptz AND c.last_success_at<=$3::timestamptz
+   AND e.last_checked_at=c.last_success_at AND e.last_evaluated_at>=$2::timestamptz
+   AND e.last_evaluated_at<=$3::timestamptz THEN 'firing' ELSE 'unknown' END::text AS status
+FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+WHERE e.started_at>=$4::timestamptz AND e.started_at<=$5::timestamptz
+ORDER BY e.started_at DESC,e.id DESC LIMIT $6::integer
+`
+
+type OperatorAlertRecurrenceEpisodesParams struct {
+	CollectionEnabled bool
+	FreshSince        pgtype.Timestamptz
+	FutureBefore      pgtype.Timestamptz
+	Since             pgtype.Timestamptz
+	AsOf              pgtype.Timestamptz
+	RowLimit          int32
+}
+
+type OperatorAlertRecurrenceEpisodesRow struct {
+	ID         string
+	RuleKey    string
+	SeriesID   string
+	Name       string
+	Severity   string
+	Component  string
+	StartedAt  pgtype.Timestamptz
+	ResolvedAt pgtype.Timestamptz
+	AccountID  string
+	AppID      string
+	NodeID     string
+	Status     string
+}
+
+func (q *Queries) OperatorAlertRecurrenceEpisodes(ctx context.Context, db DBTX, arg OperatorAlertRecurrenceEpisodesParams) ([]OperatorAlertRecurrenceEpisodesRow, error) {
+	rows, err := db.Query(ctx, operatorAlertRecurrenceEpisodes,
+		arg.CollectionEnabled,
+		arg.FreshSince,
+		arg.FutureBefore,
+		arg.Since,
+		arg.AsOf,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertRecurrenceEpisodesRow{}
+	for rows.Next() {
+		var i OperatorAlertRecurrenceEpisodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleKey,
+			&i.SeriesID,
+			&i.Name,
+			&i.Severity,
+			&i.Component,
+			&i.StartedAt,
+			&i.ResolvedAt,
+			&i.AccountID,
+			&i.AppID,
+			&i.NodeID,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAlertResolveMissing = `-- name: OperatorAlertResolveMissing :exec
 UPDATE operator_alert_episodes e
 SET resolved_at = r.evaluated_at, last_evaluated_at = r.evaluated_at, last_checked_at = $1::timestamptz

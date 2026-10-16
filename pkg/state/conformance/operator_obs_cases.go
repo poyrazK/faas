@@ -43,6 +43,10 @@ func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	if err != nil || len(timing.Episodes) != 1 || timing.Episodes[0].FirstAcknowledgedAt == nil || timing.Episodes[0].ReceiptCoverage != "complete" {
 		t.Fatalf("response timing: %+v %v", timing, err)
 	}
+	recurrence, err := fx.Store.OperatorAlertRecurrence(fx.Ctx, state.OperatorAlertRecurrenceFilter{Now: now, Since: now.Add(-time.Hour), CollectionEnabled: true})
+	if err != nil || len(recurrence.Episodes) != 1 || recurrence.Episodes[0].ID != episode.ID || recurrence.Episodes[0].RuleKey != rule || recurrence.Episodes[0].SeriesID != series || recurrence.Episodes[0].Status != "firing" {
+		t.Fatalf("recurrence: %+v %v", recurrence, err)
+	}
 	if err := fx.Store.RecordOperatorAlertFailure(fx.Ctx, now.Add(100*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}

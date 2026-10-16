@@ -19,6 +19,7 @@ import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { ObsAlertRecurrence } from '../models/ObsAlertRecurrence.js';
 import type { ObsAlertResponseTimes } from '../models/ObsAlertResponseTimes.js';
 import type { ObsAlertTriageHistory } from '../models/ObsAlertTriageHistory.js';
 import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
@@ -1136,6 +1137,58 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Diagnose repeated retained alert activations and observed recovery gaps.
+   * Requires operator read scope, MFA and the operator allowlist. Reads one
+   * retained activation cohort between since and as_of inclusive, default
+   * 24 hours and maximum 30 days. Groups by rule definition and exact series;
+   * changed rules and different resources never share a recurrence sequence.
+   * Repeat activations equal episodes minus one within each group. Durations
+   * measure activation to confirmed resolution observation. Recovery gaps
+   * compare adjacent activations only when the previous confirmed resolution
+   * precedes or equals the next activation; unknown recovery, overlapping
+   * observations and invalid clocks are counted separately. Minimum and
+   * nearest-rank median use valid whole-second samples; absent samples are
+   * null. This does not establish exact recovery time, continuous collection,
+   * lifetime recurrence, false positives or notification volume.
+   * Cohorts above 1000 episodes return 400 requiring a narrower since.
+   * Complete totals precede a preview of at most 200 series ranked by repeat
+   * count descending, latest activation descending, rule key then series ID.
+   * Each preview includes at most five recent episodes newest first with
+   * explicit truncation. One read-only database snapshot has a five-second
+   * budget. Current collection and retention metadata do not reconstruct
+   * historical collection gaps. Reads perform no lifecycle or triage writes.
+   *
+   * @returns ObsAlertRecurrence Complete bounded recurrence totals and a ranked series preview with evidence coverage.
+   * @throws ApiError
+   */
+  public static getObsAlertRecurrence({
+    since,
+  }: {
+    /**
+     * Inclusive recurrence activation lower bound; defaults to 24 hours before as_of.
+     */
+    since?: string,
+  }): CancelablePromise<ObsAlertRecurrence> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/incidents/platform_alert/recurrence',
+      query: {
+        'since': since,
+      },
+      errors: {
+        400: `Invalid recurrence window or query or cohort exceeding 1000 episodes; narrow since.`,
+        401: `code: unauthorized`,
+        403: `Recurrence read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Recurrence storage snapshot could not be read within its deadline.`,
       },
     });
   }

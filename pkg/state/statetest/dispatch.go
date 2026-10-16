@@ -2322,6 +2322,7 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"OperatorAlertRecurrence":                       true,
 	"OperatorAlertResponseTimes":                    true,
 	"OperatorAlertWorkload":                         true,
 	"OperatorAlertTriageHistory":                    true,
@@ -3016,4 +3017,13 @@ func (s *Store) OperatorAlertResponseTimes(ctx context.Context, f state.Operator
 		return o.OperatorAlertResponseTimes(ctx, f)
 	}
 	return s.Store.OperatorAlertResponseTimes(ctx, f)
+}
+
+func (s *Store) OperatorAlertRecurrence(ctx context.Context, f state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertRecurrence(context.Context, state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error)
+	}); ok {
+		return o.OperatorAlertRecurrence(ctx, f)
+	}
+	return s.Store.OperatorAlertRecurrence(ctx, f)
 }

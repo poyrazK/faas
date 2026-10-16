@@ -45060,6 +45060,48 @@ paths:
         '403': { description: Notification pipeline observation denied by operator scope or MFA or allowlist. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/incidents/platform_alert/recurrence:
+    get:
+      tags: [admin]
+      operationId: getObsAlertRecurrence
+      summary: Diagnose repeated retained alert activations and observed recovery gaps.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Reads one
+        retained activation cohort between since and as_of inclusive, default
+        24 hours and maximum 30 days. Groups by rule definition and exact series;
+        changed rules and different resources never share a recurrence sequence.
+        Repeat activations equal episodes minus one within each group. Durations
+        measure activation to confirmed resolution observation. Recovery gaps
+        compare adjacent activations only when the previous confirmed resolution
+        precedes or equals the next activation; unknown recovery, overlapping
+        observations and invalid clocks are counted separately. Minimum and
+        nearest-rank median use valid whole-second samples; absent samples are
+        null. This does not establish exact recovery time, continuous collection,
+        lifetime recurrence, false positives or notification volume.
+        Cohorts above 1000 episodes return 400 requiring a narrower since.
+        Complete totals precede a preview of at most 200 series ranked by repeat
+        count descending, latest activation descending, rule key then series ID.
+        Each preview includes at most five recent episodes newest first with
+        explicit truncation. One read-only database snapshot has a five-second
+        budget. Current collection and retention metadata do not reconstruct
+        historical collection gaps. Reads perform no lifecycle or triage writes.
+      parameters:
+        - in: query
+          name: since
+          description: Inclusive recurrence activation lower bound; defaults to 24 hours before as_of.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Complete bounded recurrence totals and a ranked series preview with evidence coverage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertRecurrence' }
+        '400': { description: Invalid recurrence window or query or cohort exceeding 1000 episodes; narrow since. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Recurrence read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Recurrence storage snapshot could not be read within its deadline. }
+
   /v1/admin/obs/incidents/platform_alert/response-times:
     get:
       tags: [admin]
@@ -64473,6 +64515,102 @@ components:
       properties:
         incident_id: { type: string }
         triage: { $ref: '#/components/schemas/ObsAlertTriage' }
+    ObsAlertRecurrence:
+      type: object
+      description: Retained activation-cohort recurrence evidence with complete totals and a ranked preview.
+      required: [as_of, since, scope, percentile_method, limitations, collection, retention, totals, items, truncated]
+      properties:
+        as_of: { type: string, format: date-time }
+        since: { type: string, format: date-time }
+        scope: { type: string, enum: [retained_activation_cohort] }
+        percentile_method: { type: string, enum: [nearest_rank_whole_seconds] }
+        limitations:
+          type: array
+          items: { type: string }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        retention: { $ref: '#/components/schemas/ObsAlertRetentionHealth' }
+        totals:
+          description: Null before the first successful collection; a known quiet retained cohort has zero counts and null statistics.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertRecurrenceTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ObsAlertRecurrenceSeries' }
+        truncated: { type: boolean, description: Whether the ranked preview omits series included in complete totals. }
+    ObsAlertRecurrenceTotals:
+      type: object
+      description: Complete cohort counts across distinct rule-definition and exact-series groups.
+      required: [series, repeated_series, metrics]
+      properties:
+        series: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        repeated_series: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        metrics: { $ref: '#/components/schemas/ObsAlertRecurrenceMetrics' }
+    ObsAlertRecurrenceMetrics:
+      type: object
+      description: Episode denominator and adjacent-repeat denominator with independent evidence partitions.
+      required: [episodes, repeat_activations, unresolved, unknown_observation, duration, recovery_gap]
+      properties:
+        episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        repeat_activations: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unresolved: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unknown_observation: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        duration: { $ref: '#/components/schemas/ObsAlertRecurrenceDuration' }
+        recovery_gap: { $ref: '#/components/schemas/ObsAlertRecurrenceGap' }
+    ObsAlertRecurrenceDuration:
+      type: object
+      description: Episode partition and valid activation-to-resolution observation statistics.
+      required: [samples, not_observed, invalid_clock, min_seconds, p50_seconds]
+      properties:
+        samples: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        not_observed: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_clock: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        min_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        p50_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+    ObsAlertRecurrenceGap:
+      type: object
+      description: Adjacent-repeat partition; valid samples measure confirmed resolution observation to next activation.
+      required: [samples, unconfirmed_recovery, resolution_overlap, invalid_clock, min_seconds, p50_seconds]
+      properties:
+        samples: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unconfirmed_recovery: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        resolution_overlap: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_clock: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        min_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        p50_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+    ObsAlertRecurrenceSeries:
+      type: object
+      description: Exact rule/series recurrence group with safe resource identity and a bounded newest-first episode preview.
+      required: [rule_key, series_id, name, severity, component, first_activation_at, last_activation_at, metrics, recent_episodes, recent_episodes_truncated]
+      properties:
+        rule_key: { type: string, pattern: '^[0-9a-f]{64}$' }
+        series_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        name: { type: string, maxLength: 128 }
+        severity: { type: string, enum: [critical, error, warning] }
+        component: { type: string, maxLength: 64 }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        first_activation_at: { type: string, format: date-time }
+        last_activation_at: { type: string, format: date-time }
+        metrics: { $ref: '#/components/schemas/ObsAlertRecurrenceMetrics' }
+        recent_episodes:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsAlertRecurrenceEpisode' }
+        recent_episodes_truncated: { type: boolean, description: Whether older cohort episodes of this series were omitted from the preview. }
+    ObsAlertRecurrenceEpisode:
+      type: object
+      description: Immutable retained episode reference for recurrence investigation without raw source payloads or workflow identities.
+      required: [episode_id, status, started_at, resolved_at, evidence_path]
+      properties:
+        episode_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        status: { type: string, enum: [firing, resolved, unknown] }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, 'null'], format: date-time }
+        evidence_path: { type: string }
     ObsAlertResponseTimes:
       type: object
       description: Atomic retained activation-cohort timing with explicit evidence and sample limitations.

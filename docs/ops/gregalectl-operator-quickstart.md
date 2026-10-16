@@ -737,3 +737,32 @@ unhealthy, while resolved episodes retain their historical state.
 `platform_alert_history` in `unavailable_sources` identifies collection gaps.
 Before the first successful history collection, the compatibility view uses
 live alerts; `prometheus_alert_metadata` means annotations were unavailable.
+
+### Investigate recurring alert series
+
+Run `gregalectl obs recurrence --json` or add `--since RFC3339` to select an
+inclusive activation cohort. The server defaults to 24 hours and accepts at
+most 30 days. It groups immutable rule definitions and exact series separately,
+then ranks series by repeat activation count and latest activation. Different
+resources and changed rules remain separate. Each group includes canonical
+evidence paths for recent episodes.
+
+Totals cover the complete retained cohort. The series preview stops at 200
+and each recent-episode preview at five; both expose truncation. More than
+1000 cohort episodes returns an error: narrow `--since` rather than treating a
+partial sample as complete. Totals are unknown before the first successful
+collection; known quiet retained cohorts have zero counts.
+
+Completed episode durations and recovery-to-next-activation gaps show sample
+counts, minimum and nearest-rank median in whole seconds. Missing recovery,
+overlapping resolution observations and invalid clocks are separate counts;
+absent samples remain null. A confirmed zero-second gap is a valid sample.
+Collection and retention health accompany the result, and unknown unresolved
+observations remain explicit.
+
+These are retained observations, not lifetime counts, false-positive scores or
+notification volume. An episode outside the activation window or removed by
+retention does not contribute a predecessor. Confirmed resolution is the time
+recovery was observed, not exact repair time. Current collection health cannot
+prove uninterrupted historical coverage; historical collection gaps remain
+unknown. This command reads evidence without changing alert or silence policy.

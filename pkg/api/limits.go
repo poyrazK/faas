@@ -8863,6 +8863,12 @@ const (
 	ObsAlertResponseTimesWindowMax            = 30 * 24 * time.Hour
 	ObsAlertResponseTimesEpisodesMax          = 1000
 	ObsAlertResponseTimesReceiptsMax          = 10000
+	ObsAlertRecurrenceBudget                  = 5 * time.Second
+	ObsAlertRecurrenceWindowDefault           = 24 * time.Hour
+	ObsAlertRecurrenceWindowMax               = 30 * 24 * time.Hour
+	ObsAlertRecurrenceEpisodesMax             = 1000
+	ObsAlertRecurrenceSeriesMax               = 200
+	ObsAlertRecurrenceRecentMax               = 5
 	ObsAlertWorkloadGroupMax                  = 72 // 3 statuses * 3 severities * 2 acknowledgment * 2 ownership * 2 snooze
 	ObsAlertTriageRevisionMax           int64 = 9007199254740991
 	ObsAlertRetentionInterval                 = 30 * time.Second

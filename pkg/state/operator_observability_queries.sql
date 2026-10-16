@@ -407,3 +407,15 @@ SELECT (data->>'episode_id')::text AS episode_id,id::text AS id,received_at,
 FROM audit_log
 WHERE kind='operator.action.alert_triage' AND data->>'episode_id'=ANY(sqlc.arg(episode_ids)::text[])
 LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: OperatorAlertRecurrenceEpisodes :many
+SELECT e.id,e.rule_key,e.series_id,e.name,e.severity,e.component,e.started_at,e.resolved_at,
+ coalesce(e.account_id::text,'')::text AS account_id,coalesce(e.app_id::text,'')::text AS app_id,coalesce(e.node_id::text,'')::text AS node_id,
+ CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+  WHEN sqlc.arg(collection_enabled)::boolean AND c.last_success_at IS NOT NULL AND c.last_attempt_at=c.last_success_at
+   AND c.last_success_at>=sqlc.arg(fresh_since)::timestamptz AND c.last_success_at<=sqlc.arg(future_before)::timestamptz
+   AND e.last_checked_at=c.last_success_at AND e.last_evaluated_at>=sqlc.arg(fresh_since)::timestamptz
+   AND e.last_evaluated_at<=sqlc.arg(future_before)::timestamptz THEN 'firing' ELSE 'unknown' END::text AS status
+FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+WHERE e.started_at>=sqlc.arg(since)::timestamptz AND e.started_at<=sqlc.arg(as_of)::timestamptz
+ORDER BY e.started_at DESC,e.id DESC LIMIT sqlc.arg(row_limit)::integer;
