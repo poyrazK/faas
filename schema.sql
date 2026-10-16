@@ -8241,6 +8241,58 @@ $$;
 
 
 --
+-- Name: enqueue_route_insight_webhooks(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_route_insight_webhooks() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    event_name text;
+    transition_id timestamptz;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.state <> 'active' THEN
+            RETURN NEW;
+        END IF;
+        event_name := 'routes.insight.detected';
+        transition_id := NEW.first_detected_at;
+    ELSIF NEW.state = 'active' AND OLD.state <> 'active' THEN
+        event_name := 'routes.insight.detected';
+        transition_id := NEW.first_detected_at;
+    ELSIF NEW.state = 'resolved' AND OLD.state <> 'resolved' THEN
+        event_name := 'routes.insight.resolved';
+        transition_id := NEW.resolved_at;
+    ELSE
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO app_webhook_deliveries (webhook_id, app_id, account_id, event, payload)
+    SELECT h.id, NEW.app_id, h.account_id, event_name, jsonb_build_object(
+               'app_id', NEW.app_id,
+               'kind', NEW.kind,
+               'method', NEW.method,
+               'route', NEW.route,
+               'message', NEW.message,
+               'evidence', NEW.evidence,
+               'state', NEW.state,
+               'first_detected_at', NEW.first_detected_at,
+               'last_detected_at', NEW.last_detected_at,
+               'resolved_at', NEW.resolved_at,
+               'transition_id', transition_id)
+      FROM app_webhooks h
+      JOIN apps a ON a.id = NEW.app_id AND a.account_id = h.account_id
+     WHERE h.scope = 'app'
+       AND h.app_id = NEW.app_id
+       AND h.enabled
+       AND (cardinality(h.event_filter) = 0 OR event_name = ANY(h.event_filter))
+    ON CONFLICT DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enqueue_route_policy_checks(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -46597,6 +46649,34 @@ CREATE TABLE public.route_health_notification_state (
 
 
 --
+-- Name: route_insights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_insights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    method text NOT NULL,
+    route text NOT NULL,
+    state text NOT NULL,
+    message text NOT NULL,
+    evidence jsonb NOT NULL,
+    first_detected_at timestamp with time zone NOT NULL,
+    last_detected_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT route_insights_check CHECK ((last_detected_at >= first_detected_at)),
+    CONSTRAINT route_insights_check1 CHECK (((state = 'resolved'::text) = (resolved_at IS NOT NULL))),
+    CONSTRAINT route_insights_evidence_check CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT route_insights_kind_check CHECK ((kind = ANY (ARRAY['kept_awake'::text, 'cacheable'::text]))),
+    CONSTRAINT route_insights_message_check CHECK (((char_length(message) >= 1) AND (char_length(message) <= 1000))),
+    CONSTRAINT route_insights_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'OPTIONS'::text]))),
+    CONSTRAINT route_insights_route_check CHECK (((route ~~ '/%'::text) AND (char_length(route) <= 512))),
+    CONSTRAINT route_insights_state_check CHECK ((state = ANY (ARRAY['active'::text, 'resolved'::text])))
+);
+
+
+--
 -- Name: route_lifecycle_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59177,6 +59257,22 @@ ALTER TABLE ONLY public.route_health_notification_state
 
 
 --
+-- Name: route_insights route_insights_app_id_kind_method_route_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insights
+    ADD CONSTRAINT route_insights_app_id_kind_method_route_key UNIQUE (app_id, kind, method, route);
+
+
+--
+-- Name: route_insights route_insights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insights
+    ADD CONSTRAINT route_insights_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: route_lifecycle_approvals route_lifecycle_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61484,6 +61580,13 @@ CREATE UNIQUE INDEX app_webhook_deliveries_reconciliation_applied_uniq ON public
 --
 
 CREATE INDEX app_webhook_deliveries_retention_idx ON public.app_webhook_deliveries USING btree (updated_at, id) WHERE (status = ANY (ARRAY['succeeded'::text, 'dead'::text]));
+
+
+--
+-- Name: app_webhook_deliveries_route_insight_transition_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_webhook_deliveries_route_insight_transition_uniq ON public.app_webhook_deliveries USING btree (webhook_id, event, ((payload ->> 'kind'::text)), ((payload ->> 'method'::text)), ((payload ->> 'route'::text)), ((payload ->> 'transition_id'::text))) WHERE (event = ANY (ARRAY['routes.insight.detected'::text, 'routes.insight.resolved'::text]));
 
 
 --
@@ -68519,6 +68622,13 @@ CREATE INDEX route_health_history_deployment_idx ON public.route_health_history 
 
 
 --
+-- Name: route_insights_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_insights_active_idx ON public.route_insights USING btree (app_id) WHERE (state = 'active'::text);
+
+
+--
 -- Name: route_lifecycle_approvals_candidate; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -74760,6 +74870,20 @@ CREATE TRIGGER reserved_ip_inventory_set_updated_at_trg BEFORE UPDATE ON public.
 --
 
 CREATE TRIGGER reserved_ip_leases_set_updated_at_trg BEFORE UPDATE ON public.reserved_ip_leases FOR EACH ROW EXECUTE FUNCTION public.reserved_ip_leases_set_updated_at();
+
+
+--
+-- Name: route_insights route_insights_webhooks_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_insights_webhooks_insert AFTER INSERT ON public.route_insights FOR EACH ROW EXECUTE FUNCTION public.enqueue_route_insight_webhooks();
+
+
+--
+-- Name: route_insights route_insights_webhooks_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER route_insights_webhooks_state AFTER UPDATE OF state ON public.route_insights FOR EACH ROW WHEN ((old.state IS DISTINCT FROM new.state)) EXECUTE FUNCTION public.enqueue_route_insight_webhooks();
 
 
 --
@@ -87739,6 +87863,22 @@ ALTER TABLE ONLY public.route_health_notification_state
 
 ALTER TABLE ONLY public.route_health_notification_state
     ADD CONSTRAINT route_health_notification_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_insights route_insights_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insights
+    ADD CONSTRAINT route_insights_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_insights route_insights_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insights
+    ADD CONSTRAINT route_insights_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

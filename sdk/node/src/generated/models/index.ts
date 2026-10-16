@@ -2480,6 +2480,8 @@ export type { RouteHealthRoute } from './RouteHealthRoute.js';
 export type { RouteHealthStatusCounts } from './RouteHealthStatusCounts.js';
 export type { RouteHealthTransitionWebhookPayload } from './RouteHealthTransitionWebhookPayload.js';
 export type { RouteHealthWindowEvidence } from './RouteHealthWindowEvidence.js';
+export type { RouteInsight } from './RouteInsight.js';
+export type { RouteInsightsResponse } from './RouteInsightsResponse.js';
 export type { RouteLifecycleApproval } from './RouteLifecycleApproval.js';
 export type { RouteLifecycleHistoryApproval } from './RouteLifecycleHistoryApproval.js';
 export type { RouteLifecycleHistoryCapture } from './RouteLifecycleHistoryCapture.js';

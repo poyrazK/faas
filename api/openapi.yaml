@@ -24787,6 +24787,39 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/routes/insights:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteInsights
+      summary: List the app's proactive route insights.
+      description: |
+        Findings the route insights evaluator records every six hours for
+        apps that ran in the last day (ADR-1198): `kept_awake` when a client
+        calling a route at a steady interval keeps a mostly-awake app from
+        parking, and `cacheable` when the gateways measured a route safe to
+        cache for a given lifetime. Active insights come first, then those
+        resolved in the last seven days. An insight resolves after a day
+        without being observed. Subscribe app webhooks to
+        `routes.insight.detected` and `routes.insight.resolved` to be told of
+        each transition; the webhook payload is the same insight object.
+        Uses the normal read scopes, completed MFA and the
+        DebugTelemetryEnabled plan gate.
+      x-since: 2026-10
+      responses:
+        '200':
+          description: The app's route insights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteInsightsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/service-wake-ahead:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -72829,6 +72862,33 @@ components:
       properties:
         kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
         message: {"type": "string"}
+    RouteInsightsResponse:
+      type: object
+      description: "An app's active route insights, then those resolved in the last seven days (ADR-1198)."
+      required: [slug, insights]
+      properties:
+        slug: {"type": "string"}
+        insights:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/RouteInsight' }
+    RouteInsight:
+      type: object
+      description: "One finding for a route; also the payload of the routes.insight.detected and routes.insight.resolved webhooks."
+      required: [kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
+      properties:
+        kind: {"type": "string", "enum": ["kept_awake", "cacheable"]}
+        method: {"type": "string"}
+        route: {"type": "string", "description": "Route template, for example /catalog."}
+        state: {"type": "string", "enum": ["active", "resolved"]}
+        message: {"type": "string", "description": "What was observed and what to change."}
+        evidence:
+          type: object
+          additionalProperties: true
+          description: "Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat counts for cacheable."
+        first_detected_at: {"type": "string", "format": "date-time"}
+        last_detected_at: {"type": "string", "format": "date-time"}
+        resolved_at: {"type": "string", "format": "date-time"}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -110510,6 +110570,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged
@@ -111563,6 +111625,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged
@@ -111742,6 +111806,8 @@ components:
               - routes.monitor.violated
               - routes.monitor.escalated
               - routes.monitor.recovered
+              - routes.insight.detected
+              - routes.insight.resolved
               - workflow.finished
               - automation.paused
               - realtime.inbox.acknowledged

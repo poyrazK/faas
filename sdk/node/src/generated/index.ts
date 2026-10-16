@@ -2486,6 +2486,8 @@ export type { RouteHealthRoute } from './models/RouteHealthRoute.js';
 export type { RouteHealthStatusCounts } from './models/RouteHealthStatusCounts.js';
 export type { RouteHealthTransitionWebhookPayload } from './models/RouteHealthTransitionWebhookPayload.js';
 export type { RouteHealthWindowEvidence } from './models/RouteHealthWindowEvidence.js';
+export type { RouteInsight } from './models/RouteInsight.js';
+export type { RouteInsightsResponse } from './models/RouteInsightsResponse.js';
 export type { RouteLifecycleApproval } from './models/RouteLifecycleApproval.js';
 export type { RouteLifecycleHistoryApproval } from './models/RouteLifecycleHistoryApproval.js';
 export type { RouteLifecycleHistoryCapture } from './models/RouteLifecycleHistoryCapture.js';

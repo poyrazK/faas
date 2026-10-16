@@ -11228,6 +11228,23 @@ const (
 	RouteContentMaxUncacheableShare = 0.5
 )
 
+// RouteInsight bounds proactive route insights (ADR-1198): every
+// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
+// ran in the last RouteInsightWindow. An insight no evaluation has observed
+// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
+// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
+// show active insights and those resolved within RouteInsightResolvedListWindow,
+// at most RouteInsightListLimit rows.
+const (
+	RouteInsightInterval           = 6 * time.Hour
+	RouteInsightWindow             = 24 * time.Hour
+	RouteInsightResolveAfter       = 24 * time.Hour
+	RouteInsightMaxApps            = 500
+	RouteInsightKeptAwakeMinShare  = 0.5
+	RouteInsightListLimit          = 50
+	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.

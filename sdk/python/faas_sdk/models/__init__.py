@@ -4793,6 +4793,11 @@ from .route_health_window_evidence import RouteHealthWindowEvidence
 from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
 from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_insight import RouteInsight
+from .route_insight_evidence import RouteInsightEvidence
+from .route_insight_kind import RouteInsightKind
+from .route_insight_state import RouteInsightState
+from .route_insights_response import RouteInsightsResponse
 from .route_lifecycle_approval import RouteLifecycleApproval
 from .route_lifecycle_approval_checker_version import RouteLifecycleApprovalCheckerVersion
 from .route_lifecycle_approval_compatibility import RouteLifecycleApprovalCompatibility
@@ -10225,6 +10230,11 @@ __all__ = (
     "RouteHealthWindowEvidenceErrorStatus",
     "RouteHealthWindowEvidenceLatencyStatus",
     "RouteHealthWindowEvidenceStatus",
+    "RouteInsight",
+    "RouteInsightEvidence",
+    "RouteInsightKind",
+    "RouteInsightsResponse",
+    "RouteInsightState",
     "RouteLifecycleApproval",
     "RouteLifecycleApprovalCheckerVersion",
     "RouteLifecycleApprovalCompatibility",
