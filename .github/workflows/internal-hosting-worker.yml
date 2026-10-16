@@ -4,8 +4,8 @@ on:
     paths:
       - deploy/cloudflare/hosting-worker/**
       - scripts/ops/internal-frontend-hosting-qualification.py
-      - scripts/ops/internal_frontend_hosting_probes.py
-      - scripts/ci/test_internal_frontend_hosting_qualification.py
+      - scripts/ops/internal_frontend_hosting_*.py
+      - scripts/ci/test_internal_frontend_hosting_*.py
       - pkg/api/limits.go
       - .github/workflows/internal-hosting-worker.yml
   push:
@@ -13,8 +13,8 @@ on:
     paths:
       - deploy/cloudflare/hosting-worker/**
       - scripts/ops/internal-frontend-hosting-qualification.py
-      - scripts/ops/internal_frontend_hosting_probes.py
-      - scripts/ci/test_internal_frontend_hosting_qualification.py
+      - scripts/ops/internal_frontend_hosting_*.py
+      - scripts/ci/test_internal_frontend_hosting_*.py
       - .github/workflows/internal-hosting-worker.yml
 permissions:
   contents: read
@@ -42,7 +42,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Qualification failure and credential boundaries
-        run: python3 scripts/ci/test_internal_frontend_hosting_qualification.py
+        run: python3 -m unittest discover -s scripts/ci -p 'test_internal_frontend_hosting_*.py'
       - name: Install checksum-pinned Terraform
         run: |
           set -euo pipefail

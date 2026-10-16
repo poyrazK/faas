@@ -301,7 +301,7 @@ admission or provision resources.
 go test -race ./pkg/hosting ./pkg/apid/hosting ./pkg/state/hostingtest
 go test ./cmd/gregale -run 'Test(StaticHosting|HostingUpload|Sites)'
 node --test --test-isolation=none deploy/cloudflare/hosting-worker/worker.test.mjs
-python3 scripts/ci/test_internal_frontend_hosting_qualification.py
+python3 -m unittest discover -s scripts/ci -p 'test_internal_frontend_hosting_*.py'
 ```
 
 The PostgreSQL suite requires the normal isolated test fixture. A live pilot
@@ -390,9 +390,10 @@ list untested API/control-plane outages, regional load, and an omitted Worker
 switch. They never qualify public launch. Leased sites retain short routing
 leases; customer billing and domain onboarding remain pilot boundaries in both modes.
 
-Use the [outage and regional qualification procedure](internal-frontend-hosting-qualification.md)
+Use the [hosting qualification procedure](internal-frontend-hosting-qualification.md)
 to enable explicit API/database fault checks, publication retry recovery, actual
-cold/warm measurements, and optional dedicated control-plane resource snapshots.
+cold/warm measurements, optional dedicated control-plane resource snapshots,
+account quota/cleanup assertions, custom-domain lifecycle, and traffic observations.
 These phases remain unqualified unless their observations complete.
 
 ## Account storage accounting

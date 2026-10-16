@@ -20,6 +20,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from internal_frontend_hosting_probes import PilotProbes
+from internal_frontend_hosting_acceptance import AcceptanceChecks
 
 ROOT = Path(__file__).resolve().parents[2]
 API_PATH = '/v1/internal/hosting/sites'
@@ -44,9 +45,9 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 
-def execute(command, env, timeout=120, accepted=(0,)):
+def execute(command, env, timeout=120, accepted=(0,), input=None):
     try:
-        result = subprocess.run(command, env=env, capture_output=True, timeout=timeout)
+        result = subprocess.run(command, env=env, capture_output=True, timeout=timeout, input=input)
     except (OSError, subprocess.TimeoutExpired):
         raise Failure('Qualification command unavailable or timed out') from None
     require(result.returncode in accepted, 'Qualification command failed; inspect the configured service separately')
@@ -195,7 +196,7 @@ def manifest(files):
     ]}
 
 
-class Qualification(PilotProbes):
+class Qualification(PilotProbes, AcceptanceChecks):
     def __init__(self, args, env=None, http=None):
         self.args = args
         self.env = dict(os.environ if env is None else env)
@@ -205,16 +206,22 @@ class Qualification(PilotProbes):
         self.deployment = None
         for name, default in {'outage_controller': None, 'check_control_plane_outages': False,
                               'check_publication_recovery': False, 'outage_duration': 1200,
-                              'outage_interval': 30, 'edge_samples': 0, 'runner_region': '', 'resource_profile': False}.items():
+                              'outage_interval': 30, 'edge_samples': 0, 'runner_region': '', 'resource_profile': False,
+                              'check_usage': False, 'check_traffic': False, 'custom_domain': '',
+                              'domain_controller': None}.items():
             if not hasattr(args, name):
                 setattr(args, name, default)
         self.configure_probes(require, decode_json, execute, Failure)
+        self.configure_acceptance()
         self.probe_digest, self.probe_uuid = digest, UUID
-        self.report = {'version': 1, 'scope': 'internal-static-frontend-hosting', 'status': 'running',
+        self.report = {'version': 2, 'scope': 'internal-static-frontend-hosting', 'status': 'running',
                        'started_at': utc_now(), 'checks': {}, 'public_launch_qualified': False,
                        'not_run': ['api_control_plane_outage', 'database_control_plane_outage',
                                    'regional_latency_and_load', 'publication_retry_recovery',
-                                   'provider_usage_billing', 'control_plane_resource_profile']}
+                                   'provider_usage_billing', 'control_plane_resource_profile',
+                                   'account_quota_admission', 'account_reservation_cleanup', 'traffic_observations',
+                                   'custom_domain_lifecycle', 'custom_domain_ambiguous_create_recovery',
+                                   'custom_domain_provider_outage', 'certificate_renewal', 'traffic_provider_outage']}
         if not args.check_worker_switch:
             self.report['not_run'].append('worker_deployment_switch')
 
@@ -248,12 +255,12 @@ class Qualification(PilotProbes):
                 'Site response changed account, hostname, identity, revision, routing mode, or storage placement')
         return value
 
-    def api_response(self, method, suffix='', value=None, *, timeout=180):
+    def api_response(self, method, suffix='', value=None, *, timeout=180, root=API_PATH):
         body = None if value is None else json.dumps(value).encode()
         headers = {'Authorization': 'Bearer ' + self.env['FAAS_TOKEN'], 'Content-Type': 'application/json'}
         if method not in ('GET', 'HEAD'):
             headers['Idempotency-Key'] = str(uuid.uuid4())
-        return self.http.request(method, self.api_url + API_PATH + suffix,
+        return self.http.request(method, self.api_url + root + suffix,
                                  headers, body, timeout=timeout)
 
     def api(self, method, suffix='', value=None, status=200, code=None):
@@ -318,9 +325,10 @@ class Qualification(PilotProbes):
         result, elapsed = self.wait('expected edge release', check)
         return {**result, 'observed_after_seconds': elapsed, 'release_id': release}
 
-    def denied(self):
-        status, headers, _ = self.edge(authenticated=False)
-        require(status in (302, 303, 401, 403) and 'x-gregale-release' not in headers,
+    def denied(self, path='/', method='GET', headers=None):
+        status, received, _ = self.edge(path, authenticated=False, method=method, headers=headers)
+        require(status in (302, 303, 401, 403) and 'x-gregale-release' not in received and
+                'x-gregale-cache' not in received,
                 'An unauthenticated request was not denied by Access')
         return status
 
@@ -391,6 +399,7 @@ class Qualification(PilotProbes):
         binary = Path(shutil.which(self.args.binary) or self.args.binary)
         self.report['cli_sha256'] = digest(binary.read_bytes())
         self.check_private_endpoints()
+        self.prepare_acceptance()
         self.checked('preflight')
 
     def interrupted_release(self, files):
@@ -483,20 +492,30 @@ class Qualification(PilotProbes):
         require(created.get('name') == self.report['site_name'] and created.get('environment') == self.args.environment,
                 'Created site did not match the disposable qualification name and environment')
         self.site = self.accept_site(created, sid)
-        require(not (self.args.check_control_plane_outages or self.args.check_publication_recovery or self.args.edge_samples) or created['durable_routing'],
-                'Outage and regional probes require a newly created durable site')
+        require(not (self.args.check_control_plane_outages or self.args.check_publication_recovery or
+                     self.args.edge_samples or self.args.custom_domain) or created['durable_routing'],
+                'Outage, regional and custom-domain probes require a newly created durable site')
         self.report['routing_mode'] = 'durable' if created.get('durable_routing') is True else 'leased'
         require(not created.get('durable_routing') or self.deployment.get('durable_routing_enabled') is True,
                 'The API created a durable site but the Worker durable-routing switch is disabled')
         if not created.get('durable_routing'):
             self.report['not_run'].append('durable_site_suspension')
         self.checked('access_denied_before_publication', http_status=self.denied())
+        if self.args.check_usage:
+            self.quota_admission()
+        if self.args.custom_domain:
+            self.create_domain()
         self.interrupted_release(fixtures(run_id, 'recovered'))
+        self.check_usage_snapshot('after_finalization')
         with tempfile.TemporaryDirectory(prefix='gregale-hosting-qualification-') as temp:
             old, new = fixtures(run_id, 'first'), fixtures(run_id, 'second')
             first = self.deploy(old, Path(temp) / 'first')
             first_revision = self.site['revision']
             self.checked('first_deployment', **self.expect_file('/', first, old['index.html']))
+            self.access_contract(first, old)
+            if self.args.custom_domain:
+                self.ready_domain()
+                self.domain_contract('first_deployment', first, old)
             self.checked('edge_cache_hit', **self.expect_file('/', first, old['index.html'], cache_hit=True))
             self.checked('access_denied_after_cache_hit', http_status=self.denied())
             asset = next(path for path in old if path.endswith('.js'))
@@ -518,6 +537,8 @@ class Qualification(PilotProbes):
             self.checked('static_http_contract')
             second = self.deploy(new, Path(temp) / 'second')
             self.checked('updated_deployment', **self.expect_file('/', second, new['index.html']))
+            if self.args.custom_domain:
+                self.domain_contract('promotion', second, new)
             new_asset = next(path for path in new if path.endswith('.js'))
             self.expect_file('/' + new_asset, second, new[new_asset])
             self.expect_file('/' + asset, first, old[asset])
@@ -531,6 +552,9 @@ class Qualification(PilotProbes):
                     'CLI rollback did not advance this site to the retained release')
             self.site = rolled_back
             self.checked('rollback', **self.expect_file('/', first, old['index.html']))
+            self.check_usage_snapshot('after_rollback')
+            if self.args.custom_domain:
+                self.domain_contract('rollback', first, old)
             if self.site.get('durable_routing'):
                 if self.args.edge_samples:
                     self.edge_observations(first, old['index.html'])
@@ -547,6 +571,11 @@ class Qualification(PilotProbes):
                 return status == 404 and decode_json(body).get('code') == 'hosting_file_not_found'
             _, elapsed = self.wait('retired release to leave routing', retired)
             self.checked('retired_release_denied', observed_after_seconds=elapsed)
+            self.check_usage_snapshot('after_retirement')
+            if self.args.check_traffic:
+                self.traffic_observations()
+            if self.args.custom_domain:
+                self.remove_domain()
 
     def check_suspension(self, release, body):
         previous = self.site
@@ -558,6 +587,8 @@ class Qualification(PilotProbes):
             return status == 503 and 'x-gregale-release' not in headers and decode_json(payload).get('code') == 'hosting_route_unavailable'
         _, elapsed = self.wait('suspended site to stop serving', denied)
         self.checked('durable_site_suspended', observed_after_seconds=elapsed)
+        if self.domain is not None:
+            self.domain_denied_suspended()
         previous = self.site
         self.site = self.accept_site(self.cli('sites', 'resume', '--site', previous['id']), previous['id'])
         require(self.site.get('suspended') is False and self.site['revision'] > previous['revision'],
@@ -598,6 +629,7 @@ class Qualification(PilotProbes):
             self.checked('durable_deletion_head_retained', generation=head['generation'])
         self.report['cleanup']['status'] = 'passed'
         self.checked('artifact_and_metadata_cleanup', observed_after_seconds=elapsed)
+        self.finish_acceptance_cleanup()
 
     def run(self):
         # Reserve the evidence destination before any external action. Existing
@@ -633,7 +665,7 @@ class Qualification(PilotProbes):
             except (Failure, OSError, ValueError, KeyError, TypeError):
                 self.report['status'] = 'failed'
                 self.report['cleanup'] = {'status': 'failed', 'site_id': self.site.get('id') if self.site else None,
-                                          'action': 'Retire/delete the recorded qualification site and verify both storage prefixes'}
+                                          'action': 'Retire/delete the recorded qualification site and verify storage prefixes; preserve custom-domain DNS until provider cleanup is confirmed'}
             if self.args.resource_profile and self.report.get('resource_profile'):
                 try:
                     self.resource_snapshot('after_cleanup')
@@ -667,6 +699,10 @@ def main():
     parser.add_argument('--outage-interval', type=int, default=30, help='Seconds between bounded warm/cold outage probes')
     parser.add_argument('--edge-samples', type=int, default=0, help='Up to 100 unique cold assets, each followed by a repeat request')
     parser.add_argument('--runner-region', default='', help='Operator-supplied runner location label; observed Cloudflare locations are recorded separately')
+    parser.add_argument('--check-usage', action='store_true', help='Fill catalog reservations without uploads, check both account caps and cleanup; requires an empty, exclusive pilot account')
+    parser.add_argument('--check-traffic', action='store_true', help='Wait for nonzero approximate provider observations; requires API and Worker analytics opt-ins')
+    parser.add_argument('--custom-domain', default='', help='Disposable external CNAME subdomain, never reused after this run')
+    parser.add_argument('--domain-controller', type=Path, help='Absolute isolated DNS/Access controller; required with --custom-domain')
     args = parser.parse_args()
     if args.edge_timeout <= 0 or args.cleanup_timeout <= 0:
         parser.error('timeouts must be positive')

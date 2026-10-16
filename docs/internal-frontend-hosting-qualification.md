@@ -1,8 +1,9 @@
-# Internal hosting outage and regional qualification
+# Internal frontend hosting acceptance qualification
 
 The [hosting runner](../scripts/ops/internal-frontend-hosting-qualification.py)
 extends the [dedicated pilot procedure](internal-frontend-hosting.md#live-qualification).
-All fault injection, regional sampling, and resource profiling are opt-in. The
+Fault injection, regional sampling, resource profiling, quota probes, domain
+lifecycle, and traffic observations are opt-in. The
 runner never enables API admission, deploys a Worker, provisions a region, or
 selects a production API by default. Use the migration, API/CLI, and Worker from
 the same checkout. Durable responses must report `X-Gregale-Route-Generation`.
@@ -175,3 +176,168 @@ otherwise cross-restart CPU accounting remains unqualified. These are process
 and hosting-table observations on the dedicated pilot, including background
 work, not per-site CPU attribution or a billing implementation. File storage
 and CDN usage remain separate provider costs.
+
+## Run the extended acceptance scenarios
+
+The runner also supports independently opt-in account accounting, custom-domain
+lifecycle, and traffic observations. Every normal run now checks unauthenticated
+GET, HEAD, and conditional GET before a unique path is fetched and after its
+file cache has an observed hit. Authorized HEAD and 304 behavior remain part of
+the static HTTP contract.
+
+Run the portable failure fixtures without credentials or infrastructure:
+
+```bash
+python3 -m unittest discover -s scripts/ci -p 'test_internal_frontend_hosting_*.py'
+```
+
+These fixtures exercise the runner's decisions, including lost DNS command
+responses, ambiguous provider creates, missing terminal heads, wrong Access
+audiences, early storage release, and malformed or unavailable traffic reports.
+They do not establish actual DNS propagation, certificate issuance/renewal,
+Cloudflare entitlements, analytics ingestion, or regional performance. The same
+fixture command runs in the hosting workflow. No optional scenario enables a
+feature flag, deploys infrastructure, or buys a provider service.
+
+For a later, explicitly provisioned live pilot, add any of these options to the
+base command above:
+
+```bash
+--check-usage \
+--check-traffic \
+--custom-domain pilot.external-qualification.example \
+--domain-controller /absolute/operator/pilot-domain-controller
+```
+
+Use the same checkout for API, CLI, Worker, and qualification scripts. Do not use
+a previously reserved hostname: removing a domain retains its reservation and
+terminal head permanently. Use a fresh disposable external subdomain for each
+run. DNS for a Cloudflare-hosted customer domain must be in the separate account
+described in the [custom-domain runbook](internal-frontend-hosting-domains.md).
+
+### Account quota and cleanup evidence
+
+`--check-usage` requires an empty, exclusively owned disposable hosting account.
+Preflight refuses existing release reservations before creating a site; keep
+other writers out for the entire run. The scenario creates manifests declaring
+the advertised maximum release size, without requesting upload grants or
+uploading their bytes. With the current pilot limits it admits five 100 MiB
+release manifests, retaining their two-copy-plus-manifest reservations.
+
+It proves the pending-upload cap with a separate zero-payload manifest, retires
+one pending release to open a slot, and checks that retirement keeps its byte
+reservation. It then proves the storage cap with the next large manifest.
+Both 409 responses must include the expected stable code, limit, attempted
+value, and documentation URL. Storage rejection takes precedence when both
+limits would be exceeded. The quota fixture's releases are retired and their
+catalog cleanup is awaited before the normal deployment scenario starts.
+This adds another retirement grace period to a live run.
+
+After finalization, rollback, and retirement, the runner compares account usage
+with the manifest sizes and states in the exclusive site's catalog. It retries
+non-atomic reads that race background cleanup. Ready releases must no longer
+occupy pending slots; retiring releases still reserve bytes. After site removal
+and authenticated empty artifact-prefix listings, all six catalog counters must
+return to zero. Fixed routing/domain tombstones are intentionally outside this
+account reservation check. These observations do not measure physical bucket
+bytes, upload bandwidth/concurrency, or provider billing.
+
+### Custom-domain controller protocol
+
+`--custom-domain` and `--domain-controller` must be supplied together. Preflight
+requires API domain capability, applied Worker domain infrastructure and serving,
+and durable routing. The domain and CNAME target must match the isolated pilot.
+The controller must attest to an unused, exclusively owned disposable hostname;
+it must refuse existing or unrelated records, provider objects, and overlapping
+runs. No real controller is bundled: review and configure one for the intended
+DNS provider and protected operator identity before running this scenario.
+
+The controller is invoked as `[ABSOLUTE_EXECUTABLE, COMMAND]`, without a shell.
+Each command receives a JSON object on standard input, with this identity:
+
+```json
+{
+  "version": 1,
+  "api_origin": "https://api.pilot.example",
+  "account_id": "QUALIFICATION_ACCOUNT_UUID",
+  "origin_id": "ORIGIN_FINGERPRINT",
+  "worker_name": "gregale-internal-pilot",
+  "hostname": "pilot.external-qualification.example",
+  "run_id": "QUALIFICATION_RUN_UUID",
+  "records": [],
+  "access_aud": ""
+}
+```
+
+Return the seven identity fields unchanged in a JSON object of at most 16 KiB.
+Commands have a 45-second timeout. As with the outage controller, only basic
+process/proxy/CA settings and `SSH_AUTH_SOCK` are inherited. No runner API,
+canonical Access, Cloudflare, R2, or AWS credentials are supplied. Use protected
+operator mechanisms for the controller's own DNS and Access authorization.
+Child output, tokens, proof challenges, and record values never enter evidence.
+
+| Command | Required response and behavior |
+|---|---|
+| `describe` | Read-only; `dedicated: true`, `disposable_hostname: true`; verify this exact unused hostname and pilot, refuse overlap |
+| `sync` | `applied: true`; idempotently acquire run ownership and add/retain only the supplied DNS-only CNAME, Gregale proof TXT, and bounded provider-validation records; journal ownership before writes |
+| `token` | `access_token: "JWT"`; obtain a valid Access identity for this exact hostname and supplied application audience, without disabling or bypassing Access |
+| `clear` | `cleared: true`; idempotently remove only records journaled as owned by this run, release ownership; never remove another run's or pre-existing records |
+
+The runner derives the Gregale TXT/CNAME itself and rejects provider record
+names outside the disposable hostname. Subsequent syncs must retain earlier
+validation records until `clear`; certificates may depend on them. The runner
+persists the hostname/run ID and marks DNS cleanup required *before* any sync,
+so an applied write with a lost response still has a recovery identity. The
+controller must retain its journal across crashes; after a forcibly killed
+runner, use its recorded identity to finish provider/site cleanup and then
+idempotent `clear`. Do not automatically clear validation DNS on a timer while
+a live or uncertain provider object still depends on it.
+
+After DNS, TLS, Access, and alias publication are active, the controller obtains
+the domain-specific JWT. The runner observes exact HTML, an actual file-cache
+hit, authorized HEAD/304, and denial of anonymous and canonical-audience cookies.
+It repeats the serving checks after promotion and rollback, and verifies
+suspension through the alias. On removal it observes cached content revocation
+while DNS and the certificate still exist, then waits for the API domain row to
+be purged. It verifies the owned terminal R2 domain head before clearing DNS.
+It does not require successful HTTPS after provider cleanup: the removed
+hostname may no longer have a certificate.
+
+On failure the runner requests site deletion in its existing `finally` path.
+DNS is cleared only after site/provider catalog cleanup and an owned terminal
+head can be confirmed. If those checks fail, evidence retains `dns_cleanup:
+"required"` and recovery identity; preserve DNS and follow the
+[standard-plan recovery procedure](internal-frontend-hosting-domains.md#retry-remove-and-recover).
+A `provider_conflict` stops the normal scenario. The runner never chooses an
+unbound provider ID, resets a create marker, or automatically invokes recovery.
+A successful normal lifecycle does **not** qualify ambiguous-create recovery,
+domain-provider outages, or certificate renewal.
+
+### Traffic observation evidence
+
+`--check-traffic` requires the independent API analytics capability and applied
+Worker analytics binding/collection flags. After generating fixture traffic, it
+reads the site's no-store traffic endpoint and requires the canonical site ID,
+Analytics Engine source, approximate marker, valid sampling weight, fresh UTC
+24-hour window, ordered hourly buckets, matching bucket totals, and fixed
+bounded failure groups. Only counters and maximum sample weight are saved.
+
+An empty report is retried within `--edge-timeout`; it cannot prove collection
+is working. A provider/API error fails this scenario and cannot become zero
+traffic. Allow enough time for the first write, provider ingestion, and the API's
+one-minute query cache when selecting the timeout. There is no exact request or
+byte assertion: sampling, ingestion delay, and other authorized pilot traffic
+make those totals approximate. These checks do not qualify provider-query
+outage/recovery, actual delivered bytes, CPU, R2 operations, or billing. Follow
+the independent [traffic runbook](internal-frontend-hosting-traffic.md) for
+credentials, privacy, retention, and provider charges.
+
+## Interpret acceptance reports
+
+Reports now use `version: 2`. `status: "passed"` means the selected scenarios
+and cleanup completed. Each optional scenario remains in `not_run` until its
+own checks finish. `public_launch_qualified` remains false. Review `not_run`
+even when the selected run passes: ambiguous provider-create recovery,
+domain-provider and analytics-provider outages, certificate renewal, actual
+provider usage/billing, and unselected regional/control-plane scenarios remain
+explicit release gates. Fixture success never fills these live evidence gaps.
