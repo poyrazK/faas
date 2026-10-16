@@ -79,6 +79,11 @@ func testMCPServeStdioUsesSelectedProfile(t *testing.T, durable bool) {
 	var startupRequests int32
 	if durable {
 		stateDir := t.TempDir()
+		// Go's temporary directories inherit the host umask. The encrypted
+		// journal requires an explicitly private parent on every CI runner.
+		if err := os.Chmod(stateDir, 0700); err != nil {
+			t.Fatal(err)
+		}
 		keyPath := filepath.Join(stateDir, "key")
 		if err := os.WriteFile(keyPath, bytes.Repeat([]byte{7}, 32), 0600); err != nil {
 			t.Fatal(err)

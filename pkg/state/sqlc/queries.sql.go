@@ -45935,6 +45935,17 @@ func (q *Queries) LockCloneDeploymentCleanupRetirementWriters(ctx context.Contex
 	return err
 }
 
+const lockCloneEnvironmentCacheScopeBorrowers = `-- name: LockCloneEnvironmentCacheScopeBorrowers :exec
+LOCK TABLE environment_cache_schedule_events, environment_cache_schedules IN SHARE MODE
+`
+
+// Cache schedules and their retained events can borrow a scope even when their
+// environment UUID names another environment. Hold their writers through cleanup.
+func (q *Queries) LockCloneEnvironmentCacheScopeBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneEnvironmentCacheScopeBorrowers)
+	return err
+}
+
 const lockCloneEnvironmentCleanupScopeBorrowers = `-- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
 SELECT lock_clone_environment_cleanup_scope_borrowers()
 `
@@ -65514,6 +65525,13 @@ SELECT
  (SELECT count(*) FROM app_environment_workload_intents p WHERE p.environment_id=$1::uuid) AS app_environment_workload_intents,
  (SELECT count(*) FROM custom_domains p WHERE p.environment_id=$1::uuid) AS custom_domains,
  (SELECT count(*) FROM dev_bridge_sessions p WHERE p.environment_id=$1::uuid) AS dev_bridge_sessions,
+ (SELECT count(*) FROM environment_cache_gateway_observations p WHERE p.environment_id=$1::uuid) AS environment_cache_gateway_observations,
+ (SELECT count(*) FROM environment_cache_policy_history p WHERE p.environment_id=$1::uuid) AS environment_cache_policy_history,
+ (SELECT count(*) FROM environment_cache_policy_receipts p WHERE p.environment_id=$1::uuid) AS environment_cache_policy_receipts,
+ (SELECT count(*) FROM environment_cache_purges p WHERE p.environment_id=$1::uuid) AS environment_cache_purges,
+ (SELECT count(*) FROM environment_cache_schedule_event_counters p WHERE p.environment_id=$1::uuid) AS environment_cache_schedule_event_counters,
+ (SELECT count(*) FROM environment_cache_schedule_events p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$2::text)) AS environment_cache_schedule_events,
+ (SELECT count(*) FROM environment_cache_schedules p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$2::text)) AS environment_cache_schedules,
  (SELECT count(*) FROM environment_external_field_owners p WHERE p.environment_id=$1::uuid) AS environment_external_field_owners,
  (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=$1::uuid) AS environment_git_sources,
  (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=$1::uuid) AS environment_managed_fields,
@@ -65524,6 +65542,7 @@ SELECT
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_domains,
  (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$2::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_cache_policies p WHERE p.environment_id=$1::uuid) AS project_environment_cache_policies,
  (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_edge_policies,
  (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_qualifications,
  (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid) AS project_environment_queue_runtime_sets,
@@ -65543,31 +65562,39 @@ type ReadCloneEnvironmentMetadataBorrowersParams struct {
 }
 
 type ReadCloneEnvironmentMetadataBorrowersRow struct {
-	AppEnvironmentRouteBudgets           int64
-	AppEnvironmentSecretRefSuppressions  int64
-	AppEnvironmentSecretRefs             int64
-	AppEnvironmentWorkloadIntents        int64
-	CustomDomains                        int64
-	DevBridgeSessions                    int64
-	EnvironmentExternalFieldOwners       int64
-	EnvironmentGitSources                int64
-	EnvironmentManagedFields             int64
-	EnvironmentWorkloadGraphs            int64
-	EnvironmentWorkloadRetirements       int64
-	FeatureFlagVersions                  int64
-	InvocationEnvironmentQueueAdmissions int64
-	InvocationWorkEnvironmentAdmissions  int64
-	InvocationWorkEnvironmentDomains     int64
-	Invocations                          int64
-	ProjectEnvironmentEdgePolicies       int64
-	ProjectEnvironmentQualifications     int64
-	ProjectEnvironmentQueueRuntimeSets   int64
-	ProjectEnvironmentRoutePolicies      int64
-	ProjectEnvironmentWorkloadSpecs      int64
-	ProjectReleaseSets                   int64
-	RuntimeEnvironmentScalingStates      int64
-	OwnedDeployments                     int64
-	ForeignDeployments                   int64
+	AppEnvironmentRouteBudgets            int64
+	AppEnvironmentSecretRefSuppressions   int64
+	AppEnvironmentSecretRefs              int64
+	AppEnvironmentWorkloadIntents         int64
+	CustomDomains                         int64
+	DevBridgeSessions                     int64
+	EnvironmentCacheGatewayObservations   int64
+	EnvironmentCachePolicyHistory         int64
+	EnvironmentCachePolicyReceipts        int64
+	EnvironmentCachePurges                int64
+	EnvironmentCacheScheduleEventCounters int64
+	EnvironmentCacheScheduleEvents        int64
+	EnvironmentCacheSchedules             int64
+	EnvironmentExternalFieldOwners        int64
+	EnvironmentGitSources                 int64
+	EnvironmentManagedFields              int64
+	EnvironmentWorkloadGraphs             int64
+	EnvironmentWorkloadRetirements        int64
+	FeatureFlagVersions                   int64
+	InvocationEnvironmentQueueAdmissions  int64
+	InvocationWorkEnvironmentAdmissions   int64
+	InvocationWorkEnvironmentDomains      int64
+	Invocations                           int64
+	ProjectEnvironmentCachePolicies       int64
+	ProjectEnvironmentEdgePolicies        int64
+	ProjectEnvironmentQualifications      int64
+	ProjectEnvironmentQueueRuntimeSets    int64
+	ProjectEnvironmentRoutePolicies       int64
+	ProjectEnvironmentWorkloadSpecs       int64
+	ProjectReleaseSets                    int64
+	RuntimeEnvironmentScalingStates       int64
+	OwnedDeployments                      int64
+	ForeignDeployments                    int64
 }
 
 // Counts retained rows regardless of runtime status, TTL or tenant metadata.
@@ -65587,6 +65614,13 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.AppEnvironmentWorkloadIntents,
 		&i.CustomDomains,
 		&i.DevBridgeSessions,
+		&i.EnvironmentCacheGatewayObservations,
+		&i.EnvironmentCachePolicyHistory,
+		&i.EnvironmentCachePolicyReceipts,
+		&i.EnvironmentCachePurges,
+		&i.EnvironmentCacheScheduleEventCounters,
+		&i.EnvironmentCacheScheduleEvents,
+		&i.EnvironmentCacheSchedules,
 		&i.EnvironmentExternalFieldOwners,
 		&i.EnvironmentGitSources,
 		&i.EnvironmentManagedFields,
@@ -65597,6 +65631,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.InvocationWorkEnvironmentAdmissions,
 		&i.InvocationWorkEnvironmentDomains,
 		&i.Invocations,
+		&i.ProjectEnvironmentCachePolicies,
 		&i.ProjectEnvironmentEdgePolicies,
 		&i.ProjectEnvironmentQualifications,
 		&i.ProjectEnvironmentQueueRuntimeSets,

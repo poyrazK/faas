@@ -18242,6 +18242,13 @@ SELECT
  (SELECT count(*) FROM app_environment_workload_intents p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS app_environment_workload_intents,
  (SELECT count(*) FROM custom_domains p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS custom_domains,
  (SELECT count(*) FROM dev_bridge_sessions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS dev_bridge_sessions,
+ (SELECT count(*) FROM environment_cache_gateway_observations p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_cache_gateway_observations,
+ (SELECT count(*) FROM environment_cache_policy_history p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_cache_policy_history,
+ (SELECT count(*) FROM environment_cache_policy_receipts p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_cache_policy_receipts,
+ (SELECT count(*) FROM environment_cache_purges p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_cache_purges,
+ (SELECT count(*) FROM environment_cache_schedule_event_counters p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_cache_schedule_event_counters,
+ (SELECT count(*) FROM environment_cache_schedule_events p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)) AS environment_cache_schedule_events,
+ (SELECT count(*) FROM environment_cache_schedules p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)) AS environment_cache_schedules,
  (SELECT count(*) FROM environment_external_field_owners p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_external_field_owners,
  (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_git_sources,
  (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_managed_fields,
@@ -18252,6 +18259,7 @@ SELECT
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_domains,
  (SELECT count(*) FROM invocations p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_cache_policies p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS project_environment_cache_policies,
  (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text) AS project_environment_edge_policies,
  (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text) AS project_environment_qualifications,
  (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS project_environment_queue_runtime_sets,
@@ -18324,6 +18332,11 @@ SELECT
 
 -- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
 SELECT lock_clone_environment_cleanup_scope_borrowers();
+
+-- name: LockCloneEnvironmentCacheScopeBorrowers :exec
+-- Cache schedules and their retained events can borrow a scope even when their
+-- environment UUID names another environment. Hold their writers through cleanup.
+LOCK TABLE environment_cache_schedule_events, environment_cache_schedules IN SHARE MODE;
 
 -- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(

@@ -280,6 +280,15 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"deployments.scope",
 		"dev_bridge_sessions.environment_id",
 		"dev_bridge_sessions.scope",
+		"environment_cache_gateway_observations.environment_id",
+		"environment_cache_policy_history.environment_id",
+		"environment_cache_policy_receipts.environment_id",
+		"environment_cache_purges.environment_id",
+		"environment_cache_schedule_event_counters.environment_id",
+		"environment_cache_schedule_events.environment_id",
+		"environment_cache_schedule_events.scope",
+		"environment_cache_schedules.environment_id",
+		"environment_cache_schedules.scope",
 		"environment_external_field_owners.environment_id",
 		"environment_git_sources.environment_id",
 		"environment_gitops_runtime_effects.environment_slug",
@@ -307,6 +316,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"pg_ratelimit_counters.scope",
 		"production_lifecycle_reviews.scope", // Retained historical deployment review evidence.
 		"project_environment_approvals.environment_slug",
+		"project_environment_cache_policies.environment_id",
 		"project_environment_cleanup_jobs.environment_slug",
 		"project_environment_clone_configuration_ownership.environment_id",
 		"project_environment_clone_deployment_cleanups.environment_id",
@@ -401,7 +411,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness"} {
+	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness", "cache_schedule", "cache_event"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -412,6 +422,10 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		}
 		if borrower == "foreign_key" {
 			_, err = tx.Exec(ctx, "INSERT INTO custom_domains(domain,app_id,environment_id) VALUES('racing.example.com',$1,$2)", appID, native.Plan.EnvironmentID)
+		} else if borrower == "cache_schedule" {
+			_, err = tx.Exec(ctx, "LOCK TABLE environment_cache_schedules IN ROW EXCLUSIVE MODE")
+		} else if borrower == "cache_event" {
+			_, err = tx.Exec(ctx, "LOCK TABLE environment_cache_schedule_events IN ROW EXCLUSIVE MODE")
 		} else if borrower == "workflow_readiness" {
 			_, err = tx.Exec(ctx, "LOCK TABLE customer_workflow_readiness_subscriptions IN ROW EXCLUSIVE MODE")
 		} else if borrower == "workflow_state" {

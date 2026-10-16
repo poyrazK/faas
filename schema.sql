@@ -25508,6 +25508,179 @@ CREATE TABLE public.entity_outbox_acceptances (
 
 
 --
+-- Name: environment_cache_gateway_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_gateway_observations (
+    node_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_cache_gateway_observations_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: environment_cache_gateway_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_gateway_sessions (
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    gateway_target_url text NOT NULL,
+    heartbeat_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: environment_cache_policy_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_policy_history (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    snapshot jsonb NOT NULL,
+    CONSTRAINT environment_cache_policy_history_revision_check CHECK (((revision > 0) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT environment_cache_policy_history_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: environment_cache_policy_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_policy_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb NOT NULL
+);
+
+
+--
+-- Name: environment_cache_purge_watermarks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_purge_watermarks (
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    last_id bigint NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_cache_purge_watermarks_last_id_check CHECK (((last_id >= 0) AND (last_id <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: environment_cache_purges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_purges (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    path text NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_cache_purges_id_check CHECK (((id > 0) AND (id <= '9007199254740991'::bigint))),
+    CONSTRAINT environment_cache_purges_path_check CHECK ((octet_length(path) <= 1024))
+);
+
+
+--
+-- Name: environment_cache_purges_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.environment_cache_purges ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.environment_cache_purges_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: environment_cache_schedule_event_counters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_schedule_event_counters (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    last_sequence bigint NOT NULL,
+    pruned_through bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT environment_cache_schedule_event_counters_check CHECK (((pruned_through >= 0) AND (pruned_through <= last_sequence))),
+    CONSTRAINT environment_cache_schedule_event_counters_last_sequence_check CHECK (((last_sequence > 0) AND (last_sequence <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: environment_cache_schedule_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_schedule_events (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    scope text NOT NULL,
+    sequence bigint NOT NULL,
+    payload jsonb NOT NULL,
+    occurred_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_cache_schedule_events_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT environment_cache_schedule_events_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
+    CONSTRAINT environment_cache_schedule_events_sequence_check CHECK (((sequence > 0) AND (sequence <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: environment_cache_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_cache_schedules (
+    schedule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    scope text NOT NULL,
+    request jsonb NOT NULL,
+    execute_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    status text DEFAULT 'scheduled'::text NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    finished_at timestamp with time zone,
+    error_code text DEFAULT ''::text NOT NULL,
+    result jsonb DEFAULT '{}'::jsonb NOT NULL,
+    replaces_schedule_id uuid,
+    replaced_by_schedule_id uuid,
+    CONSTRAINT environment_cache_schedule_replaced CHECK (((replaced_by_schedule_id IS NULL) OR ((replaced_by_schedule_id <> schedule_id) AND (status = 'cancelled'::text)))),
+    CONSTRAINT environment_cache_schedule_replaces CHECK (((replaces_schedule_id IS NULL) OR (replaces_schedule_id <> schedule_id))),
+    CONSTRAINT environment_cache_schedules_check CHECK (((status = 'executing'::text) = ((lease_token IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT environment_cache_schedules_check1 CHECK (((status = ANY (ARRAY['executed'::text, 'failed'::text, 'cancelled'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT environment_cache_schedules_error_code_check CHECK ((length(error_code) <= 64)),
+    CONSTRAINT environment_cache_schedules_execute_at_check CHECK (isfinite(execute_at)),
+    CONSTRAINT environment_cache_schedules_request_check CHECK ((jsonb_typeof(request) = 'object'::text)),
+    CONSTRAINT environment_cache_schedules_result_check CHECK ((jsonb_typeof(result) = 'object'::text)),
+    CONSTRAINT environment_cache_schedules_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
+    CONSTRAINT environment_cache_schedules_status_check CHECK ((status = ANY (ARRAY['scheduled'::text, 'executing'::text, 'executed'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
 -- Name: environment_desired_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33387,6 +33560,25 @@ CREATE TABLE public.project_environment_approvals (
 
 
 --
+-- Name: project_environment_cache_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_cache_policies (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    inherited boolean DEFAULT false NOT NULL,
+    CONSTRAINT environment_cache_inherited_empty CHECK (((NOT inherited) OR (rules = '[]'::jsonb))),
+    CONSTRAINT project_environment_cache_policies_revision_check CHECK (((revision > 0) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_cache_policies_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 20)))
+);
+
+
+--
 -- Name: project_environment_cleanup_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40679,6 +40871,102 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_cache_gateway_observations environment_cache_gateway_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_gateway_observations
+    ADD CONSTRAINT environment_cache_gateway_observations_pkey PRIMARY KEY (node_id, app_id, environment_id);
+
+
+--
+-- Name: environment_cache_gateway_sessions environment_cache_gateway_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_gateway_sessions
+    ADD CONSTRAINT environment_cache_gateway_sessions_pkey PRIMARY KEY (node_id);
+
+
+--
+-- Name: environment_cache_policy_history environment_cache_policy_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_history
+    ADD CONSTRAINT environment_cache_policy_history_pkey PRIMARY KEY (app_id, environment_id, revision);
+
+
+--
+-- Name: environment_cache_policy_receipts environment_cache_policy_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_receipts
+    ADD CONSTRAINT environment_cache_policy_receipts_pkey PRIMARY KEY (account_id, request_id);
+
+
+--
+-- Name: environment_cache_purge_watermarks environment_cache_purge_watermarks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purge_watermarks
+    ADD CONSTRAINT environment_cache_purge_watermarks_pkey PRIMARY KEY (node_id);
+
+
+--
+-- Name: environment_cache_purges environment_cache_purges_account_id_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purges
+    ADD CONSTRAINT environment_cache_purges_account_id_request_id_key UNIQUE (account_id, request_id);
+
+
+--
+-- Name: environment_cache_purges environment_cache_purges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purges
+    ADD CONSTRAINT environment_cache_purges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_cache_schedule_event_counters environment_cache_schedule_event_counters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_event_counters
+    ADD CONSTRAINT environment_cache_schedule_event_counters_pkey PRIMARY KEY (app_id, environment_id);
+
+
+--
+-- Name: environment_cache_schedule_events environment_cache_schedule_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_events
+    ADD CONSTRAINT environment_cache_schedule_events_pkey PRIMARY KEY (app_id, environment_id, sequence);
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_pkey PRIMARY KEY (schedule_id);
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_replaced_by_schedule_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_replaced_by_schedule_id_key UNIQUE (replaced_by_schedule_id);
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_replaces_schedule_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_replaces_schedule_id_key UNIQUE (replaces_schedule_id);
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44084,6 +44372,14 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_cache_policies project_environment_cache_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_cache_policies
+    ADD CONSTRAINT project_environment_cache_policies_pkey PRIMARY KEY (app_id, environment_id);
 
 
 --
@@ -48750,6 +49046,41 @@ CREATE INDEX egress_flow_log_remote_ip_idx ON public.egress_flow_log USING gist 
 --
 
 CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: environment_cache_gateway_observations_policy_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_cache_gateway_observations_policy_idx ON public.environment_cache_gateway_observations USING btree (app_id, environment_id);
+
+
+--
+-- Name: environment_cache_purges_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_cache_purges_target_idx ON public.environment_cache_purges USING btree (app_id, environment_id, id);
+
+
+--
+-- Name: environment_cache_schedules_discovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_cache_schedules_discovery ON public.environment_cache_schedules USING btree (account_id, app_id, environment_id, execute_at, schedule_id);
+
+
+--
+-- Name: environment_cache_schedules_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_cache_schedules_due ON public.environment_cache_schedules USING btree (execute_at) WHERE (status = ANY (ARRAY['scheduled'::text, 'executing'::text]));
+
+
+--
+-- Name: environment_cache_schedules_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_cache_schedules_target ON public.environment_cache_schedules USING btree (account_id, app_id, environment_id);
 
 
 --
@@ -61714,6 +62045,246 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_cache_gateway_observations environment_cache_gateway_observations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_gateway_observations
+    ADD CONSTRAINT environment_cache_gateway_observations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_gateway_observations environment_cache_gateway_observations_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_gateway_observations
+    ADD CONSTRAINT environment_cache_gateway_observations_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_gateway_observations environment_cache_gateway_observations_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_gateway_observations
+    ADD CONSTRAINT environment_cache_gateway_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_gateway_sessions environment_cache_gateway_sessions_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_gateway_sessions
+    ADD CONSTRAINT environment_cache_gateway_sessions_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_history environment_cache_policy_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_history
+    ADD CONSTRAINT environment_cache_policy_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_history environment_cache_policy_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_history
+    ADD CONSTRAINT environment_cache_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_history environment_cache_policy_history_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_history
+    ADD CONSTRAINT environment_cache_policy_history_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_history environment_cache_policy_history_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_history
+    ADD CONSTRAINT environment_cache_policy_history_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_receipts environment_cache_policy_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_receipts
+    ADD CONSTRAINT environment_cache_policy_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_receipts environment_cache_policy_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_receipts
+    ADD CONSTRAINT environment_cache_policy_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_policy_receipts environment_cache_policy_receipts_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_policy_receipts
+    ADD CONSTRAINT environment_cache_policy_receipts_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_purge_watermarks environment_cache_purge_watermarks_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purge_watermarks
+    ADD CONSTRAINT environment_cache_purge_watermarks_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_purges environment_cache_purges_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purges
+    ADD CONSTRAINT environment_cache_purges_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_purges environment_cache_purges_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purges
+    ADD CONSTRAINT environment_cache_purges_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_purges environment_cache_purges_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purges
+    ADD CONSTRAINT environment_cache_purges_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_purges environment_cache_purges_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_purges
+    ADD CONSTRAINT environment_cache_purges_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_event_counters environment_cache_schedule_event_counters_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_event_counters
+    ADD CONSTRAINT environment_cache_schedule_event_counters_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_event_counters environment_cache_schedule_event_counters_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_event_counters
+    ADD CONSTRAINT environment_cache_schedule_event_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_event_counters environment_cache_schedule_event_counters_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_event_counters
+    ADD CONSTRAINT environment_cache_schedule_event_counters_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_event_counters environment_cache_schedule_event_counters_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_event_counters
+    ADD CONSTRAINT environment_cache_schedule_event_counters_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_events environment_cache_schedule_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_events
+    ADD CONSTRAINT environment_cache_schedule_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_events environment_cache_schedule_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_events
+    ADD CONSTRAINT environment_cache_schedule_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_events environment_cache_schedule_events_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_events
+    ADD CONSTRAINT environment_cache_schedule_events_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedule_events environment_cache_schedule_events_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedule_events
+    ADD CONSTRAINT environment_cache_schedule_events_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_replaced_by_schedule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_replaced_by_schedule_id_fkey FOREIGN KEY (replaced_by_schedule_id) REFERENCES public.environment_cache_schedules(schedule_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: environment_cache_schedules environment_cache_schedules_replaces_schedule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_cache_schedules
+    ADD CONSTRAINT environment_cache_schedules_replaces_schedule_id_fkey FOREIGN KEY (replaces_schedule_id) REFERENCES public.environment_cache_schedules(schedule_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65762,6 +66333,38 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 
 --
+-- Name: project_environment_cache_policies project_environment_cache_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_cache_policies
+    ADD CONSTRAINT project_environment_cache_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_cache_policies project_environment_cache_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_cache_policies
+    ADD CONSTRAINT project_environment_cache_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_cache_policies project_environment_cache_policies_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_cache_policies
+    ADD CONSTRAINT project_environment_cache_policies_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_cache_policies project_environment_cache_policies_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_cache_policies
+    ADD CONSTRAINT project_environment_cache_policies_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_clone_checkpoint_pg_connection_values project_environment_clone_ch_operation_id_source_binding__fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68683,127 +69286,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
-
-CREATE TABLE project_environment_cache_policies (
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- revision bigint NOT NULL CHECK (revision > 0 AND revision <= 9007199254740991),
- rules jsonb NOT NULL CHECK (jsonb_typeof(rules)='array' AND jsonb_array_length(rules)<=20),
- updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY(app_id,environment_id)
-);
-CREATE TABLE environment_cache_policy_receipts (
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- request_id uuid NOT NULL,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- request_hash text NOT NULL,
- response jsonb NOT NULL,
- PRIMARY KEY(account_id,request_id)
-);
-
-
-CREATE TABLE environment_cache_gateway_sessions (
- node_id uuid PRIMARY KEY REFERENCES compute_nodes(id) ON DELETE CASCADE,
- session_id uuid NOT NULL,
- started_at timestamptz NOT NULL,
- gateway_target_url text NOT NULL,
- heartbeat_at timestamptz NOT NULL DEFAULT clock_timestamp()
-);
-CREATE TABLE environment_cache_gateway_observations (
- node_id uuid NOT NULL REFERENCES compute_nodes(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- session_id uuid NOT NULL,
- revision bigint NOT NULL CHECK (revision>0),
- observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY(node_id,app_id,environment_id)
-);
-CREATE INDEX environment_cache_gateway_observations_policy_idx ON environment_cache_gateway_observations(app_id,environment_id);
-
--- Preserve a monotonic revision when returning to live app inheritance.
-ALTER TABLE project_environment_cache_policies ADD COLUMN inherited boolean NOT NULL DEFAULT false;
-ALTER TABLE project_environment_cache_policies ADD CONSTRAINT environment_cache_inherited_empty CHECK (NOT inherited OR rules='[]'::jsonb);
-
-CREATE TABLE environment_cache_policy_history (
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- revision bigint NOT NULL CHECK (revision>0 AND revision<=9007199254740991),
- snapshot jsonb NOT NULL CHECK (jsonb_typeof(snapshot)='object'),
- PRIMARY KEY(app_id,environment_id,revision)
-);
-
-CREATE TABLE environment_cache_purges (
- id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY CHECK (id>0 AND id<=9007199254740991),
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- request_id uuid NOT NULL,
- path text NOT NULL CHECK (octet_length(path)<=1024),
- requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- UNIQUE(account_id,request_id)
-);
-CREATE INDEX environment_cache_purges_target_idx ON environment_cache_purges(app_id,environment_id,id);
-CREATE TABLE environment_cache_purge_watermarks (
- node_id uuid PRIMARY KEY REFERENCES compute_nodes(id) ON DELETE CASCADE,
- session_id uuid NOT NULL,
- last_id bigint NOT NULL CHECK (last_id>=0 AND last_id<=9007199254740991),
- observed_at timestamptz NOT NULL DEFAULT clock_timestamp()
-);
-
-CREATE TABLE environment_cache_schedules (
- schedule_id uuid PRIMARY KEY,
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- scope text NOT NULL CHECK (length(scope) BETWEEN 1 AND 63),
- request jsonb NOT NULL CHECK (jsonb_typeof(request)='object'),
- execute_at timestamptz NOT NULL CHECK (isfinite(execute_at)),
- created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- status text NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','executing','executed','failed','cancelled')),
- lease_token uuid,
- lease_until timestamptz,
- finished_at timestamptz,
- error_code text NOT NULL DEFAULT '' CHECK (length(error_code)<=64),
- result jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(result)='object'),
- CHECK ((status='executing')=(lease_token IS NOT NULL AND lease_until IS NOT NULL)),
- CHECK ((status IN ('executed','failed','cancelled'))=(finished_at IS NOT NULL))
-);
-CREATE INDEX environment_cache_schedules_due ON environment_cache_schedules(execute_at) WHERE status IN ('scheduled','executing');
-CREATE INDEX environment_cache_schedules_target ON environment_cache_schedules(account_id,app_id,environment_id);
-
-ALTER TABLE environment_cache_schedules
- ADD COLUMN replaces_schedule_id uuid UNIQUE REFERENCES environment_cache_schedules(schedule_id) DEFERRABLE INITIALLY DEFERRED,
- ADD COLUMN replaced_by_schedule_id uuid UNIQUE REFERENCES environment_cache_schedules(schedule_id) DEFERRABLE INITIALLY DEFERRED,
- ADD CONSTRAINT environment_cache_schedule_replaces CHECK (replaces_schedule_id IS NULL OR replaces_schedule_id<>schedule_id),
- ADD CONSTRAINT environment_cache_schedule_replaced CHECK (replaced_by_schedule_id IS NULL OR (replaced_by_schedule_id<>schedule_id AND status='cancelled'));
-CREATE INDEX environment_cache_schedules_discovery ON environment_cache_schedules(account_id,app_id,environment_id,execute_at,schedule_id);
-
-CREATE TABLE environment_cache_schedule_event_counters (
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- last_sequence bigint NOT NULL CHECK (last_sequence>0 AND last_sequence<=9007199254740991),
- PRIMARY KEY(app_id,environment_id)
-);
-CREATE TABLE environment_cache_schedule_events (
- account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
- project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
- scope text NOT NULL CHECK (length(scope) BETWEEN 1 AND 63),
- sequence bigint NOT NULL CHECK (sequence>0 AND sequence<=9007199254740991),
- payload jsonb NOT NULL CHECK (jsonb_typeof(payload)='object'),
- occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY(app_id,environment_id,sequence)
-);
-
-ALTER TABLE environment_cache_schedule_event_counters
- ADD COLUMN pruned_through bigint NOT NULL DEFAULT 0 CHECK (pruned_through>=0 AND pruned_through<=last_sequence);

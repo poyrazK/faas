@@ -2428,6 +2428,9 @@ type Querier interface {
 	LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error
 	// Deployment UUID arrays retain original artifacts without a foreign-key lock.
 	LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error
+	// Cache schedules and their retained events can borrow a scope even when their
+	// environment UUID names another environment. Hold their writers through cleanup.
+	LockCloneEnvironmentCacheScopeBorrowers(ctx context.Context, db DBTX) error
 	LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error
 	LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.

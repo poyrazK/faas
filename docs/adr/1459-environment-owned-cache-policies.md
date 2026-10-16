@@ -60,3 +60,13 @@ environment clone operations do not copy it; a new environment starts with app
 inheritance until explicitly configured. Restoring inheritance, declarative
 ownership and clone integration are future additions. Native default scope
 and shared cache rules keep their existing APIs and consent model.
+
+The clone schema inventory classifies cache policies, policy history and deferred
+cache schedules as configuration requiring an isolated copy strategy. Gateway
+sessions, observations, purge commands/watermarks, request receipts and activity
+feeds remain operational state. Clone compensation counts all eight direct
+environment borrowers before deleting its original environment, including
+terminal schedules, retained history and pruned activity counters. Schedule and
+activity scope references also block cleanup independently of their environment
+UUID, with their writers locked through the cleanup commit. Inventory registration
+does not enable copying cache intent or cascading retained cache records.

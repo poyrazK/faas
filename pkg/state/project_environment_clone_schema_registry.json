@@ -3372,6 +3372,126 @@
     "kind": "operational"
   },
   {
+    "table": "environment_cache_gateway_observations",
+    "columns": [
+      "app_id",
+      "environment_id",
+      "node_id",
+      "observed_at",
+      "revision",
+      "session_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_gateway_sessions",
+    "columns": [
+      "gateway_target_url",
+      "heartbeat_at",
+      "node_id",
+      "session_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_policy_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "project_id",
+      "revision",
+      "snapshot"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "environment_cache_policy_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "request_hash",
+      "request_id",
+      "response"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_purge_watermarks",
+    "columns": [
+      "last_id",
+      "node_id",
+      "observed_at",
+      "session_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_purges",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "id",
+      "path",
+      "project_id",
+      "request_id",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_schedule_event_counters",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "last_sequence",
+      "project_id",
+      "pruned_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_schedule_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "occurred_at",
+      "payload",
+      "project_id",
+      "scope",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_cache_schedules",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "environment_id",
+      "error_code",
+      "execute_at",
+      "finished_at",
+      "lease_token",
+      "lease_until",
+      "project_id",
+      "replaced_by_schedule_id",
+      "replaces_schedule_id",
+      "request",
+      "result",
+      "schedule_id",
+      "scope",
+      "status"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "environment_desired_revisions",
     "columns": [
       "approved_at",
@@ -8570,6 +8690,20 @@
       "token_kind"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_cache_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
+      "inherited",
+      "project_id",
+      "revision",
+      "rules",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "project_environment_cleanup_jobs",
