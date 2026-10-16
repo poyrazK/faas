@@ -1,9 +1,9 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS public.issue_tracker_auto_sync (
- link_id uuid PRIMARY KEY REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
- source_issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS issue_tracker_auto_sync (
+ link_id uuid PRIMARY KEY REFERENCES issue_tracker_links(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ source_issue_id uuid NOT NULL REFERENCES app_issues(id) ON DELETE CASCADE,
  enabled boolean NOT NULL DEFAULT true,
  revision bigint NOT NULL DEFAULT 1 CHECK(revision>0),
  binding_fingerprint text NOT NULL CHECK(binding_fingerprint ~ '^[a-f0-9]{64}$'),
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.issue_tracker_auto_sync (
  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS issue_tracker_auto_sync_due_idx ON public.issue_tracker_auto_sync(next_check_at,link_id) WHERE enabled AND outcome IN ('matched','pending','applied','error');
+CREATE INDEX IF NOT EXISTS issue_tracker_auto_sync_due_idx ON issue_tracker_auto_sync(next_check_at,link_id) WHERE enabled AND outcome IN ('matched','pending','applied','error');
 
 -- +goose Down
 -- +goose StatementBegin
@@ -28,5 +28,5 @@ DO $$ BEGIN
   RAISE EXCEPTION 'automatic tracker sync policies are in use; disable and preserve them before rollback';
  END IF;
 END $$;
-DROP TABLE public.issue_tracker_auto_sync;
+DROP TABLE issue_tracker_auto_sync;
 -- +goose StatementEnd

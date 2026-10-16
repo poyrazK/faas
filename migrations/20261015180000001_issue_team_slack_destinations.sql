@@ -1,9 +1,9 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS public.issue_team_slack_destinations (
+CREATE TABLE IF NOT EXISTS issue_team_slack_destinations (
  id uuid PRIMARY KEY,
- app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL,
- team_id uuid NOT NULL REFERENCES public.app_issue_teams(id) ON DELETE CASCADE,
+ team_id uuid NOT NULL REFERENCES app_issue_teams(id) ON DELETE CASCADE,
  channel_id text NOT NULL CHECK(channel_id ~ '^[CG][A-Z0-9]{8,31}$'),
  token_sealed bytea NOT NULL CHECK(octet_length(token_sealed)>0),
  enabled boolean NOT NULL DEFAULT false,
@@ -16,13 +16,13 @@ CREATE TABLE IF NOT EXISTS public.issue_team_slack_destinations (
  UNIQUE(app_id,team_id)
 );
 
-CREATE TABLE IF NOT EXISTS public.issue_team_slack_deliveries (
+CREATE TABLE IF NOT EXISTS issue_team_slack_deliveries (
  id uuid PRIMARY KEY,
  delivery_seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
  channel_id text NOT NULL CHECK(channel_id ~ '^[CG][A-Z0-9]{8,31}$'),
- destination_id uuid NOT NULL REFERENCES public.issue_team_slack_destinations(id) ON DELETE CASCADE,
+ destination_id uuid NOT NULL REFERENCES issue_team_slack_destinations(id) ON DELETE CASCADE,
  destination_revision bigint NOT NULL CHECK(destination_revision>0),
- notification_id uuid NOT NULL REFERENCES public.issue_tracker_sync_notifications(id) ON DELETE CASCADE,
+ notification_id uuid NOT NULL REFERENCES issue_tracker_sync_notifications(id) ON DELETE CASCADE,
  incident_id uuid NOT NULL,
  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','in_flight','failed','succeeded','dead','canceled')),
  attempt integer NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 7),
@@ -39,12 +39,12 @@ CREATE TABLE IF NOT EXISTS public.issue_team_slack_deliveries (
  UNIQUE(destination_id,destination_revision,notification_id)
 );
 
-CREATE INDEX IF NOT EXISTS issue_team_slack_delivery_due ON public.issue_team_slack_deliveries(next_attempt_at,delivery_seq) WHERE status IN ('pending','failed','in_flight');
+CREATE INDEX IF NOT EXISTS issue_team_slack_delivery_due ON issue_team_slack_deliveries(next_attempt_at,delivery_seq) WHERE status IN ('pending','failed','in_flight');
 
-CREATE INDEX IF NOT EXISTS issue_team_slack_delivery_thread ON public.issue_team_slack_deliveries(destination_id,destination_revision,incident_id,delivery_seq);
+CREATE INDEX IF NOT EXISTS issue_team_slack_delivery_thread ON issue_team_slack_deliveries(destination_id,destination_revision,incident_id,delivery_seq);
 
-CREATE TABLE IF NOT EXISTS public.issue_team_slack_threads (
- destination_id uuid NOT NULL REFERENCES public.issue_team_slack_destinations(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS issue_team_slack_threads (
+ destination_id uuid NOT NULL REFERENCES issue_team_slack_destinations(id) ON DELETE CASCADE,
  destination_revision bigint NOT NULL CHECK(destination_revision>0),
  incident_id uuid NOT NULL,
  root_ts text NOT NULL DEFAULT '' CHECK(root_ts='' OR root_ts ~ '^[0-9]{1,20}\.[0-9]{1,10}$'),

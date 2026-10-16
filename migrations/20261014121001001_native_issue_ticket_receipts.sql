@@ -1,9 +1,9 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS public.native_issue_ticket_receipts (
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS native_issue_ticket_receipts (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  request_id uuid NOT NULL,
- app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
- issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ issue_id uuid NOT NULL REFERENCES app_issues(id) ON DELETE CASCADE,
  request_hash text NOT NULL CHECK(request_hash ~ '^[a-f0-9]{64}$'),
  state text NOT NULL DEFAULT 'ready' CHECK(state IN ('ready','dispatching','created','linked')),
  claim_id uuid,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS public.native_issue_ticket_receipts (
  CHECK (state<>'dispatching' OR (claim_id IS NOT NULL AND recover_after IS NOT NULL))
 );
 
-CREATE INDEX IF NOT EXISTS native_issue_ticket_receipts_issue_idx ON public.native_issue_ticket_receipts(issue_id);
+CREATE INDEX IF NOT EXISTS native_issue_ticket_receipts_issue_idx ON native_issue_ticket_receipts(issue_id);
 
 -- +goose Down
 -- +goose StatementBegin
@@ -29,5 +29,5 @@ DO $$ BEGIN
   RAISE EXCEPTION 'native ticket recovery receipts are in use; preserve them before rollback';
  END IF;
 END $$;
-DROP TABLE public.native_issue_ticket_receipts;
+DROP TABLE native_issue_ticket_receipts;
 -- +goose StatementEnd

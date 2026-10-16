@@ -1,7 +1,7 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS public.issue_tracker_callback_diagnostics (
- app_id uuid PRIMARY KEY REFERENCES public.issue_tracker_linear_connections(app_id) ON DELETE CASCADE,
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS issue_tracker_callback_diagnostics (
+ app_id uuid PRIMARY KEY REFERENCES issue_tracker_linear_connections(app_id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  connection_revision bigint NOT NULL CHECK(connection_revision>0),
  invalid_signature bigint NOT NULL DEFAULT 0 CHECK(invalid_signature>=0),
  wrong_scope bigint NOT NULL DEFAULT 0 CHECK(wrong_scope>=0),
@@ -19,5 +19,5 @@ DO $$ BEGIN
   RAISE EXCEPTION 'preserve callback diagnostics before rollback';
  END IF;
 END $$;
-DROP TABLE public.issue_tracker_callback_diagnostics;
+DROP TABLE issue_tracker_callback_diagnostics;
 -- +goose StatementEnd

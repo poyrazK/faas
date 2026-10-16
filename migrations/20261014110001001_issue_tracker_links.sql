@@ -1,19 +1,19 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS public.issue_tracker_links (
+CREATE TABLE IF NOT EXISTS issue_tracker_links (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
- issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
+ issue_id uuid NOT NULL REFERENCES app_issues(id) ON DELETE CASCADE,
  provider text NOT NULL CHECK(provider IN ('github','linear')),
  external_key text NOT NULL CHECK(octet_length(external_key) BETWEEN 1 AND 256),
  url text NOT NULL CHECK(octet_length(url) BETWEEN 1 AND 512),
  title text NOT NULL DEFAULT '' CHECK(octet_length(title)<=256),
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now(),
- created_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
- updated_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ created_by_account_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
+ updated_by_account_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
  UNIQUE(issue_id,provider,external_key)
 );
 
-CREATE INDEX IF NOT EXISTS issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS issue_tracker_links_page_idx ON issue_tracker_links(issue_id,created_at DESC,id DESC);
 -- +goose StatementBegin
 
 DO $issue_replay$ BEGIN

@@ -1,7 +1,7 @@
 -- +goose Up
-CREATE TABLE IF NOT EXISTS public.issue_tracker_linear_connections (
- app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS issue_tracker_linear_connections (
+ app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  connected boolean NOT NULL,
  workspace_id uuid,
@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS public.issue_tracker_linear_connections (
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN
- IF EXISTS(SELECT 1 FROM public.issue_tracker_linear_connections WHERE connected) THEN
+ IF EXISTS(SELECT 1 FROM issue_tracker_linear_connections WHERE connected) THEN
   RAISE EXCEPTION 'disconnect Linear connections before rollback';
  END IF;
 END $$;
-DROP TABLE public.issue_tracker_linear_connections;
+DROP TABLE issue_tracker_linear_connections;
 -- +goose StatementEnd
