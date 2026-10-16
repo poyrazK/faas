@@ -21,6 +21,7 @@ import (
 type testHost struct {
 	enabled, allowed, durable bool
 	analytics                 bool
+	config                    bool
 	trafficReader             artifacts.TrafficReader
 	domains                   bool
 	domainProvider            artifacts.DomainProvider
@@ -211,3 +212,5 @@ func TestFinalizeCannotPublishReadyAfterFailureOrDisable(t *testing.T) {
 
 func (h *testHost) HostingAnalyticsEnabled() bool                 { return h.analytics }
 func (h *testHost) HostingTrafficReader() artifacts.TrafficReader { return h.trafficReader }
+
+func (h *testHost) HostingConfigEnabled() bool { return h.config }

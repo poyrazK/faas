@@ -170,7 +170,10 @@ func (s Service) CreateRelease(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	var manifest api.HostingManifest
 	if err := httpkit.DecodeJSONSized(r, &manifest, api.HostingManifestMaxBytes); err != nil || artifacts.ValidateManifest(manifest) != nil {
-		api.WriteProblem(w, api.ErrValidation("a bounded static manifest with unique file paths, sizes, SHA-256 digests, content types, and index.html is required"))
+		api.WriteProblem(w, api.ErrValidation("a bounded static manifest with unique file paths, sizes, SHA-256 digests, content types, index.html, and valid optional release configuration is required"))
+		return
+	}
+	if !s.requireConfig(w, manifest) {
 		return
 	}
 	release, err := s.Host.HostingStore().CreateHostingRelease(r.Context(), acct.ID, site.ID, manifest)
@@ -222,6 +225,9 @@ func (s Service) Finalize(w http.ResponseWriter, r *http.Request, acct state.Acc
 	if !ok {
 		return
 	}
+	if !s.requireConfig(w, release.Manifest) {
+		return
+	}
 	if release.State == "ready" {
 		httpkit.WriteJSON(w, http.StatusOK, release)
 		return
@@ -238,7 +244,7 @@ func (s Service) Finalize(w http.ResponseWriter, r *http.Request, acct state.Acc
 	}
 	// Re-check the switch after potentially slow storage calls. A disabled
 	// pilot must not acknowledge new ready releases or promote them.
-	if !s.guard(w, acct) {
+	if !s.guard(w, acct) || !s.requireConfig(w, release.Manifest) {
 		return
 	}
 	release, err := s.Host.HostingStore().ReadyHostingRelease(ctx, acct.ID, release.SiteID, release.ID)
@@ -260,7 +266,15 @@ func (s Service) Promote(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrValidation("release_id and expected_revision are required"))
 		return
 	}
-	site, err := s.Host.HostingStore().PromoteHostingRelease(r.Context(), acct.ID, site.ID, req.ReleaseID, req.ExpectedRevision)
+	release, err := s.Host.HostingStore().GetHostingRelease(r.Context(), acct.ID, site.ID, req.ReleaseID)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	if !s.requireConfig(w, release.Manifest) {
+		return
+	}
+	site, err = s.Host.HostingStore().PromoteHostingRelease(r.Context(), acct.ID, site.ID, req.ReleaseID, req.ExpectedRevision)
 	if err != nil {
 		failure(w, err)
 		return

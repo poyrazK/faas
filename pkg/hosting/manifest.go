@@ -36,7 +36,7 @@ func ValidPath(name string) bool {
 			return false
 		}
 	}
-	return !strings.HasPrefix(name, "_gregale/")
+	return name != ReleaseConfigFilename && !strings.HasPrefix(name, "_gregale/")
 }
 
 func ValidateManifest(m api.HostingManifest) error {
@@ -60,7 +60,7 @@ func ValidateManifest(m api.HostingManifest) error {
 	if !seen["index.html"] {
 		return errors.New("hosting release requires index.html")
 	}
-	return nil
+	return ValidateReleaseConfig(m.Config, m.Files)
 }
 
 func ValidName(name string) bool {

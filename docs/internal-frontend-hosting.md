@@ -159,8 +159,10 @@ asset URLs under that prefix stay pinned to it. Customer content is not rewritte
 
 Browser responses require revalidation. The Worker's shared cache uses immutable
 site/release/path/digest keys and is consulted only after authorization and
-routing checks. Only GET/HEAD are supported; SSR, redirects configuration,
-range responses, and custom domains are not included in this pilot.
+routing checks. Only GET/HEAD are supported; SSR and range responses are not
+included. Independently gated [release configuration](internal-frontend-hosting-config.md)
+adds exact redirects, approved response headers and an HTML 404 page. Custom
+domains have their own [managed HTTPS pilot](internal-frontend-hosting-domains.md).
 
 ## Disable and recover
 

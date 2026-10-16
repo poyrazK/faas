@@ -11251,6 +11251,11 @@ const (
 // publication work, retained artifacts, and the edge kill-switch convergence.
 const (
 	HostingFilesMax                            = 1000
+	HostingConfigMaxBytes                      = 32 << 10
+	HostingConfigRedirectsMax                  = 32
+	HostingConfigHeaderRulesMax                = 16
+	HostingConfigHeadersPerRuleMax             = 8
+	HostingConfigHeaderValueMaxBytes           = 2048
 	HostingAnalyticsDatasetMaxBytes            = 64
 	HostingTrafficQueryTimeout                 = 5 * time.Second
 	HostingTrafficQueryConcurrency             = 2

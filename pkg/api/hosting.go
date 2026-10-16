@@ -5,26 +5,32 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
-	AnalyticsEnabled         bool   `json:"analytics_enabled"`
-	AccountStorageMaxBytes   int64  `json:"account_storage_max_bytes"`
-	AccountPendingUploadsMax int64  `json:"account_pending_uploads_max"`
-	DomainsEnabled           bool   `json:"domains_enabled"`
-	DomainsPerSite           int    `json:"domains_per_site"`
-	DomainHostnameMaxBytes   int    `json:"domain_hostname_max_bytes"`
-	DomainCNAMETarget        string `json:"domain_cname_target,omitempty"`
-	UploadBaseURL            string `json:"upload_base_url"`
-	FilesMax                 int    `json:"files_max"`
-	FileMaxBytes             int64  `json:"file_max_bytes"`
-	ReleaseMaxBytes          int64  `json:"release_max_bytes"`
-	ManifestMaxBytes         int64  `json:"manifest_max_bytes"`
-	PathMaxBytes             int    `json:"path_max_bytes"`
-	ContentTypeMaxBytes      int    `json:"content_type_max_bytes"`
-	NameMaxBytes             int    `json:"name_max_bytes"`
-	SitesPerAccount          int    `json:"sites_per_account"`
-	ReleasesPerSite          int    `json:"releases_per_site"`
-	UploadTTLSeconds         int    `json:"upload_ttl_seconds"`
-	StorageTimeoutSeconds    int    `json:"storage_timeout_seconds"`
-	FinalizeTimeoutSeconds   int    `json:"finalize_timeout_seconds"`
+	ConfigEnabled             bool   `json:"config_enabled"`
+	ConfigMaxBytes            int    `json:"config_max_bytes"`
+	ConfigRedirectsMax        int    `json:"config_redirects_max"`
+	ConfigHeaderRulesMax      int    `json:"config_header_rules_max"`
+	ConfigHeadersPerRuleMax   int    `json:"config_headers_per_rule_max"`
+	ConfigHeaderValueMaxBytes int    `json:"config_header_value_max_bytes"`
+	AnalyticsEnabled          bool   `json:"analytics_enabled"`
+	AccountStorageMaxBytes    int64  `json:"account_storage_max_bytes"`
+	AccountPendingUploadsMax  int64  `json:"account_pending_uploads_max"`
+	DomainsEnabled            bool   `json:"domains_enabled"`
+	DomainsPerSite            int    `json:"domains_per_site"`
+	DomainHostnameMaxBytes    int    `json:"domain_hostname_max_bytes"`
+	DomainCNAMETarget         string `json:"domain_cname_target,omitempty"`
+	UploadBaseURL             string `json:"upload_base_url"`
+	FilesMax                  int    `json:"files_max"`
+	FileMaxBytes              int64  `json:"file_max_bytes"`
+	ReleaseMaxBytes           int64  `json:"release_max_bytes"`
+	ManifestMaxBytes          int64  `json:"manifest_max_bytes"`
+	PathMaxBytes              int    `json:"path_max_bytes"`
+	ContentTypeMaxBytes       int    `json:"content_type_max_bytes"`
+	NameMaxBytes              int    `json:"name_max_bytes"`
+	SitesPerAccount           int    `json:"sites_per_account"`
+	ReleasesPerSite           int    `json:"releases_per_site"`
+	UploadTTLSeconds          int    `json:"upload_ttl_seconds"`
+	StorageTimeoutSeconds     int    `json:"storage_timeout_seconds"`
+	FinalizeTimeoutSeconds    int    `json:"finalize_timeout_seconds"`
 }
 
 const (
@@ -54,8 +60,9 @@ type HostingPublicationStatus struct {
 
 // HostingManifest describes an already-built static site, never source code.
 type HostingManifest struct {
-	Files       []HostingFile `json:"files"`
-	SPAFallback bool          `json:"spa_fallback"`
+	Config      *HostingReleaseConfig `json:"config,omitempty"`
+	Files       []HostingFile         `json:"files"`
+	SPAFallback bool                  `json:"spa_fallback"`
 }
 
 type HostingFile struct {
@@ -118,4 +125,21 @@ type PromoteHostingReleaseRequest struct {
 type SetHostingSuspendedRequest struct {
 	Suspended        bool  `json:"suspended"`
 	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+// HostingReleaseConfig is immutable release metadata, never a public file.
+type HostingReleaseConfig struct {
+	Version   int                 `json:"version"`
+	Redirects []HostingRedirect   `json:"redirects,omitempty"`
+	Headers   []HostingHeaderRule `json:"headers,omitempty"`
+	NotFound  string              `json:"not_found,omitempty"`
+}
+type HostingRedirect struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Status int    `json:"status"`
+}
+type HostingHeaderRule struct {
+	Path   string            `json:"path"`
+	Values map[string]string `json:"values"`
 }

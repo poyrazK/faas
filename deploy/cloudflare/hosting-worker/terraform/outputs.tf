@@ -12,6 +12,7 @@ output "hosting" {
     worker_sha256             = filesha256(local.worker_source)
     analytics_configured      = var.configure_analytics
     analytics_enabled         = var.analytics_enabled
+    release_config_enabled    = var.release_config_enabled
     analytics_dataset         = var.configure_analytics ? local.analytics_dataset : ""
     worker_enabled            = var.worker_enabled
     durable_routing_enabled   = var.durable_routing_enabled
@@ -34,6 +35,7 @@ output "apid_environment" {
     FAAS_FRONTEND_HOSTING_ENABLED                  = "0"
     FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED  = "0"
     FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED          = "0"
+    FAAS_FRONTEND_HOSTING_CONFIG_ENABLED           = "0"
     FAAS_FRONTEND_HOSTING_DOMAINS_ZONE_ID          = var.configure_custom_domains ? var.zone_id : ""
     FAAS_FRONTEND_HOSTING_DOMAINS_ACCESS_POLICY_ID = var.configure_custom_domains ? cloudflare_zero_trust_access_policy.internal.id : ""
     FAAS_FRONTEND_HOSTING_DOMAINS_CNAME_TARGET     = var.configure_custom_domains ? "customers.${var.hosting_domain}" : ""

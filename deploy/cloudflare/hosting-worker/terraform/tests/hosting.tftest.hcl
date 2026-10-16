@@ -205,3 +205,19 @@ run "analytics_opt_in" {
     error_message = "Worker collection and API read admission must be independent."
   }
 }
+
+run "release_config_default_off" {
+  command = plan
+  assert {
+    condition     = !var.release_config_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_CONFIG_ENABLED"]) == "false" && output.apid_environment.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED == "0"
+    error_message = "Release configuration admission and serving must default off."
+  }
+}
+run "release_config_independent_serving_gate" {
+  command = plan
+  variables { release_config_enabled = true }
+  assert {
+    condition     = output.hosting.release_config_enabled && !output.hosting.worker_enabled && output.apid_environment.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED == "0" && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_CONFIG_ENABLED"]) == "true"
+    error_message = "Release configuration must not enable API admission or general serving."
+  }
+}

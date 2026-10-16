@@ -3,6 +3,7 @@ package hosting
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +64,7 @@ func TestStagingIsVerifiedAndPublishedImmutably(t *testing.T) {
 	body := []byte("<html>Hello</html>")
 	digest := sha256.Sum256(body)
 	file := api.HostingFile{Path: "index.html", Size: int64(len(body)), SHA256: hex.EncodeToString(digest[:]), ContentType: "text/html"}
-	manifest := api.HostingManifest{Files: []api.HostingFile{file}}
+	manifest := api.HostingManifest{Files: []api.HostingFile{file}, Config: &api.HostingReleaseConfig{Version: 1, Headers: []api.HostingHeaderRule{{Path: "/*", Values: map[string]string{"x-frame-options": "DENY"}}}}}
 	grant, err := backend.Upload(t.Context(), site, release, file)
 	if err != nil || !strings.Contains(grant.URL, "/hosting/staging/") || strings.Contains(grant.URL, "/published/") {
 		t.Fatalf("grant namespace: %v", err)
@@ -92,6 +93,18 @@ func TestStagingIsVerifiedAndPublishedImmutably(t *testing.T) {
 	if err := backend.Publish(t.Context(), site, release, manifest); err != nil {
 		t.Fatalf("idempotent publication: %v", err)
 	}
+	// adr: 202610161909 — published configuration is immutable with its bytes.
+	var stored api.HostingManifest
+	if err := json.Unmarshal(objects[ReleasePrefix(site, release)+"manifest.json"], &stored); err != nil || stored.Config == nil || stored.Config.Headers[0].Values["x-frame-options"] != "DENY" {
+		t.Fatalf("missing published configuration: %+v %v", stored.Config, err)
+	}
+	manifest.Config.Headers[0].Values["x-frame-options"] = "SAMEORIGIN"
+	if err := backend.Publish(t.Context(), site, release, manifest); err == nil {
+		t.Fatal("replaced immutable release configuration")
+	}
+	if _, exists := objects[ReleasePrefix(site, release)+"files/"+ReleaseConfigFilename]; exists {
+		t.Fatal("published control file")
+	}
 	objects[stagingKey(site, release, file.Path)] = []byte("changed after publication")
 	if got := string(objects[ReleasePrefix(site, release)+"files/index.html"]); got != string(body) {
 		t.Fatal("staging mutation changed published bytes")
@@ -99,7 +112,7 @@ func TestStagingIsVerifiedAndPublishedImmutably(t *testing.T) {
 }
 
 func TestManifestRejectsAmbiguousPathsAndLimits(t *testing.T) {
-	for _, path := range []string{"../index.html", "/index.html", "a//b", "a/../b", "a%2fb", `a\b`, "_gregale/releases/x"} {
+	for _, path := range []string{"../index.html", "/index.html", "a//b", "a/../b", "a%2fb", `a\b`, "_gregale/releases/x", ReleaseConfigFilename} {
 		if ValidPath(path) {
 			t.Fatalf("accepted ambiguous path %q", path)
 		}

@@ -121,3 +121,42 @@ func TestSitesSuspensionUsesCurrentRevision(t *testing.T) {
 		})
 	}
 }
+
+func TestStaticHostingReleaseConfiguration(t *testing.T) {
+	// adr: 202610161909 — release policies are bounded and independently gated.
+	dir := t.TempDir()
+	for path, body := range map[string]string{"index.html": "home", "404.html": "missing", "gregale-hosting.json": `{"version":1,"not_found":"404.html","redirects":[{"from":"/old","to":"/new","status":308}]}`} {
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "")
+	if _, err := staticHostingManifest(dir, false); err == nil {
+		t.Fatal("configuration enabled by default")
+	}
+	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "1")
+	m, err := staticHostingManifest(dir, false)
+	if err != nil || m.Config == nil || m.Config.NotFound != "404.html" || len(m.Files) != 2 {
+		t.Fatalf("manifest %+v %v", m, err)
+	}
+	for _, f := range m.Files {
+		if f.Path == "gregale-hosting.json" {
+			t.Fatal("configuration published as file")
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gregale-hosting.json"), []byte(`{"version":1,"not_found":"missing.html"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staticHostingManifest(dir, false); err == nil {
+		t.Fatal("accepted missing custom 404")
+	}
+	if err := os.Remove(filepath.Join(dir, "gregale-hosting.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("index.html", filepath.Join(dir, "gregale-hosting.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staticHostingManifest(dir, false); err == nil {
+		t.Fatal("accepted symlink config")
+	}
+}

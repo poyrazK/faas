@@ -110,14 +110,24 @@ func lifecycle(t *testing.T, store hostingTestStore) {
 		t.Fatalf("cross-account release: %v", err)
 	}
 	input := manifest()
+	input.Config = &api.HostingReleaseConfig{Version: 1, Redirects: []api.HostingRedirect{{From: "/old", To: "/new", Status: 308}}, Headers: []api.HostingHeaderRule{{Path: "/*", Values: map[string]string{"x-frame-options": "DENY"}}}}
 	release, err := store.CreateHostingRelease(t.Context(), account.ID, site.ID, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input.Files[0].Path = "mutated.html"
+	input.Config.Redirects[0].To = "/mutated"
+	input.Config.Headers[0].Values["x-frame-options"] = "SAMEORIGIN"
+	release.Manifest.Config.Headers[0].Values["x-frame-options"] = "OTHER"
 	loaded, err := store.GetHostingRelease(t.Context(), account.ID, site.ID, release.ID)
-	if err != nil || loaded.Manifest.Files[0].Path != "index.html" {
+	if err != nil || loaded.Manifest.Files[0].Path != "index.html" || loaded.Manifest.Config.Redirects[0].To != "/new" || loaded.Manifest.Config.Headers[0].Values["x-frame-options"] != "DENY" {
 		t.Fatalf("mutable manifest: %+v %v", loaded, err)
+	}
+	// adr: 202610161909 — release response policies are immutable intent.
+	loaded.Manifest.Config.Headers[0].Values["x-frame-options"] = "MUTATED"
+	reread, err := store.GetHostingRelease(t.Context(), account.ID, site.ID, release.ID)
+	if err != nil || reread.Manifest.Config.Headers[0].Values["x-frame-options"] != "DENY" {
+		t.Fatal("read mutated stored release configuration")
 	}
 	if _, err := store.PromoteHostingRelease(t.Context(), account.ID, site.ID, release.ID, site.Revision); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("promoted pending release: %v", err)

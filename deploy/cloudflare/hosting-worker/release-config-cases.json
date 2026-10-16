@@ -1,0 +1,923 @@
+[
+  {
+    "name": "complete",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": true
+  },
+  {
+    "name": "minimal",
+    "config": {
+      "version": 1
+    },
+    "valid": true
+  },
+  {
+    "name": "root and trailing slash",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/",
+          "to": "/docs/",
+          "status": 302
+        }
+      ],
+      "headers": [
+        {
+          "path": "/docs/*",
+          "values": {
+            "referrer-policy": "no-referrer"
+          }
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "unsupported version",
+    "config": {
+      "version": 2,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "unknown field",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html",
+      "rewrites": []
+    },
+    "valid": false
+  },
+  {
+    "name": "external redirect",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "https://other.example/",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "protocol relative redirect",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "//other.example/",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "query redirect",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new?secret=1",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "reserved route",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/_gregale/",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "reserved file",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/gregale-hosting.json",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "unknown redirect field",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308,
+          "from_": "bad"
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported status",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 200
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "self loop",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/old",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "cycle",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        },
+        {
+          "from": "/new",
+          "to": "/old",
+          "status": 301
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "duplicate source",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        },
+        {
+          "from": "/old",
+          "to": "/else",
+          "status": 307
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "redirect cap",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/p0",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p1",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p2",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p3",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p4",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p5",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p6",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p7",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p8",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p9",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p10",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p11",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p12",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p13",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p14",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p15",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p16",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p17",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p18",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p19",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p20",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p21",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p22",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p23",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p24",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p25",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p26",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p27",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p28",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p29",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p30",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p31",
+          "to": "/target",
+          "status": 301
+        },
+        {
+          "from": "/p32",
+          "to": "/target",
+          "status": 301
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "header wildcard",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/a*b",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "header cap",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/p0",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p1",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p2",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p3",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p4",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p5",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p6",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p7",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p8",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p9",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p10",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p11",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p12",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p13",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p14",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p15",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        },
+        {
+          "path": "/p16",
+          "values": {
+            "x-frame-options": "DENY"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "duplicate header rule",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        },
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "cache override",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "cache-control": "public"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "cookie override",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "set-cookie": "x=y"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "header casing",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "X-Frame-Options": "DENY"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "header injection",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "x-frame-options": "DENY\r\nX-Test: injected"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "header whitespace",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "x-frame-options": " DENY"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "header value cap",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "not_found": "404.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "missing 404",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "missing.html"
+    },
+    "valid": false
+  },
+  {
+    "name": "non HTML 404",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "app.js"
+    },
+    "valid": false
+  },
+  {
+    "name": "encoded 404",
+    "config": {
+      "version": 1,
+      "redirects": [
+        {
+          "from": "/old",
+          "to": "/new",
+          "status": 308
+        }
+      ],
+      "headers": [
+        {
+          "path": "/*",
+          "values": {
+            "content-security-policy": "default-src 'self'",
+            "permissions-policy": "camera=()"
+          }
+        }
+      ],
+      "not_found": "a%2fb.html"
+    },
+    "valid": false
+  }
+]

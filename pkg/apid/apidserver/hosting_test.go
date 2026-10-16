@@ -73,3 +73,25 @@ func TestHostingDisablePrecedesIdempotencyReplay(t *testing.T) {
 		t.Fatalf("replayed enabled response after disable: %d %s", replay.Code, replay.Body)
 	}
 }
+
+func TestHostingReleaseConfigRuntimeOptIn(t *testing.T) {
+	// adr: 202610161909 — response policies have independent default-off admission.
+	const key = "frontend_hosting_config_enabled"
+	for _, value := range []string{"", "false", "true", "1"} {
+		m := apidserver.NewRuntimeConfigManager(func(name string) string {
+			if name == "FAAS_FRONTEND_HOSTING_CONFIG_ENABLED" {
+				return value
+			}
+			return ""
+		})
+		if m.Bool(key, false) != (value == "true" || value == "1") {
+			t.Fatalf("bootstrap opt-in %q", value)
+		}
+		if err := m.Apply(key, []byte("false")); err != nil {
+			t.Fatal(err)
+		}
+		if m.Bool(key, true) {
+			t.Fatal("hot disable did not override bootstrap")
+		}
+	}
+}

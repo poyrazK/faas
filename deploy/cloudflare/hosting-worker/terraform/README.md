@@ -159,3 +159,11 @@ Review provider pricing/retention before opting in. See the
 [traffic runbook](../../../../docs/internal-frontend-hosting-traffic.md) for scoped
 credentials, API/dashboard flags, sampling semantics and live qualification.
 Disabling collection does not delete observations or stop static serving.
+
+## Release configuration (independent opt-in)
+
+`release_config_enabled` defaults false. It supplies the Worker's independent
+`FAAS_FRONTEND_HOSTING_CONFIG_ENABLED` serving switch; generated apid environment
+keeps admission disabled. Upgrade all apid writers/Workers before admitting
+configured manifests. See [the release configuration guide](../../../../docs/internal-frontend-hosting-config.md)
+for file format, limits, API/CLI/dashboard opt-ins and fail-closed disabling.

@@ -8,6 +8,9 @@ on:
       - scripts/ci/test_internal_frontend_hosting_*.py
       - pkg/hosting/pilot*.go
       - pkg/hosting/config.go
+      - pkg/hosting/release_config*.go
+      - pkg/hosting/manifest.go
+      - pkg/api/hosting.go
       - pkg/api/limits.go
       - .github/workflows/internal-hosting-worker.yml
   push:
@@ -19,6 +22,9 @@ on:
       - scripts/ci/test_internal_frontend_hosting_*.py
       - pkg/hosting/pilot*.go
       - pkg/hosting/config.go
+      - pkg/hosting/release_config*.go
+      - pkg/hosting/manifest.go
+      - pkg/api/hosting.go
       - .github/workflows/internal-hosting-worker.yml
 permissions:
   contents: read

@@ -1,7 +1,8 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
-import { serve } from "./worker.mjs";
+import { readFileSync } from "node:fs";
+import { serve, validateReleaseConfig } from "./worker.mjs";
 
 globalThis.crypto ||= webcrypto;
 const now = Date.now();
@@ -50,8 +51,8 @@ function fixture() {
       async put(key, response) { cached.set(key.url, new Response(await response.arrayBuffer(), { headers: response.headers })); },
     },
   };
-  function release(id, files, spa = false) {
-    const manifest = { spa_fallback: spa, files: [] };
+  function release(id, files, spa = false, config) {
+    const manifest = { spa_fallback: spa, files: [], ...(config ? { config } : {}) };
     for (const [path, body] of Object.entries(files)) {
       manifest.files.push({ path, size: Buffer.byteLength(body), sha256: createHash("sha256").update(body).digest("hex"), content_type: path.endsWith(".html") ? "text/html" : "text/javascript" });
       objects.set(`hosting/published/${site}/${id}/files/${path}`, body);
@@ -345,4 +346,85 @@ test('custom-domain analytics attributes to its bound canonical site', async () 
   await f.customRequest('/',{headers});
   assert.equal(points.length,1); assert.deepEqual(points[0].indexes,[site]);
   assert.ok(!JSON.stringify(points).includes(f.custom));
+});
+
+test('release configuration agrees with the Go shared contract', () => {
+  const cases = JSON.parse(readFileSync(new URL('./release-config-cases.json', import.meta.url)));
+  const files = new Map([['index.html',{content_type:'text/html'}],['404.html',{content_type:'text/html; charset=utf-8'}],['app.js',{content_type:'text/javascript'}]]);
+  for (const c of cases) {
+    if (c.valid) assert.doesNotThrow(() => validateReleaseConfig(c.config,files),c.name);
+    else assert.throws(() => validateReleaseConfig(c.config,files),undefined,c.name);
+  }
+});
+
+const releaseConfig = (to='/new') => ({version:1, redirects:[{from:'/old',to,status:308}], headers:[{path:'/*',values:{'content-security-policy':"default-src 'self'",'permissions-policy':'camera=()'}},{path:'/private/*',values:{'referrer-policy':'no-referrer'}},{path:'/private/page',values:{'x-frame-options':'DENY'}}], not_found:'404.html'});
+const configFiles = {'index.html':'home','404.html':'missing page','private/page/index.html':'page','app.js':'script'};
+
+test('redirects precede files, preserve chosen status, discard queries, and cannot redirect pinned release URLs', async () => {
+  const f=fixture();f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';
+  f.release(first,{...configFiles,old:'old file'},false,releaseConfig());
+  for (const method of ['GET','HEAD']) {
+    const r=await f.request('/old?secret=discard',{method});
+    assert.equal(r.status,308);assert.equal(r.headers.get('Location'),'/new');assert.equal(await r.text(),'');
+    assert.equal(r.headers.get('Cache-Control'),'private, no-store');
+    assert.equal(r.headers.get('Content-Security-Policy'),"default-src 'self'");
+  }
+  const pinned=await f.request(`/_gregale/releases/${first}/old`);
+  assert.equal(pinned.status,200);assert.equal(await pinned.text(),'old file');
+});
+
+test('headers match request paths on GET, HEAD, 304, and custom 404 while platform headers remain enforced', async () => {
+  const f=fixture();f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';f.release(first,configFiles,false,releaseConfig());
+  const r=await f.request('/private/page');
+  for (const response of [r,await f.request('/private/page',{method:'HEAD'}),await f.request('/private/page',{headers:{'If-None-Match':r.headers.get('ETag')}})]) {
+    assert.equal(response.headers.get('X-Frame-Options'),'DENY');assert.equal(response.headers.get('Referrer-Policy'),'no-referrer');
+    assert.equal(response.headers.get('X-Content-Type-Options'),'nosniff');assert.equal(response.headers.get('Cache-Control'),'private, max-age=0, must-revalidate');
+  }
+  assert.equal((await f.request('/privateer/page',{headers:{Accept:'text/html'}})).headers.get('Referrer-Policy'),'strict-origin-when-cross-origin');
+  const notFound=await f.request('/missing',{headers:{Accept:'text/html'}});
+  assert.equal(notFound.status,404);assert.equal(await notFound.text(),'missing page');
+  assert.equal(notFound.headers.get('Content-Security-Policy'),"default-src 'self'");
+  const head=await f.request('/missing',{method:'HEAD',headers:{Accept:'text/html','If-None-Match':notFound.headers.get('ETag')}});
+  assert.equal(head.status,404);assert.equal(await head.text(),'');assert.equal(head.headers.get('Content-Length'),'12');
+  assert.equal((await f.request('/missing',{headers:{Accept:'text/html','If-None-Match':notFound.headers.get('ETag')}})).status,404);
+  assert.equal((await f.request('/missing',{headers:{Accept:'application/json'}})).headers.get('Content-Type'),'application/json');
+});
+
+test('configuration flags, Access, and suspension gate redirects and warm cached content', async () => {
+  const f=fixture();f.durable();f.release(first,configFiles,false,releaseConfig());
+  assert.equal((await f.request()).status,503);
+  f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';await f.request();
+  assert.equal((await f.request()).headers.get('X-Gregale-Cache'),'HIT');
+  for (const path of ['/old','/','/missing']) assert.equal((await f.request(path,{headers:{'Cf-Access-Jwt-Assertion':'forged',Accept:'text/html'}})).status,403);
+  f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='false';
+  for (const path of ['/old','/','/missing']) assert.equal((await f.request(path,{headers:{Accept:'text/html'}})).status,503);
+  f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';f.durable({enabled:false,generation:2});f.advance(61000);
+  assert.equal((await f.request('/old')).status,503);
+});
+
+test('promotion and rollback restore configuration, and retained assets keep their own release headers', async () => {
+  const f=fixture();f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';
+  f.release(first,{...configFiles,'old.js':'old script'},false,releaseConfig('/first'));
+  const changed=releaseConfig('/second');changed.headers[0].values['permissions-policy']='camera=(self)';
+  f.release(second,configFiles,false,changed);
+  assert.equal((await f.request('/old')).headers.get('Location'),'/first');const initial=await f.request();
+  f.route.active_release_id=second;f.route.ready_releases=[second,first];f.route.revision++;
+  assert.equal((await f.request('/old')).headers.get('Location'),'/second');
+  assert.equal((await f.request()).headers.get('Permissions-Policy'),'camera=(self)');
+  const revalidated=await f.request('/',{headers:{'If-None-Match':initial.headers.get('ETag')}});
+  assert.equal(revalidated.status,304);assert.equal(revalidated.headers.get('Permissions-Policy'),'camera=(self)');
+  assert.equal((await f.request('/old.js')).headers.get('Permissions-Policy'),'camera=()');
+  f.route.active_release_id=first;f.route.revision++;
+  assert.equal((await f.request('/old')).headers.get('Location'),'/first');
+  assert.equal((await f.request()).headers.get('Permissions-Policy'),'camera=()');
+  assert.equal((await f.request('/gregale-hosting.json')).status,404);
+});
+
+test('SPA fallback precedes the custom 404 and custom domains use the same protected configuration', async () => {
+  const f=customFixture();f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='true';f.release(first,configFiles,true,releaseConfig());
+  const headers={'Cf-Access-Jwt-Assertion':await token({aud:[f.binding.access_aud]}),Accept:'text/html'};
+  assert.equal(await (await f.customRequest('/dashboard',{headers})).text(),'home');
+  const missing=await f.customRequest('/missing.js',{headers});assert.equal(missing.status,404);assert.equal(await missing.text(),'missing page');
+  const redirect=await f.customRequest('/old',{headers});assert.equal(redirect.status,308);assert.equal(redirect.headers.get('Location'),'/new');
+  assert.equal((await f.customRequest('/old')).status,403);
 });

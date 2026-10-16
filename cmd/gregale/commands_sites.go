@@ -147,6 +147,22 @@ func staticHostingManifest(dir string, spa bool) (api.HostingManifest, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if rel == hosting.ReleaseConfigFilename {
+			if os.Getenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED") != "1" && os.Getenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED") != "true" {
+				return errors.New("release configuration requires FAAS_FRONTEND_HOSTING_CONFIG_ENABLED=1")
+			}
+			configFile, err := openCustomerFile(name)
+			if err != nil {
+				return err
+			}
+			data, readErr := io.ReadAll(io.LimitReader(configFile, api.HostingConfigMaxBytes+1))
+			closeErr := configFile.Close()
+			if readErr != nil || closeErr != nil {
+				return errors.New("cannot read hosting configuration")
+			}
+			manifest.Config, err = hosting.ParseReleaseConfig(data)
+			return err
+		}
 		if !hosting.ValidPath(rel) {
 			return errors.New("static directory contains a noncanonical URL path")
 		}

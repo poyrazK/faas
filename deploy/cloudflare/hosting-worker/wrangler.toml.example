@@ -8,6 +8,7 @@ preview_urls = false
 FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED = "false"
 HOSTING_DOMAIN = "gregale-hosting.example"
 FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED = "false"
+FAAS_FRONTEND_HOSTING_CONFIG_ENABLED = "false"
 # Opt in only after configuring a wildcard Cloudflare Access application.
 FAAS_FRONTEND_HOSTING_ENABLED = "false"
 FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = "false"

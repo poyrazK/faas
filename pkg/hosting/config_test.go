@@ -48,3 +48,18 @@ func TestHostingConfigurationIsExplicitAndIsolated(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseConfigOptInRequiresHostingProviders(t *testing.T) {
+	// adr: 202610161909 — release policies are bounded and independently gated.
+	for _, value := range []string{"1", "true"} {
+		_, err := Load(func(key string) string {
+			if key == "FAAS_FRONTEND_HOSTING_CONFIG_ENABLED" {
+				return value
+			}
+			return ""
+		}, "gregale.dev")
+		if err == nil {
+			t.Fatal("enabled release configuration without isolated hosting providers")
+		}
+	}
+}

@@ -150,6 +150,7 @@ resource "cloudflare_worker_version" "hosting" {
     { name = "ARTIFACTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.artifacts.name },
     { name = "ROUTES", type = "kv_namespace", namespace_id = cloudflare_workers_kv_namespace.routes.id },
     ], var.configure_analytics ? [{ name            = "ANALYTICS", type = "analytics_engine", dataset = local.analytics_dataset }] : [], [for name, text in {
+      FAAS_FRONTEND_HOSTING_CONFIG_ENABLED          = tostring(var.release_config_enabled)
       FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED       = tostring(var.analytics_enabled)
       FAAS_FRONTEND_HOSTING_ENABLED                 = tostring(var.worker_enabled)
       FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = tostring(var.durable_routing_enabled)

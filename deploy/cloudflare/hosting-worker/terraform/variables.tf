@@ -115,3 +115,9 @@ variable "analytics_enabled" {
   default     = false
   description = "Collect privacy-limited, best-effort site traffic observations."
 }
+
+variable "release_config_enabled" {
+  type        = bool
+  default     = false
+  description = "Serve immutable release redirects, approved headers and custom 404 pages; API admission remains independently disabled."
+}

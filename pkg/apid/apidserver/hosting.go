@@ -148,3 +148,7 @@ func (h hostingHost) HostingTrafficReader() hosting.TrafficReader {
 	}
 	return h.s.hostingConfig.Analytics
 }
+
+func (h hostingHost) HostingConfigEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingConfig, false)
+}

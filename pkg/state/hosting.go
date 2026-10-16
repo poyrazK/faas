@@ -95,6 +95,18 @@ func validHostingSite(s api.HostingSite) bool {
 
 func cloneHostingRelease(r api.HostingRelease) api.HostingRelease {
 	r.Manifest.Files = append([]api.HostingFile(nil), r.Manifest.Files...)
+	if r.Manifest.Config != nil {
+		cfg := *r.Manifest.Config
+		cfg.Redirects = append([]api.HostingRedirect(nil), cfg.Redirects...)
+		cfg.Headers = append([]api.HostingHeaderRule(nil), cfg.Headers...)
+		for i, rule := range cfg.Headers {
+			cfg.Headers[i].Values = make(map[string]string, len(rule.Values))
+			for k, v := range rule.Values {
+				cfg.Headers[i].Values[k] = v
+			}
+		}
+		r.Manifest.Config = &cfg
+	}
 	if r.RetiredAt != nil {
 		t := *r.RetiredAt
 		r.RetiredAt = &t

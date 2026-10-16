@@ -29,6 +29,7 @@ const (
 	runtimeConfigS3                       = "s3_enabled"
 	runtimeConfigFrontendHosting          = "frontend_hosting_enabled"
 	runtimeConfigFrontendHostingDurable   = "frontend_hosting_durable_routing_enabled"
+	runtimeConfigFrontendHostingConfig    = "frontend_hosting_config_enabled"
 	runtimeConfigFrontendHostingAnalytics = "frontend_hosting_analytics_enabled"
 	runtimeConfigFrontendHostingDomains   = "frontend_hosting_domains_enabled"
 
@@ -56,6 +57,7 @@ type runtimeConfigDefinition struct {
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
+	{Key: runtimeConfigFrontendHostingConfig, Label: "Internal hosting release configuration", Description: "Admit release redirects, response headers and custom 404 pages. Worker serving has a separate default-off switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingAnalytics, Label: "Internal hosting traffic analytics", Description: "Read approximate provider traffic observations for owned internal sites. Worker collection has an independent default-off switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDomains, Label: "Internal hosting custom domains", Description: "Admit operator-only custom domain management. Existing domains continue safety reconciliation when disabled; the Worker has an independent serving switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHosting, Label: "Internal frontend hosting", Description: "Enable operator-only static hosting management. Disabling expires leased routes within 120 seconds; durable sites continue serving. The independent Worker switch stops all traffic.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -110,6 +112,8 @@ func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) st
 		envName = "FAAS_FRONTEND_HOSTING_ENABLED"
 	case runtimeConfigFrontendHostingDurable:
 		envName = "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"
+	case runtimeConfigFrontendHostingConfig:
+		envName = "FAAS_FRONTEND_HOSTING_CONFIG_ENABLED"
 	case runtimeConfigFrontendHostingAnalytics:
 		envName = "FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"
 	case runtimeConfigFrontendHostingDomains:
