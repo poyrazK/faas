@@ -390,7 +390,7 @@ func (q *Queries) IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.U
 }
 
 const issueSlackCandidateDelivery = `-- name: IssueSlackCandidateDelivery :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details,
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details::jsonb AS details,
  COALESCE(a.account_id=dst.account_id AND a.deleted_at IS NULL AND a.status<>'deleted'
  AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY($1::text[])
  AND dst.enabled AND dst.revision=d.destination_revision AND src.eligible,false)::boolean AS eligible
@@ -444,7 +444,7 @@ type IssueSlackCandidateDeliveryRow struct {
 	LinkID                    pgtype.UUID
 	Kind                      string
 	Reason                    string
-	Details                   interface{}
+	Details                   []byte
 	Eligible                  bool
 }
 
@@ -1183,7 +1183,7 @@ func (q *Queries) IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRe
 }
 
 const issueSlackRetryGet = `-- name: IssueSlackRetryGet :one
-SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed FROM issue_team_slack_deliveries d
+SELECT d.id, d.delivery_seq, d.channel_id, d.destination_id, d.destination_revision, d.notification_id, d.incident_id, d.status, d.attempt, d.total_attempts, d.next_attempt_at, d.expires_at, d.claim_id, d.claim_until, d.last_error, d.response_code, d.created_at, d.updated_at, d.activity_id, d.application_policy_revision, d.recipient_account_ids, d.assigned_team_id, d.assigned_account_id, d.reminder_id, d.routing_revision, d.routing_rule_key,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed::boolean AS application_retry_allowed FROM issue_team_slack_deliveries d
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
 WHERE d.id=$1 AND a.id=$2 AND a.account_id=$3
@@ -1225,7 +1225,7 @@ type IssueSlackRetryGetRow struct {
 	TeamID                    pgtype.UUID
 	CurrentRevision           int64
 	Enabled                   bool
-	ApplicationRetryAllowed   interface{}
+	ApplicationRetryAllowed   bool
 }
 
 func (q *Queries) IssueSlackRetryGet(ctx context.Context, db DBTX, arg IssueSlackRetryGetParams) (IssueSlackRetryGetRow, error) {

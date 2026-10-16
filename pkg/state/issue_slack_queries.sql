@@ -24,7 +24,7 @@ AND (d.claim_until IS NULL OR d.claim_until<=clock_timestamp()) AND (dst.claim_u
 AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.channel_id=d.channel_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
 ORDER BY d.delivery_seq LIMIT 1 FOR UPDATE OF a SKIP LOCKED;
 -- name: IssueSlackCandidateDelivery :one
-SELECT d.*,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details,
+SELECT d.*,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details::jsonb AS details,
  COALESCE(a.account_id=dst.account_id AND a.deleted_at IS NULL AND a.status<>'deleted'
  AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[])
  AND dst.enabled AND dst.revision=d.destination_revision AND src.eligible,false)::boolean AS eligible
@@ -71,7 +71,7 @@ JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id JOIN app_issue_te
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
 WHERE a.id=$1 AND a.account_id=$2 ORDER BY d.delivery_seq DESC LIMIT $3;
 -- name: IssueSlackRetryGet :one
-SELECT d.*,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed FROM issue_team_slack_deliveries d
+SELECT d.*,dst.team_id,dst.revision AS current_revision,dst.enabled,src.application_retry_allowed::boolean AS application_retry_allowed FROM issue_team_slack_deliveries d
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
 WHERE d.id=$1 AND a.id=$2 AND a.account_id=$3;
