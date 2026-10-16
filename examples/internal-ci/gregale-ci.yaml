@@ -1,0 +1,25 @@
+# Internal metadata example; these digests are placeholders. No commands run.
+version: 1
+repository: acme/api
+jobs:
+  test:
+    image: registry.example/ci-node24@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    timeout_seconds: 600
+    steps:
+      - name: install
+        run: npm ci
+      - name: test
+        run: npm test
+    artifacts:
+      - reports/**
+  build:
+    needs: [test]
+    image: registry.example/ci-node24@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    timeout_seconds: 600
+    steps:
+      - name: install
+        run: npm ci
+      - name: build
+        run: npm run build
+    artifacts:
+      - dist/**

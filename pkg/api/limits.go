@@ -11132,3 +11132,123 @@ const (
 	MCPConnectionHealthMaxOffset          = 10000
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
 )
+
+// Internal CI metadata bounds. No production compute dispatcher is wired.
+const (
+	CIDefinitionMaxBytes     = 64 << 10
+	CIRequestMaxBytes        = 2 * CIDefinitionMaxBytes
+	CIRepositoryMaxBytes     = 200
+	CIImageMaxBytes          = 512
+	CIMaxJobs                = 16
+	CIMaxStepsPerJob         = 32
+	CIMaxCommandBytes        = 4096
+	CIMaxArtifactsPerJob     = 16
+	CIArtifactPathMaxBytes   = 256
+	CIDefaultTimeoutSeconds  = 600
+	CIMaxTimeoutSeconds      = 3600
+	CIMaxRevisionsPerAccount = 64
+	CIMaxRunsPerAccount      = 256
+	CIIdempotencyKeyMaxBytes = 128
+	CIEventListMax           = 2
+)
+
+// CI execution qualification bounds. No production dispatcher is installed.
+const (
+	CIMaxQualificationExecutionsPerAccount = 32
+	CIExecutionLeaseSeconds                = 30
+	CIExecutionSnapshotMaxBytes            = 4 << 20
+	CILogPageMaxBytes                      = 16 << 10
+	CILogMaxBytesPerAttempt                = 64 << 10
+	CIArtifactMaxBytes                     = 32 << 20
+	CIArtifactsMaxBytesPerJob              = 64 << 20
+)
+
+// Internal GitHub CI admission and delivery bounds; all gates default off.
+const (
+	CIGitHubMaxBindingsPerAccount = 16
+	CIGitHubMaxTriggersPerAccount = 256
+	CIGitHubMaxBranches           = 16
+	CIGitHubBranchMaxBytes        = 255
+	CIGitHubSnapshotMaxBytes      = 64 << 10
+	CIGitHubWebhookMaxBytes       = 10 << 20
+	CIGitHubMaxAttempts           = 8
+	CIGitHubLeaseSeconds          = 60
+	CIGitHubRPCSeconds            = 15
+	CIGitHubPollSeconds           = 2
+	CIGitHubWorkerBatch           = 16
+	CIGitHubMaxBackoffSeconds     = 300
+	CIGitHubCheckPageSize         = 100
+	CIGitHubCheckMaxPages         = 10
+)
+
+// Internal execution Check summaries contain states and counts only (ADR-1342).
+const CIExecutionCheckSummaryMaxBytes = 8 << 10
+
+// Operator recovery is bounded for each retained execution (ADR-1343).
+const CICheckRetryMaxGenerations = 3
+
+// CI observability is bounded independently of execution admission. Slots are
+// diagnostic only; exhausting them never stops a worker from reconciling.
+const (
+	CIHealthTimeoutSeconds        = 5
+	CIWorkerHealthSlots           = 8
+	CIWorkerHeartbeatSeconds      = 10
+	CIWorkerHeartbeatStaleSeconds = 45
+	CIWorkerSlotExpirySeconds     = 90
+	CIWorkerProgressStaleSeconds  = 120
+)
+
+// Compact CI archives retain permanent identity independently of detailed history.
+const (
+	CIMaxExecutionArchivesPerAccount = 128
+	CIExecutionArchiveMaxBytes       = 16 << 10
+)
+
+// Saved internal CI profiles are bounded independently of compute admission.
+const (
+	CIMaxExecutionProfilesPerAccount = 64
+	CIProfileSnapshotMaxBytes        = 64 << 10
+)
+
+// Dormant CI-to-Jobs adapter bounds. Existing Jobs account, capacity, image and
+// timeout admission still applies; this initial profile never widens it.
+const (
+	CIMaxJobsExecutionsPerAccount = 32
+	CIActiveExecutionsPerAccount  = 4
+	CIActiveExecutionsGlobal      = 16
+	CIDispatchWorkers             = 4
+	CIDispatchLeasesPerAccount    = 2
+	CIDispatchPollSeconds         = 2
+	CIDispatchMaxBackoffSeconds   = 60
+	CIDispatchMaxFailures         = 16
+	CIJobsRAMMB                   = 512
+	CIJobsVCPU                    = 1
+	CIJobsManifestMaxBytes        = 16 << 10
+	CIJobsSourceArchiveMaxBytes   = 32 << 20
+	CIJobsResultManifestMaxBytes  = 32 << 10
+	CIJobsResultJSONMaxDepth      = 32
+	CIJobsOutputSnapshotMaxBytes  = 256 << 10
+	CIJobsExpandedSourceMaxBytes  = 128 << 20
+	CIJobsSourceMaxEntries        = 8192
+	CIJobsSourcePathMaxBytes      = 512
+	CIJobsFinalizeSeconds         = 20
+	CIJobsTransferSeconds         = 15
+	CIJobsControlPollMillis       = 1000
+	CIJobsStepStopGraceMillis     = 500
+	CIJobsTransferMaxAttempts     = 3
+	CIStorageMaxBytesPerAccount   = 2 << 30
+	CIStorageMaxBytesGlobal       = 8 << 30
+	CIStorageMaxObjectsPerAccount = 1024
+	CIStorageMaxObjectsGlobal     = 8192
+	CIStorageMaxJournalPerAccount = 16384
+	CIStorageMaxJournalGlobal     = 131072
+	CIStorageMaxIOPerAccount      = 2
+	CIStorageMaxIOGlobal          = 8
+	CIStorageOperationSeconds     = 30
+	CIStorageRetentionDays        = 7
+	CIStorageOrphanHours          = 2
+	CIStorageCleanupBatch         = 16
+	CIStorageCleanupSeconds       = 60
+	CIStorageKeyMaxBytes          = 1024
+	CIStorageWriterChunkBytes     = 256 << 10
+)
