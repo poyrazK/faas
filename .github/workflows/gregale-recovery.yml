@@ -41,7 +41,20 @@ jobs:
     env:
       GOMEMLIMIT: 6GiB
       CGO_ENABLED: '1'
+      DATABASE_URL: postgres://faas:faas-test@127.0.0.1:5432/gregale_recovery?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: '1'
       RECOVERY_GATE_OUTPUT: .cache/gregale-recovery-ci
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas-test
+          POSTGRES_DB: gregale_recovery
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U faas -d gregale_recovery"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,12 +76,12 @@ jobs:
           # The light tier owns the shared Actions cache budget.
           cache: false
       - name: Run portable recovery gate
-        run: make test-gregale-recovery
+        run: make test-gregale-recovery-postgres
       - name: Show actionable failure evidence
         if: failure()
         shell: bash
         run: |
-          for evidence in self-test.stderr.log native-harness.stderr.log registration-contracts.log registration-contracts.stderr.log consumer-intents.log consumer-intents.stderr.log registration-api.log registration-api.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log summary.json; do
+          for evidence in self-test.stderr.log native-harness.stderr.log registration-contracts.log registration-contracts.stderr.log consumer-intents.log consumer-intents.stderr.log registration-api.log registration-api.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log postgres-server-compile.stderr.log postgres-acceptance.json postgres-acceptance.stderr.log summary.json; do
             if [[ -f "$RECOVERY_GATE_OUTPUT/$evidence" ]]; then
               echo "::group::$evidence"
               cat "$RECOVERY_GATE_OUTPUT/$evidence"

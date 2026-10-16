@@ -293,3 +293,31 @@ recorded cleanup failures and spent budget retain their existing meaning.
 Re-exporting a recipient retains ancestor journal inventories without duplicating
 inventory files. Subsequent recipients can verify and clean the full graph even
 when the original machines and earlier recipients no longer exist.
+
+### PostgreSQL acceptance
+
+Run `make test-gregale-recovery-postgres` with `DATABASE_URL` pointing to a
+local disposable PostgreSQL cluster. The target includes the portable gate and
+requires both end-to-end race orderings to pass; missing infrastructure or a
+skipped acceptance test fails the gate. `FAAS_PGTEST_TEMPLATE_DATABASE=1` enables
+the existing private database clone harness and requires database creation rights.
+The ordinary `make test-gregale-recovery` remains available without PostgreSQL.
+CI runs the PostgreSQL target against its own PostgreSQL 16 service.
+
+The CLI acceptance binary starts the real authenticated API test server in a
+separate process with an isolated, migrated PgStore. A delivery proxy holds a
+creation request and discards selected successful responses, while every durable
+effect still goes through the production API handlers. It covers lost consumer,
+key and cancellation responses, and deterministically exercises creation before
+cancellation and cancellation before creation.
+
+The test uses the public bundle export/import and cleanup commands. It imports
+a three-generation recovery bundle into a recipient directory,
+removes the sender's directories, checks read-only pending observations, retries
+cleanup after a lost cancellation response, and repeats completed cleanup. SQL
+assertions check consumer counts and the gateway's credential lookup semantics
+before and after revocation. Completion requires absent sessions and namespaces
+and verified cancellation or revocation without claiming test execution passed.
+Frozen imported evidence must remain byte-identical and contain no credential.
+This is HTTP/SQL portable recovery acceptance; it does not qualify VM execution
+or demonstrate a deployment on a second physical host.

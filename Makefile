@@ -50,6 +50,10 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 test-gregale-recovery: ## Portable Gregale recovery formatting, compile, acceptance and race gate (no KVM)
 	@GO="$(GO)" python3 scripts/ci/gregale_recovery_gate.py
 
+.PHONY: test-gregale-recovery-postgres
+test-gregale-recovery-postgres: ## Portable recovery gate plus real API/PostgreSQL handoff acceptance (DATABASE_URL required)
+	@GO="$(GO)" python3 scripts/ci/gregale_recovery_gate.py --postgres
+
 
 .PHONY: test-customer-platform
 .PHONY: test-commit

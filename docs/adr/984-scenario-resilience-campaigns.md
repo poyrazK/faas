@@ -252,3 +252,11 @@ consumer row lock (or the memory-store mutex), including after app soft deletion
 Both linked and managed platform-customer ownership block this operation. New
 intent journals use this route for saved and recovered IDs; legacy known IDs
 retain their existing route. Unsupported lookup routes cannot prove absence.
+
+The PostgreSQL recovery gate now composes the CLI portable handoff path with a
+subprocess running the production authenticated API route table and a migrated,
+isolated PgStore. Delivery faults control both creation/cancellation orderings
+and lose committed consumer, key and cancellation responses. Acceptance requires
+safe repeated recipient cleanup, disabled credentials, unchanged frozen evidence,
+and resource completion that preserves execution uncertainty. Missing or skipped
+PostgreSQL acceptance is a gate failure; the portable-only gate remains available.

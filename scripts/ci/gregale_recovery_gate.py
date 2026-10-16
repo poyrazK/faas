@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable Gregale recovery validation; no KVM, deployment or credentials."""
+"""Gregale recovery validation, with optional isolated HTTP/PostgreSQL acceptance; no KVM."""
 import argparse
 import datetime
 import json
@@ -44,7 +44,7 @@ GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
 STATE_GCFLAGS = "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false"
 
 
-def test_events(path):
+def test_events(path, required=REQUIRED):
     passed, failed, skipped = set(), set(), set()
     errors = []
     for number, line in enumerate(Path(path).read_text().splitlines(), 1):
@@ -66,7 +66,7 @@ def test_events(path):
             passed.add(name)
         if name and action == "skip":
             skipped.add(name)
-    missing = sorted(REQUIRED - passed)
+    missing = sorted(required - passed)
     if missing:
         errors.append("required acceptance tests did not pass: " + ", ".join(missing))
     if skipped:
@@ -85,6 +85,7 @@ def test_events(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", help="new evidence directory (must not exist)")
+    parser.add_argument("--postgres", action="store_true", help="require real API/PostgreSQL portable consumer recovery acceptance")
     parser.add_argument("--format", action="store_true", help="explicitly gofmt CLI sources before checking")
     args = parser.parse_args()
     run_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
@@ -106,7 +107,7 @@ def main():
     stages = []
     summary = {"schema_version": 1, "run_id": run_id, "package": PACKAGE,
                "filter": FILTER, "required_acceptance_tests": sorted(REQUIRED),
-               "format_sources_requested": args.format, "stages": stages, "passed": False}
+               "format_sources_requested": args.format, "postgres_requested": args.postgres, "stages": stages, "passed": False}
 
     def save():
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -135,6 +136,8 @@ def main():
         return stage
 
     try:
+        if args.postgres and (not env.get("DATABASE_URL") or env.get("FAAS_SKIP_PG_TESTS")):
+            raise ValueError("PostgreSQL acceptance requires DATABASE_URL and forbids FAAS_SKIP_PG_TESTS")
         self_test = run("self-test", [sys.executable, "-m", "unittest", "discover", "-s", "scripts/ci", "-p", "gregale_recovery_gate_test.py"], timeout=60)
         if not self_test["passed"]:
             return 1
@@ -179,7 +182,8 @@ def main():
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in files + ["go.mod", "go.sum", "scripts/ci/gregale_recovery_gate.py",
                             "scripts/ci/scenario-restart-native.py", "scripts/ci/scenario-restart-native_test.py",
-                            "scripts/ci/native_campaign_recovery.py", "scripts/ci/native_campaign_recovery_test.py"]
+                            "scripts/ci/native_campaign_recovery.py", "scripts/ci/native_campaign_recovery_test.py",
+                            "pkg/apid/apidserver/scenario_consumer_acceptance_server_test.go"]
         }
         # Keep compilation/test evidence even if formatting failed.
         with tempfile.TemporaryDirectory(prefix="gregale-recovery-build-") as temporary:
@@ -217,6 +221,23 @@ def main():
                                 if shown < 200:
                                     print(message, flush=True)
                                     shown += 1
+        if args.postgres:
+            with tempfile.TemporaryDirectory(prefix="gregale-postgres-acceptance-") as temporary:
+                server = Path(temporary) / "apid-acceptance.test"
+                built = run("postgres-server-compile", [go, "test", "-p=1", STATE_GCFLAGS,
+                    "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-c=1 -dwarf=false",
+                    "-c", "-o", str(server), "./pkg/apid/apidserver"])
+                if not built["passed"]:
+                    return 1
+                env["GREGALE_CONSUMER_ACCEPTANCE_BINARY"] = str(server)
+                acceptance = run("postgres-acceptance", [go, "test", "-p=1", STATE_GCFLAGS, GCFLAGS,
+                    "-json", "-count=1", "-timeout=8m", "-run", "^TestScenarioConsumerPostgresPortableRecovery$", PACKAGE],
+                    timeout=600, stdout="postgres-acceptance.json")
+                required = {"TestScenarioConsumerPostgresPortableRecovery" + suffix
+                            for suffix in ("", "/cancel-first", "/create-first")}
+                acceptance["tests"] = test_events(output / "postgres-acceptance.json", required)
+                acceptance["passed"] = acceptance["passed"] and not acceptance["tests"]["errors"]
+                save()
         summary["passed"] = all(stage["passed"] for stage in stages)
         return 0 if summary["passed"] else 1
     except (KeyError, ValueError, StopIteration, OSError) as error:
