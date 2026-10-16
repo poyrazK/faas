@@ -305,3 +305,44 @@ test("SPA navigation, missing assets, HEAD, and conditional requests", async () 
   assert.equal((await f.request("/dashboard", { headers: { Accept: "application/json" } })).status, 404);
   assert.equal((await f.request("/_gregale/releases/../../anything")).status >= 400, true);
 });
+
+test('analytics is separately gated, private, and does not buffer or alter serving', async () => {
+  const f = fixture(); f.env.HOSTING_DOMAIN = 'hosting.example';
+  const points = []; f.env.ANALYTICS = { writeDataPoint(point) { points.push(point); } };
+  f.release(first, { 'index.html': 'private bytes' });
+  await f.request('/?secret=query'); assert.equal(points.length, 0);
+  f.env.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED = 'true';
+  const cold = await f.request('/'); assert.equal(await cold.text(), 'private bytes');
+  const warm = await f.request('/'); assert.equal(warm.headers.get('X-Gregale-Cache'), 'HIT');
+  await f.request('/', { method: 'HEAD' });
+  await f.request('/', { headers: { 'If-None-Match': warm.headers.get('ETag') } });
+  assert.equal(points.length, 4);
+  assert.deepEqual(points[0], { indexes: [site], blobs: [origin, first, 'ok', 'hit', 'v1'], doubles: [1, 13, 200] });
+  assert.deepEqual(points.slice(2).map(p => p.doubles), [[1,0,200],[1,0,304]]);
+  const serialized = JSON.stringify(points);
+  for (const secret of ['operator@example.com', 'private bytes', 'query', validToken, 'index.html']) assert.ok(!serialized.includes(secret));
+  f.env.ANALYTICS.writeDataPoint = () => { throw new Error('provider outage'); };
+  assert.equal((await f.request('/')).status, 200);
+  delete f.env.ANALYTICS;
+  assert.equal((await f.request('/')).status, 200);
+});
+
+test('analytics counts authorized serving failures but excludes access denials and disabled serving', async () => {
+  const f = fixture(); f.env.HOSTING_DOMAIN = 'hosting.example'; f.env.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED = 'true';
+  const points = []; f.env.ANALYTICS = { writeDataPoint(p) { points.push(p); } };
+  await f.request('/', { headers: { 'Cf-Access-Jwt-Assertion': 'forged' } }); assert.equal(points.length, 0);
+  f.route.enabled = false;
+  assert.equal((await f.request('/')).status, 503);
+  assert.deepEqual(points[0], { indexes:[site], blobs:[origin,'','hosting_route_unavailable','none','v1'], doubles:[1,0,503] });
+  f.env.FAAS_FRONTEND_HOSTING_ENABLED = 'false'; await f.request('/'); assert.equal(points.length, 1);
+});
+
+test('custom-domain analytics attributes to its bound canonical site', async () => {
+  const f = customFixture(); f.env.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED = 'true';
+  const points=[]; f.env.ANALYTICS={writeDataPoint(p){points.push(p);}};
+  f.release(first, {'index.html':'alias'});
+  const headers={'Cf-Access-Jwt-Assertion':await token({aud:[f.binding.access_aud]})};
+  await f.customRequest('/',{headers});
+  assert.equal(points.length,1); assert.deepEqual(points[0].indexes,[site]);
+  assert.ok(!JSON.stringify(points).includes(f.custom));
+});

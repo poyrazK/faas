@@ -3,10 +3,11 @@ data "cloudflare_zone" "hosting" {
 }
 
 locals {
-  endpoint      = "https://${var.account_id}.r2.cloudflarestorage.com"
-  bucket        = "${var.name}-artifacts"
-  origin_id     = sha256("${local.endpoint}\n${local.bucket}")
-  worker_source = "${path.module}/../worker.mjs"
+  endpoint          = "https://${var.account_id}.r2.cloudflarestorage.com"
+  bucket            = "${var.name}-artifacts"
+  origin_id         = sha256("${local.endpoint}\n${local.bucket}")
+  analytics_dataset = "${replace(var.name, "-", "_")}_traffic"
+  worker_source     = "${path.module}/../worker.mjs"
 }
 
 resource "terraform_data" "isolation" {
@@ -23,6 +24,10 @@ resource "terraform_data" "isolation" {
     precondition {
       condition     = alltrue([for domain in var.platform_domains : var.hosting_domain != domain && !endswith(var.hosting_domain, ".${domain}") && !endswith(domain, ".${var.hosting_domain}")])
       error_message = "Use a different registrable domain from the platform; apid also enforces public-suffix isolation."
+    }
+    precondition {
+      condition     = !var.analytics_enabled || var.configure_analytics
+      error_message = "Attach the analytics binding before enabling collection."
     }
     precondition {
       condition     = !var.worker_enabled || var.attach_route
@@ -144,7 +149,8 @@ resource "cloudflare_worker_version" "hosting" {
   bindings = concat([
     { name = "ARTIFACTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.artifacts.name },
     { name = "ROUTES", type = "kv_namespace", namespace_id = cloudflare_workers_kv_namespace.routes.id },
-    ], [for name, text in {
+    ], var.configure_analytics ? [{ name            = "ANALYTICS", type = "analytics_engine", dataset = local.analytics_dataset }] : [], [for name, text in {
+      FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED       = tostring(var.analytics_enabled)
       FAAS_FRONTEND_HOSTING_ENABLED                 = tostring(var.worker_enabled)
       FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = tostring(var.durable_routing_enabled)
       FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED         = tostring(var.custom_domains_enabled)

@@ -28,6 +28,18 @@ func TestHostingConfigurationIsExplicitAndIsolated(t *testing.T) {
 	if config, err := Load(getenv, "apps.gregale.dev"); err != nil || config == nil {
 		t.Fatalf("valid configuration: %+v %v", config, err)
 	}
+	values["FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"] = "true"
+	if _, err := Load(getenv, "apps.gregale.dev"); err == nil {
+		t.Fatal("enabled unconfigured analytics accepted")
+	}
+	values["FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET"] = "gregale_internal_pilot_traffic"
+	values["FAAS_FRONTEND_HOSTING_ANALYTICS_CF_TOKEN"] = "read-token"
+	if config, err := Load(getenv, "apps.gregale.dev"); err != nil || config.Analytics == nil {
+		t.Fatalf("configured analytics: %v", err)
+	}
+	delete(values, "FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED")
+	delete(values, "FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET")
+	delete(values, "FAAS_FRONTEND_HOSTING_ANALYTICS_CF_TOKEN")
 	for _, domain := range []string{"sites.gregale.dev", "https://other.example", "other.example/path", "user@other.example", "other.example:443"} {
 		values["FAAS_FRONTEND_HOSTING_DOMAIN"] = domain
 		_, err := Load(getenv, "apps.gregale.dev")

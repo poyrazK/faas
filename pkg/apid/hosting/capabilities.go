@@ -26,6 +26,9 @@ func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 		StorageTimeoutSeconds:  int(api.HostingStorageTimeout / time.Second),
 		FinalizeTimeoutSeconds: int(api.HostingFinalizeTimeout / time.Second),
 	}
+	if h, ok := s.Host.(AnalyticsHost); ok && h.HostingAnalyticsEnabled() && h.HostingTrafficReader() != nil {
+		out.AnalyticsEnabled = true
+	}
 	if h, ok := s.Host.(DomainHost); ok && h.HostingDomainsEnabled() && h.HostingDomainProvider() != nil && h.HostingDomainStore() != nil {
 		out.DomainsEnabled = true
 		out.DomainsPerSite = api.HostingDomainsPerSite

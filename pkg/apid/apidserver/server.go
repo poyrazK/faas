@@ -1315,6 +1315,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/internal/hosting/sites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.Require(s.idempotent(s.hosting.CreateSite)))))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetSite)))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetStatus)))))
+	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/traffic", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetTraffic)))))
 	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.DeleteSite)))))
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/suspension", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.Require(s.idempotent(s.hosting.SetSuspended)))))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListReleases)))))

@@ -400,3 +400,9 @@ These phases remain unqualified unless their observations complete.
 The [storage and cost runbook](internal-frontend-hosting-usage.md) describes
 account-wide reservations, pending upload caps, cleanup accounting and the
 operations dashboard’s hypothetical provider-cost calculator.
+
+## Traffic observations
+
+The independently gated [traffic runbook](internal-frontend-hosting-traffic.md)
+describes provider-side approximate observations, privacy, retention and the
+operations panel. It is separate from catalog storage accounting and billing.

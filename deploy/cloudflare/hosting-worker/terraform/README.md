@@ -146,3 +146,16 @@ endpoints, staging-only expiration, origin fingerprints, and rejection of
 empty identities, platform domains, wrong zones, and cross-account placement.
 They validate configuration and provider schema; real account permissions,
 Access/TLS propagation, and serving behavior need live qualification.
+
+
+## Traffic observations (independent opt-in)
+
+`configure_analytics = false` and `analytics_enabled = false` are the defaults.
+The first attaches a dedicated Analytics Engine dataset binding; the provider
+creates the dataset on its first write. The second enables nonblocking,
+privacy-limited Worker observations without altering serving. API output leaves
+analytics management disabled and never includes its separate read token.
+Review provider pricing/retention before opting in. See the
+[traffic runbook](../../../../docs/internal-frontend-hosting-traffic.md) for scoped
+credentials, API/dashboard flags, sampling semantics and live qualification.
+Disabling collection does not delete observations or stop static serving.

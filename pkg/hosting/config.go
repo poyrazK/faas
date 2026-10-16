@@ -13,6 +13,7 @@ type Config struct {
 	Artifacts       *R2
 	Routes          *KV
 	Domains         *CloudflareDomains
+	Analytics       *Analytics
 	ReservedDomains []string
 }
 
@@ -21,7 +22,7 @@ type Config struct {
 func Load(getenv func(string) string, appsDomain string) (*Config, error) {
 	domain := strings.ToLower(strings.TrimSpace(getenv("FAAS_FRONTEND_HOSTING_DOMAIN")))
 	if domain == "" {
-		if getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "true" {
+		if getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED") == "true" {
 			return nil, errors.New("enabled hosting requires an isolated hosting domain and provider configuration")
 		}
 		return nil, nil
@@ -59,6 +60,14 @@ func Load(getenv func(string) string, appsDomain string) (*Config, error) {
 		}
 	} else if value := getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED"); value == "1" || value == "true" {
 		return nil, errors.New("hosting custom domains require provider configuration")
+	}
+	if dataset := getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET"); dataset != "" {
+		cfg.Analytics, err = NewAnalytics(getenv("FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID"), dataset, getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_CF_TOKEN"))
+		if err != nil {
+			return nil, err
+		}
+	} else if value := getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"); value == "1" || value == "true" {
+		return nil, errors.New("hosting analytics requires provider configuration")
 	}
 	return cfg, nil
 }

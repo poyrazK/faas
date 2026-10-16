@@ -173,3 +173,35 @@ run "reject_cross_account_zone" {
   variables { account_id = "33333333333333333333333333333333" }
   expect_failures = [terraform_data.isolation]
 }
+
+run "analytics_disabled_defaults" {
+  command = plan
+  assert {
+    condition     = !var.configure_analytics && !var.analytics_enabled && length([for binding in cloudflare_worker_version.hosting.bindings : binding if binding.name == "ANALYTICS"]) == 0 && output.apid_environment.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED == "0"
+    error_message = "Analytics binding, collection and management must all remain default-off."
+  }
+}
+run "analytics_binding_without_collection" {
+  command = plan
+  variables { configure_analytics = true }
+  assert {
+    condition     = one([for binding in cloudflare_worker_version.hosting.bindings : binding.dataset if binding.name == "ANALYTICS"]) == "gregale_internal_hosting_traffic" && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"]) == "false" && output.apid_environment.FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET == "gregale_internal_hosting_traffic"
+    error_message = "Binding preparation must not start collection or enable API reads."
+  }
+}
+run "analytics_collection_requires_binding" {
+  command = plan
+  variables { analytics_enabled = true }
+  expect_failures = [terraform_data.isolation]
+}
+run "analytics_opt_in" {
+  command = plan
+  variables {
+    configure_analytics = true
+    analytics_enabled   = true
+  }
+  assert {
+    condition     = output.hosting.analytics_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"]) == "true" && output.apid_environment.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED == "0"
+    error_message = "Worker collection and API read admission must be independent."
+  }
+}

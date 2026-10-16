@@ -16,3 +16,6 @@ configure_custom_domains = false
 # Browser uploads stay disabled until exact operations-console origins are set.
 dashboard_upload_origins = []
 # dashboard_upload_origins = ["https://operations.gregale.dev"]
+
+configure_analytics = false
+analytics_enabled = false

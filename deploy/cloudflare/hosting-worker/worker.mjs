@@ -189,7 +189,7 @@ async function resolveFile(request, url, env, ctx, deps, route) {
   return file ? { file, release, pinned } : null;
 }
 
-async function serveFile(request, url, env, ctx, deps, route, selected) {
+async function serveFile(request, url, env, ctx, deps, route, selected, trace) {
   const { file, release, pinned } = selected;
   const etag = `"sha256:${file.sha256}"`;
   const headers = new Headers({
@@ -211,7 +211,7 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
   headers.set("X-Gregale-Cache", response ? "HIT" : "MISS");
   if (!response) {
     const object = await env.ARTIFACTS.get(`hosting/published/${route.site_id}/${release}/files/${file.path}`);
-    if (!object || object.size !== file.size) return problem(503, "hosting_artifact_unavailable");
+    if (!object || object.size !== file.size) { trace.code = "hosting_artifact_unavailable"; return problem(503, "hosting_artifact_unavailable"); }
     response = new Response(object.body, { headers: { "Cache-Control": "public, max-age=31536000, immutable" } });
     if (deps.cache) ctx.waitUntil(deps.cache.put(key, response.clone()));
   }
@@ -219,42 +219,66 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
   return new Response(response.body, { headers });
 }
 
-export async function serve(request, env, ctx, deps = { fetch, now: Date.now, cache: globalThis.caches?.default }) {
-  if (env.FAAS_FRONTEND_HOSTING_ENABLED !== "true") return problem(404, "frontend_hosting_disabled");
-  if (!env.ROUTES || !env.ARTIFACTS) return problem(503, "hosting_unconfigured");
+async function dispatch(request, env, ctx, deps, trace) {
+  const fail = (status, code) => { trace.code = code; return problem(status, code); };
+  if (env.FAAS_FRONTEND_HOSTING_ENABLED !== "true") return fail(404, "frontend_hosting_disabled");
+  if (!env.ROUTES || !env.ARTIFACTS) return fail(503, "hosting_unconfigured");
   try {
     const url = new URL(request.url);
     let binding;
     let routingURL = url;
-    if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED === "true" && !env.HOSTING_DOMAIN) return problem(503, "hosting_unconfigured");
+    if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED === "true" && !env.HOSTING_DOMAIN) return fail(503, "hosting_unconfigured");
     if (env.HOSTING_DOMAIN && !canonicalHostname(url.hostname, env.HOSTING_DOMAIN)) {
-      if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED !== "true") return problem(404, "frontend_hosting_domains_disabled");
-      if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED !== "true") return problem(503, "hosting_route_unavailable");
+      if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED !== "true") return fail(404, "frontend_hosting_domains_disabled");
+      if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED !== "true") return fail(503, "hosting_route_unavailable");
       const assertion = request.headers.get("Cf-Access-Jwt-Assertion") || "";
-      if (assertion.length > 16384 || assertion.split(".").length !== 3) return problem(403, "internal_access_required");
+      if (assertion.length > 16384 || assertion.split(".").length !== 3) return fail(403, "internal_access_required");
       binding = await domainBindingFor(url, env, ctx, deps);
       routingURL = new URL(`https://${binding.canonical_hostname}/`);
     }
-    if (!(await verifyAccess(request, binding ? { ...env, ACCESS_AUD: binding.access_aud } : env, deps))) return problem(403, "internal_access_required");
-    if (!new Set(["GET", "HEAD"]).has(request.method)) return problem(405, "method_not_allowed");
+    if (!(await verifyAccess(request, binding ? { ...env, ACCESS_AUD: binding.access_aud } : env, deps))) return fail(403, "internal_access_required");
+    // Attribute only authenticated requests to a canonical site or a verified alias.
+    trace.site = binding?.site_id || (canonicalHostname(url.hostname, env.HOSTING_DOMAIN) ? url.hostname.split('.')[0] : '');
+    if (!new Set(["GET", "HEAD"]).has(request.method)) return fail(405, "method_not_allowed");
     let route;
     if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED === "true") {
       route = await durableRouteFor(routingURL, env, ctx, deps);
       // An existing disabled/deleted/invalid head never falls back to a stale KV lease.
-      if (route !== undefined && !validDurableRoute(route, routingURL.hostname, env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
+      if (route !== undefined && !validDurableRoute(route, routingURL.hostname, env.ORIGIN_ID)) return fail(503, "hosting_route_unavailable");
     }
-    if (binding && (route === undefined || route.site_id !== binding.site_id)) return problem(503, "hosting_route_unavailable");
+    if (binding && (route === undefined || route.site_id !== binding.site_id)) return fail(503, "hosting_route_unavailable");
     if (binding) route.domain_generation = binding.generation;
     if (route === undefined) {
       route = await env.ROUTES.get(`site:${url.hostname}`, { type: "json", cacheTtl: 60 });
-      if (!validRoute(route, url.hostname, deps.now(), env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
+      if (!validRoute(route, url.hostname, deps.now(), env.ORIGIN_ID)) return fail(503, "hosting_route_unavailable");
     }
     const selected = await resolveFile(request, url, env, ctx, deps, route);
-    if (!selected) return problem(404, "hosting_file_not_found");
-    return await serveFile(request, url, env, ctx, deps, route, selected);
+    if (!selected) return fail(404, "hosting_file_not_found");
+    return await serveFile(request, url, env, ctx, deps, route, selected, trace);
   } catch {
-    return problem(503, "hosting_unavailable");
+    return fail(503, "hosting_unavailable");
   }
+}
+
+// Analytics Engine enqueues these writes in the provider runtime. There is no
+// telemetry HTTP fetch, body buffering, waitUntil dependency, or Gregale RPC.
+export async function serve(request, env, ctx, deps = { fetch, now: Date.now, cache: globalThis.caches?.default }) {
+  const trace = { site: '', code: '' };
+  const response = await dispatch(request, env, ctx, deps, trace);
+  if (env.FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED === 'true' && UUID.test(trace.site) && DIGEST.test(env.ORIGIN_ID || '')) {
+    try {
+      const release = response.headers.get('X-Gregale-Release') || '';
+      const size = Number(response.headers.get('Content-Length'));
+      const bytes = response.status === 200 && request.method === 'GET' && UUID.test(release) && Number.isSafeInteger(size) && size >= 0 && size <= 32 * 1024 * 1024 ? size : 0;
+      const cache = response.headers.get('X-Gregale-Cache');
+      env.ANALYTICS?.writeDataPoint({
+        indexes: [trace.site],
+        blobs: [env.ORIGIN_ID, UUID.test(release) ? release : '', trace.code || (response.status === 304 ? 'not_modified' : 'ok'), cache === 'HIT' ? 'hit' : cache === 'MISS' ? 'miss' : 'none', 'v1'],
+        doubles: [1, bytes, response.status],
+      });
+    } catch { /* Observability must never interrupt static serving. */ }
+  }
+  return response;
 }
 
 export default { fetch: serve };

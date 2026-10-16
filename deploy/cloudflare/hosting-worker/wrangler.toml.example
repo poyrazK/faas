@@ -5,6 +5,7 @@ workers_dev = false
 preview_urls = false
 
 [vars]
+FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED = "false"
 HOSTING_DOMAIN = "gregale-hosting.example"
 FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED = "false"
 # Opt in only after configuring a wildcard Cloudflare Access application.
@@ -25,3 +26,8 @@ id = "replace-with-the-routing-namespace-id"
 
 # Add only the isolated hosting zone's wildcard route after Access is ready.
 # Never attach this Worker to the Gregale dashboard/API zone or R2 API endpoint.
+
+# Opt in only after reviewing Analytics Engine pricing and retention.
+# [[analytics_engine_datasets]]
+# binding = "ANALYTICS"
+# dataset = "gregale_internal_hosting_traffic"

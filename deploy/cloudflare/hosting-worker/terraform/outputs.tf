@@ -10,6 +10,9 @@ output "hosting" {
     kv_namespace_id           = cloudflare_workers_kv_namespace.routes.id
     worker_name               = cloudflare_worker.hosting.name
     worker_sha256             = filesha256(local.worker_source)
+    analytics_configured      = var.configure_analytics
+    analytics_enabled         = var.analytics_enabled
+    analytics_dataset         = var.configure_analytics ? local.analytics_dataset : ""
     worker_enabled            = var.worker_enabled
     durable_routing_enabled   = var.durable_routing_enabled
     custom_domains_configured = var.configure_custom_domains
@@ -26,6 +29,8 @@ output "hosting" {
 output "apid_environment" {
   description = "Non-secret bootstrap settings; inject scoped credentials separately through sealed environment configuration."
   value = {
+    FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED        = "0"
+    FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET        = var.configure_analytics ? local.analytics_dataset : ""
     FAAS_FRONTEND_HOSTING_ENABLED                  = "0"
     FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED  = "0"
     FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED          = "0"

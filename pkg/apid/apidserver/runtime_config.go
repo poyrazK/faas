@@ -19,17 +19,18 @@ import (
 )
 
 const (
-	runtimeConfigTenantSurfaces         = "tenant_surfaces_enabled"
-	runtimeConfigDomainDoctor           = "domain_doctor_enabled"
-	runtimeConfigDomainDoctorTTL        = "domain_doctor_ttl_seconds"
-	runtimeConfigDataPlacement          = "data_placement_enabled"
-	runtimeConfigAppErrors              = "app_errors_enabled"
-	runtimeConfigRekey                  = "rekey_enabled"
-	runtimeConfigHSTS                   = "hsts_enabled"
-	runtimeConfigS3                     = "s3_enabled"
-	runtimeConfigFrontendHosting        = "frontend_hosting_enabled"
-	runtimeConfigFrontendHostingDurable = "frontend_hosting_durable_routing_enabled"
-	runtimeConfigFrontendHostingDomains = "frontend_hosting_domains_enabled"
+	runtimeConfigTenantSurfaces           = "tenant_surfaces_enabled"
+	runtimeConfigDomainDoctor             = "domain_doctor_enabled"
+	runtimeConfigDomainDoctorTTL          = "domain_doctor_ttl_seconds"
+	runtimeConfigDataPlacement            = "data_placement_enabled"
+	runtimeConfigAppErrors                = "app_errors_enabled"
+	runtimeConfigRekey                    = "rekey_enabled"
+	runtimeConfigHSTS                     = "hsts_enabled"
+	runtimeConfigS3                       = "s3_enabled"
+	runtimeConfigFrontendHosting          = "frontend_hosting_enabled"
+	runtimeConfigFrontendHostingDurable   = "frontend_hosting_durable_routing_enabled"
+	runtimeConfigFrontendHostingAnalytics = "frontend_hosting_analytics_enabled"
+	runtimeConfigFrontendHostingDomains   = "frontend_hosting_domains_enabled"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -55,6 +56,7 @@ type runtimeConfigDefinition struct {
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
+	{Key: runtimeConfigFrontendHostingAnalytics, Label: "Internal hosting traffic analytics", Description: "Read approximate provider traffic observations for owned internal sites. Worker collection has an independent default-off switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDomains, Label: "Internal hosting custom domains", Description: "Admit operator-only custom domain management. Existing domains continue safety reconciliation when disabled; the Worker has an independent serving switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHosting, Label: "Internal frontend hosting", Description: "Enable operator-only static hosting management. Disabling expires leased routes within 120 seconds; durable sites continue serving. The independent Worker switch stops all traffic.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDurable, Label: "Internal durable frontend routing", Description: "Create new static sites with durable edge routing. Existing sites keep their routing mode. Disabling does not stop existing durable sites or their safety reconciliation; the Worker has a separate durable-routing switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -108,6 +110,8 @@ func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) st
 		envName = "FAAS_FRONTEND_HOSTING_ENABLED"
 	case runtimeConfigFrontendHostingDurable:
 		envName = "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"
+	case runtimeConfigFrontendHostingAnalytics:
+		envName = "FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"
 	case runtimeConfigFrontendHostingDomains:
 		envName = "FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED"
 	case runtimeConfigTenantSurfaces:

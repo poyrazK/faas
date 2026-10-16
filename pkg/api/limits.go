@@ -11251,6 +11251,16 @@ const (
 // publication work, retained artifacts, and the edge kill-switch convergence.
 const (
 	HostingFilesMax                            = 1000
+	HostingAnalyticsDatasetMaxBytes            = 64
+	HostingTrafficQueryTimeout                 = 5 * time.Second
+	HostingTrafficQueryConcurrency             = 2
+	HostingTrafficCacheTTL                     = time.Minute
+	HostingTrafficCacheEntries                 = 128
+	HostingTrafficWindow                       = 24 * time.Hour
+	HostingTrafficRowsMax                      = 2048
+	HostingTrafficResponseMaxBytes             = 512 << 10
+	HostingTrafficCounterMax             int64 = 1<<53 - 1
+	HostingTrafficFailureGroupsMax             = 20
 	HostingAccountStorageMaxBytes        int64 = 1 << 30
 	HostingAccountPendingUploadsMax      int64 = 4
 	HostingStorageCopies                 int64 = 2

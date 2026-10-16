@@ -104,3 +104,14 @@ variable "dashboard_upload_origins" {
     error_message = "Use exact lowercase HTTPS origins without wildcards, ports, paths, credentials, or trailing slashes."
   }
 }
+
+variable "configure_analytics" {
+  type        = bool
+  default     = false
+  description = "Attach a dedicated Analytics Engine binding; no dataset is created until the first write."
+}
+variable "analytics_enabled" {
+  type        = bool
+  default     = false
+  description = "Collect privacy-limited, best-effort site traffic observations."
+}

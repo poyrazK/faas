@@ -138,3 +138,13 @@ func (s *server) runHostingReconciler(ctx context.Context) {
 		}
 	}
 }
+
+func (h hostingHost) HostingAnalyticsEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingAnalytics, false)
+}
+func (h hostingHost) HostingTrafficReader() hosting.TrafficReader {
+	if h.s.hostingConfig == nil || h.s.hostingConfig.Analytics == nil {
+		return nil
+	}
+	return h.s.hostingConfig.Analytics
+}
