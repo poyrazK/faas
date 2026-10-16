@@ -1464,12 +1464,19 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	oldVerifier := joinControlPlaneVerifier
 	oldRegistrar := joinReleaseBundleRegistrar
 	oldLookup := joinPrivateAddressLookup
+	oldProbe := joinBootstrapContractProbe
 	t.Cleanup(func() {
 		ansiblePlaybookRunner = oldRunner
 		joinControlPlaneVerifier = oldVerifier
 		joinReleaseBundleRegistrar = oldRegistrar
 		joinPrivateAddressLookup = oldLookup
+		joinBootstrapContractProbe = oldProbe
 	})
+	contractCurrent, probedContract := true, ""
+	joinBootstrapContractProbe = func(_ context.Context, _ string, _ []string, _, want, _ string) (bool, error) {
+		probedContract = want
+		return contractCurrent, nil
+	}
 	joinControlPlaneVerifier = func(context.Context, *deployJoinReport, string) error { return nil }
 	registrations := 0
 	joinReleaseBundleRegistrar = func(context.Context, string, string, string) error {
@@ -1641,5 +1648,28 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if registrations != 2 {
 		t.Fatalf("activation release registrations = %d, want one additional registration", registrations)
+	}
+	if !strings.HasPrefix(probedContract, "sha256:") || activateReport.RolesConverged {
+		t.Fatalf("current-contract activation probed %q, RolesConverged=%v", probedContract, activateReport.RolesConverged)
+	}
+
+	// ADR-1360: a stale contract was prepared without role convergence, so
+	// activation runs the playbook from the top and converges roles first.
+	calls = nil
+	contractCurrent = false
+	staleReport := report
+	staleReport.Applied = false
+	staleReport.Prepared = false
+	if code, err := deployJoinApply(&activateOpts, &staleReport); err != nil || code != 0 {
+		t.Fatalf("stale-contract activate deployJoinApply: code=%d err=%v", code, err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("stale-contract activation Ansible calls = %d, want control-plane, node activation, and baseline acceptance", len(calls))
+	}
+	if joined := strings.Join(calls[1], " "); strings.Contains(joined, "--start-at-task") || !strings.Contains(joined, "node_join.yml") {
+		t.Fatalf("stale-contract activation must run node_join.yml from the top: %v", calls[1])
+	}
+	if !staleReport.RolesConverged || !staleReport.Applied {
+		t.Fatalf("stale-contract activation report = %#v, want roles converged and applied", staleReport)
 	}
 }
