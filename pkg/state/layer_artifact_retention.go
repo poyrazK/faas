@@ -128,6 +128,16 @@ func (m *MemStore) deploymentLayerArtifactReferencedLocked(d Deployment) bool {
 }
 
 func (m *MemStore) layerArtifactReferencedLocked(key string) bool {
+	for _, job := range m.jobs {
+		if isEnvironmentGitOpsSourceJob(job.ImageRef) && job.Status != "deleted" && job.ImageMaterializationStatus == "ready" && job.ImageStorageKey == key {
+			return true
+		}
+	}
+	for _, run := range m.jobRuns {
+		if isEnvironmentGitOpsSourceJob(run.ImageRefSnapshot) && (run.AggregateStatus == "queued" || run.AggregateStatus == "running") && run.ImageStorageKeySnapshot == key {
+			return true
+		}
+	}
 	for _, d := range m.deployments {
 		app := m.apps[d.AppID]
 		if app.ID == "" || app.Status == AppDeleted || !m.deploymentLayerArtifactReferencedLocked(d) {

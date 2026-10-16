@@ -427,6 +427,12 @@ SELECT EXISTS (
     JOIN apps a ON a.id = p.app_id
     WHERE p.storage_key = sqlc.arg(storage_key)::text AND a.status <> 'deleted'
       AND op.status NOT IN ('ready', 'compensated')
+) OR EXISTS (
+    SELECT 1 FROM jobs j WHERE j.status<>'deleted' AND j.image_ref LIKE 'gregale-source://%'
+        AND j.image_materialization_status='ready' AND j.image_storage_key=sqlc.arg(storage_key)::text
+) OR EXISTS (
+    SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
+        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=sqlc.arg(storage_key)::text
 ) AS referenced;
 
 -- name: RetainedLayerBytesWithClonePins :one

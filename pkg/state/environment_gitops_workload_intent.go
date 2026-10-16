@@ -143,12 +143,12 @@ func environmentGitOpsScheduledJobUnsupported(app gitOpsIntentApp, intent Enviro
 	if source == nil {
 		source, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
-	if source == nil || source.Kind != "image" || source.Image == "" {
-		return "environment_scheduled_job_requires_immutable_image_source"
+	if source == nil || (source.Kind != "image" && source.Kind != "source" && source.Kind != "dockerfile") {
+		return "environment_scheduled_job_requires_verified_source"
 	}
 	if _, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
 		Project: "scheduled-job", Environment: "scheduled-job", Workloads: map[string]api.EnvironmentWorkload{"job": {Source: source}}}); err != nil {
-		return "environment_scheduled_job_requires_immutable_image_source"
+		return "environment_scheduled_job_requires_verified_source"
 	}
 	if !plan.JobsAllowed() || api.JobMaxPerAccount[plan.PlanIndex()] <= 0 || api.JobRAMMB[plan.PlanIndex()] <= 0 || api.JobTaskTimeoutSec[plan.PlanIndex()] <= 0 {
 		return "environment_scheduled_job_plan_not_supported"
@@ -162,8 +162,19 @@ func environmentGitOpsScheduledJobUnsupported(app gitOpsIntentApp, intent Enviro
 	if strings.TrimSpace(app.StartCommand) != "" {
 		return "environment_scheduled_job_start_command_unsupported"
 	}
+	commandIntent := intent
+	commandIntent.Source = source
+	if source.Kind != "image" {
+		// A source schedule must declare reviewed production argv in this
+		// definition; an omitted/unmanaged old entrypoint is not authority.
+		commandIntent.Runtime = nil
+		_ = json.Unmarshal(workload.Runtime, &commandIntent.Runtime)
+	}
+	if _, ok := EnvironmentGitOpsJobCommand(commandIntent); !ok {
+		return "environment_scheduled_job_command_required"
+	}
 	for key, raw := range intent.Runtime {
-		if key == "execution_mode" || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if key == "execution_mode" || key == "entrypoint" || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			continue
 		}
 		return "environment_scheduled_job_runtime_field_unsupported"

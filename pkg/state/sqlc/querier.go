@@ -151,6 +151,7 @@ type Querier interface {
 	BindDeploymentRuntimeRelease(ctx context.Context, db DBTX, arg BindDeploymentRuntimeReleaseParams) (string, error)
 	BindEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsQueueParams) (int64, error)
 	BindEnvironmentGitOpsResource(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsResourceParams) (int64, error)
+	BindEnvironmentSourceJobArtifact(ctx context.Context, db DBTX, arg BindEnvironmentSourceJobArtifactParams) (int64, error)
 	BindExclusiveWorkSubmission(ctx context.Context, db DBTX, arg BindExclusiveWorkSubmissionParams) error
 	BindInvocationEnvironment(ctx context.Context, db DBTX, arg BindInvocationEnvironmentParams) (int64, error)
 	BlockApplicationStandardEnrollmentWorker(ctx context.Context, db DBTX, arg BlockApplicationStandardEnrollmentWorkerParams) (int64, error)
@@ -725,6 +726,7 @@ type Querier interface {
 	// Public controls check authority before source/quota checks, including a
 	// no-op delete. The storage trigger still checks authority at the write.
 	EnvironmentSecretReferenceWriteOwned(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceWriteOwnedParams) (bool, error)
+	EnvironmentSourceJobArtifactReady(ctx context.Context, db DBTX, arg EnvironmentSourceJobArtifactReadyParams) (bool, error)
 	EnvironmentWorkloadAdmissionRetired(ctx context.Context, db DBTX, arg EnvironmentWorkloadAdmissionRetiredParams) (bool, error)
 	EnvironmentWorkloadGraphByIDForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadGraphForPreparation(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForPreparationParams) (EnvironmentWorkloadGraph, error)

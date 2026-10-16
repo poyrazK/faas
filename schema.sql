@@ -7296,7 +7296,7 @@ CREATE TABLE public.environment_workload_qualification_requests (
     CONSTRAINT environment_workload_qualification_requests_phase_check CHECK ((phase = ANY (ARRAY['queued'::text, 'claimed'::text]))),
     CONSTRAINT environment_workload_qualification_requests_resource_check CHECK ((resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)),
     CONSTRAINT environment_workload_qualification_requests_worker_id_check CHECK ((octet_length(worker_id) <= 256)),
-    CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (((execution_mode = 'job'::text) AND (reserved_instance_id IS NULL)) OR ((execution_mode <> 'job'::text) AND (reserved_instance_id IS NOT NULL))))))
+    CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (reserved_instance_id IS NOT NULL))))
 );
 
 
@@ -8279,14 +8279,20 @@ WHERE graph.id=target_graph AND graph.phase='prepared'
     AND managed_job.account_id=source.account_id AND managed_job.kind='recurring' AND managed_job.status='active'
     AND managed_job.image_materialization_status='ready'
     AND coalesce(managed_job.image_storage_key,'')<>''
-    AND managed_job.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
-    AND intent.source->>'kind'='image' AND managed_job.image_ref=intent.source->>'image'
+    AND (
+        (intent.source->>'kind'='image' AND managed_job.image_ref=intent.source->>'image'
+         AND managed_job.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')) OR
+        (environment_workload_source_job_deployment_matches(managed_job.id,deployment.id)
+         AND managed_job.image_resolved_digest='gregale-deployment:' || deployment.id::text
+         AND managed_job.image_storage_key=deployment.rootfs_key)
+    )
     AND intent.schedule IS NOT NULL AND managed_job.cron_schedule=intent.schedule->>'cron'
     AND managed_job.cron_timezone=intent.schedule->>'timezone'
     AND managed_job.schedule_policy IS NOT DISTINCT FROM NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
     AND managed_job.failure_rules IS NOT DISTINCT FROM NULLIF(intent.schedule->'failure_rules','null'::jsonb)
     AND managed_job.max_parallelism=1 AND managed_job.retry_max=0
-    AND managed_job.ram_mb>0 AND managed_job.task_timeout_s>0 AND cardinality(managed_job.command)=0
+    AND managed_job.ram_mb>0 AND managed_job.task_timeout_s>0
+    AND to_jsonb(managed_job.command)=coalesce(nullif(intent.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
     AND managed_job.env_overrides=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
     AND coalesce(nullif(intent.variables,'null'::jsonb),'{}'::jsonb)=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
     AND coalesce(nullif(member.value->'service_bindings','null'::jsonb),'{}'::jsonb)=coalesce(intent.service_bindings,'{}'::jsonb)
@@ -8557,6 +8563,39 @@ CREATE FUNCTION public.environment_workload_serving_traffic_authorized(target_ap
          (target_deployment<>route.deployment_id AND target_traffic=0))
  )
 $$;
+
+
+--
+-- Name: environment_workload_source_job_deployment_matches(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_source_job_deployment_matches(target_job uuid, target_deployment uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $_$
+SELECT EXISTS (
+    SELECT 1 FROM jobs j
+    JOIN app_environment_workload_intents i ON i.job_id=j.id AND i.account_id=j.account_id
+    JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+    JOIN project_environments e ON e.id=i.environment_id
+    JOIN deployments d ON d.id=target_deployment AND d.app_id=i.app_id AND d.scope=e.slug
+    WHERE j.id=target_job AND i.source->>'kind' IN ('source','dockerfile')
+        AND i.source_revision ~ '^[a-f0-9]{40}$' AND d.commit_sha=i.source_revision
+        AND j.image_ref='gregale-source://' || i.environment_id::text || '/' || i.app_id::text || '/' || i.source_revision
+        AND d.status IN ('snapshotting','live') AND d.rootfs_key IS NOT NULL AND d.rootfs_key<>'' AND d.rootfs_bytes>0
+        AND d.environment_workload_runtime->'source'=i.source
+        AND d.environment_workload_runtime->'runtime'->'entrypoint'=i.runtime->'entrypoint'
+        AND jsonb_typeof(i.runtime->'entrypoint')='array' AND jsonb_array_length(i.runtime->'entrypoint') BETWEEN 1 AND 64
+        AND to_jsonb(j.command)=i.runtime->'entrypoint'
+        AND d.environment_workload_runtime->>'source_id'=s.id::text
+        AND d.environment_workload_runtime->>'environment_id'=i.environment_id::text
+        AND d.environment_workload_runtime->>'app_id'=i.app_id::text
+        AND d.environment_workload_runtime->'source_archive'->>'commit_sha'=i.source_revision
+        AND d.environment_workload_runtime->'source_archive'->>'build_id'=d.build_id::text
+        AND d.environment_workload_runtime->'source_archive'->>'sha256'=d.source_sha256
+        AND d.environment_workload_runtime->'source_archive'->>'path'=d.source_path
+        AND d.environment_workload_runtime->>'workload_class'='job'
+)
+$_$;
 
 
 --
@@ -12105,6 +12144,35 @@ END $$;
 
 
 --
+-- Name: guard_environment_source_job_artifact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_source_job_artifact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (OLD.image_ref LIKE 'gregale-source://%' OR NEW.image_ref LIKE 'gregale-source://%') AND
+       ROW(NEW.image_resolved_digest,NEW.image_storage_key,NEW.image_materialization_status,
+           NEW.image_materialization_attempts,NEW.schedule_revision)
+       IS DISTINCT FROM ROW(OLD.image_resolved_digest,OLD.image_storage_key,OLD.image_materialization_status,
+           OLD.image_materialization_attempts,OLD.schedule_revision) AND NOT EXISTS (
+        SELECT 1 FROM app_environment_workload_intents i
+        JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+        JOIN environment_gitops_jobs work ON work.source_id=s.id
+        WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended
+            AND work.desired_generation=s.generation AND work.claimed_generation=s.generation
+            AND work.lease_until>clock_timestamp() AND work.lease_token<>''
+            AND work.lease_token=current_setting('gregale.gitops_lease',true)
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+            MESSAGE='Source Job artifacts require the environment controller lease';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_environment_workload_candidate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12621,14 +12689,18 @@ $$;
 
 CREATE FUNCTION public.guard_environment_workload_job_link() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 BEGIN
     IF TG_OP<>'DELETE' AND NEW.job_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM jobs j
         WHERE j.id=NEW.job_id AND j.account_id=NEW.account_id
           AND j.kind='recurring' AND j.status IN ('paused','active')
-          AND NEW.schedule IS NOT NULL AND NEW.source->>'kind'='image'
-          AND j.image_ref=NEW.source->>'image'
+          AND NEW.schedule IS NOT NULL AND (
+              (NEW.source->>'kind'='image' AND j.image_ref=NEW.source->>'image') OR
+              (NEW.source->>'kind' IN ('source','dockerfile') AND NEW.source_revision ~ '^[a-f0-9]{40}$'
+               AND j.image_ref='gregale-source://' || NEW.environment_id::text || '/' || NEW.app_id::text || '/' || NEW.source_revision)
+          )
+          AND to_jsonb(j.command)=coalesce(nullif(NEW.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
           AND j.env_overrides=NEW.variables
           AND j.cron_schedule=NEW.schedule->>'cron'
           AND j.cron_timezone=NEW.schedule->>'timezone'
@@ -12636,11 +12708,11 @@ BEGIN
           AND j.failure_rules IS NOT DISTINCT FROM NULLIF(NEW.schedule->'failure_rules','null'::jsonb)
     ) THEN
         RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_link_contract',
-            MESSAGE='GitOps Job binding does not match the reviewed image and schedule';
+            MESSAGE='GitOps Job binding does not match the reviewed source and schedule';
     END IF;
     RETURN NEW;
 END;
-$$;
+$_$;
 
 
 --
@@ -25890,7 +25962,7 @@ CREATE TABLE public.environment_qualification_job_smoke_receipts (
     CONSTRAINT environment_qualification_job_smoke_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT environment_qualification_job_smoke_receipts_error_class_check CHECK ((error_class = 'succeeded'::text)),
     CONSTRAINT environment_qualification_job_smoke_receipts_exit_code_check CHECK ((exit_code = 0)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK ((policy_id = 'job-exit-v2'::text)),
+    CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK ((policy_id = ANY (ARRAY['job-exit-v2'::text, 'job-exit-v3'::text]))),
     CONSTRAINT environment_qualification_job_smoke_receipts_resource_check CHECK ((resource ~ '^workload/[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT environment_qualification_job_smoke_receipts_signal_check CHECK ((signal = 0))
 );
@@ -56187,6 +56259,13 @@ CREATE TRIGGER guard_environment_qualification_physical_retirement BEFORE DELETE
 --
 
 CREATE TRIGGER guard_environment_qualification_runtime_receipt BEFORE INSERT OR UPDATE ON public.instance_runtime_config_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_runtime_receipt();
+
+
+--
+-- Name: jobs guard_environment_source_job_artifact; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_source_job_artifact BEFORE UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_source_job_artifact();
 
 
 --

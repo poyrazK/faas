@@ -10,7 +10,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity, protected-branch review evidence and project/commit-bound source builds | Dedicated native GitLab workload acceptance; incomplete or conflicting build provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery; PostgreSQL apid acceptance for an API/worker/queue graph through a source outage and controller restart | Live report-mode qualification on a deployed control plane |
 | Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies; unsupported or unverified source-provider provenance |
-| Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image-only schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
+| Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image and reviewed source/Dockerfile schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
 | Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, private Manager restore orchestration, version-checked load, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels; restore-target config/runtime receipts and receipt-gated route selection in both stores; native-retired and native-effects-absent proofs; schedd's periodic, node-bound abandoned-execution recovery; smoke-authorized conditional GCS retirement with durable host tombstones and an opt-in vmmd retry loop | Dedicated Linux capture/restore acceptance; production qualification polling remains gated until those pass |
 | Enforcement | Transactional ownership, override and execution fences; lease-bound activation and serving of supported request/service graphs including pinned scoped service bindings, push and pull workers, queue-bound HTTP functions, and scheduled Jobs with a successful post-activation occurrence | Production qualification polling remains gated; dedicated Linux acceptance and unsupported production execution adapters |
 
@@ -141,7 +141,7 @@ be service-binding targets. A
 scheduled Job can activate from the reviewed graph, but the graph is not
 reported serving until that exact active Job completes a successful scheduled
 occurrence after release publication.
-For image-only Job workloads with reviewed variables and environment-scoped
+For image or reviewed source/Dockerfile Job workloads with reviewed variables and environment-scoped
 secret references, but without queue bindings or unsupported runtime overrides, apply now
 creates or reconciles a deterministic, paused Gregale `jobs` record and stores
 its ID on the scoped workload intent. Database checks require that link to
@@ -198,6 +198,21 @@ to acknowledge the exact secret-key set. Queue bindings remain unsupported;
 service-bound Jobs may target only request/service
 workloads in the same graph and release. Dedicated Linux acceptance still gates
 production qualification polling and enforcement.
+
+Source/Dockerfile schedules use the same exact-commit archive verification and
+held builder candidates as services for both GitHub and GitLab. Source-backed schedules require an explicit reviewed `runtime.entrypoint` argv
+(for example, `["/usr/local/bin/node", "/app/report.js"]`), separate from
+`job_smoke.command`. Each Job remains paused through build and qualification. Participating apps
+retain the existing release-set requirement to opt into revision retention
+(`revision_pin_ttl_seconds`) before activation. Release activation binds its exact
+qualified deployment layer; occurrences reuse that layer without fetching source
+or rebuilding. Internal `gregale-source://` and `gregale-deployment:` identities
+are source/deployment references, not OCI images or content digests. OCI
+materializer APIs cannot publish them. Schedd verifies frozen source provenance,
+layer identity and the active release before boot and before releasing the held
+command. A changed artifact increments the schedule revision. Serving still
+requires a matching successful occurrence after activation. See
+[ADR-1333](adr/1333-gitops-source-scheduled-jobs.md).
 
 At scheduled execution, schedd requires the VM client's explicit held-start
 release capability before booting a managed Job. It persists the Job's runtime

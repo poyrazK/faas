@@ -77,6 +77,12 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 	if !evidence.Qualified || !environmentGraphSupportsProductionServing(graph) {
 		return ProjectReleaseSet{}, false, nil
 	}
+	// Source Jobs publish their qualified artifact binding in this transaction,
+	// before readiness is assessed. Install the already-validated controller
+	// lease for that write, as for the later release publication callback.
+	if _, err := sqlc.New().SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return ProjectReleaseSet{}, false, mapErr(err)
+	}
 	jobsReady, err := environmentGitOpsScheduledJobsReadyTx(ctx, tx, graph, "paused", true)
 	if err != nil {
 		return ProjectReleaseSet{}, false, err

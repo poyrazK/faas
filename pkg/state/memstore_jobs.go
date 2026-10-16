@@ -383,7 +383,7 @@ func (m *MemStore) JobListPendingImageMaterialization(_ context.Context, limit i
 	defer m.mu.Unlock()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status != "deleted" && j.ImageMaterializationStatus == "pending" &&
+		if j.Status != "deleted" && !isEnvironmentGitOpsSourceJob(j.ImageRef) && j.ImageMaterializationStatus == "pending" &&
 			(j.ImageMaterializationNextAttemptAt == nil || !j.ImageMaterializationNextAttemptAt.After(time.Now())) {
 			if claim, ok := m.jobMaterializationClaims[j.ID]; ok && claim.leaseUntil.After(time.Now()) {
 				continue
@@ -419,7 +419,7 @@ func (m *MemStore) JobClaimImageMaterialization(_ context.Context, id, owner str
 	}
 	now := time.Now().UTC()
 	j, ok := m.jobs[id]
-	if !ok || j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+	if !ok || j.Status == "deleted" || isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageMaterializationStatus != "pending" {
 		return Job{}, ErrNotFound
 	}
 	if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
@@ -453,7 +453,7 @@ func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit 
 	now := time.Now().UTC()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+		if j.Status == "deleted" || isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageMaterializationStatus != "pending" {
 			continue
 		}
 		if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
@@ -518,7 +518,7 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
 	if status == "ready" {
@@ -561,7 +561,7 @@ func (m *MemStore) JobPublishImageMaterialization(_ context.Context, id, sourceR
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
@@ -606,7 +606,7 @@ func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, s
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
