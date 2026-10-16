@@ -1610,6 +1610,11 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
+-- name: AppRuntimeGeneration :one
+-- ADR-1345: the app's runtime generation, which triggers bump in the
+-- writer's transaction for every change a wake depends on.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid;
+
 -- name: FrozenThawBasis :one
 -- ADR-1342: what a frozen VM's thaw guard compares with, read when it
 -- freezes. selected repeats ThawFrozenInstance's selection rule: the app's

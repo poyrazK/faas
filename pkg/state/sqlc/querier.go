@@ -73,6 +73,9 @@ type Querier interface {
 	AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOpenMonitorIncidentParams) (AppOpenMonitorIncidentRow, error)
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
 	AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX, arg AppRuntimeConfigChangedAtInScopeParams) (pgtype.Timestamptz, error)
+	// ADR-1345: the app's runtime generation, which triggers bump in the
+	// writer's transaction for every change a wake depends on.
+	AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)

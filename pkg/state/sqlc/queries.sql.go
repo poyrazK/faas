@@ -1534,6 +1534,19 @@ func (q *Queries) AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX,
 	return changed_at, err
 }
 
+const appRuntimeGeneration = `-- name: AppRuntimeGeneration :one
+SELECT generation FROM app_runtime_generations WHERE app_id=$1::uuid
+`
+
+// ADR-1345: the app's runtime generation, which triggers bump in the
+// writer's transaction for every change a wake depends on.
+func (q *Queries) AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, appRuntimeGeneration, appID)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const appendAccountCreditLedgerEntry = `-- name: AppendAccountCreditLedgerEntry :exec
 INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

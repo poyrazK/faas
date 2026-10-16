@@ -14,3 +14,8 @@ func TestPgFrozenThawSelectionAgreesWithWake(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testFrozenThawSelectionAgreesWithWake(t, store)
 }
+
+func TestPgAppRuntimeGeneration(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testAppRuntimeGeneration(t, store)
+}

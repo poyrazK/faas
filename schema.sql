@@ -204,6 +204,137 @@ $$;
 
 
 --
+-- Name: app_runtime_generation_bump(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_bump(target uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE next bigint;
+BEGIN
+    IF target IS NULL THEN
+        RETURN;
+    END IF;
+    UPDATE app_runtime_generations SET generation = generation + 1, changed_at = clock_timestamp()
+    WHERE app_id = target RETURNING generation INTO next;
+    IF NOT FOUND THEN
+        INSERT INTO app_runtime_generations AS g (app_id)
+        SELECT target WHERE EXISTS (SELECT 1 FROM apps WHERE id = target)
+        ON CONFLICT (app_id) DO UPDATE SET generation = g.generation + 1, changed_at = clock_timestamp()
+        RETURNING generation INTO next;
+    END IF;
+    IF next IS NOT NULL THEN
+        PERFORM pg_notify('app_runtime_changed', json_build_object('app_id', target, 'generation', next)::text);
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_accounts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_accounts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owned uuid;
+BEGIN
+    IF OLD.status IS NOT DISTINCT FROM NEW.status AND OLD.plan IS NOT DISTINCT FROM NEW.plan
+        AND OLD.abuse_hold_at IS NOT DISTINCT FROM NEW.abuse_hold_at
+        AND OLD.overage_cap_cents IS NOT DISTINCT FROM NEW.overage_cap_cents
+        AND OLD.egress_allowlist_extra IS NOT DISTINCT FROM NEW.egress_allowlist_extra
+        AND OLD.deletion_requested_at IS NOT DISTINCT FROM NEW.deletion_requested_at THEN
+        RETURN NULL;
+    END IF;
+    FOR owned IN SELECT id FROM apps WHERE account_id = NEW.id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(owned);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_app_row(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_app_row() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - TG_ARGV) = (to_jsonb(NEW) - TG_ARGV) THEN
+        RETURN NULL;
+    END IF;
+    IF TG_OP <> 'INSERT' THEN
+        PERFORM app_runtime_generation_bump(OLD.app_id);
+    END IF;
+    IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+        PERFORM app_runtime_generation_bump(NEW.app_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_apps(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_apps() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO app_runtime_generations (app_id) VALUES (NEW.id) ON CONFLICT (app_id) DO NOTHING;
+        PERFORM pg_notify('app_runtime_changed', json_build_object('app_id', NEW.id, 'generation', 1)::text);
+    ELSIF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('app_runtime_changed', json_build_object('app_id', OLD.id, 'generation', 0)::text);
+    ELSIF (to_jsonb(OLD) - TG_ARGV) <> (to_jsonb(NEW) - TG_ARGV) THEN
+        PERFORM app_runtime_generation_bump(NEW.id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_deployment_row(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_deployment_row() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        PERFORM app_runtime_generation_bump((SELECT d.app_id FROM deployments d WHERE d.id = OLD.deployment_id));
+    END IF;
+    IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.deployment_id IS DISTINCT FROM OLD.deployment_id) THEN
+        PERFORM app_runtime_generation_bump((SELECT d.app_id FROM deployments d WHERE d.id = NEW.deployment_id));
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_release_sets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_release_sets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    FOR member IN SELECT DISTINCT m.app_id FROM project_release_members m
+        WHERE m.release_id = COALESCE(NEW.id, OLD.id) ORDER BY m.app_id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: app_workflow_definitions(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -21858,6 +21989,18 @@ CREATE TABLE public.app_runtime_config_scope_changes (
 
 
 --
+-- Name: app_runtime_generations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_runtime_generations (
+    app_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    changed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_runtime_generations_generation_check CHECK ((generation > 0))
+);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -39059,6 +39202,14 @@ ALTER TABLE ONLY public.app_runtime_config_scope_changes
 
 
 --
+-- Name: app_runtime_generations app_runtime_generations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_generations
+    ADD CONSTRAINT app_runtime_generations_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status app_scaling_policy_scheduler_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -54111,6 +54262,118 @@ CREATE TRIGGER app_runtime_config_scope_change_lock_app BEFORE INSERT OR UPDATE 
 
 
 --
+-- Name: accounts app_runtime_generation_accounts; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_accounts AFTER UPDATE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_accounts();
+
+
+--
+-- Name: app_application_standards app_runtime_generation_application_standards; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_application_standards AFTER INSERT OR DELETE OR UPDATE ON public.app_application_standards FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row('updated_at', 'lease_owner', 'lease_generation', 'lease_until', 'observed_revision', 'observation_checked_at', 'observation_revision');
+
+
+--
+-- Name: apps app_runtime_generation_apps; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_apps AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_apps('last_scale_out_at', 'last_scale_in_at', 'last_deploy_failed_email_at', 'purge_claimed_at', 'preview_destroy_commented_at');
+
+
+--
+-- Name: app_runtime_config_changes app_runtime_generation_config_changes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_config_changes AFTER INSERT OR DELETE OR UPDATE ON public.app_runtime_config_changes FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: app_runtime_config_scope_changes app_runtime_generation_config_scope_changes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_config_scope_changes AFTER INSERT OR DELETE OR UPDATE ON public.app_runtime_config_scope_changes FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: deployments app_runtime_generation_deployments; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_deployments AFTER INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row('snapshot_miss_count', 'snapshot_miss_last_at', 'snapshot_miss_backoff_until', 'first_wake_at', 'first_5xx_window_ends_at', 'first_5xx_count', 'liveness_restart_count', 'canary_step_started_at', 'runtime_upgrade_routing_token');
+
+
+--
+-- Name: deployment_runtime_environment_owners app_runtime_generation_environment_owners; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_environment_owners AFTER INSERT OR DELETE OR UPDATE ON public.deployment_runtime_environment_owners FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
+
+
+--
+-- Name: app_envs app_runtime_generation_envs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_envs AFTER INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_release_members app_runtime_generation_release_members; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_members AFTER INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_release_sets app_runtime_generation_release_sets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_sets AFTER DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_release_sets();
+
+
+--
+-- Name: app_secrets app_runtime_generation_secrets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_secrets AFTER INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row('updated_at', 'delivered_version', 'delivery_status', 'last_delivery_attempt_at', 'last_delivered_at', 'last_delivery_error_code', 'last_delivered_wake_id', 'last_delivered_instance_id', 'last_runtime_reload_version', 'last_runtime_reload_revision', 'last_runtime_reload_projection', 'last_runtime_reload_signal', 'last_runtime_reload_at', 'last_runtime_reload_error_code', 'last_runtime_reload_instance_id');
+
+
+--
+-- Name: deployment_sidecar_layers app_runtime_generation_sidecar_layers; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_sidecar_layers AFTER INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
+
+
+--
+-- Name: project_environment_workload_deployment_specs app_runtime_generation_workload_deployment_specs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_deployment_specs AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
+
+
+--
+-- Name: project_environment_workload_heads app_runtime_generation_workload_heads; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_heads AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: environment_workload_retirements app_runtime_generation_workload_retirements; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_retirements AFTER INSERT OR DELETE OR UPDATE ON public.environment_workload_retirements FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_environment_workload_specs app_runtime_generation_workload_specs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_workload_specs AFTER INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
 -- Name: app_secrets app_secret_managed_postgres_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -59547,6 +59810,14 @@ ALTER TABLE ONLY public.app_runtime_config_changes
 
 ALTER TABLE ONLY public.app_runtime_config_scope_changes
     ADD CONSTRAINT app_runtime_config_scope_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_runtime_generations app_runtime_generations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_generations
+    ADD CONSTRAINT app_runtime_generations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
