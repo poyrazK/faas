@@ -745,6 +745,25 @@ type Provider interface {
 	Usage(context.Context, string, UsageWindow) (Usage, error)
 }
 
+// SessionObservation reports what revoked identities still hold on one
+// database. Fields are counts, or 1 when a provider can only report presence;
+// callers treat any nonzero field as "some remain" and never rely on totals.
+type SessionObservation struct {
+	Sessions             int64
+	PreparedTransactions int64
+}
+
+// SessionTerminator is an optional capability that ends the sessions of
+// credentials already revoked through RevokeCredentials (ADR-1370). Every
+// request names the same ProviderResourceID. Both methods are idempotent; an
+// absent role holds no sessions and no prepared transactions. A provider may
+// terminate every session on the database, since an activation owns all of
+// its bindings. Without this capability an activation cannot fence its source.
+type SessionTerminator interface {
+	TerminateSessions(context.Context, []CredentialRequest) error
+	ObserveSessions(context.Context, []CredentialRequest) (SessionObservation, error)
+}
+
 // ScaleToZeroProber is an optional qualification-only capability. Providers
 // that advertise scale-to-zero must implement it so the operator can verify
 // the real suspend/resume behavior instead of trusting configuration alone.
