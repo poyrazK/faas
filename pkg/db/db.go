@@ -65,6 +65,9 @@ var DaemonMaxConnections = map[string]int32{
 	"githubd":           2,
 	"outboundd":         2,
 	"s3-gatewayd":       2,
+	// pgproxyd on each database node (ADR-1027) reads role verifiers
+	// and holds no LISTEN; postgres_capacity counts it per database node.
+	"pgproxyd": 4,
 }
 
 // DaemonMaxConnectionsNotifyHubDisabled is the budget used when
@@ -108,6 +111,9 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"githubd":           2,
 	"outboundd":         2,
 	"s3-gatewayd":       2,
+	// pgproxyd on each database node (ADR-1027) reads role verifiers
+	// and holds no LISTEN; postgres_capacity counts it per database node.
+	"pgproxyd": 4,
 }
 
 const defaultMaxConnections int32 = 4

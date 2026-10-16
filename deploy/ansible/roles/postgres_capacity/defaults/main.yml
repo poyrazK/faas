@@ -4,6 +4,10 @@
 # Includes optional data planes and the private APID clone worker.
 faas_postgres_control_plane_pool_budget: 46
 faas_postgres_per_compute_pool_budget: 34
+# ADR-1027: pgproxyd on each [database_nodes] host reads role verifiers on
+# the direct DSN (db.DaemonMaxConnections["pgproxyd"]); pgbouncer does not
+# carry it, and database nodes take no part in compute rollouts.
+faas_postgres_per_database_node_pool_budget: 4
 
 # Pooled fleet (faas_pgbouncer_enabled). A compute node's ORDINARY pools no
 # longer reach the postmaster — they terminate at pgbouncer and share its

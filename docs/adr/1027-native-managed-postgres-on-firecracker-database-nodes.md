@@ -468,6 +468,16 @@ ansible` derives the rest from the hosts' addresses:
   on port 10083 of its service-proxy address, with every pgproxyd as an
   upstream.
 
+Fleet-wide checks count database nodes too:
+- `preflight.yml` validates them like every host: one role, the matching
+  box role, OS, architecture, systemd and private address.
+- `scale_check.yml` counts them in the private peer map (every host's
+  lists them) and checks their generated vars. It used to reject any
+  fleet with a database host.
+- The PostgreSQL capacity plan adds pgproxyd's direct pool (4,
+  `faas_postgres_per_database_node_pool_budget`, equal to
+  `db.DaemonMaxConnections["pgproxyd"]`) per database node.
+
 A database node has no shared role identity in the private hosts map:
 schedd binds its vmmd certificate to `<name>.faas`. A fleet without
 database hosts renders exactly as before.
