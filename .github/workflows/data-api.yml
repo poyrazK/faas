@@ -21,6 +21,7 @@ on:
       - "examples/data-api-bulk/**"
       - "examples/data-api-import-preview/**"
       - "scripts/test-data-api.sh"
+      - "scripts/test-data-api-load.sh"
       - "scripts/*data-api*bundle*"
       - "scripts/test-data-api-packaging.sh"
       - "scripts/data-api-release*"
@@ -90,6 +91,7 @@ jobs:
       DATA_API_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_POSTGREST_BIN: /tmp/gregale-postgrest
       DATA_API_BROWSER_REQUIRED: "1"
+      DATA_API_LOAD_REPORT: ${{ runner.temp }}/data-api-load-report.json
     steps:
       - uses: actions/checkout@v7
       # Restore-only: read main's non-race `checks` Go cache instead of letting
@@ -127,6 +129,14 @@ jobs:
         run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract
         run: make data-api-acceptance
+      - name: Retain redacted local load and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-data-api-load-${{ github.sha }}
+          path: ${{ runner.temp }}/data-api-load-report.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify portable hosted canary and contract rollout harness
         run: make data-api-staging-check
       - name: Enable TLS for durable SQL credential acceptance

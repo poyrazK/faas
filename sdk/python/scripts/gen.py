@@ -123,6 +123,14 @@ def pre_normalize_spec(spec: Path) -> Path:
         if schema is not None:
             for keyword in ("oneOf", "anyOf", "not"):
                 schema.pop(keyword, None)
+    # 0.29 rejects boolean enums and otherwise drops the entire preflight DTO.
+    # Preserve its boolean wire type; the canonical spec and server still
+    # require false while customer activation is disabled (ADR-1333).
+    preflight = fixed["components"]["schemas"]["ManagedPostgresCutoverPreflight"]
+    activation = preflight["properties"]["activation_allowed"]
+    if activation.get("enum") != [False]:
+        raise ValueError("Preflight activation gate generator adaptation needs review")
+    activation.pop("enum")
     # The pinned generator discards object properties when a oneOf contains
     # only required-field constraints, producing body: Any instead of the
     # existing typed request model. Keep its wire shape in generated clients;

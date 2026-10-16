@@ -3,6 +3,152 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Database connection-budget preflight
+
+New read-only management endpoints report a database-wide canonical connection
+model and the shared databases used by an app's Data API bindings. `data-api
+health` includes those reports alongside SQL readiness and engine observations.
+The model covers resident/waking and parked instances, observed deployment
+overlap, credential rotation, Auth pools and explicit control/migration headroom.
+Duplicate bindings do not duplicate physical instance counts or modeled pools.
+
+Reports distinguish `within_budget`, `over_budget` and `unknown`; the first two
+require complete verified evidence for the exact database generation/placement.
+Current provider metadata supplies no verified usable-capacity allocation, and
+the catalog cannot attest deployed pool configurations or external clients, so
+current reports remain `unknown` with estimates and coverage reasons. An unknown
+budget makes CLI health partial without changing valid SQL readiness. This slice
+does not reserve connections, change quotas, wake SQL or enforce admission.
+
+## Concurrent load and recovery verification
+
+The manual staging canary now includes a hosted adapter with seven bounded
+REST/RPC, RLS/tenant, pressure, lost-reply, managed-restart and park/wake scenarios.
+It uses the shared runner and installed SDK, verifies exact write receipts and
+records source/deployment identities with private redacted measurements.
+Unsupported private faults and SQL instrumentation remain explicit. Client
+cleanup is separate from the parent's resource journal. Portable contracts and
+real local SQL verification do not establish hosted acceptance; running the live
+controls still requires the configured isolated staging target and existing
+provider/native qualification. See the [hosted guide](../tests/data-api/staging/README.md#hosted-load-and-recovery).
+
+`make data-api-load-verify` runs nine bounded scenarios against disposable local
+PostgreSQL 16 and checksum-pinned PostgREST 14.3. Concurrent signed-user REST/RPC
+traffic checks RLS alongside admission/rate pressure, deadlines, disconnects,
+oversized responses, lost replies and an embedded engine/gateway restart. Uncertain
+writes settle and reconcile receipts before any explicit same-key replay.
+
+Acceptance CI retains a redacted, private JSON report with client latency
+percentiles, success/rejection counts, throughput, sampled serving connections,
+recovery time and source identities. Failure and SIGTERM checks verify owned
+resource cleanup. These local observations do not qualify hosted capacity or
+production supervision. See the [runner guide](../tests/data-api/load/README.md).
+
+## Optional per-user request rates
+
+Updated runtimes support `DATA_API_RATE_LIMIT_PER_SECOND` and
+`DATA_API_RATE_LIMIT_BURST`. Either enables per-subject token buckets with omitted
+defaults of 10 requests/second and burst 20; both accept integers from 1 to 1,000.
+Remove both to disable. Policies take effect after a fresh runtime start.
+Verified subjects share credit across tokens and authenticated routes. Rejections
+return `429 data_api_rate_limited` and `Retry-After: 1` before SQL dispatch.
+Generated OpenAPI describes that response and header.
+Health and CORS bypass this policy; global admission remains separate.
+
+Tracking is capped at 4,096 hashed subjects. Only fully refilled entries expire;
+tracking pressure rejects new subjects without resetting depleted counters.
+Safe diagnostics retain policy/reason metadata, classify rate limits separately
+from overload, and keep recent findings separate from current health. The SDK
+adds `rate_limited` / `wait` classification without automatic replay. Generic
+429 does not establish rollback. Local checks cover signed JWT rotation, user
+isolation, capacity pressure, expiry, rejected SQL writes and recovery. Budgets
+are per runtime, not shared quotas or per-user admission fairness. Cold process
+starts reset them; snapshots may retain state. Hosted load qualification is open.
+
+## REST/RPC response byte limits
+
+The gateway now streams normal response bodies with a 16 MiB byte cap and
+downstream backpressure. Known oversized lengths return `502 response_too_large`
+before headers; overflow after headers closes the incomplete stream, potentially
+leaving a sent 200 status. Exactly 16 MiB is allowed; HEAD/bodyless representation
+lengths are excluded. The existing request/schema and row bounds remain separate.
+
+Safe logs attach fixed response-limit metadata, CLI diagnostics count failures
+including aborted 200 streams, and health distinguishes recent limits from
+current readiness. The SDK recognizes the new code with `reconcile` guidance;
+interrupted bodies can instead surface as `no_response`. Writes can commit
+before rejection, so reconciliation must precede replay. No mutation retries
+are added. Local checks cover byte boundaries, chunked/error/RPC responses,
+backpressure, redaction, real PostgreSQL commits, RLS and recovery. Update deployed
+runtimes and the client SDK; hosted qualification remains pending.
+
+## Engine connection-pool observations
+
+`gregale data-api health NAME` now includes timestamped engine pool capacity,
+existing idle connections, pending acquisitions and cumulative acquisition
+timeouts. Two-second callers share bounded private reads with an 8 KiB response
+cap and a 15-second hard HTTP timeout. The pinned handler performs SQL checks
+before metrics, so saturation may produce unknown coverage; reads reuse the
+engine pool and retain pending work after caller timeout. Pool waiters are a current finding;
+cumulative timeout counts/reset do not imply recent or current failure. Available
+connections in the lazy pool cannot be subtracted from capacity to derive usage.
+Metrics failures preserve SQL readiness and the deployment HTTP status. The CLI
+keeps valid readiness while flagging unknown, malformed or absent pool coverage
+as partial. Existing runtimes need an update. Local verification is separate from
+hosted qualification; the changes do not deploy or publish artifacts.
+
+## Request phase timings and slow-query-shape diagnostics
+
+Admitted request logs now separate verification, refresh, schema readiness,
+signing, engine response wait and response streaming. CLI diagnostics report
+phase coverage and completed p50/p95/p99, with interrupted elapsed lower bounds
+kept separate in JSON. Legacy/bypassed requests retain explicit missing coverage.
+With query-shape metadata enabled, `--sort p95` and `--sort errors` rank shapes
+by total gateway-request p95 or failure count; request count remains the default.
+Engine wait does not isolate SQL execution or pool wait. Existing apps need the
+updated runtime; changes remain local and no deployment is performed here.
+
+## Total admitted request deadlines
+
+Authenticated Data API work now shares a total 15-second elapsed-time deadline
+across verification, refresh, signing, upstream work and response streaming.
+Continuous chunks cannot retain an active slot indefinitely. Expiry prevents late
+dispatch, sends `504 request_deadline_exceeded` before headers or closes an
+incomplete stream. Pending async verification/control work stays bounded until
+settlement. Safe timeout-phase diagnostics distinguish where expiry was observed;
+SDK errors retain timeout/reconciliation guidance without mutation retries.
+SQL rollback is not inferred from HTTP cancellation. Existing apps and clients
+need the updated runtime/SDK; no deployment or publication is performed here.
+
+## Data API health observations
+
+`gregale data-api health NAME` combines independent gateway liveness, engine TCP
+reachability, SQL readiness, refresh and admission observations with recent safe
+request diagnostics. `/livez` performs no SQL; `/healthz` remains the deployment
+readiness check. Failed SQL readiness leaves database connectivity unknown, so
+pool saturation does not become an invented database-outage diagnosis. Bounded
+probes share in-flight work and reuse existing SQL pools. Partial logs and older
+runtime support remain explicit; recent failures do not override recovered health.
+Existing apps need the updated runtime; no deployment or hosted qualification is
+performed by this local implementation.
+
+## Bounded runtime admission
+
+The Data API gateway now limits active work to its engine pool size (two, or one
+with coordinated refresh), with eight FIFO waiters and a one-second queue
+deadline. Full and expired queues return `503 data_api_overloaded` with
+`Retry-After: 1` before PostgREST dispatch. Health/CORS remain outside this queue.
+Cancelled queued writes cannot dispatch; disconnected verifiers retain their
+slot until verification settles. Active timeout/disconnect outcomes still require
+application reconciliation. No automatic write retry is added.
+
+Safe request logs and CLI diagnostics distinguish admission waits, queue saturation
+and queue timeouts from query timeouts and engine failures. Old log samples remain
+readable with explicit admission coverage. SDK error classification recognizes
+overload codes, including thrown errors without an HTTP status. Existing deployed
+Data API applications must adopt the updated runtime to receive these bounds;
+hosted acceptance remains a separate qualification step.
+
 ## Guided onboarding follow-up
 
 `gregale data-api onboard --path DIR --bundle MANIFEST` composes starter creation,

@@ -215,6 +215,7 @@ test('staging owner release grants RPCs, compiles contracts and survives role re
   const migrationURL = new URL(url); migrationURL.username = migrator; migrationURL.password = 'test-only'
   const loginURL = new URL(url); loginURL.username = role; loginURL.password = 'test-only'
   await cp(new URL('./staging/migrate.mjs', import.meta.url), join(directory, 'migrate.mjs'))
+  await cp(new URL('./staging/load-fixture.sql', import.meta.url), join(directory, 'load-fixture.sql'))
   for (const file of ['release.mjs', 'rpc-permissions.mjs']) await cp(join(repoRoot, 'cmd/gregale/templates/data-api-starter/migrations', file), join(directory, file))
   await mkdir(join(directory, 'rpc-runtime'))
   for (const file of ['types.mjs', 'type-render.mjs', 'config.mjs']) await cp(new URL(file, runtime), join(directory, 'rpc-runtime', file))
