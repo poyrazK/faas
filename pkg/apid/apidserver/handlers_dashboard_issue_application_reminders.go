@@ -41,5 +41,5 @@ func (s *server) dashboardApplicationReminderView(w http.ResponseWriter, r *http
 	view.ApplicationReminderMin = api.IssueApplicationReminderMinMinutes
 	view.ApplicationReminderMax = api.IssueApplicationReminderMaxMinutes
 	view.ApplicationReminderRepeatMax = api.IssueApplicationRemindersMax
-	return true
+	return s.dashboardApplicationEscalationView(w, r, app, view)
 }

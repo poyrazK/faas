@@ -85,7 +85,7 @@ func (s *PgStore) EnqueueIssueApplicationReminder(ctx context.Context) (bool, er
 	if err != nil {
 		return false, err
 	}
-	route, err := q.IssueApplicationSlackRoute(ctx, tx, sqlc.IssueApplicationSlackRouteParams{AppID: due.AppID, AccountID: due.AccountID, AssignedTeamID: due.AssigneeTeamID, FallbackTeamID: issueUUID(policy.FallbackTeamID)})
+	route, err := q.IssueApplicationSlackRoute(ctx, tx, sqlc.IssueApplicationSlackRouteParams{AppID: due.AppID, AccountID: due.AccountID, AssignedTeamID: due.PreferredTeamID, FallbackTeamID: issueUUID(policy.FallbackTeamID)})
 	outcome := "queued"
 	if errors.Is(err, pgx.ErrNoRows) {
 		outcome = "unrouted"
@@ -107,7 +107,7 @@ func (s *PgStore) EnqueueIssueApplicationReminder(ctx context.Context) (bool, er
 		}
 	}
 	id := issueUUID(uuid.NewString())
-	if err = q.IssueApplicationReminderRecord(ctx, tx, sqlc.IssueApplicationReminderRecordParams{ID: id, IssueID: due.ID, ResponseID: due.ResponseID, Sequence: due.ReminderCount + 1, PolicyRevision: due.ReminderPolicyRevision, Outcome: outcome}); err != nil {
+	if err = q.IssueApplicationReminderRecord(ctx, tx, sqlc.IssueApplicationReminderRecordParams{ID: id, IssueID: due.ID, ResponseID: due.ResponseID, Sequence: due.ReminderCount + 1, PolicyRevision: due.ReminderPolicyRevision, Outcome: outcome, ResponsibilityTeamID: due.ResponsibilityTeamID}); err != nil {
 		return false, err
 	}
 	if outcome == "queued" {
@@ -115,7 +115,7 @@ func (s *PgStore) EnqueueIssueApplicationReminder(ctx context.Context) (bool, er
 			return false, err
 		}
 	}
-	if err = q.IssueApplicationReminderReceipt(ctx, tx, due.ID); err != nil {
+	if err = q.IssueApplicationReminderReceipt(ctx, tx, sqlc.IssueApplicationReminderReceiptParams{IssueID: due.ID, Queued: outcome == "queued"}); err != nil {
 		return false, err
 	}
 	if err = q.IssueApplicationReminderPrune(ctx, tx, sqlc.IssueApplicationReminderPruneParams{IssueID: due.ID, Offset: api.IssueApplicationReminderHistoryMax}); err != nil {
@@ -127,7 +127,7 @@ func applicationReminderHistory(ctx context.Context, q *sqlc.Queries, tx pgx.Tx,
 	rows, err := q.IssueApplicationReminderHistory(ctx, tx, sqlc.IssueApplicationReminderHistoryParams{IssueID: issue, Limit: api.IssueApplicationReminderHistoryMax})
 	out := []IssueApplicationReminder{}
 	for _, r := range rows {
-		out = append(out, IssueApplicationReminder{ID: issueID(r.ID), ResponseID: issueID(r.ResponseID), Sequence: int(r.Sequence), Outcome: r.Outcome, DeliveryStatus: r.DeliveryStatus, TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time})
+		out = append(out, IssueApplicationReminder{ID: issueID(r.ID), Kind: r.Kind, ResponseID: issueID(r.ResponseID), Sequence: int(r.Sequence), Outcome: r.Outcome, DeliveryStatus: r.DeliveryStatus, TeamName: r.TeamName, CreatedAt: r.CreatedAt.Time})
 	}
 	return out, err
 }

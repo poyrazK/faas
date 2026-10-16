@@ -1579,6 +1579,14 @@ type Querier interface {
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
 	IssueAddTeamMember(ctx context.Context, db DBTX, arg IssueAddTeamMemberParams) error
 	IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error
+	IssueApplicationEscalationApp(ctx context.Context, db DBTX, entitledPlans []string) (pgtype.UUID, error)
+	IssueApplicationEscalationCancel(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationEscalationDue(ctx context.Context, db DBTX, arg IssueApplicationEscalationDueParams) (IssueApplicationEscalationDueRow, error)
+	IssueApplicationEscalationPolicy(ctx context.Context, db DBTX, arg IssueApplicationEscalationPolicyParams) (IssueApplicationEscalationPolicyRow, error)
+	IssueApplicationEscalationPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationEscalationPolicyPutParams) error
+	IssueApplicationEscalationReceipt(ctx context.Context, db DBTX, arg IssueApplicationEscalationReceiptParams) error
+	IssueApplicationEscalationRecord(ctx context.Context, db DBTX, arg IssueApplicationEscalationRecordParams) error
+	IssueApplicationEscalationRelease(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueApplicationReminderApp(ctx context.Context, db DBTX, entitledPlans []string) (pgtype.UUID, error)
 	IssueApplicationReminderCancel(ctx context.Context, db DBTX, arg IssueApplicationReminderCancelParams) error
 	IssueApplicationReminderDue(ctx context.Context, db DBTX, arg IssueApplicationReminderDueParams) (IssueApplicationReminderDueRow, error)
@@ -1587,7 +1595,7 @@ type Querier interface {
 	IssueApplicationReminderPolicy(ctx context.Context, db DBTX, arg IssueApplicationReminderPolicyParams) (IssueApplicationReminderPolicyRow, error)
 	IssueApplicationReminderPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationReminderPolicyPutParams) error
 	IssueApplicationReminderPrune(ctx context.Context, db DBTX, arg IssueApplicationReminderPruneParams) error
-	IssueApplicationReminderReceipt(ctx context.Context, db DBTX, issueID pgtype.UUID) error
+	IssueApplicationReminderReceipt(ctx context.Context, db DBTX, arg IssueApplicationReminderReceiptParams) error
 	IssueApplicationReminderRecord(ctx context.Context, db DBTX, arg IssueApplicationReminderRecordParams) error
 	IssueApplicationReminderRelease(ctx context.Context, db DBTX, arg IssueApplicationReminderReleaseParams) error
 	IssueApplicationReminderStart(ctx context.Context, db DBTX, arg IssueApplicationReminderStartParams) error

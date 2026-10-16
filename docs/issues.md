@@ -639,12 +639,12 @@ The current application-error alert surface has these boundaries (reviewed
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
 | Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation, interactive acknowledgment and per-rule channel overrides |
-| Response | Native issue acknowledgment, timed snoozing, bounded reminders and handling history | Backup-team escalation and a dedicated incident inbox |
+| Response | Native acknowledgment, snoozing, reminders, backup-team escalation and handling history | A dedicated incident inbox and interactive Slack actions |
 
 Native Slack delivery now connects application alerts to team channels.
 Native application issues now have dashboard acknowledgment and snoozing.
-Native application reminders now follow shared response state; backup-team
-escalation remains available only for tracker incidents. Ending an ignore
+Native reminders and backup-team escalation now follow shared response state;
+tracker-sync incident policies remain independent. Ending an ignore
 period does not retroactively notify about suppressed customer-impact crossings.
 
 ## Limits
@@ -1063,7 +1063,7 @@ activity and generic webhooks still commit. These omissions are not backfilled.
 Terminal history expires after seven days, with bounded cleanup; an expired thread
 root can cause a later alert to start a fresh thread. Tracker retention remains
 independent. Native application acknowledgment and snoozing are described below;
-application escalation and interactive Slack actions remain future work.
+native escalation is described below; interactive Slack actions remain future work.
 
 ## GitHub and Linear tracker links
 
@@ -1879,7 +1879,7 @@ membership/ownership. Merging preserves the destination's response; source alias
 are not actionable and their response is not transferred. History is bounded across
 responses and historical actors do not establish present access.
 
-Native application reminders are described below. Escalation, a snoozed-incident
+Native application reminders and escalation are described below. A snoozed-incident
 inbox/filter and Slack interactive actions remain future work. This dashboard feature adds no public API
 or SDK endpoint.
 
@@ -1892,9 +1892,10 @@ response. Defaults are disabled, 60 minutes and three attempts.
 
 Timing starts when a new selected native alert is admitted to the Slack queue while
 reminders are enabled. Opt-in does not replay historical alerts. A reminder goes to
-the current assigned team's eligible Slack destination, or the explicit native
-fallback, and replies in that issue's thread for that destination revision.
-Reassignment affects future routing; old jobs retain their captured route and
+the assigned team's eligible Slack destination, or the explicit native fallback.
+After an admitted escalation, the backup team takes responsibility for reminders.
+Messages reply in that issue's thread for the destination revision. Reassignment
+affects routing before escalation; old jobs retain their captured route and
 membership/assignment eligibility checks.
 
 Acknowledgment or resolution stops reminders. Snoozes pause them and allow a full
@@ -1907,8 +1908,9 @@ nothing. Disabling/re-enabling reminder policy can resume an already timed respo
 after a full interval. Changing native application Slack policy clears timers;
 a newly admitted selected alert is required to start timing again.
 
-**Native reminder history** on the issue response page shows the last 100 attempts
-across responses, their admission outcome and retained delivery status/team. A queued
+**Native reminder history** on the issue response page shows admission outcomes
+and retained delivery status/team across responses. Reminder and escalation history
+share the last 100 attempts. A queued
 attempt is not proof of receipt or investigation. Missing routing and full-queue
 outcomes consume an attempt and increment the native Slack missed counters. They
 advance the interval rather than retrying admission in a tight loop. Transport
@@ -1920,4 +1922,53 @@ the selected due time. Messages already sending may arrive after cancellation.
 Reminders use the shared native queue/history cap and expire with its transport
 history; pruning old reminder history also removes its old deliveries. Generic
 issue activity/webhooks and tracker reminders remain independent. Native backup-team
-escalation and interactive Slack actions remain future work.
+escalation is described below; interactive Slack actions remain future work.
+
+### Escalate an unacknowledged native issue to a backup team
+
+App owners can enable **Native issue backup-team escalation** in **Tracker sync
+notifications**. Choose a backup team and a delay from 15 minutes to seven days
+(default one day, disabled). Native Slack alerts and native reminders must also
+be enabled. A response becomes eligible only after a reminder was queued; an
+unrouted or queue-full reminder does not start escalation timing.
+
+One escalation attempt is allowed per response. The worker waits a full delay
+from the latest first queued reminder, reminder-policy save, escalation-policy
+save or snooze expiry. Acknowledgment and resolution stop escalation; snoozes
+pause it, and clearing snooze may make an overdue response eligible immediately.
+Reopen, regression and split-out start a fresh response. Opt-in and settings saves
+do not immediately replay old incidents. Repeated identical saves change nothing.
+
+The attempt uses only the configured backup team's enabled destination and current
+eligible members. Missing backup routing and a full queue record **unrouted** or
+**queue_full**, consume the attempt and increment native missed counters. They do
+not broadcast or change responsibility. If that team is already receiving the
+response's reminders, **already_responsible** records the attempt without another
+message. These admission outcomes are not retried by changing settings.
+
+An admitted escalation transfers **response reminder responsibility** to the backup
+team, cancels outstanding old response reminders and permits a full reminder
+interval before another. Issue assignment and ordinary occurrence/threshold alert
+routing stay unchanged. Later response reminders prefer the persisted backup, then
+the explicit native fallback if necessary. The backup's escalation starts a new
+issue thread there if needed; later reminders use that thread. Transport retries
+reuse the same message ID and do not consume another escalation attempt.
+
+Current backup team members who remain organization members can read the narrow
+response page and acknowledge or snooze the issue. This grants no occurrence
+evidence or general app access. Membership removal or a new response revokes the
+backup grant. Assignment owners keep their existing response access.
+
+The response page separates reminder responsibility from issue assignment and shows
+**Native escalation history**, target team, admission outcome and retained transport
+status. Reminder and escalation histories share the most recent 100 attempts per
+issue. Historical target names remain when delivery history or a team is removed.
+Queued is not proof of receipt or investigation; already sending messages may
+arrive after cancellation.
+
+Changed escalation settings cancel queued escalation jobs and preserve prior
+attempts and admitted responsibility. Opting out does not undo a handoff already
+recorded; disable native reminders to stop later response reminders. Changing
+native Slack policy clears the first-reminder clock with existing timers. Existing
+tracker escalation remains independent. Interactive Slack actions, workspace OAuth
+installation and a dedicated native incident inbox remain future work.

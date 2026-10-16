@@ -11,9 +11,9 @@ type IssueApplicationReminderPolicy struct {
 	IntervalMinutes, RepeatLimit int
 }
 type IssueApplicationReminder struct {
-	ID, ResponseID, Outcome, DeliveryStatus, TeamName string
-	Sequence                                          int
-	CreatedAt                                         time.Time
+	ID, Kind, ResponseID, Outcome, DeliveryStatus, TeamName string
+	Sequence                                                int
+	CreatedAt                                               time.Time
 }
 type IssueApplicationReminderStore interface {
 	GetIssueApplicationReminderPolicy(context.Context, string, string) (IssueApplicationReminderPolicy, error)

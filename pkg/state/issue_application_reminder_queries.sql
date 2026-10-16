@@ -22,7 +22,7 @@ JOIN LATERAL(SELECT GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snooz
 WHERE a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[])
 ORDER BY due.due_at,a.id LIMIT 1 FOR UPDATE OF a SKIP LOCKED;
 -- name: IssueApplicationReminderDue :one
-SELECT i.*,tr.incident_id AS response_id,tr.reminder_count,p.revision AS reminder_policy_revision
+SELECT i.*,tr.incident_id AS response_id,tr.reminder_count,p.revision AS reminder_policy_revision,tr.escalation_team_id AS responsibility_team_id,CASE WHEN tr.escalated_at IS NOT NULL THEN tr.escalation_team_id ELSE i.assignee_team_id END::uuid AS preferred_team_id
 FROM apps a JOIN accounts owner ON owner.id=a.account_id
 JOIN issue_application_reminder_policies p ON p.app_id=a.id AND p.enabled
 JOIN issue_application_slack_policies ap ON ap.app_id=a.id AND ap.enabled
@@ -33,9 +33,9 @@ AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
 AND GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snoozed_until,p.updated_at)+p.interval_minutes*interval '1 minute'<=statement_timestamp()
 ORDER BY GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snoozed_until,p.updated_at),i.id LIMIT 1;
 -- name: IssueApplicationReminderRecord :exec
-INSERT INTO issue_application_reminders(id,issue_id,response_id,sequence,policy_revision,outcome) VALUES($1,$2,$3,$4,$5,$6);
+INSERT INTO issue_application_reminders(id,issue_id,response_id,sequence,policy_revision,outcome,responsibility_team_id) VALUES($1,$2,$3,$4,$5,$6,$7);
 -- name: IssueApplicationReminderReceipt :exec
-UPDATE issue_application_triage SET reminder_count=reminder_count+1,last_reminded_at=clock_timestamp() WHERE issue_id=$1;
+UPDATE issue_application_triage SET reminder_count=reminder_count+1,last_reminded_at=clock_timestamp(),first_reminded_at=CASE WHEN sqlc.arg(queued)::boolean THEN COALESCE(first_reminded_at,clock_timestamp()) ELSE first_reminded_at END WHERE issue_id=sqlc.arg(issue_id);
 -- name: IssueApplicationReminderEnqueue :exec
 INSERT INTO issue_team_slack_deliveries(id,destination_id,destination_revision,reminder_id,incident_id,channel_id,application_policy_revision,recipient_account_ids,assigned_team_id,assigned_account_id)
 VALUES(sqlc.arg(id),sqlc.arg(destination_id),sqlc.arg(destination_revision),sqlc.arg(reminder_id),sqlc.arg(issue_id),sqlc.arg(channel_id),sqlc.arg(policy_revision),sqlc.arg(recipients)::uuid[],sqlc.narg(assigned_team_id),sqlc.narg(assigned_account_id));
@@ -48,11 +48,11 @@ UPDATE issue_team_slack_deliveries d SET status='canceled',last_error='destinati
 FROM issue_application_reminders rem JOIN app_issues i ON i.id=rem.issue_id
 WHERE rem.id=d.reminder_id AND i.app_id=sqlc.arg(app_id) AND (sqlc.narg(issue_id)::uuid IS NULL OR i.id=sqlc.narg(issue_id)) AND d.status IN ('pending','failed','in_flight');
 -- name: IssueApplicationReminderHistory :many
-SELECT r.*,COALESCE(d.status,'')::text AS delivery_status,COALESCE(t.name,'')::text AS team_name
+SELECT r.*,COALESCE(d.status,'')::text AS delivery_status,COALESCE(t.name,NULLIF(r.target_team_name,''),'')::text AS team_name
 FROM issue_application_reminders r LEFT JOIN issue_team_slack_deliveries d ON d.reminder_id=r.id
 LEFT JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id LEFT JOIN app_issue_teams t ON t.id=dst.team_id
 WHERE r.issue_id=$1 ORDER BY r.created_at DESC,r.id DESC LIMIT $2;
 -- name: IssueApplicationReminderPrune :exec
 DELETE FROM issue_application_reminders target WHERE target.issue_id=$1 AND target.id IN(SELECT old.id FROM issue_application_reminders old WHERE old.issue_id=$1 ORDER BY old.created_at DESC,old.id DESC OFFSET $2);
 -- name: IssueApplicationReminderStopSchedules :exec
-UPDATE issue_application_triage tr SET reminder_started_at=NULL,last_reminded_at=NULL FROM app_issues i WHERE i.id=tr.issue_id AND i.app_id=$1;
+UPDATE issue_application_triage tr SET reminder_started_at=NULL,last_reminded_at=NULL,first_reminded_at=NULL FROM app_issues i WHERE i.id=tr.issue_id AND i.app_id=$1;

@@ -49,24 +49,29 @@ func (q *Queries) IssueApplicationTriageCancelSlack(ctx context.Context, db DBTX
 }
 
 const issueApplicationTriageGet = `-- name: IssueApplicationTriageGet :one
-SELECT tr.issue_id, tr.reminder_started_at, tr.last_reminded_at, tr.reminder_count, tr.incident_id, tr.revision, tr.acknowledged_by, tr.acknowledged_at, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason,COALESCE(ack.email::text,'')::text AS acknowledged_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name
-FROM issue_application_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts sleeper ON sleeper.id=tr.snoozed_by WHERE tr.issue_id=$1
+SELECT tr.issue_id, tr.first_reminded_at, tr.escalation_attempted_at, tr.escalated_at, tr.escalation_team_id, tr.reminder_started_at, tr.last_reminded_at, tr.reminder_count, tr.incident_id, tr.revision, tr.acknowledged_by, tr.acknowledged_at, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason,COALESCE(ack.email::text,'')::text AS acknowledged_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name,COALESCE(backup.name,'')::text AS responsible_team_name
+FROM issue_application_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts sleeper ON sleeper.id=tr.snoozed_by LEFT JOIN app_issue_teams backup ON backup.id=tr.escalation_team_id WHERE tr.issue_id=$1
 `
 
 type IssueApplicationTriageGetRow struct {
-	IssueID           pgtype.UUID
-	ReminderStartedAt pgtype.Timestamptz
-	LastRemindedAt    pgtype.Timestamptz
-	ReminderCount     int32
-	IncidentID        pgtype.UUID
-	Revision          int64
-	AcknowledgedBy    pgtype.UUID
-	AcknowledgedAt    pgtype.Timestamptz
-	SnoozedUntil      pgtype.Timestamptz
-	SnoozedBy         pgtype.UUID
-	SnoozeReason      string
-	AcknowledgedName  string
-	SnoozedName       string
+	IssueID               pgtype.UUID
+	FirstRemindedAt       pgtype.Timestamptz
+	EscalationAttemptedAt pgtype.Timestamptz
+	EscalatedAt           pgtype.Timestamptz
+	EscalationTeamID      pgtype.UUID
+	ReminderStartedAt     pgtype.Timestamptz
+	LastRemindedAt        pgtype.Timestamptz
+	ReminderCount         int32
+	IncidentID            pgtype.UUID
+	Revision              int64
+	AcknowledgedBy        pgtype.UUID
+	AcknowledgedAt        pgtype.Timestamptz
+	SnoozedUntil          pgtype.Timestamptz
+	SnoozedBy             pgtype.UUID
+	SnoozeReason          string
+	AcknowledgedName      string
+	SnoozedName           string
+	ResponsibleTeamName   string
 }
 
 func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriageGetRow, error) {
@@ -74,6 +79,10 @@ func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueI
 	var i IssueApplicationTriageGetRow
 	err := row.Scan(
 		&i.IssueID,
+		&i.FirstRemindedAt,
+		&i.EscalationAttemptedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
 		&i.ReminderStartedAt,
 		&i.LastRemindedAt,
 		&i.ReminderCount,
@@ -86,6 +95,7 @@ func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueI
 		&i.SnoozeReason,
 		&i.AcknowledgedName,
 		&i.SnoozedName,
+		&i.ResponsibleTeamName,
 	)
 	return i, err
 }
@@ -200,7 +210,7 @@ func (q *Queries) IssueApplicationTriageReleaseLease(ctx context.Context, db DBT
 }
 
 const issueApplicationTriageReset = `-- name: IssueApplicationTriageReset :one
-INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='',reminder_started_at=NULL,last_reminded_at=NULL,reminder_count=0 RETURNING issue_id, reminder_started_at, last_reminded_at, reminder_count, incident_id, revision, acknowledged_by, acknowledged_at, snoozed_until, snoozed_by, snooze_reason
+INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='',reminder_started_at=NULL,last_reminded_at=NULL,reminder_count=0,first_reminded_at=NULL,escalation_attempted_at=NULL,escalated_at=NULL,escalation_team_id=NULL RETURNING issue_id, first_reminded_at, escalation_attempted_at, escalated_at, escalation_team_id, reminder_started_at, last_reminded_at, reminder_count, incident_id, revision, acknowledged_by, acknowledged_at, snoozed_until, snoozed_by, snooze_reason
 `
 
 func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriage, error) {
@@ -208,6 +218,10 @@ func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issu
 	var i IssueApplicationTriage
 	err := row.Scan(
 		&i.IssueID,
+		&i.FirstRemindedAt,
+		&i.EscalationAttemptedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
 		&i.ReminderStartedAt,
 		&i.LastRemindedAt,
 		&i.ReminderCount,
@@ -229,19 +243,20 @@ FROM app_issues i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 JOIN accounts owner ON owner.id=a.account_id
 LEFT JOIN app_issue_teams t ON t.id=i.assignee_team_id AND t.app_id=a.id
 LEFT JOIN accounts ac ON ac.id=i.assignee_account_id
+LEFT JOIN issue_application_triage current_response ON current_response.issue_id=i.id
 WHERE i.id=$1 AND a.id=$2 AND a.account_id=$3
 AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.plan=ANY($4::text[]) AND owner.abuse_hold_at IS NULL AND owner.status='active'
 AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
 AND (a.account_id=$5::uuid OR (
  EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$5 AND m.removed_at IS NULL)
- AND (i.assignee_account_id=$5::uuid OR EXISTS(
+ AND (EXISTS(SELECT 1 FROM issue_application_triage tr JOIN app_issue_team_members tm ON tm.team_id=tr.escalation_team_id WHERE tr.issue_id=i.id AND tr.escalated_at IS NOT NULL AND tm.account_id=$5) OR i.assignee_account_id=$5::uuid OR EXISTS(
  SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=i.assignee_team_id AND tm.account_id=$5) OR EXISTS(
  SELECT 1 FROM issue_application_slack_policies p JOIN LATERAL (
  SELECT dst.team_id FROM issue_team_slack_destinations dst
- WHERE dst.app_id=a.id AND dst.account_id=a.account_id AND dst.enabled AND dst.team_id IN(i.assignee_team_id,p.fallback_team_id)
+ WHERE dst.app_id=a.id AND dst.account_id=a.account_id AND dst.enabled AND dst.team_id IN((CASE WHEN current_response.escalated_at IS NOT NULL THEN current_response.escalation_team_id ELSE i.assignee_team_id END),p.fallback_team_id)
  AND EXISTS(SELECT 1 FROM app_issue_team_members member WHERE member.team_id=dst.team_id AND (member.account_id=a.account_id OR EXISTS(
  SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=member.account_id AND m.removed_at IS NULL)))
- ORDER BY CASE WHEN dst.team_id=i.assignee_team_id THEN 0 ELSE 1 END LIMIT 1
+ ORDER BY CASE WHEN dst.team_id=(CASE WHEN current_response.escalated_at IS NOT NULL THEN current_response.escalation_team_id ELSE i.assignee_team_id END) THEN 0 ELSE 1 END LIMIT 1
  ) route ON true JOIN app_issue_team_members tm ON tm.team_id=route.team_id AND tm.account_id=$5
  WHERE p.app_id=a.id AND p.enabled))))
 `

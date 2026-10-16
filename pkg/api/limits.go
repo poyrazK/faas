@@ -10572,3 +10572,10 @@ const (
 	IssueApplicationReminderHistoryMax     = 100
 	IssueApplicationReminderBatch          = 100
 )
+
+const (
+	IssueApplicationEscalationDefaultMinutes = 1440
+	IssueApplicationEscalationMinMinutes     = 15
+	IssueApplicationEscalationMaxMinutes     = 10080
+	IssueApplicationEscalationBatch          = 100
+)

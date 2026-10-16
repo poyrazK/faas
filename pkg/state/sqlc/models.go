@@ -3894,14 +3894,27 @@ type IssueActivity struct {
 	Details        []byte
 }
 
+type IssueApplicationEscalationPolicy struct {
+	AppID        pgtype.UUID
+	Enabled      bool
+	Revision     int64
+	DelayMinutes int32
+	TeamID       pgtype.UUID
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type IssueApplicationReminder struct {
-	ID             pgtype.UUID
-	IssueID        pgtype.UUID
-	ResponseID     pgtype.UUID
-	Sequence       int32
-	PolicyRevision int64
-	Outcome        string
-	CreatedAt      pgtype.Timestamptz
+	ID                       pgtype.UUID
+	IssueID                  pgtype.UUID
+	ResponseID               pgtype.UUID
+	Sequence                 int32
+	Kind                     string
+	EscalationPolicyRevision pgtype.Int8
+	ResponsibilityTeamID     pgtype.UUID
+	TargetTeamName           string
+	PolicyRevision           int64
+	Outcome                  string
+	CreatedAt                pgtype.Timestamptz
 }
 
 type IssueApplicationReminderPolicy struct {
@@ -3924,17 +3937,21 @@ type IssueApplicationSlackPolicy struct {
 }
 
 type IssueApplicationTriage struct {
-	IssueID           pgtype.UUID
-	ReminderStartedAt pgtype.Timestamptz
-	LastRemindedAt    pgtype.Timestamptz
-	ReminderCount     int32
-	IncidentID        pgtype.UUID
-	Revision          int64
-	AcknowledgedBy    pgtype.UUID
-	AcknowledgedAt    pgtype.Timestamptz
-	SnoozedUntil      pgtype.Timestamptz
-	SnoozedBy         pgtype.UUID
-	SnoozeReason      string
+	IssueID               pgtype.UUID
+	FirstRemindedAt       pgtype.Timestamptz
+	EscalationAttemptedAt pgtype.Timestamptz
+	EscalatedAt           pgtype.Timestamptz
+	EscalationTeamID      pgtype.UUID
+	ReminderStartedAt     pgtype.Timestamptz
+	LastRemindedAt        pgtype.Timestamptz
+	ReminderCount         int32
+	IncidentID            pgtype.UUID
+	Revision              int64
+	AcknowledgedBy        pgtype.UUID
+	AcknowledgedAt        pgtype.Timestamptz
+	SnoozedUntil          pgtype.Timestamptz
+	SnoozedBy             pgtype.UUID
+	SnoozeReason          string
 }
 
 type IssueApplicationTriageActivity struct {

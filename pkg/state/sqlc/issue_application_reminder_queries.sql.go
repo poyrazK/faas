@@ -49,7 +49,7 @@ func (q *Queries) IssueApplicationReminderCancel(ctx context.Context, db DBTX, a
 }
 
 const issueApplicationReminderDue = `-- name: IssueApplicationReminderDue :one
-SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id, i.assignee_team_id,tr.incident_id AS response_id,tr.reminder_count,p.revision AS reminder_policy_revision
+SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id, i.assignee_team_id,tr.incident_id AS response_id,tr.reminder_count,p.revision AS reminder_policy_revision,tr.escalation_team_id AS responsibility_team_id,CASE WHEN tr.escalated_at IS NOT NULL THEN tr.escalation_team_id ELSE i.assignee_team_id END::uuid AS preferred_team_id
 FROM apps a JOIN accounts owner ON owner.id=a.account_id
 JOIN issue_application_reminder_policies p ON p.app_id=a.id AND p.enabled
 JOIN issue_application_slack_policies ap ON ap.app_id=a.id AND ap.enabled
@@ -89,6 +89,8 @@ type IssueApplicationReminderDueRow struct {
 	ResponseID               pgtype.UUID
 	ReminderCount            int32
 	ReminderPolicyRevision   int64
+	ResponsibilityTeamID     pgtype.UUID
+	PreferredTeamID          pgtype.UUID
 }
 
 func (q *Queries) IssueApplicationReminderDue(ctx context.Context, db DBTX, arg IssueApplicationReminderDueParams) (IssueApplicationReminderDueRow, error) {
@@ -117,6 +119,8 @@ func (q *Queries) IssueApplicationReminderDue(ctx context.Context, db DBTX, arg 
 		&i.ResponseID,
 		&i.ReminderCount,
 		&i.ReminderPolicyRevision,
+		&i.ResponsibilityTeamID,
+		&i.PreferredTeamID,
 	)
 	return i, err
 }
@@ -156,7 +160,7 @@ func (q *Queries) IssueApplicationReminderEnqueue(ctx context.Context, db DBTX, 
 }
 
 const issueApplicationReminderHistory = `-- name: IssueApplicationReminderHistory :many
-SELECT r.id, r.issue_id, r.response_id, r.sequence, r.policy_revision, r.outcome, r.created_at,COALESCE(d.status,'')::text AS delivery_status,COALESCE(t.name,'')::text AS team_name
+SELECT r.id, r.issue_id, r.response_id, r.sequence, r.kind, r.escalation_policy_revision, r.responsibility_team_id, r.target_team_name, r.policy_revision, r.outcome, r.created_at,COALESCE(d.status,'')::text AS delivery_status,COALESCE(t.name,NULLIF(r.target_team_name,''),'')::text AS team_name
 FROM issue_application_reminders r LEFT JOIN issue_team_slack_deliveries d ON d.reminder_id=r.id
 LEFT JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id LEFT JOIN app_issue_teams t ON t.id=dst.team_id
 WHERE r.issue_id=$1 ORDER BY r.created_at DESC,r.id DESC LIMIT $2
@@ -168,15 +172,19 @@ type IssueApplicationReminderHistoryParams struct {
 }
 
 type IssueApplicationReminderHistoryRow struct {
-	ID             pgtype.UUID
-	IssueID        pgtype.UUID
-	ResponseID     pgtype.UUID
-	Sequence       int32
-	PolicyRevision int64
-	Outcome        string
-	CreatedAt      pgtype.Timestamptz
-	DeliveryStatus string
-	TeamName       string
+	ID                       pgtype.UUID
+	IssueID                  pgtype.UUID
+	ResponseID               pgtype.UUID
+	Sequence                 int32
+	Kind                     string
+	EscalationPolicyRevision pgtype.Int8
+	ResponsibilityTeamID     pgtype.UUID
+	TargetTeamName           string
+	PolicyRevision           int64
+	Outcome                  string
+	CreatedAt                pgtype.Timestamptz
+	DeliveryStatus           string
+	TeamName                 string
 }
 
 func (q *Queries) IssueApplicationReminderHistory(ctx context.Context, db DBTX, arg IssueApplicationReminderHistoryParams) ([]IssueApplicationReminderHistoryRow, error) {
@@ -193,6 +201,10 @@ func (q *Queries) IssueApplicationReminderHistory(ctx context.Context, db DBTX, 
 			&i.IssueID,
 			&i.ResponseID,
 			&i.Sequence,
+			&i.Kind,
+			&i.EscalationPolicyRevision,
+			&i.ResponsibilityTeamID,
+			&i.TargetTeamName,
 			&i.PolicyRevision,
 			&i.Outcome,
 			&i.CreatedAt,
@@ -278,25 +290,31 @@ func (q *Queries) IssueApplicationReminderPrune(ctx context.Context, db DBTX, ar
 }
 
 const issueApplicationReminderReceipt = `-- name: IssueApplicationReminderReceipt :exec
-UPDATE issue_application_triage SET reminder_count=reminder_count+1,last_reminded_at=clock_timestamp() WHERE issue_id=$1
+UPDATE issue_application_triage SET reminder_count=reminder_count+1,last_reminded_at=clock_timestamp(),first_reminded_at=CASE WHEN $1::boolean THEN COALESCE(first_reminded_at,clock_timestamp()) ELSE first_reminded_at END WHERE issue_id=$2
 `
 
-func (q *Queries) IssueApplicationReminderReceipt(ctx context.Context, db DBTX, issueID pgtype.UUID) error {
-	_, err := db.Exec(ctx, issueApplicationReminderReceipt, issueID)
+type IssueApplicationReminderReceiptParams struct {
+	Queued  bool
+	IssueID pgtype.UUID
+}
+
+func (q *Queries) IssueApplicationReminderReceipt(ctx context.Context, db DBTX, arg IssueApplicationReminderReceiptParams) error {
+	_, err := db.Exec(ctx, issueApplicationReminderReceipt, arg.Queued, arg.IssueID)
 	return err
 }
 
 const issueApplicationReminderRecord = `-- name: IssueApplicationReminderRecord :exec
-INSERT INTO issue_application_reminders(id,issue_id,response_id,sequence,policy_revision,outcome) VALUES($1,$2,$3,$4,$5,$6)
+INSERT INTO issue_application_reminders(id,issue_id,response_id,sequence,policy_revision,outcome,responsibility_team_id) VALUES($1,$2,$3,$4,$5,$6,$7)
 `
 
 type IssueApplicationReminderRecordParams struct {
-	ID             pgtype.UUID
-	IssueID        pgtype.UUID
-	ResponseID     pgtype.UUID
-	Sequence       int32
-	PolicyRevision int64
-	Outcome        string
+	ID                   pgtype.UUID
+	IssueID              pgtype.UUID
+	ResponseID           pgtype.UUID
+	Sequence             int32
+	PolicyRevision       int64
+	Outcome              string
+	ResponsibilityTeamID pgtype.UUID
 }
 
 func (q *Queries) IssueApplicationReminderRecord(ctx context.Context, db DBTX, arg IssueApplicationReminderRecordParams) error {
@@ -307,6 +325,7 @@ func (q *Queries) IssueApplicationReminderRecord(ctx context.Context, db DBTX, a
 		arg.Sequence,
 		arg.PolicyRevision,
 		arg.Outcome,
+		arg.ResponsibilityTeamID,
 	)
 	return err
 }
@@ -344,7 +363,7 @@ func (q *Queries) IssueApplicationReminderStart(ctx context.Context, db DBTX, ar
 }
 
 const issueApplicationReminderStopSchedules = `-- name: IssueApplicationReminderStopSchedules :exec
-UPDATE issue_application_triage tr SET reminder_started_at=NULL,last_reminded_at=NULL FROM app_issues i WHERE i.id=tr.issue_id AND i.app_id=$1
+UPDATE issue_application_triage tr SET reminder_started_at=NULL,last_reminded_at=NULL,first_reminded_at=NULL FROM app_issues i WHERE i.id=tr.issue_id AND i.app_id=$1
 `
 
 func (q *Queries) IssueApplicationReminderStopSchedules(ctx context.Context, db DBTX, appID pgtype.UUID) error {

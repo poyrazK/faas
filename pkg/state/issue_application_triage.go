@@ -8,6 +8,9 @@ import (
 // IssueApplicationTriage is response state for a canonical issue. It does not
 // grant access, change assignment, or alter issue capture/resolution.
 type IssueApplicationTriage struct {
+	EscalatedAt                                                                  *time.Time
+	ResponsibleTeamID, ResponsibleTeamName                                       string
+	Escalations                                                                  []IssueApplicationReminder
 	IssueID, IncidentID, Environment, TeamID, TeamName, AssigneeID, AssigneeName string
 	Revision                                                                     int64
 	Active, Snoozed, Resurfaced                                                  bool

@@ -6,6 +6,9 @@ import (
 )
 
 type IssueTrackerNotificationsView struct {
+	ApplicationEscalationAvailable, ApplicationEscalationSaved                   bool
+	ApplicationEscalationPolicy                                                  state.IssueApplicationEscalationPolicy
+	ApplicationEscalationMin, ApplicationEscalationMax                           int
 	ApplicationRemindersAvailable, ApplicationRemindersSaved                     bool
 	ApplicationReminderPolicy                                                    state.IssueApplicationReminderPolicy
 	ApplicationReminderMin, ApplicationReminderMax, ApplicationReminderRepeatMax int

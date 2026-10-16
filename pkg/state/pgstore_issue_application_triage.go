@@ -25,6 +25,9 @@ func applicationTriageGet(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, sc
 	if err != nil {
 		return out, err
 	}
+	out.EscalatedAt = trackerSnoozeTime(row.EscalatedAt)
+	out.ResponsibleTeamID = issueID(row.EscalationTeamID)
+	out.ResponsibleTeamName = row.ResponsibleTeamName
 	out.IncidentID = issueID(row.IncidentID)
 	out.Revision = row.Revision
 	out.AcknowledgedBy = issueID(row.AcknowledgedBy)
@@ -61,9 +64,16 @@ func (s *PgStore) GetIssueApplicationTriage(ctx context.Context, app, owner, act
 	for _, r := range rows {
 		out.History = append(out.History, IssueApplicationTriageActivity{IncidentID: issueID(r.IncidentID), ActorID: issueID(r.ActorID), ActorName: r.ActorName, Action: r.Action, Reason: r.Reason, Revision: r.Revision, CreatedAt: r.CreatedAt.Time, SnoozedUntil: trackerSnoozeTime(r.SnoozedUntil)})
 	}
-	out.Reminders, err = applicationReminderHistory(ctx, q, tx, scope.ID)
+	notices, err := applicationReminderHistory(ctx, q, tx, scope.ID)
 	if err != nil {
 		return out, err
+	}
+	for _, notice := range notices {
+		if notice.Kind == "escalation" {
+			out.Escalations = append(out.Escalations, notice)
+		} else {
+			out.Reminders = append(out.Reminders, notice)
+		}
 	}
 	return out, tx.Commit(ctx)
 }

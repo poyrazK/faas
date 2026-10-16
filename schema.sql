@@ -58982,6 +58982,14 @@ CREATE TABLE public.issue_team_slack_destinations (
  CHECK((claim_id IS NULL)=(claim_until IS NULL)),
  UNIQUE(app_id,team_id)
 );
+CREATE TABLE public.issue_application_escalation_policies (
+ app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+ enabled boolean NOT NULL DEFAULT false,
+ revision bigint NOT NULL CHECK(revision>0),
+ delay_minutes integer NOT NULL CHECK(delay_minutes BETWEEN 15 AND 10080),
+ team_id uuid REFERENCES public.app_issue_teams(id) ON DELETE SET NULL,
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
 CREATE TABLE public.issue_application_reminder_policies (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  enabled boolean NOT NULL DEFAULT false,
@@ -58994,11 +59002,16 @@ CREATE TABLE public.issue_application_reminders (
  id uuid PRIMARY KEY,
  issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
  response_id uuid NOT NULL,
- sequence integer NOT NULL CHECK(sequence BETWEEN 1 AND 3),
+ sequence integer NOT NULL,
+ kind text NOT NULL DEFAULT 'reminder' CHECK(kind IN ('reminder','escalation')),
+ escalation_policy_revision bigint CHECK(escalation_policy_revision>0),
+ responsibility_team_id uuid REFERENCES public.app_issue_teams(id) ON DELETE SET NULL,
+ target_team_name text NOT NULL DEFAULT '' CHECK(octet_length(target_team_name)<=64),
+ CHECK((kind='reminder' AND sequence BETWEEN 1 AND 3 AND escalation_policy_revision IS NULL) OR (kind='escalation' AND sequence=0 AND escalation_policy_revision IS NOT NULL)),
  policy_revision bigint NOT NULL CHECK(policy_revision>0),
- outcome text NOT NULL CHECK(outcome IN ('queued','unrouted','queue_full')),
+ outcome text NOT NULL CHECK(outcome IN ('queued','unrouted','queue_full','already_responsible') AND (kind='escalation' OR outcome<>'already_responsible')),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- UNIQUE(issue_id,response_id,sequence)
+ UNIQUE(issue_id,response_id,kind,sequence)
 );
 CREATE TABLE public.issue_team_slack_deliveries (
  id uuid PRIMARY KEY,
@@ -59069,6 +59082,10 @@ CREATE INDEX issue_slack_application_history ON public.issue_team_slack_deliveri
 CREATE UNIQUE INDEX issue_slack_reminder_once ON public.issue_team_slack_deliveries(reminder_id) WHERE reminder_id IS NOT NULL;
 CREATE TABLE public.issue_application_triage (
  issue_id uuid PRIMARY KEY REFERENCES public.app_issues(id) ON DELETE CASCADE,
+ first_reminded_at timestamptz,
+ escalation_attempted_at timestamptz,
+ escalated_at timestamptz,
+ escalation_team_id uuid REFERENCES public.app_issue_teams(id) ON DELETE SET NULL,
  reminder_started_at timestamptz,
  last_reminded_at timestamptz,
  reminder_count integer NOT NULL DEFAULT 0 CHECK(reminder_count BETWEEN 0 AND 3),
@@ -59096,13 +59113,13 @@ CREATE TABLE public.issue_application_triage_activity (
 );
 CREATE VIEW public.issue_slack_delivery_sources AS
 SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id,
- COALESCE(n.kind,act.action,CASE WHEN rem.id IS NOT NULL THEN 'application_reminder' END,'')::text AS kind,COALESCE(n.reason,'')::text AS reason,(COALESCE(act.details,CASE WHEN rem.id IS NOT NULL THEN jsonb_build_object('reminder_sequence',rem.sequence::text) END,'{}'::jsonb) || CASE WHEN i.id IS NOT NULL THEN jsonb_build_object('environment',i.environment) ELSE '{}'::jsonb END)::jsonb AS details,
+ COALESCE(n.kind,act.action,CASE WHEN rem.kind='escalation' THEN 'application_escalation' WHEN rem.id IS NOT NULL THEN 'application_reminder' END,'')::text AS kind,COALESCE(n.reason,'')::text AS reason,(COALESCE(act.details,CASE WHEN rem.kind='escalation' THEN '{}'::jsonb WHEN rem.id IS NOT NULL THEN jsonb_build_object('reminder_sequence',rem.sequence::text) END,'{}'::jsonb) || CASE WHEN i.id IS NOT NULL THEN jsonb_build_object('environment',i.environment) ELSE '{}'::jsonb END)::jsonb AS details,
  COALESCE(CASE WHEN d.notification_id IS NOT NULL THEN
    a.account_id=n.account_id AND p.enabled AND n.team_id=dst.team_id
    AND EXISTS(SELECT 1 FROM public.app_issue_team_members tm WHERE tm.team_id=dst.team_id AND tm.account_id=ANY(n.recipient_account_ids)
      AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM public.org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))
  ELSE
-   ap.enabled AND ap.revision=d.application_policy_revision AND ((d.reminder_id IS NULL AND act.action=ANY(ap.events)) OR (d.reminder_id IS NOT NULL AND rp.enabled AND rp.revision=rem.policy_revision AND tr.incident_id=rem.response_id AND tr.acknowledged_at IS NULL AND i.state='open' AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=clock_timestamp())))
+   ap.enabled AND ap.revision=d.application_policy_revision AND ((d.reminder_id IS NULL AND act.action=ANY(ap.events)) OR (d.reminder_id IS NOT NULL AND rp.enabled AND rp.revision=rem.policy_revision AND tr.escalation_team_id IS NOT DISTINCT FROM rem.responsibility_team_id AND (rem.kind='reminder' OR (ep.enabled AND ep.revision=rem.escalation_policy_revision AND ep.team_id=dst.team_id)) AND tr.incident_id=rem.response_id AND tr.acknowledged_at IS NULL AND i.state='open' AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=clock_timestamp())))
    AND i.id IS NOT NULL AND i.app_id=a.id AND i.account_id=a.account_id
    AND i.assignee_team_id IS NOT DISTINCT FROM d.assigned_team_id AND i.assignee_account_id IS NOT DISTINCT FROM d.assigned_account_id
    AND NOT (i.state='ignored' AND (i.ignored_until IS NULL OR i.ignored_until>clock_timestamp()))
@@ -59111,7 +59128,7 @@ SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id
    AND EXISTS(SELECT 1 FROM public.app_issue_team_members tm WHERE tm.team_id=dst.team_id AND tm.account_id=ANY(d.recipient_account_ids)
      AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM public.org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))
  END,false)::boolean AS eligible,
- COALESCE(d.notification_id IS NOT NULL OR (ap.enabled AND ap.revision=d.application_policy_revision AND ((d.reminder_id IS NULL AND act.action=ANY(ap.events)) OR (d.reminder_id IS NOT NULL AND rp.enabled AND rp.revision=rem.policy_revision AND tr.incident_id=rem.response_id AND tr.acknowledged_at IS NULL AND i.state='open' AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=clock_timestamp())))),false)::boolean AS application_retry_allowed
+ COALESCE(d.notification_id IS NOT NULL OR (ap.enabled AND ap.revision=d.application_policy_revision AND ((d.reminder_id IS NULL AND act.action=ANY(ap.events)) OR (d.reminder_id IS NOT NULL AND rp.enabled AND rp.revision=rem.policy_revision AND tr.escalation_team_id IS NOT DISTINCT FROM rem.responsibility_team_id AND (rem.kind='reminder' OR (ep.enabled AND ep.revision=rem.escalation_policy_revision AND ep.team_id=dst.team_id)) AND tr.incident_id=rem.response_id AND tr.acknowledged_at IS NULL AND i.state='open' AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=clock_timestamp())))),false)::boolean AS application_retry_allowed
 FROM public.issue_team_slack_deliveries d
 JOIN public.issue_team_slack_destinations dst ON dst.id=d.destination_id
 JOIN public.apps a ON a.id=dst.app_id
@@ -59122,4 +59139,5 @@ LEFT JOIN public.issue_application_reminders rem ON rem.id=d.reminder_id
 LEFT JOIN public.app_issues i ON i.id=COALESCE(act.issue_id,rem.issue_id)
 LEFT JOIN public.issue_application_slack_policies ap ON ap.app_id=a.id
 LEFT JOIN public.issue_application_reminder_policies rp ON rp.app_id=a.id
-LEFT JOIN public.issue_application_triage tr ON tr.issue_id=i.id;
+LEFT JOIN public.issue_application_triage tr ON tr.issue_id=i.id
+LEFT JOIN public.issue_application_escalation_policies ep ON ep.app_id=a.id;

@@ -12,7 +12,7 @@ import (
 func TestApplicationResponseControlsAndEscaping(t *testing.T) {
 	until := time.Now().UTC().Add(time.Hour)
 	for _, active := range []bool{true, false} {
-		v := NewIssueApplicationTriageView("app", "csrf", state.IssueApplicationTriage{IssueID: "issue", Active: active, Snoozed: active, SnoozedUntil: &until, SnoozedName: "<script>member</script>", SnoozeReason: "<script>reason</script>", Reminders: []state.IssueApplicationReminder{{Outcome: "queued", TeamName: "<script>reminder-team</script>", Sequence: 1}}, History: []state.IssueApplicationTriageActivity{{ActorName: "<script>history</script>", Action: "snooze", Reason: "<script>audit</script>"}}}, false)
+		v := NewIssueApplicationTriageView("app", "csrf", state.IssueApplicationTriage{IssueID: "issue", EscalatedAt: &until, ResponsibleTeamName: "<script>backup</script>", Escalations: []state.IssueApplicationReminder{{Kind: "escalation", TeamName: "<script>target</script>", Outcome: "queued"}}, Active: active, Snoozed: active, SnoozedUntil: &until, SnoozedName: "<script>member</script>", SnoozeReason: "<script>reason</script>", Reminders: []state.IssueApplicationReminder{{Outcome: "queued", TeamName: "<script>reminder-team</script>", Sequence: 1}}, History: []state.IssueApplicationTriageActivity{{ActorName: "<script>history</script>", Action: "snooze", Reason: "<script>audit</script>"}}}, false)
 		tmpl, err := template.ParseFS(tmplFS, "templates/issue_application_triage.html")
 		if err != nil {
 			t.Fatal(err)
