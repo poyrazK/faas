@@ -1,3 +1,23 @@
+-- name: ListAccountDeletedApps :many
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND status = 'deleted'
+  AND (sqlc.arg(before_id)::text = '' OR
+       (coalesce(deleted_at, created_at), id::text) <
+       (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
+ORDER BY coalesce(deleted_at, created_at) DESC, id::text DESC
+LIMIT sqlc.arg(page_limit)::int;
+
+-- name: AccountDeletedAppByID :one
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = sqlc.arg(account_id)::text::uuid
+  AND id = sqlc.arg(app_id)::text::uuid AND status = 'deleted';
+
 -- name: GetInstanceApplicationStandardAdmission :one
 SELECT input_snapshot, captured_at, coalesce(node_id::text,'')::text AS node_id, native_input_hash FROM instance_application_standard_admissions
 WHERE instance_id = sqlc.arg(instance_id)::uuid;

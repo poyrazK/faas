@@ -24,6 +24,8 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"RestoreApp":             true,
+	"RestoreAppWithActivity": true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -122,6 +124,24 @@ var memDispatched = map[string]bool{
 	"StampOperationExecutionAttempt":                          true,
 	"UpdateAccountProviderCustomerID":                         true,
 	"WarmPoolReconciliationAppIDs":                            true,
+}
+
+func (s *Mem) RestoreApp(ctx context.Context, id string, limits api.Limits) (state.App, error) {
+	if o, ok := s.over.(interface {
+		RestoreApp(context.Context, string, api.Limits) (state.App, error)
+	}); ok {
+		return o.RestoreApp(ctx, id, limits)
+	}
+	return s.MemStore.RestoreApp(ctx, id, limits)
+}
+
+func (s *Mem) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry state.OrgActivity) (state.App, int64, error) {
+	if o, ok := s.over.(interface {
+		RestoreAppWithActivity(context.Context, string, api.Limits, state.OrgActivity) (state.App, int64, error)
+	}); ok {
+		return o.RestoreAppWithActivity(ctx, id, limits, entry)
+	}
+	return s.MemStore.RestoreAppWithActivity(ctx, id, limits, entry)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {

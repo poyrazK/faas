@@ -15480,6 +15480,98 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/deleted-apps:
+    get:
+      tags: [apps]
+      operationId: listDeletedApps
+      summary: List account-owned retained deleted apps.
+      description: |
+        Bounded lifecycle inventory; never includes another account's tombstones.
+        Eligibility does not reserve quota or capacity. Use the returned deadline
+        and evaluation time, not a deadline inferred from the browser clock.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum records in this account-owned page.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: cursor
+          in: query
+          description: Opaque cursor from this account and inventory order. Restart when rejected.
+          schema: { type: string, maxLength: 1024 }
+      responses:
+        '200':
+          description: One bounded account-owned page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/deleted-apps/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact deleted-app ID returned by this account's inventory.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getDeletedApp
+      summary: Read one account-owned deleted app before restore review.
+      description: Returns current lifecycle evidence for the exact owned retained ID; foreign and restored IDs are absent.
+      responses:
+        '200':
+          description: Current lifecycle evidence; active or foreign apps return 404.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/deleted-apps/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID; never resolved to a replacement slug.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: restoreDeletedApp
+      summary: Restore an identified app within its retained deletion window.
+      description: |
+        Requires deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Rechecks identity, deadline, purge claim, quota and capacity.
+        This operation has no idempotent replay receipt. After an uncertain response,
+        reconcile exact-ID reads; never automatically retry or fall back to slug restore.
+        Success acknowledges restoration, not execution health.
+      requestBody:
+        description: Optional empty object; no dry-run or other fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200':
+          description: The restored exact app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15487,12 +15579,28 @@ paths:
       tags: [apps]
       operationId: restoreApp
       summary: Restore an app during its deletion grace window.
+      description: |
+        Bodyless legacy callers remain supported. An optional expected_app_id
+        fences the selected identity on updated servers. For mixed-version
+        safety, use the dedicated deleted-app ID route instead of relying on
+        legacy body handling. This route has no idempotent replay receipt.
+      requestBody:
+        description: Optional reviewed app identity on updated servers; bodyless callers remain compatible.
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expected_app_id: { type: string, format: uuid, minLength: 32, maxLength: 36 }
       responses:
         '200':
           description: The restored app.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -65983,6 +66091,29 @@ components:
         scheduler_node_id: { type: string, description: Scheduler owner node when this app is sharded. }
         observed_at: { type: [string, "null"], format: date-time }
         stale: { type: boolean }
+
+    DeletedAppSummary:
+      type: object
+      description: Account-owned retained lifecycle metadata. Eligibility never reserves quota or proves execution health.
+      required: [account_id, id, slug, deleted_at, delete_grace_until, restore_eligible, restore_blocker, evaluated_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        deleted_at: { type: [string, "null"], format: date-time }
+        delete_grace_until: { type: [string, "null"], format: date-time }
+        restore_eligible: { type: boolean }
+        restore_blocker: { type: string, enum: ['', grace_expired, purge_started, metadata_unavailable] }
+        evaluated_at: { type: string, format: date-time }
+    DeletedAppListResponse:
+      type: object
+      description: Bounded account-owned tombstone inventory and its opaque cursor.
+      required: [account_id, apps, evaluated_at]
+      properties:
+        account_id: { type: string, format: uuid }
+        apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
+        next_cursor: { type: string, maxLength: 1024 }
+        evaluated_at: { type: string, format: date-time }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
