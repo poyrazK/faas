@@ -123,7 +123,20 @@ func tracedPgStore(t *testing.T) (*state.PgStore, *pgxpool.Pool, *statementTrace
 	return state.NewPgStore(pool), pool, tracer
 }
 
-func TestPostgresThawStatements(t *testing.T) {
+// postgresFrozen is a published instance frozen in place on real Postgres,
+// with an engine whose ledger holds its frozen charge.
+type postgresFrozen struct {
+	store  *state.PgStore
+	pool   *pgxpool.Pool
+	tracer *statementTracer
+	e      *Engine
+	vmm    *frozenFakeVMM
+	app    state.App
+	ins    state.Instance
+}
+
+func seedPostgresFrozen(t *testing.T) postgresFrozen {
+	t.Helper()
 	store, pool, tracer := tracedPgStore(t)
 	ctx := t.Context()
 	acct, err := store.CreateAccount(ctx, "thaw-statements-"+uuid.NewString()+"@example.com", api.PlanPro)
@@ -191,7 +204,13 @@ func TestPostgresThawStatements(t *testing.T) {
 	if err := store.HeartbeatComputeNode(ctx, node.ID); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
+	return postgresFrozen{store: store, pool: pool, tracer: tracer, e: e, vmm: vmm, app: app, ins: ins}
+}
 
+func TestPostgresThawStatements(t *testing.T) {
+	pf := seedPostgresFrozen(t)
+	store, pool, tracer, e, vmm, app, ins := pf.store, pf.pool, pf.tracer, pf.e, pf.vmm, pf.app, pf.ins
+	ctx := t.Context()
 	listener, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -246,6 +265,67 @@ func TestPostgresThawStatements(t *testing.T) {
 		t.Fatalf("instance_changed = %+v, %v", n, err)
 	}
 	if events := runningTransitions(t, store, ins.ID, "frozen_thaw"); events != 1 {
+		t.Fatalf("frozen_thaw events = %d, want 1", events)
+	}
+}
+
+// ADR-1342: a ticketed thaw sends the runtime-values reads beside the vmmd
+// call and then one guarded statement; none of the ordinary path's reads.
+func TestPostgresTicketedThawStatements(t *testing.T) {
+	pf := seedPostgresFrozen(t)
+	ctx := t.Context()
+	pf.e.EnableFrozenFastPath()
+	pf.e.issueThawTicket(ctx, pf.ins, frozenChargeMB(pf.ins.RAMMB, 150))
+	if _, ok := pf.e.thawTickets.byApp[pf.app.ID][pf.ins.ID]; !ok {
+		t.Fatal("no thaw ticket for an eligible frozen VM")
+	}
+	listener, err := pf.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Release()
+	if _, err := listener.Exec(ctx, "listen "+db.NotifyInstanceChanged); err != nil {
+		t.Fatal(err)
+	}
+
+	pf.tracer.armed.Store(true)
+	result, err := pf.e.Wake(ctx, pf.app.ID, "", "", "")
+	answered := time.Now()
+	pf.tracer.armed.Store(false)
+	if err != nil || result.InstanceID != pf.ins.ID || pf.vmm.thaws != 1 {
+		t.Fatalf("Wake: %+v, %v, thaws %d", result, err, pf.vmm.thaws)
+	}
+	var names []string
+	for i, name := range pf.tracer.recorded() {
+		pf.tracer.mu.Lock()
+		ended := pf.tracer.intervals[i][1]
+		pf.tracer.mu.Unlock()
+		if !ended.IsZero() && !ended.After(answered) {
+			names = append(names, name)
+		}
+	}
+	t.Logf("ticketed thaw: %v, %d sequential round trips", names, pf.tracer.sequentialRoundTrips(answered))
+	want := map[string]int{"AppRuntimeConfigChangedAtInScope": 1, "ReadRuntimeAppValuesForDeployment": 1,
+		"GetAppEnvironmentSecretIntent": 1, "ThawFrozenInstance": 1}
+	got := map[string]int{}
+	for _, name := range names {
+		got[name]++
+	}
+	if len(got) != len(want) {
+		t.Fatalf("statements before the answer = %v, want exactly %v", got, want)
+	}
+	for name, n := range want {
+		if got[name] != n {
+			t.Fatalf("statements before the answer = %v, want exactly %v", got, want)
+		}
+	}
+	wait, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	n, err := listener.Conn().WaitForNotification(wait)
+	if err != nil || n.Payload != instanceChangedPayload(pf.ins.ID, pf.app.ID, state.StateRunning, pf.ins.WakeID) {
+		t.Fatalf("instance_changed = %+v, %v", n, err)
+	}
+	if events := runningTransitions(t, pf.store, pf.ins.ID, "frozen_thaw"); events != 1 {
 		t.Fatalf("frozen_thaw events = %d, want 1", events)
 	}
 }

@@ -1135,6 +1135,15 @@ type Querier interface {
 	FinishReadinessSubscription(ctx context.Context, db DBTX, arg FinishReadinessSubscriptionParams) (pgtype.UUID, error)
 	FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error)
 	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
+	// ADR-1342: what a frozen VM's thaw guard compares with, read when it
+	// freezes. selected repeats ThawFrozenInstance's selection rule: the app's
+	// active production release pins the deployment, or no release pins the app
+	// and the deployment is its only live production-lane deployment with
+	// traffic. The stamps are the app's runtime-config stamp rows; NULL is a row
+	// that does not exist. standards_version is the app's application-standards
+	// enrollment row version: the guard requires it unchanged, since the
+	// enrollment rule itself is evaluated in Go when the ticket is issued.
+	FrozenThawBasis(ctx context.Context, db DBTX, arg FrozenThawBasisParams) (FrozenThawBasisRow, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
 	// Read both sides of the intent at one statement snapshot.
@@ -4049,6 +4058,15 @@ type Querier interface {
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
 	SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	// ADR-1342: a ticketed thaw's one control-plane round trip. The FROZEN ->
+	// RUNNING compare-and-set holds every guard the ordinary wake path would
+	// have read: the app, account and deployment as the ticket recorded them,
+	// FrozenThawBasis's selection rule, the application-standards enrollment
+	// and runtime-config stamps unchanged, and the instance's config proof. The app, deployment and project environment
+	// are share-locked as PublishOwnedInstanceRuntime locks them. The
+	// transition event and instance_changed notification commit with it. No
+	// row means a guard refused and nothing changed.
+	ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error)
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error

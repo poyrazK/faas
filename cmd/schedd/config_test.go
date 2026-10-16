@@ -311,6 +311,31 @@ func TestLoadConfig_FrozenTier(t *testing.T) {
 	}
 }
 
+// ADR-1342: the frozen fast path is off by default; frozen_fast_path or
+// FAAS_FROZEN_FAST_PATH turns it on, and the env wins.
+func TestLoadConfig_FrozenFastPath(t *testing.T) {
+	t.Setenv("FAAS_FROZEN_FAST_PATH", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.FrozenFastPath {
+		t.Fatalf("default FrozenFastPath = %v, %v; want off", cfg != nil && cfg.FrozenFastPath, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("frozen_fast_path = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenFastPath {
+		t.Fatalf("frozen_fast_path = true: FrozenFastPath = %v, %v", cfg != nil && cfg.FrozenFastPath, err)
+	}
+	t.Setenv("FAAS_FROZEN_FAST_PATH", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.FrozenFastPath {
+		t.Fatalf("FAAS_FROZEN_FAST_PATH=false over TOML: FrozenFastPath = %v, %v", cfg != nil && cfg.FrozenFastPath, err)
+	}
+	t.Setenv("FAAS_FROZEN_FAST_PATH", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_FROZEN_FAST_PATH=maybe accepted")
+	}
+}
+
 func TestResolveLocalNodeID_ComputeOnlyAllowsDrainedRollout(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

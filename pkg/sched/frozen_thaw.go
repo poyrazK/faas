@@ -154,6 +154,22 @@ func (e *Engine) frozenCandidateNode(ctx context.Context, nodeID string) frozenC
 	return frozenCandidate{node: node, haveNode: true}
 }
 
+// frozenThawPlan is what thawing one frozen VM needs: from the ordinary
+// path's reads (ADR-1151) or from a ticket recorded at freeze (ADR-1342).
+// app is resolved for the deployment; node holds the VM's node admission
+// limits, zero for a node that could not be read (global defaults).
+type frozenThawPlan struct {
+	frozen         state.Instance
+	app            state.App
+	acct           state.Account
+	limits         api.Limits
+	dep            state.Deployment
+	environmentKey string
+	production     bool
+	node           nodeAdmissionLimits
+	region         string
+}
+
 // thawFrozenLocked thaws one candidate. thawed=false means the candidate was
 // parked and the caller may try the next one.
 func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, values runtimeDeploymentValues, candidate frozenCandidate, timing thawTiming) (WakeResult, bool, error) {
@@ -166,42 +182,15 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		e.parkFrozenLocked(ctx, frozen, "config_changed")
 		return WakeResult{}, false, nil //nolint:nilerr // a VM without its captured config proof must not thaw; it parks and the ordinary wake proceeds
 	}
-	// Re-admit the full reservation on the VM's node, as a wake would. A
-	// node that could not be read admits at the global defaults (zero).
-	var ceiling, vcpuBudget, cpuBudget int
+	plan := frozenThawPlan{frozen: frozen, app: app, acct: acct, limits: limits, dep: dep,
+		environmentKey: runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
+		production:     reaperProductionScope(values.Snapshot.Scope)}
 	if candidate.haveNode {
-		ceiling, vcpuBudget = candidate.node.AdmissionCeilingMB, candidate.node.VCPUBudget
-		cpuBudget = int(cpuBudgetMillicores(candidate.node))
+		plan.node = nodeAdmissionLimits{ceilingMB: candidate.node.AdmissionCeilingMB, vcpuBudget: candidate.node.VCPUBudget,
+			cpuBudgetMillicores: int(cpuBudgetMillicores(candidate.node))}
+		plan.region = stringValue(candidate.node.Region)
 	}
-	e.ledger.Release(frozen.ID)
-	if err := e.ledger.Admit(Request{
-		Instance: frozen.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
-		ProductionEnvironment: reaperProductionScope(values.Snapshot.Scope),
-		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-		NodeID: frozen.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget,
-		CPUBudgetMillicores: cpuBudget,
-	}); err != nil {
-		e.log.Debug("sched: frozen thaw: re-admission refused; parking", "instance", frozen.ID, "err", err)
-		e.parkFrozenLocked(ctx, frozen, "no_capacity")
-		e.observeThaw("no_capacity")
-		return WakeResult{}, false, nil //nolint:nilerr // a refused re-admission parks the VM; the ordinary wake path owns the capacity answer
-	}
-	timing.rpcStarted = time.Now()
-	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)
-	// An app that declared after_restore reconnects its clients after the
-	// time it spent frozen, as it does after a restore.
-	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep), RunAfterRestore: app.Manifest.AfterRestore != nil}
-	result, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, req)
-	cancel()
-	timing.rpcEnded = time.Now()
-	if thawErr == nil {
-		thawErr = unconfirmedThawWork(req, result)
-	}
-	if thawErr != nil {
-		e.log.Warn("sched: frozen thaw failed; parking", "instance", frozen.ID, "err", thawErr)
-		e.parkFrozenLocked(ctx, frozen, "thaw_failed")
-		e.observeThaw("failed")
+	if !e.readmitFrozenLocked(ctx, plan) || !e.thawFrozenVM(ctx, thawer, plan, &timing) {
 		return WakeResult{}, false, nil
 	}
 	bookkeeping := e.publicationBookkeeping(frozen.ID, app.ID, frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
@@ -213,27 +202,80 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	timing.published = time.Now()
 	if publishErr != nil {
 		e.log.Warn("sched: frozen thaw: publish RUNNING", "instance", frozen.ID, "err", publishErr)
-		if current, loadErr := e.store.InstanceByID(ctx, frozen.ID); loadErr == nil && state.State(current.State) == state.StateFrozen {
-			e.parkFrozenLocked(ctx, frozen, "publish_failed")
-		} else {
-			e.ledger.Release(frozen.ID)
-		}
-		e.observeThaw("failed")
+		e.abandonThawPublication(ctx, frozen)
 		return WakeResult{}, false, nil
 	}
-	e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, app.ID, dep.ID, bookkeeping)
-	e.observeThaw("success")
-	region := ""
-	if candidate.haveNode {
-		region = stringValue(candidate.node.Region)
+	return e.answerThaw(ctx, plan, fresh, bookkeeping, timing, "success"), true, nil
+}
+
+// readmitFrozenLocked re-admits the frozen VM's full reservation on its
+// node, as a wake would. A refused re-admission parks the VM; the ordinary
+// wake path then owns the capacity answer.
+func (e *Engine) readmitFrozenLocked(ctx context.Context, plan frozenThawPlan) bool {
+	frozen := plan.frozen
+	e.ledger.Release(frozen.ID)
+	if err := e.ledger.Admit(Request{
+		Instance: frozen.ID, AppID: plan.app.ID, DeploymentID: plan.dep.ID, DeploymentScope: plan.dep.Scope, Plan: plan.acct.Plan,
+		EnvironmentKey: plan.environmentKey, ProductionEnvironment: plan.production,
+		RAMMB: plan.app.RAMMB, VCPU: plan.limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
+		NodeID: frozen.NodeID, NodeCeilingMB: plan.node.ceilingMB, VCPUBudget: plan.node.vcpuBudget,
+		CPUBudgetMillicores: plan.node.cpuBudgetMillicores,
+	}); err != nil {
+		e.log.Debug("sched: frozen thaw: re-admission refused; parking", "instance", frozen.ID, "err", err)
+		e.parkFrozenLocked(ctx, frozen, "no_capacity")
+		e.observeThaw("no_capacity")
+		return false
 	}
-	e.emitThawBreakdown(ctx, app.ID, fresh, timing, time.Now())
-	// A thaw answers the gateway as a restore, as a warm-pool resume does.
+	return true
+}
+
+// thawFrozenVM resumes the VM through vmmd. A failed thaw parks it.
+func (e *Engine) thawFrozenVM(ctx context.Context, thawer FrozenVMM, plan frozenThawPlan, timing *thawTiming) bool {
+	frozen := plan.frozen
+	timing.rpcStarted = time.Now()
+	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)
+	// An app that declared after_restore reconnects its clients after the
+	// time it spent frozen, as it does after a restore.
+	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(plan.dep), RunAfterRestore: plan.app.Manifest.AfterRestore != nil}
+	result, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, req)
+	cancel()
+	timing.rpcEnded = time.Now()
+	if thawErr == nil {
+		thawErr = unconfirmedThawWork(req, result)
+	}
+	if thawErr != nil {
+		e.log.Warn("sched: frozen thaw failed; parking", "instance", frozen.ID, "err", thawErr)
+		e.parkFrozenLocked(ctx, frozen, "thaw_failed")
+		e.observeThaw("failed")
+		return false
+	}
+	return true
+}
+
+// abandonThawPublication cleans up after a thawed VM's publication failed:
+// a row still FROZEN parks with its VM; otherwise the reservation goes and
+// the wake path reads the row's actual state.
+func (e *Engine) abandonThawPublication(ctx context.Context, frozen state.Instance) {
+	if current, loadErr := e.store.InstanceByID(ctx, frozen.ID); loadErr == nil && state.State(current.State) == state.StateFrozen {
+		e.parkFrozenLocked(ctx, frozen, "publish_failed")
+	} else {
+		e.ledger.Release(frozen.ID)
+	}
+	e.observeThaw("failed")
+}
+
+// answerThaw finishes a published thaw and answers the gateway, as a
+// restore, as a warm-pool resume does.
+func (e *Engine) answerThaw(ctx context.Context, plan frozenThawPlan, fresh state.Instance, bookkeeping *state.RuntimePublicationBookkeeping, timing thawTiming, outcome string) WakeResult {
+	e.thawTickets.drop(fresh.ID)
+	e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, plan.app.ID, plan.dep.ID, bookkeeping)
+	e.observeThaw(outcome)
+	e.emitThawBreakdown(ctx, plan.app.ID, fresh, timing, time.Now())
 	return WakeResult{
 		InstanceID: fresh.ID, NodeID: fresh.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE,
-		WakeID: fresh.WakeID, Port: deploymentRuntimePort(dep), DeploymentID: dep.ID,
-		RequestCount: fresh.RequestCount, Identity: platformIdentity(app, dep, acct, fresh.NodeID, fresh.ID, region),
-	}, true, nil
+		WakeID: fresh.WakeID, Port: deploymentRuntimePort(plan.dep), DeploymentID: plan.dep.ID,
+		RequestCount: fresh.RequestCount, Identity: platformIdentity(plan.app, plan.dep, plan.acct, fresh.NodeID, fresh.ID, plan.region),
+	}
 }
 
 // thawTiming holds one thaw's phase boundaries for wake.thaw_breakdown.

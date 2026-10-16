@@ -1609,6 +1609,101 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
+-- name: FrozenThawBasis :one
+-- ADR-1342: what a frozen VM's thaw guard compares with, read when it
+-- freezes. selected repeats ThawFrozenInstance's selection rule: the app's
+-- active production release pins the deployment, or no release pins the app
+-- and the deployment is its only live production-lane deployment with
+-- traffic. The stamps are the app's runtime-config stamp rows; NULL is a row
+-- that does not exist. standards_version is the app's application-standards
+-- enrollment row version: the guard requires it unchanged, since the
+-- enrollment rule itself is evaluated in Go when the ticket is issued.
+SELECT (SELECT c.changed_at FROM app_runtime_config_changes c WHERE c.app_id=a.id) AS app_stamp,
+    (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id AND c.scope='default') AS default_scope_stamp,
+    (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id
+        AND c.scope=COALESCE(NULLIF(d.scope,''),'default')) AS deployment_scope_stamp,
+    COALESCE((SELECT s.xmin::text FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id),'')::text AS standards_version,
+    (a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
+        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
+        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
+        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                    AND rm.deployment_id=d.id AND d.scope='production')
+            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                        AND rm.deployment_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
+                    AND o.traffic_percent>0 AND o.scope IN ('production','default','')))))::boolean AS selected
+FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ThawFrozenInstance :one
+-- ADR-1342: a ticketed thaw's one control-plane round trip. The FROZEN ->
+-- RUNNING compare-and-set holds every guard the ordinary wake path would
+-- have read: the app, account and deployment as the ticket recorded them,
+-- FrozenThawBasis's selection rule, the application-standards enrollment
+-- and runtime-config stamps unchanged, and the instance's config proof. The app, deployment and project environment
+-- are share-locked as PublishOwnedInstanceRuntime locks them. The
+-- transition event and instance_changed notification commit with it. No
+-- row means a guard refused and nothing changed.
+WITH environment_lock AS (
+    SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+    WHERE e.id=sqlc.narg(environment_id)::uuid AND e.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+        AND e.slug=CASE WHEN sqlc.arg(scope)::text='default' THEN 'production' ELSE sqlc.arg(scope)::text END
+    FOR SHARE OF e
+), guard AS (
+    SELECT a.id FROM apps a JOIN accounts acc ON acc.id=a.account_id JOIN deployments d ON d.app_id=a.id
+    WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
+        AND a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
+        AND a.org_id IS NOT DISTINCT FROM sqlc.narg(org_id)::uuid
+        AND (a.org_id IS NULL OR EXISTS (SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
+            AND s.xmin::text=sqlc.arg(standards_version)::text AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
+        AND a.type=sqlc.arg(app_type)::text AND a.ram_mb=sqlc.arg(ram_mb)::integer
+        AND a.cpu_millicores=sqlc.arg(cpu_millicores)::integer AND a.max_concurrency=sqlc.arg(max_concurrency)::integer
+        AND acc.status IN ('active','past_due') AND acc.abuse_hold_at IS NULL AND acc.plan=sqlc.arg(plan)::text
+        AND COALESCE(NULLIF(d.scope,''),'default')=sqlc.arg(scope)::text
+        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
+        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
+        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                    AND rm.deployment_id=d.id AND d.scope='production')
+            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                        AND rm.deployment_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
+                    AND o.traffic_percent>0 AND o.scope IN ('production','default',''))))
+        AND (SELECT c.changed_at FROM app_runtime_config_changes c WHERE c.app_id=a.id) IS NOT DISTINCT FROM sqlc.narg(app_stamp)::timestamptz
+        AND (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id AND c.scope='default')
+            IS NOT DISTINCT FROM sqlc.narg(default_scope_stamp)::timestamptz
+        AND (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id AND c.scope=sqlc.arg(scope)::text)
+            IS NOT DISTINCT FROM sqlc.narg(deployment_scope_stamp)::timestamptz
+        AND (sqlc.narg(environment_id)::uuid IS NULL OR EXISTS (SELECT 1 FROM environment_lock))
+    FOR SHARE OF a, d
+), thawed AS (
+    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+        AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+        AND wake_id=sqlc.arg(wake_id)::uuid AND state='frozen' AND EXISTS (SELECT 1 FROM guard)
+        AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
+            AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
+            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=sqlc.arg(config_fingerprint)::text)
+    RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+        state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+        coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+        node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,thawed.id::uuid,sqlc.narg(event_data)::jsonb FROM thawed
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text) FROM thawed
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT thawed.*, (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent
+FROM thawed;
+
 -- name: SaveRuntimeInstanceConfigProof :one
 -- Saves the config proof a publication commits with. A wake's bookkeeping
 -- rides in the same statement, so it costs no round trip: the transition

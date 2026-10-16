@@ -1603,6 +1603,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("frozen tier enabled (ADR-1151)",
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
+	if cfg.FrozenFastPath {
+		engine.EnableFrozenFastPath()
+		log.Info("frozen fast path enabled (ADR-1342)")
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership

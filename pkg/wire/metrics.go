@@ -6143,7 +6143,7 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
 	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
-	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity"}
+	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 )

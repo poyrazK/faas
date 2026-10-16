@@ -25,6 +25,7 @@ func (e *Engine) ParkFrozen(ctx context.Context, instanceID, reason string) erro
 // the app lock. The deployment's snapshot is untouched, so the next request
 // restores from it.
 func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, reason string) {
+	e.thawTickets.drop(frozen.ID)
 	cleanupCtx := context.WithoutCancel(ctx)
 	if e.frozenNodeUnreachable(cleanupCtx, frozen.NodeID) {
 		// The VM went with its node or vmmd. Parking the row is enough:

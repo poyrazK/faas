@@ -75,12 +75,16 @@ func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
 	if _, err := netip.ParseAddr(p.HostIP); err != nil {
 		return ErrInvalidArgument
 	}
-	// Bookkeeping that the database would refuse would abort the publication
-	// of a VM that already booted.
-	if b := p.Bookkeeping; b != nil && (b.EventKind != "" && !json.Valid(b.EventData) || b.NotifyChannel == "" && b.NotifyPayload != "") {
+	if !validPublicationBookkeeping(p.Bookkeeping) {
 		return ErrInvalidArgument
 	}
 	return nil
+}
+
+// validPublicationBookkeeping refuses bookkeeping the database would refuse,
+// which would abort the publication of a VM that already booted.
+func validPublicationBookkeeping(b *RuntimePublicationBookkeeping) bool {
+	return b == nil || (b.EventKind == "" || json.Valid(b.EventData)) && (b.NotifyChannel != "" || b.NotifyPayload == "")
 }
 
 // Empty target preserves the RUNNING publication contract for wake and prime.

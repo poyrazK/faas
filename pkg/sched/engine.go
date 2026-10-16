@@ -641,6 +641,10 @@ type Engine struct {
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
 	frozenTier atomic.Bool
+	// frozenFastPath (ADR-1342, schedd `frozen_fast_path`) thaws a frozen
+	// VM from the ticket recorded when it froze; thawTickets holds them.
+	frozenFastPath atomic.Bool
+	thawTickets    frozenTickets
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
@@ -1745,7 +1749,13 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	ctx = WithScope(ctx, scope)
 	scope = ScopeFrom(ctx)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
+	wakeStarted := time.Now()
 	release := e.lockApp(appID)
+	// ADR-1342: a frozen VM with a thaw ticket thaws before any read.
+	if result, handled := e.thawFromTicketLocked(ctx, appID, deploymentID, scope, wakeStarted); handled {
+		release()
+		return result, nil
+	}
 	// One app read serves the standards check, the fast path's tenant and,
 	// through the context, admission. It does not depend on the running
 	// instance lookup, so the two run at once; their errors are checked in
