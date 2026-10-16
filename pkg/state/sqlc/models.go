@@ -6637,6 +6637,41 @@ type OutboundAdmissionState struct {
 	MonthlyAiCostMillicents        int64
 }
 
+type OutboundAiAccessToken struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	TokenHash      []byte
+	TokenPrefix    string
+	IntegrationIds []pgtype.UUID
+	ExpiresAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+}
+
+type OutboundAiBatch struct {
+	ID                     pgtype.UUID
+	IntegrationID          pgtype.UUID
+	AccountID              pgtype.UUID
+	Caller                 string
+	BindingAppID           pgtype.UUID
+	Provider               string
+	ProviderBatchID        pgtype.Text
+	Requests               int32
+	ReservedTokens         int64
+	ReservedCostMillicents int64
+	State                  string
+	Outcome                pgtype.Text
+	SettledTokens          pgtype.Int8
+	SettledCostMillicents  pgtype.Int8
+	Checks                 int32
+	NextCheckAt            pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	SettledAt              pgtype.Timestamptz
+}
+
 type OutboundAiBudgetAlert struct {
 	ID               pgtype.UUID
 	IntegrationID    pgtype.UUID
@@ -6649,6 +6684,51 @@ type OutboundAiBudgetAlert struct {
 	UsedValue        int64
 	CrossedAt        pgtype.Timestamptz
 	EndUser          pgtype.Text
+}
+
+type OutboundAiEvaluation struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	RouteID                 pgtype.UUID
+	Position                int16
+	JudgeIntegrationID      pgtype.UUID
+	JudgeModel              string
+	SampleSize              int16
+	MaxLossRate             int16
+	Canary                  []byte
+	State                   string
+	Verdict                 pgtype.Text
+	ErrorCode               pgtype.Text
+	Samples                 int32
+	Wins                    int32
+	Ties                    int32
+	Losses                  int32
+	CandidateErrors         int32
+	JudgeErrors             int32
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMsTotal     int64
+	BaselineTtfbCalls       int32
+	CandidateTtfbMsTotal    int64
+	CandidateTtfbCalls      int32
+	CanaryStarted           bool
+	CreatedAt               pgtype.Timestamptz
+	StartedAt               pgtype.Timestamptz
+	FinishedAt              pgtype.Timestamptz
+}
+
+type OutboundAiEvaluationItem struct {
+	EvaluationID            pgtype.UUID
+	Ordinal                 int16
+	LogID                   pgtype.UUID
+	Verdict                 string
+	CandidateStatus         pgtype.Int2
+	CandidateCostMillicents int64
+	CandidateTtfbMs         pgtype.Int4
+	BaselineCostMillicents  int64
+	BaselineTtfbMs          pgtype.Int4
+	BaselineOutputText      string
+	CandidateOutputText     string
 }
 
 type OutboundAiLogExport struct {

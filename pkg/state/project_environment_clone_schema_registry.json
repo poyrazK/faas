@@ -7767,6 +7767,47 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_access_tokens",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "integration_ids",
+      "last_used_at",
+      "name",
+      "revoked_at",
+      "token_hash",
+      "token_prefix"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "outbound_ai_batches",
+    "columns": [
+      "account_id",
+      "binding_app_id",
+      "caller",
+      "checks",
+      "created_at",
+      "id",
+      "integration_id",
+      "next_check_at",
+      "outcome",
+      "provider",
+      "provider_batch_id",
+      "requests",
+      "reserved_cost_millicents",
+      "reserved_tokens",
+      "settled_at",
+      "settled_cost_millicents",
+      "settled_tokens",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_budget_alerts",
     "columns": [
       "account_id",
@@ -7780,6 +7821,57 @@
       "period_start",
       "threshold_percent",
       "used_value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_evaluation_items",
+    "columns": [
+      "baseline_cost_millicents",
+      "baseline_output_text",
+      "baseline_ttfb_ms",
+      "candidate_cost_millicents",
+      "candidate_output_text",
+      "candidate_status",
+      "candidate_ttfb_ms",
+      "evaluation_id",
+      "log_id",
+      "ordinal",
+      "verdict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_evaluations",
+    "columns": [
+      "account_id",
+      "baseline_cost_millicents",
+      "baseline_ttfb_calls",
+      "baseline_ttfb_ms_total",
+      "canary",
+      "canary_started",
+      "candidate_cost_millicents",
+      "candidate_errors",
+      "candidate_ttfb_calls",
+      "candidate_ttfb_ms_total",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "judge_errors",
+      "judge_integration_id",
+      "judge_model",
+      "losses",
+      "max_loss_rate",
+      "position",
+      "route_id",
+      "sample_size",
+      "samples",
+      "started_at",
+      "state",
+      "ties",
+      "verdict",
+      "wins"
     ],
     "kind": "operational"
   },
