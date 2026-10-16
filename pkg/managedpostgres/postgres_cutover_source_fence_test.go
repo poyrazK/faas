@@ -160,7 +160,7 @@ func sourceFenceDue(t *testing.T, s *PostgresStore, c Cutover) {
 
 func sourceFenceMigrationStatements(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261015133400001_managed_postgres_cutover_source_fences.sql")
+	raw, err := migrations.FS.ReadFile("20261016165128592_managed_postgres_cutover_source_fences.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

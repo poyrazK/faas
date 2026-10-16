@@ -75,7 +75,7 @@ func installWriterIsolationSagaProvider(service *CutoverService, base *sourceFen
 
 func writerCatalogMigrationStatements(t *testing.T) (string, string) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261015153500001_managed_postgres_writer_catalog_baselines.sql")
+	raw, err := migrations.FS.ReadFile("20261016165131580_managed_postgres_writer_catalog_baselines.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

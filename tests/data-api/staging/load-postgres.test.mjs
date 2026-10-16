@@ -47,7 +47,8 @@ test('hosted adapter exercises real SQL, JWT tenant RLS, receipts and runtime pr
     .setIssuer('https://issuer.invalid').setAudience('load-fixture').setExpirationTime('5m').sign(local.keys.privateKey)
   const adapter = new HostedFixture(parent, { app, url: app.url, jwt, sdk, sdkDirectory: join(parent.repoRoot, 'sdk/data/dist') })
   const report = await verifyLoad(adapter, workload, { signal, steps: hostedScenarios, profile: hostedProfile })
-  assert.equal(report.result, 'passed', JSON.stringify(report.failure))
+  assert.equal(report.result, 'passed', JSON.stringify({ failure: report.failure,
+    scenarios: report.scenarios.map(({ name, result, failure, traffic }) => ({ name, result, failure, statuses: traffic?.statuses, codes: traffic?.codes })) }))
   assert.equal(report.scenarios.length, 7); assert.equal(report.cleanup.state, 'complete')
   const rows = (await local.owner.query('SELECT subject,tenant,key,invocations FROM api.load_notes')).rows
   assert.ok(rows.length > 0); assert.ok(rows.every(row => row.tenant === 'canary' && row.invocations === 1))

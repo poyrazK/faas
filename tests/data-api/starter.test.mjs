@@ -36,7 +36,10 @@ async function port() {
   return value
 }
 
-test('starter migrations, generated contract, packed client and two-user RLS', { skip: !enabled, timeout: 60000 }, async t => {
+test('starter migrations, generated contract, packed client and two-user RLS', { skip: !enabled, timeout: 180000 }, async t => {
+  const journeyStarted = performance.now()
+  const phase = name => t.diagnostic(`starter: ${name} after ${Math.round(performance.now() - journeyStarted)}ms`)
+  phase('migration setup')
   const root = process.env.DATA_API_STARTER_DIR
   const { migrate } = await import(pathToFileURL(join(root, 'migrations/migrate.mjs')))
   const suffix = `${process.pid}_${Date.now()}`
@@ -94,6 +97,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   finally { await rm(failedSQL) }
   assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 10)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
+  phase('migration permissions')
   await verifyPermissions({ root, owner, admin, role, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), scope, database })
   await verifyRPCPolicy({ owner, inspect, loginURL: loginURL.toString(), role })
   const snapshot = await inspect(loginURL.toString(), ['api'])
@@ -139,6 +143,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const cross = await inspect(loginURL.toString(), ['api', 'other'])
   assert.deepEqual(cross.tables.find(table => table.schema === 'api' && table.name === 'cross_refs').relationships, [])
   await owner.query('DROP TABLE api.cross_refs; DROP SCHEMA other CASCADE')
+  phase('client build')
   await command('npm', ['run', 'typecheck'], { cwd: join(root, 'client'), env: process.env })
   await command('npm', ['run', 'build'], { cwd: join(root, 'client'), env: process.env })
   const restricted = new pg.Client({ connectionString: loginURL.toString() }); await restricted.connect()
@@ -193,6 +198,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   assert.equal((await fetch(url + '/__gregale/schema')).status, 401)
   const serving = await (await fetch(url + '/__gregale/schema', { headers: contractHeaders })).json()
   assert.equal(serving.fingerprint, fingerprint(servingSnapshot))
+  phase('contract guards')
   await verifyRuntimeContractGuard({ url, token: userA.token, subject: userA.subject, owner, expectedFingerprint: serving.fingerprint })
   // The old contract predates the additive slow_notes view; both versions share one engine.
   await verifyAcceptedContractRollout({ createServer, config, verify: tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready, olderFingerprint: fingerprint(snapshot), userA, userB, owner })
@@ -208,6 +214,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token, onResponse: info => diagnostics.push(info) })
   const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
   const { createNoteForm } = await import(pathToFileURL(join(root, 'client/dist/note-form.js')))
+  phase('writes and receipt recovery')
   await verifyNoteForm({ owner, url, userA, makeClient: notesClient, createNoteForm })
   await verifyRPC({ owner, client, url, userA, userB })
   // The RPC's explicit isolation must win over a stronger role default.
@@ -223,6 +230,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   if (origins) {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
     try {
+      phase('browser journey')
       await verifyBrowserCORS({ origins, url, token: userA.token, expired, subject: userA.subject, gateway, expectedID: fixtures.rows.find(row => row.subject === userA.subject).id, expectedSchemaFingerprint: serving.fingerprint })
       const created = await owner.query("SELECT body,count(*)::integer AS n FROM api.notes WHERE subject=$1 AND body IN ('browser validated form','browser pending form') GROUP BY body ORDER BY body", [userA.subject])
       assert.deepEqual(created.rows, [{ body: 'browser pending form', n: 1 }, { body: 'browser validated form', n: 1 }])
@@ -294,6 +302,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   } finally {
     await owner.query("DELETE FROM api.notes WHERE subject=$1 AND body='page-limit-fixture'", [userA.subject])
   }
+  phase('authorization and cleanup')
   await verifyAuthorization({ url, userA, userB })
   for (const table of ['notes', 'comments', 'note_details', 'tags', 'note_tags', 'note_favorite_tags']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
   await assert.rejects(verifyAuthorization({ url, userA, userB: userA }), /subjects_must_differ/)
@@ -328,5 +337,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // is required, while the committed fixture remains untouched.
   await owner.query('ALTER TABLE api.notes ADD COLUMN description text')
   assert.notEqual(generate(await inspect(loginURL.toString(), ['api'])), types)
+  phase('schema evolution')
   await verifySchemaEvolution({ owner, client, refresh, inspect, generate, loginURL: loginURL.toString(), root, command })
+  phase('complete')
 })

@@ -183,7 +183,7 @@ func TestPostgresCutoverPreflightRuntimeCatalogRetiredStillGated(t *testing.T) {
 			t.Fatal("inconsistent pending runtime evidence accepted", values)
 		}
 	}
-	up, down := cutoverMigrationStatements(t, "20261015120000001_managed_postgres_preflight_runtime_drain.sql")
+	up, down := cutoverMigrationStatements(t, "20261016165124515_managed_postgres_preflight_runtime_drain.sql")
 	for _, migration := range []string{down, up} {
 		if _, err := s.pool.Exec(t.Context(), migration); err != nil {
 			t.Fatal("runtime observation migration round trip", err)

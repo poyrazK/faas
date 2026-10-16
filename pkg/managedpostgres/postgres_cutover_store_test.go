@@ -256,7 +256,7 @@ func TestPostgresCutoverPinsStageAndCancel(t *testing.T) {
 	fenceUp, fenceDown := cutoverMigrationStatements(t, "20261001175350459_managed_postgres_cutover_admission_fence.sql")
 	taskFenceUp, taskFenceDown := cutoverMigrationStatements(t, "20261001184558948_managed_postgres_cutover_task_fence.sql")
 	preflightUp, preflightDown := cutoverMigrationStatements(t, "20261015110000001_managed_postgres_cutover_preflights.sql")
-	runtimeUp, runtimeDown := cutoverMigrationStatements(t, "20261015120000001_managed_postgres_preflight_runtime_drain.sql")
+	runtimeUp, runtimeDown := cutoverMigrationStatements(t, "20261016165124515_managed_postgres_preflight_runtime_drain.sql")
 	sourceUp, sourceDown := sourceFenceMigrationStatements(t)
 	for _, later := range []string{sourceDown, runtimeDown} {
 		if _, err = pool.Exec(ctx, later); err != nil {
