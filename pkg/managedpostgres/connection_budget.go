@@ -18,6 +18,7 @@ type ConnectionBudgetSnapshot struct {
 	CheckedAt                                                   time.Time
 	Truncated, ModelsVerified, OtherConsumersCovered            bool
 	InventoryUnavailable                                        bool
+	NativeReplication                                           bool
 	Bindings                                                    []connectionBudgetBinding
 	Capacity                                                    *ConnectionBudgetCapacityEvidence
 }
@@ -144,6 +145,9 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 	}
 	if !s.ModelsVerified {
 		add("runtime_pool_configuration_unverified")
+	}
+	if s.NativeReplication {
+		add("native_replication_connections_unmodeled")
 	}
 	if !s.OtherConsumersCovered {
 		add("external_consumers_unobserved")

@@ -7,6 +7,17 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Managed Postgres data pipelines — 2026-10-16
+
+[ADR-1456](adr/1456-managed-postgres-data-pipelines.md) adds an internal,
+staging-only source-to-mirror connector on top of the Data API release work.
+The [pipeline guide](data-pipelines.md) documents the single-command CLI,
+sealed source custody, native initial copy/change capture, explicit JWT reader
+allowlist, pause/resync/cleanup behavior, and bounded verification. The strict
+`make test-data-pipeline` runner uses disposable TLS PostgreSQL and real signed
+HTTP reads. Live-provider, resource-budget and deployed operational qualification
+remain open; production admission is disabled.
+
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
 - **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),

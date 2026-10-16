@@ -145,6 +145,15 @@
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
+# ADR-1456: install without enabling; staging pilot and keys are configured explicitly.
+- name: control_plane_service — install private data pipeline worker unit
+  ansible.builtin.copy:
+    src: faas-apid-data-pipeline-worker.service
+    dest: /etc/systemd/system/faas-apid-data-pipeline-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+
 # ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.
 - name: control_plane_service — install private clone worker unit

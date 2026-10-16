@@ -313,6 +313,7 @@ export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js'
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './models/ConsumerKeyResponse.js';
 export type { ControlApplicationStandardOperationRequest } from './models/ControlApplicationStandardOperationRequest.js';
+export type { ControlDataPipelineRequest } from './models/ControlDataPipelineRequest.js';
 export type { ControlEventExecutionLineageCaseBackfillRequest } from './models/ControlEventExecutionLineageCaseBackfillRequest.js';
 export type { ControlEventExecutionLineageRetryJobRequest } from './models/ControlEventExecutionLineageRetryJobRequest.js';
 export type { ControlWorkflowRecoveryPolicyRequest } from './models/ControlWorkflowRecoveryPolicyRequest.js';
@@ -337,6 +338,8 @@ export type { CreateConsumerKeyRequest } from './models/CreateConsumerKeyRequest
 export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
+export type { CreateDataConnectionRequest } from './models/CreateDataConnectionRequest.js';
+export type { CreateDataPipelineRequest } from './models/CreateDataPipelineRequest.js';
 export type { CreateDeploymentOverrides } from './models/CreateDeploymentOverrides.js';
 export type { CreateDeploymentRequest } from './models/CreateDeploymentRequest.js';
 export type { CreateDeployTokenRequest } from './models/CreateDeployTokenRequest.js';
@@ -404,6 +407,10 @@ export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js'
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
+export type { DataConnection } from './models/DataConnection.js';
+export type { DataConnectionList } from './models/DataConnectionList.js';
+export type { DataPipeline } from './models/DataPipeline.js';
+export type { DataPipelineList } from './models/DataPipelineList.js';
 export type { DataUpstreamHistoryBucket } from './models/DataUpstreamHistoryBucket.js';
 export type { DataUpstreamHistoryResponse } from './models/DataUpstreamHistoryResponse.js';
 export type { DataUpstreamListResponse } from './models/DataUpstreamListResponse.js';
@@ -2023,6 +2030,7 @@ export type { RotateAppSecretRequest } from './models/RotateAppSecretRequest.js'
 export type { RotateAppSecretResponse } from './models/RotateAppSecretResponse.js';
 export type { RotateAppWebhookSecretRequest } from './models/RotateAppWebhookSecretRequest.js';
 export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSecretResponse.js';
+export type { RotateDataConnectionRequest } from './models/RotateDataConnectionRequest.js';
 export type { RotateDeployTokenRequest } from './models/RotateDeployTokenRequest.js';
 export type { RotateDeployTokenResponse } from './models/RotateDeployTokenResponse.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
@@ -2463,6 +2471,7 @@ export { BillingService } from './services/BillingService.js';
 export { ConsumersService } from './services/ConsumersService.js';
 export { CorsPresetsService } from './services/CorsPresetsService.js';
 export { CronsService } from './services/CronsService.js';
+export { DataPipelinesService } from './services/DataPipelinesService.js';
 export { DebuggerService } from './services/DebuggerService.js';
 export { DefaultService } from './services/DefaultService.js';
 export { DelayedTasksService } from './services/DelayedTasksService.js';

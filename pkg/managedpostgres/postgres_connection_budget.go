@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	pipelineSQL "github.com/onebox-faas/faas/pkg/datapipeline/sqlc"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -25,6 +26,10 @@ func (s *PostgresStore) ReadConnectionBudget(ctx context.Context, accountID, dat
 		CheckedAt: row.CheckedAt.Time, Truncated: row.Truncated}
 	if err := json.Unmarshal(row.Bindings, &out.Bindings); err != nil {
 		return out, fmt.Errorf("managedpostgres: decode connection inventory: %w", err)
+	}
+	out.NativeReplication, err = pipelineSQL.New().PipelineTargetInUse(ctx, s.pool, pipelineSQL.PipelineTargetInUseParams{AccountID: accountID, DatabaseID: databaseID})
+	if err != nil {
+		return out, mapPostgresError(err)
 	}
 	return out, nil
 }

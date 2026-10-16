@@ -11360,3 +11360,27 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Pipeline limits are intentionally separate from Data API request limits.
+// Native replication holds connections independently of application traffic.
+const (
+	DataPipelinePilotAccountsMax     = 100
+	DataPipelineConnectionsMax       = 10
+	DataPipelinesMax                 = 3
+	DataPipelineGenerationsMax       = 1000
+	DataPipelineHistoryMax           = 100
+	DataPipelineObservationMaxAge    = 90 * time.Second
+	DataPipelineLiveLagMaxBytes      = int64(16 << 20)
+	DataPipelineTablesMax            = 16
+	DataPipelineColumnsMax           = 128
+	DataPipelineSubjectsMax          = 32
+	DataPipelineSubjectMaxBytes      = 256
+	DataPipelineCredentialMaxBytes   = 8192
+	DataPipelineRequestMaxBytes      = 32768
+	DataPipelineLease                = 60 * time.Second
+	DataPipelineOperationTimeout     = 20 * time.Second
+	DataPipelinePollInterval         = 15 * time.Second
+	DataPipelineVerificationRowsMax  = 10000
+	DataPipelineVerificationBytesMax = 16 << 20
+	DataPipelineRetainedWALMaxBytes  = int64(1 << 30)
+)

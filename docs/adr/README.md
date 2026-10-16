@@ -1119,3 +1119,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+
+- [ADR-1456: Managed Postgres data pipelines](1456-managed-postgres-data-pipelines.md)

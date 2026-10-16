@@ -5437,6 +5437,42 @@ $$;
 
 
 --
+-- Name: data_pipeline_target_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.data_pipeline_target_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='data_pipelines' THEN
+  PERFORM 1 FROM managed_postgres_databases WHERE id=NEW.database_id AND account_id=NEW.account_id
+   AND state='ready' AND desired_generation=observed_generation FOR UPDATE;
+  IF NOT FOUND OR EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=NEW.database_id AND state<>'deleted') THEN
+   RAISE EXCEPTION 'pipeline target must be an unbound ready database';
+  END IF;
+ ELSIF TG_TABLE_NAME='managed_postgres_bindings' THEN
+  PERFORM 1 FROM managed_postgres_databases WHERE id=NEW.database_id FOR UPDATE;
+  IF NEW.access<>'read_only' AND EXISTS(SELECT 1 FROM data_pipelines WHERE database_id=NEW.database_id AND state<>'deleted') THEN
+   RAISE EXCEPTION 'pipeline mirrors permit only read-only application bindings';
+  END IF;
+ ELSIF TG_TABLE_NAME='managed_postgres_databases' THEN
+  IF EXISTS(SELECT 1 FROM data_pipelines WHERE database_id=OLD.id AND state<>'deleted') THEN
+   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'delete the pipeline before deleting its mirror'; END IF;
+   IF NEW.state<>'ready' OR NEW.desired_generation<>OLD.desired_generation THEN
+    RAISE EXCEPTION 'active pipeline owns the mirror lifecycle';
+   END IF;
+  END IF;
+ ELSIF TG_TABLE_NAME='accounts' THEN
+  IF EXISTS(SELECT 1 FROM data_pipelines WHERE account_id=OLD.id AND state<>'deleted') THEN
+   RAISE EXCEPTION 'delete data pipelines before deleting the account';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: data_upstreams_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -24358,6 +24394,69 @@ CREATE TABLE public.customer_workflow_readiness_subscriptions (
 
 
 --
+-- Name: data_pipeline_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipeline_connections (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    ciphertext bytea NOT NULL,
+    identity text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_pipeline_connections_ciphertext_check CHECK (((octet_length(ciphertext) >= 1) AND (octet_length(ciphertext) <= 16384))),
+    CONSTRAINT data_pipeline_connections_identity_check CHECK ((identity ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT data_pipeline_connections_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
+    CONSTRAINT data_pipeline_connections_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: data_pipelines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipelines (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    source_connection_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    tables jsonb NOT NULL,
+    read_subjects jsonb NOT NULL,
+    desired_state text DEFAULT 'running'::text NOT NULL,
+    state text DEFAULT 'validating'::text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    observed_revision bigint DEFAULT 0 NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    tables_ready integer DEFAULT 0 NOT NULL,
+    retained_wal_bytes bigint,
+    observed_at timestamp with time zone,
+    verification text DEFAULT 'unknown'::text NOT NULL,
+    verified_at timestamp with time zone,
+    initialized boolean DEFAULT false NOT NULL,
+    verify_requested boolean DEFAULT false NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
+    CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
+    CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
+    CONSTRAINT data_pipelines_read_subjects_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 1) AND (jsonb_array_length(read_subjects) <= 32)))),
+    CONSTRAINT data_pipelines_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
+    CONSTRAINT data_pipelines_retained_wal_bytes_check CHECK ((retained_wal_bytes >= 0)),
+    CONSTRAINT data_pipelines_revision_check CHECK ((revision > 0)),
+    CONSTRAINT data_pipelines_state_check CHECK ((state = ANY (ARRAY['validating'::text, 'copying'::text, 'catching_up'::text, 'live'::text, 'paused'::text, 'blocked'::text, 'deleting'::text, 'deleted'::text, 'resync_required'::text]))),
+    CONSTRAINT data_pipelines_tables_check CHECK (((jsonb_typeof(tables) = 'array'::text) AND ((jsonb_array_length(tables) >= 1) AND (jsonb_array_length(tables) <= 16)))),
+    CONSTRAINT data_pipelines_tables_ready_check CHECK (((tables_ready >= 0) AND (tables_ready <= 16))),
+    CONSTRAINT data_pipelines_verification_check CHECK ((verification = ANY (ARRAY['unknown'::text, 'pending'::text, 'passed'::text, 'mismatch'::text, 'inconclusive'::text])))
+);
+
+
+--
 -- Name: data_upstream_probes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40368,6 +40467,46 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 
 --
+-- Name: data_pipeline_connections data_pipeline_connections_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_account_id_id_key UNIQUE (account_id, id);
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_pipelines data_pipelines_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: data_pipelines data_pipelines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -48438,6 +48577,20 @@ CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_w
 
 
 --
+-- Name: data_pipelines_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_pipelines_due ON public.data_pipelines USING btree (retry_at, id) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: data_pipelines_owned_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX data_pipelines_owned_target ON public.data_pipelines USING btree (database_id) WHERE (state <> 'deleted'::text);
+
+
+--
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -55795,6 +55948,34 @@ CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE 
 
 
 --
+-- Name: accounts data_pipeline_account_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_account_guard BEFORE DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: managed_postgres_bindings data_pipeline_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_binding_guard BEFORE INSERT OR UPDATE OF access, database_id ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: managed_postgres_databases data_pipeline_database_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: data_pipelines data_pipeline_reserve_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_reserve_target BEFORE INSERT ON public.data_pipelines FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
 -- Name: data_upstreams data_upstreams_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -61335,6 +61516,38 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
     ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipelines data_pipelines_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipelines data_pipelines_account_id_source_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_account_id_source_connection_id_fkey FOREIGN KEY (account_id, source_connection_id) REFERENCES public.data_pipeline_connections(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipelines data_pipelines_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

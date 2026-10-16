@@ -39,6 +39,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: data_pipelines
+    description: Staged managed PostgreSQL mirrors with encrypted source registration and read-only application access.
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags
@@ -50905,6 +50907,201 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/data/connections:
+    get:
+      operationId: listDataConnections
+      summary: List registered data sources without credentials
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: List registered data sources without credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnectionList'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createDataConnection
+      summary: Register an encrypted PostgreSQL source
+      tags:
+      - data_pipelines
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDataConnectionRequest'
+      responses:
+        '201':
+          description: Register an encrypted PostgreSQL source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnection'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/connections/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    put:
+      operationId: rotateDataConnection
+      summary: Rotate credentials without changing source identity
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateDataConnectionRequest'
+      responses:
+        '200':
+          description: Rotate credentials without changing source identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnection'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      operationId: deleteDataConnection
+      summary: Delete a source after its pipelines are cleaned up
+      tags:
+      - data_pipelines
+      responses:
+        '204':
+          description: Delete a source after its pipelines are cleaned up
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipelines:
+    get:
+      operationId: listDataPipelines
+      summary: List managed data pipelines
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: List managed data pipelines
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineList'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createDataPipeline
+      summary: Request initial copying and continuous PostgreSQL replication
+      tags:
+      - data_pipelines
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDataPipelineRequest'
+      responses:
+        '202':
+          description: Request initial copying and continuous PostgreSQL replication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipelines/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getDataPipeline
+      summary: Read pipeline intent and observed progress
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Read pipeline intent and observed progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipelines/{id}/control:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: controlDataPipeline
+      summary: Request a revision-checked pipeline action
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlDataPipelineRequest'
+      responses:
+        '202':
+          description: Request a revision-checked pipeline action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Authentication, ownership, validation, quota or pipeline availability error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
 
   securitySchemes:
@@ -51414,6 +51611,251 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    DataConnection:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - revision
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+    DataConnectionList:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataConnection'
+    CreateDataConnectionRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - connection_url
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        connection_url:
+          type: string
+          maxLength: 8192
+          writeOnly: true
+          description: PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and
+            addresses must be operator-qualified.
+    RotateDataConnectionRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - connection_url
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        connection_url:
+          type: string
+          maxLength: 8192
+          writeOnly: true
+          description: PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and
+            addresses must be operator-qualified.
+    CreateDataPipelineRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - source_connection_id
+      - database_id
+      - tables
+      - read_subjects
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        source_connection_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        tables:
+          type: array
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{0,62}$
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+        read_subjects:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+    ControlDataPipelineRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - pause
+          - resume
+          - resync
+          - verify
+          - delete
+    DataPipeline:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - source_connection_id
+      - database_id
+      - tables
+      - read_subjects
+      - desired_state
+      - state
+      - revision
+      - observed_revision
+      - observation_fresh
+      - generation
+      - tables_ready
+      - verification
+      - created_at
+      properties:
+        observed_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Intent revision covered by the latest observation.
+        observation_fresh:
+          type: boolean
+          description: True only when the current intent was observed within the last 90 seconds.
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        source_connection_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        tables:
+          type: array
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{0,62}$
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+        read_subjects:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        desired_state:
+          type: string
+          enum:
+          - running
+          - paused
+          - deleted
+        state:
+          type: string
+          enum:
+          - validating
+          - copying
+          - catching_up
+          - live
+          - paused
+          - blocked
+          - deleting
+          - deleted
+          - resync_required
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+        tables_ready:
+          type: integer
+          minimum: 0
+          maximum: 16
+        retained_wal_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        observed_at:
+          type: string
+          format: date-time
+        verification:
+          type: string
+          enum:
+          - unknown
+          - pending
+          - passed
+          - mismatch
+          - inconclusive
+        verified_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    DataPipelineList:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipeline'
+
     MCPCatalogObserverOAuthConfig:
       description: Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
       type: object
