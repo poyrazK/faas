@@ -10575,6 +10575,10 @@ const (
 	// unless the owner sets GOTRUE_SMS_OTP_EXP; GoTrue's own 60 seconds can
 	// expire before a delayed text arrives.
 	AuthSMSCodeSeconds = 300
+	// AuthSSOMetadataBytes bounds a SAML identity provider's metadata XML,
+	// and AuthSSOMaxDomains the email domains one provider serves.
+	AuthSSOMetadataBytes = 512 << 10
+	AuthSSOMaxDomains    = 50
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app

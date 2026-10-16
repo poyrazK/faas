@@ -62,7 +62,37 @@ func (s *server) dashboardAuthSettings(w http.ResponseWriter, r *http.Request) {
 		redirectDashboardAuth(w, r, app.Slug, "unchanged", "")
 		return
 	}
+	if set["AUTH_SSO"] == "1" && !s.ensureDashboardSAMLKey(w, r, acct, app, set) {
+		return
+	}
 	s.applyDashboardAuthSecrets(w, r, acct, app, set, unset, "settings")
+}
+
+// ensureDashboardSAMLKey adds the SAML signing key the first time SSO is
+// turned on, as `gregale auth config --sso on` does. An existing key is
+// kept, so identity providers keep trusting the app.
+func (s *server) ensureDashboardSAMLKey(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, set map[string]string) bool {
+	resp := s.forwardDashboardJSON(r, acct, http.MethodGet, "/v1/apps/"+url.PathEscape(app.Slug)+"/secrets", api.DefaultEnvScope, "", nil, s.listSecrets)
+	if !dashboardMutationSucceeded(w, resp) {
+		return false
+	}
+	var list api.AppSecretListResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil {
+		renderProblem(w, s.log, err)
+		return false
+	}
+	for _, secret := range list.Secrets {
+		if secret.Key == authsettings.SAMLKeySecret {
+			return true
+		}
+	}
+	key, err := authsettings.NewSAMLKey()
+	if err != nil {
+		renderProblem(w, s.log, err)
+		return false
+	}
+	set[authsettings.SAMLKeySecret] = key
+	return true
 }
 
 // authSettingsChange reads only the fields the form sent: the page omits
@@ -94,7 +124,7 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	if err := hostedPageChange(form, &change); err != nil {
 		return change, err
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "passkeys": &change.Passkeys} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "passkeys": &change.Passkeys, "sso": &change.SSO} {
 		if !form.Has(name) {
 			continue
 		}
