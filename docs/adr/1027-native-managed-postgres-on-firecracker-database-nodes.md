@@ -474,6 +474,9 @@ Fleet-wide checks count database nodes too:
 - `scale_check.yml` counts them in the private peer map (every host's
   lists them) and checks their generated vars. It used to reject any
   fleet with a database host.
+- `verify.yml` (`make verify-fleet`) has a database-node play. vmmd must
+  be enabled, and every enabled database daemon (vmmd, pgproxyd,
+  dbbackupd) must be active and ready on its overlay ops listener.
 - The PostgreSQL capacity plan adds pgproxyd's direct pool (4,
   `faas_postgres_per_database_node_pool_budget`, equal to
   `db.DaemonMaxConnections["pgproxyd"]`) per database node.
