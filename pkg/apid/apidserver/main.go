@@ -40,6 +40,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
@@ -1420,6 +1421,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// resolved config rides on *server via WithOAuthConfig so the
 	// handlers, /v1/auth/capabilities, and renderLoginForm share one
 	// source of truth (no os.Getenv at request time).
+	slackOAuthCfg, err := issueslack.LoadOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Slack OAuth configuration: %w", err)
+	}
 	linearOAuthCfg, err := issuetracker.LoadLinearOAuthConfig(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid Linear OAuth configuration: %w", err)
@@ -1446,6 +1451,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	srv.linearOAuthConfig = linearOAuthCfg
+	srv.issueSlackOAuthConfig = slackOAuthCfg
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

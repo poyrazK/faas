@@ -2,12 +2,12 @@
 SELECT d.* FROM issue_team_slack_destinations d JOIN apps a ON a.id=d.app_id AND a.account_id=d.account_id
 WHERE d.app_id=$1 AND d.account_id=$2 AND d.team_id=$3;
 -- name: IssueSlackDestinationList :many
-SELECT d.id,d.team_id,d.channel_id,d.enabled,d.revision,t.name AS team_name FROM issue_team_slack_destinations d
+SELECT d.id,d.team_id,d.channel_id,d.enabled,d.revision,d.oauth_revision,t.name AS team_name FROM issue_team_slack_destinations d
 JOIN apps a ON a.id=d.app_id AND a.account_id=d.account_id JOIN app_issue_teams t ON t.id=d.team_id AND t.app_id=a.id
 WHERE a.id=$1 AND a.account_id=$2 ORDER BY t.name,d.id;
 -- name: IssueSlackDestinationPut :one
 INSERT INTO issue_team_slack_destinations(id,app_id,account_id,team_id,channel_id,token_sealed,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)
-ON CONFLICT(app_id,team_id) DO UPDATE SET account_id=excluded.account_id,channel_id=excluded.channel_id,token_sealed=excluded.token_sealed,enabled=excluded.enabled,revision=issue_team_slack_destinations.revision+1,claim_id=NULL,claim_until=NULL,next_send_at=clock_timestamp(),updated_at=clock_timestamp() RETURNING *;
+ON CONFLICT(app_id,team_id) DO UPDATE SET account_id=excluded.account_id,channel_id=excluded.channel_id,token_sealed=excluded.token_sealed,enabled=excluded.enabled,oauth_revision=NULL,revision=issue_team_slack_destinations.revision+1,claim_id=NULL,claim_until=NULL,next_send_at=clock_timestamp(),updated_at=clock_timestamp() RETURNING *;
 -- name: IssueSlackCancelPrevious :exec
 UPDATE issue_team_slack_deliveries SET status='canceled',last_error='destination_unavailable',claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp()
 WHERE destination_id=$1 AND destination_revision<>$2 AND status IN ('pending','failed','in_flight');

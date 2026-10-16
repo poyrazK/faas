@@ -20,6 +20,7 @@ type IssueSlackDestination struct {
 	ID, TeamID, TeamName, ChannelID string
 	Enabled                         bool
 	Revision                        int64
+	OAuthRevision                   int64
 }
 type PutIssueSlackDestination struct {
 	TeamID, ChannelID string

@@ -50,6 +50,9 @@ func (s *server) dashboardSlackInteractionView(w http.ResponseWriter, r *http.Re
 	view.SlackInteractionsAvailable = true
 	view.SlackInteractionPolicy = p
 	view.SlackInteractionURL = s.cliAuthURLBase + "/integrations/slack/issues/" + app.ID
+	if view.SlackInstallation.Status == "connected" {
+		view.SlackInteractionURL = s.cliAuthURLBase + "/integrations/slack/actions"
+	}
 	return true
 }
 func (s *server) dashboardSlackAccountLinkAction(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) bool {

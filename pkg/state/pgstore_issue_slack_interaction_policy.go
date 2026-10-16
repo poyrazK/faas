@@ -48,6 +48,13 @@ func (s *PgStore) SetIssueSlackInteractionPolicy(ctx context.Context, app, owner
 	if _, err = issueApplicationSlackPolicy(ctx, q, tx, app, owner); err != nil {
 		return empty, err
 	}
+	installed, err := readSlackInstallation(ctx, q, tx, app, owner)
+	if err != nil {
+		return empty, err
+	}
+	if installed.Status == "connected" {
+		return empty, slackOAuthChanged()
+	}
 	old, err := readSlackInteractionPolicy(ctx, q, tx, app)
 	if err != nil {
 		return empty, err

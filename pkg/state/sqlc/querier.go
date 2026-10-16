@@ -1738,9 +1738,25 @@ type Querier interface {
 	IssueSlackIdentityGet(ctx context.Context, db DBTX, arg IssueSlackIdentityGetParams) (IssueSlackIdentityGetRow, error)
 	IssueSlackIdentityMine(ctx context.Context, db DBTX, arg IssueSlackIdentityMineParams) (IssueSlackIdentityMineRow, error)
 	IssueSlackIdentityPut(ctx context.Context, db DBTX, arg IssueSlackIdentityPutParams) (int64, error)
+	IssueSlackInstallation(ctx context.Context, db DBTX, arg IssueSlackInstallationParams) (IssueSlackInstallation, error)
+	IssueSlackInstallationDisable(ctx context.Context, db DBTX, arg IssueSlackInstallationDisableParams) error
+	IssueSlackInstallationPut(ctx context.Context, db DBTX, arg IssueSlackInstallationPutParams) (IssueSlackInstallation, error)
 	IssueSlackInteractionNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	IssueSlackInteractionPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (IssueSlackInteractionPolicyRow, error)
 	IssueSlackInteractionPolicyPut(ctx context.Context, db DBTX, arg IssueSlackInteractionPolicyPutParams) error
+	IssueSlackOAuthActionApp(ctx context.Context, db DBTX, arg IssueSlackOAuthActionAppParams) (pgtype.UUID, error)
+	IssueSlackOAuthAffectedApps(ctx context.Context, db DBTX, arg IssueSlackOAuthAffectedAppsParams) ([]IssueSlackOAuthAffectedAppsRow, error)
+	IssueSlackOAuthDeliveriesCancel(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackOAuthDestinationBind(ctx context.Context, db DBTX, arg IssueSlackOAuthDestinationBindParams) error
+	IssueSlackOAuthDestinationsDisable(ctx context.Context, db DBTX, arg IssueSlackOAuthDestinationsDisableParams) error
+	IssueSlackOAuthExpiredCleanup(ctx context.Context, db DBTX, limit int32) error
+	IssueSlackOAuthFlow(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowParams) (IssueSlackOauthFlow, error)
+	IssueSlackOAuthFlowClaim(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowClaimParams) (IssueSlackOauthFlow, error)
+	IssueSlackOAuthFlowDelete(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackOAuthFlowPut(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowPutParams) error
+	IssueSlackOAuthFlowSave(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowSaveParams) (IssueSlackOauthFlow, error)
+	IssueSlackOAuthInteractionsDisable(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackOAuthOwnerReady(ctx context.Context, db DBTX, arg IssueSlackOAuthOwnerReadyParams) (bool, error)
 	IssueSlackReady(ctx context.Context, db DBTX, arg IssueSlackReadyParams) (bool, error)
 	IssueSlackRelease(ctx context.Context, db DBTX, arg IssueSlackReleaseParams) error
 	IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRetryParams) error

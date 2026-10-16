@@ -1324,3 +1324,8 @@ func IssueNativeSetLinearOAuth(e pgHandlerEnv, cfg issuetracker.LinearOAuthConfi
 }
 
 func (r *server) IssueSlackResponses() **issueslack.Client { return &r.issueSlackResponses }
+
+func IssueSetSlackOAuth(e pgHandlerEnv, cfg issueslack.OAuthConfig, client *issueslack.Client) {
+	e.s.issueSlackOAuthConfig = cfg
+	e.s.issueSlackOAuthClient = client
+}

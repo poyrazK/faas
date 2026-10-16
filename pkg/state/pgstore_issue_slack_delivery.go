@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -135,6 +136,20 @@ func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClai
 	}
 	if err = q.IssueSlackRelease(ctx, tx, sqlc.IssueSlackReleaseParams{ID: held.DestinationID, ClaimID: issueUUID(c.ClaimID), NextSendAt: issueTime(cooldown)}); err != nil {
 		return err
+	}
+	if r.Error == "invalid_auth" {
+		installed, e := readSlackInstallation(ctx, q, tx, c.AppID, c.AccountID)
+		if e != nil {
+			return e
+		}
+		if installed.Status == "connected" && bytes.Equal(installed.TokenSealed, c.TokenSealed) {
+			if e = invalidateSlackOAuth(ctx, q, tx, c.AppID, false); e != nil {
+				return e
+			}
+			if e = q.IssueSlackInstallationDisable(ctx, tx, sqlc.IssueSlackInstallationDisableParams{AppID: issueUUID(c.AppID), Status: "revoked"}); e != nil {
+				return e
+			}
+		}
 	}
 	return tx.Commit(ctx)
 }

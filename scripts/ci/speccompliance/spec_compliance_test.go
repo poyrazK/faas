@@ -89,6 +89,8 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"POST /integrations/slack/actions":                     true, // ADR-1242 signed managed Slack actions.
+	"POST /integrations/slack/events":                      true, // ADR-1242 signed Slack uninstall/revocation callbacks.
 	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1241 Slack-signed provider callback; no account credentials
 	"GET /dashboard/apps/{slug}/issues/responses":          true, // ADR-1240 authenticated browser-only response inbox
 	"GET /dashboard/apps/{slug}/issues/{issue_id}/triage":  true, // ADR-1237 authenticated browser-only native response surface
@@ -122,6 +124,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1219: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1219: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1221: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /oauth/slack/callback":                                       true, // ADR-1242 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1223: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                                        true, // HMAC-signed webhook (PR #3 / ADR-025)

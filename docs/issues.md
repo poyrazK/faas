@@ -638,8 +638,8 @@ The current application-error alert surface has these boundaries (reviewed
 | Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
-| Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation and per-rule channel overrides |
-| Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Workspace OAuth installation |
+| Slack | OAuth workspace installation, verified team channels, revocation handling, native alerts/incident threads, retries and delivery status | Per-rule channel overrides, rotating tokens and Enterprise Grid organization grants |
+| Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Resolve and assign directly in Slack |
 
 Native Slack delivery now connects application alerts to team channels.
 Native application issues now have dashboard acknowledgment and snoozing.
@@ -1012,6 +1012,54 @@ webhook idempotency key, so uncertain provider/database acknowledgements can
 still cause duplicates. The bridge does not synchronize GitHub/Linear status or
 instrument crash-free sessions.
 
+### Slack workspace installation
+
+Owners can use **Connect Slack** on Issues → Tracker sync notifications, consent
+in Slack, and explicitly confirm the workspace in Gregale. Code exchange alone
+does not save the connection. Then choose each team's joined Slack channel; invite
+the bot to the channel in Slack first. Channel discovery lists up to 1,000 channels;
+another joined channel ID can be entered and is verified before enabling. Tokens
+and the managed signing secret are sealed, never returned in forms or logs.
+
+Operator configuration (all set or all unset):
+
+- `FAAS_ISSUE_SLACK_CLIENT_ID`
+- `FAAS_ISSUE_SLACK_CLIENT_SECRET`
+- `FAAS_ISSUE_SLACK_REDIRECT_URI` — exact HTTPS `/oauth/slack/callback` URL
+- `FAAS_ISSUE_SLACK_APP_ID`
+- `FAAS_ISSUE_SLACK_SIGNING_SECRET`
+
+Register that redirect URL in the Slack app. Request bot scopes `chat:write`,
+`channels:read`, and `groups:read`. Disable Slack token rotation: rotating grants
+and Enterprise Grid organization installations are not supported yet. Configure
+Interactivity at `https://<gregale-host>/integrations/slack/actions`, and Event
+Subscriptions at `https://<gregale-host>/integrations/slack/events` with bot events
+`app_uninstalled` and `tokens_revoked`. URL verification requires a valid Slack
+signature. OAuth never supplies a signing secret; the operator sets it above.
+No credentials configured means Connect is unavailable; partial configuration fails
+apid startup. Existing manual bot-token setup remains available when disconnected.
+
+Consent expires after ten minutes and is bound to its initiating owner, app,
+browser and installation revision. Confirming a workspace replacement disables
+all previous team destinations and old response buttons; choose channels again.
+Responders link their Slack accounts again through new messages. No queued notice
+is replayed into the replacement workspace.
+
+**Disconnect from this Gregale app** immediately clears its stored installation
+and destination tokens, cancels outstanding deliveries, and disables response
+buttons/links. It leaves the workspace's shared Slack installation in place for
+other Gregale apps. Uninstall Gregale in Slack to revoke workspace access for all
+connected apps. Signed uninstall and bot-token revocation callbacks disable matching
+connections; a rejected token detected by delivery also marks its connection revoked.
+Old revocation events cannot disable a later installation, except a reconnect within
+the event's same whole second is conservatively disabled. An already sending request
+may still arrive. Reconnect after operator signing-secret changes.
+
+This adds managed workspace consent, verified channel selection and installation
+lifecycle handling to the Sentry comparison. Automatic rotating-token refresh,
+Enterprise Grid organization grants and per-rule channel routing remain gaps.
+See [ADR-1242](adr/1242-native-slack-oauth-installation.md).
+
 ### Native application Slack alerts
 
 On an app's **Issues** page, choose **Configure native team Slack alerts and
@@ -1063,7 +1111,7 @@ activity and generic webhooks still commit. These omissions are not backfilled.
 Terminal history expires after seven days, with bounded cleanup; an expired thread
 root can cause a later alert to start a fresh thread. Tracker retention remains
 independent. Native application acknowledgment and snoozing are described below;
-native escalation and Slack handling actions are described below; workspace OAuth remains future work.
+native escalation and Slack handling actions are described below; workspace OAuth setup is described above.
 
 ## GitHub and Linear tracker links
 
@@ -1922,7 +1970,7 @@ the selected due time. Messages already sending may arrive after cancellation.
 Reminders use the shared native queue/history cap and expire with its transport
 history; pruning old reminder history also removes its old deliveries. Generic
 issue activity/webhooks and tracker reminders remain independent. Native backup-team
-escalation and Slack handling actions are described below; workspace OAuth remains future work.
+escalation and Slack handling actions are described below; workspace OAuth setup is described above.
 
 ### Escalate an unacknowledged native issue to a backup team
 
@@ -1970,8 +2018,7 @@ Changed escalation settings cancel queued escalation jobs and preserve prior
 attempts and admitted responsibility. Opting out does not undo a handoff already
 recorded; disable native reminders to stop later response reminders. Changing
 native Slack policy clears the first-reminder clock with existing timers. Existing
-tracker escalation remains independent. Workspace OAuth installation remains future
-work; the native response inbox and Slack handling actions are described below.
+tracker escalation remains independent. Workspace OAuth setup is described above; the native response inbox and Slack handling actions are described below.
 
 ### Native issue response inbox
 
@@ -2010,13 +2057,14 @@ filter changes restart pagination. Changes between pages may change results.
 
 ### Acknowledge or snooze a native issue in Slack
 
-App owners can enable **Slack response buttons** in **Tracker sync notifications**.
-Enter the workspace ID, Slack app ID and that app's signing secret. Configure the
+Connecting through **Connect Slack** configures response buttons automatically.
+For a manual connection, owners can enable **Slack response buttons** in **Tracker
+sync notifications** and enter the workspace ID, Slack app ID and signing secret. Configure the
 same Slack app used by team bot tokens, enable its **Interactivity** setting and
 copy the displayed **Request URL**. One Slack app/workspace is supported per Gregale
 app. The signing secret is sealed and never displayed; leaving it blank retains
-it for the same Slack app/workspace. This setup uses the existing manually supplied
-bot tokens; workspace OAuth installation remains future work.
+it for the same Slack app/workspace. Manual setup uses the existing supplied bot tokens;
+managed OAuth setup is described above.
 
 Future native alerts, reminders and escalations include **Acknowledge**, **Snooze
 1 hour** and **Snooze 24 hours**. Existing messages are not edited. Tracker-sync

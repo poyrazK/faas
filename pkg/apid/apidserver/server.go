@@ -64,6 +64,8 @@ import (
 // live socket-dialed client.
 type server struct {
 	issueSlackResponses                    *issueslack.Client
+	issueSlackOAuthConfig                  issueslack.OAuthConfig
+	issueSlackOAuthClient                  *issueslack.Client
 	linearOAuthConfig                      issuetracker.LinearOAuthConfig
 	linearOAuthProvider                    issuetracker.LinearOAuthProvider
 	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
@@ -1246,6 +1248,8 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
+	mux.HandleFunc("POST /integrations/slack/actions", s.issueSlackManagedActions)
+	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.object.ListBuckets))))
@@ -3988,6 +3992,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/saved-views", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSavedViewHandler))))
+	mux.Handle("GET /oauth/slack/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.slackOAuthCallback))))
 	mux.Handle("GET /oauth/linear/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.linearOAuthCallback))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerHealthHandler))))
 	// ADR-1237: browser-only response state; deliberately excluded from public OpenAPI.

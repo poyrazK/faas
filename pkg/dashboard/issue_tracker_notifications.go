@@ -2,10 +2,14 @@ package dashboard
 
 import (
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type IssueTrackerNotificationsView struct {
+	SlackOAuthAvailable, SlackChannelLookupFailed                                bool
+	SlackInstallation                                                            state.IssueSlackInstallation
+	SlackChannels                                                                []issueslack.OAuthChannel
 	SlackInteractionsAvailable                                                   bool
 	SlackInteractionPolicy                                                       state.IssueSlackInteractionPolicy
 	SlackInteractionURL                                                          string

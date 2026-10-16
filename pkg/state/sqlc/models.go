@@ -4096,6 +4096,19 @@ type IssueSlackIdentity struct {
 	ExpiresAt      pgtype.Timestamptz
 }
 
+type IssueSlackInstallation struct {
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	Revision      int64
+	Status        string
+	WorkspaceID   string
+	WorkspaceName string
+	SlackAppID    string
+	BotUserID     string
+	TokenSealed   []byte
+	InstalledAt   pgtype.Timestamptz
+}
+
 type IssueSlackInteractionPolicy struct {
 	AppID        pgtype.UUID
 	Enabled      bool
@@ -4114,6 +4127,16 @@ type IssueSlackLinkChallenge struct {
 	PolicyRevision int64
 	ExpiresAt      pgtype.Timestamptz
 	ConsumedAt     pgtype.Timestamptz
+}
+
+type IssueSlackOauthFlow struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	StateHash        string
+	ExpectedRevision int64
+	Phase            string
+	Sealed           []byte
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type IssueSourceMapArtifact struct {
@@ -4174,18 +4197,19 @@ type IssueTeamSlackDelivery struct {
 }
 
 type IssueTeamSlackDestination struct {
-	ID          pgtype.UUID
-	AppID       pgtype.UUID
-	AccountID   pgtype.UUID
-	TeamID      pgtype.UUID
-	ChannelID   string
-	TokenSealed []byte
-	Enabled     bool
-	Revision    int64
-	NextSendAt  pgtype.Timestamptz
-	ClaimID     pgtype.UUID
-	ClaimUntil  pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	TeamID        pgtype.UUID
+	ChannelID     string
+	TokenSealed   []byte
+	Enabled       bool
+	Revision      int64
+	NextSendAt    pgtype.Timestamptz
+	ClaimID       pgtype.UUID
+	ClaimUntil    pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	OauthRevision pgtype.Int8
 }
 
 type IssueTeamSlackThread struct {

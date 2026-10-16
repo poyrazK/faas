@@ -700,7 +700,7 @@ func (q *Queries) IssueSlackDeliveryList(ctx context.Context, db DBTX, arg Issue
 }
 
 const issueSlackDestinationGet = `-- name: IssueSlackDestinationGet :one
-SELECT d.id, d.app_id, d.account_id, d.team_id, d.channel_id, d.token_sealed, d.enabled, d.revision, d.next_send_at, d.claim_id, d.claim_until, d.updated_at FROM issue_team_slack_destinations d JOIN apps a ON a.id=d.app_id AND a.account_id=d.account_id
+SELECT d.id, d.app_id, d.account_id, d.team_id, d.channel_id, d.token_sealed, d.enabled, d.revision, d.next_send_at, d.claim_id, d.claim_until, d.updated_at, d.oauth_revision FROM issue_team_slack_destinations d JOIN apps a ON a.id=d.app_id AND a.account_id=d.account_id
 WHERE d.app_id=$1 AND d.account_id=$2 AND d.team_id=$3
 `
 
@@ -726,6 +726,7 @@ func (q *Queries) IssueSlackDestinationGet(ctx context.Context, db DBTX, arg Iss
 		&i.ClaimID,
 		&i.ClaimUntil,
 		&i.UpdatedAt,
+		&i.OauthRevision,
 	)
 	return i, err
 }
@@ -746,7 +747,7 @@ func (q *Queries) IssueSlackDestinationLease(ctx context.Context, db DBTX, arg I
 }
 
 const issueSlackDestinationList = `-- name: IssueSlackDestinationList :many
-SELECT d.id,d.team_id,d.channel_id,d.enabled,d.revision,t.name AS team_name FROM issue_team_slack_destinations d
+SELECT d.id,d.team_id,d.channel_id,d.enabled,d.revision,d.oauth_revision,t.name AS team_name FROM issue_team_slack_destinations d
 JOIN apps a ON a.id=d.app_id AND a.account_id=d.account_id JOIN app_issue_teams t ON t.id=d.team_id AND t.app_id=a.id
 WHERE a.id=$1 AND a.account_id=$2 ORDER BY t.name,d.id
 `
@@ -757,12 +758,13 @@ type IssueSlackDestinationListParams struct {
 }
 
 type IssueSlackDestinationListRow struct {
-	ID        pgtype.UUID
-	TeamID    pgtype.UUID
-	ChannelID string
-	Enabled   bool
-	Revision  int64
-	TeamName  string
+	ID            pgtype.UUID
+	TeamID        pgtype.UUID
+	ChannelID     string
+	Enabled       bool
+	Revision      int64
+	OauthRevision pgtype.Int8
+	TeamName      string
 }
 
 func (q *Queries) IssueSlackDestinationList(ctx context.Context, db DBTX, arg IssueSlackDestinationListParams) ([]IssueSlackDestinationListRow, error) {
@@ -780,6 +782,7 @@ func (q *Queries) IssueSlackDestinationList(ctx context.Context, db DBTX, arg Is
 			&i.ChannelID,
 			&i.Enabled,
 			&i.Revision,
+			&i.OauthRevision,
 			&i.TeamName,
 		); err != nil {
 			return nil, err
@@ -794,7 +797,7 @@ func (q *Queries) IssueSlackDestinationList(ctx context.Context, db DBTX, arg Is
 
 const issueSlackDestinationPut = `-- name: IssueSlackDestinationPut :one
 INSERT INTO issue_team_slack_destinations(id,app_id,account_id,team_id,channel_id,token_sealed,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)
-ON CONFLICT(app_id,team_id) DO UPDATE SET account_id=excluded.account_id,channel_id=excluded.channel_id,token_sealed=excluded.token_sealed,enabled=excluded.enabled,revision=issue_team_slack_destinations.revision+1,claim_id=NULL,claim_until=NULL,next_send_at=clock_timestamp(),updated_at=clock_timestamp() RETURNING id, app_id, account_id, team_id, channel_id, token_sealed, enabled, revision, next_send_at, claim_id, claim_until, updated_at
+ON CONFLICT(app_id,team_id) DO UPDATE SET account_id=excluded.account_id,channel_id=excluded.channel_id,token_sealed=excluded.token_sealed,enabled=excluded.enabled,oauth_revision=NULL,revision=issue_team_slack_destinations.revision+1,claim_id=NULL,claim_until=NULL,next_send_at=clock_timestamp(),updated_at=clock_timestamp() RETURNING id, app_id, account_id, team_id, channel_id, token_sealed, enabled, revision, next_send_at, claim_id, claim_until, updated_at, oauth_revision
 `
 
 type IssueSlackDestinationPutParams struct {
@@ -831,6 +834,7 @@ func (q *Queries) IssueSlackDestinationPut(ctx context.Context, db DBTX, arg Iss
 		&i.ClaimID,
 		&i.ClaimUntil,
 		&i.UpdatedAt,
+		&i.OauthRevision,
 	)
 	return i, err
 }

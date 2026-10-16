@@ -10583,15 +10583,25 @@ const (
 // Native Slack action verification and account-link bounds (ADR-1241).
 const (
 	IssueSlackInteractionMaxBytes = 64 << 10
-	IssueSlackResponseURLMaxBytes = 512
-	IssueSlackSignatureMaxAge     = 5 * time.Minute
-	IssueSlackInteractionTimeout  = 2 * time.Second
-	IssueSlackLinkTTL             = 10 * time.Minute
-	IssueSlackIdentityTTL         = 30 * 24 * time.Hour
-	IssueSlackLinkChallengesMax   = 100
-	IssueSlackIdentitiesMax       = 200
-	IssueSlackSigningSecretBytes  = 32
-	IssueSlackLinkNonceBytes      = 32
-	IssueSlackSnoozeShort         = time.Hour
-	IssueSlackSnoozeLong          = 24 * time.Hour
+	// ADR-1242: owner-bound Slack OAuth and bounded channel discovery.
+	IssueSlackOAuthFlowTTL          = 10 * time.Minute
+	IssueSlackOAuthTimeout          = 10 * time.Second
+	IssueSlackOAuthSealedMaxBytes   = 16 << 10
+	IssueSlackOAuthResponseMaxBytes = 256 << 10
+	IssueSlackOAuthChannelPageSize  = 200
+	IssueSlackOAuthChannelPages     = 5
+	IssueSlackOAuthCodeMaxBytes     = 4096
+	IssueSlackOAuthNameMaxBytes     = 256
+	IssueSlackOAuthRedirectMaxBytes = 2048
+	IssueSlackResponseURLMaxBytes   = 512
+	IssueSlackSignatureMaxAge       = 5 * time.Minute
+	IssueSlackInteractionTimeout    = 2 * time.Second
+	IssueSlackLinkTTL               = 10 * time.Minute
+	IssueSlackIdentityTTL           = 30 * 24 * time.Hour
+	IssueSlackLinkChallengesMax     = 100
+	IssueSlackIdentitiesMax         = 200
+	IssueSlackSigningSecretBytes    = 32
+	IssueSlackLinkNonceBytes        = 32
+	IssueSlackSnoozeShort           = time.Hour
+	IssueSlackSnoozeLong            = 24 * time.Hour
 )

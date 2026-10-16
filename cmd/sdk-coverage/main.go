@@ -47,6 +47,8 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"POST /integrations/slack/actions":                                                  true, // ADR-1242 signed managed Slack actions.
+	"POST /integrations/slack/events":                                                   true, // ADR-1242 signed Slack uninstall/revocation callbacks.
 	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1241 Slack-signed provider callback.
 	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
@@ -63,6 +65,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1219: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1219: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1221: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /oauth/slack/callback":                                       true, // ADR-1242 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1223: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
