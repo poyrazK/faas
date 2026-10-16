@@ -42,18 +42,21 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 
 | Job name (exact) | Protects | Where |
 |---|---|---|
-| `light: lint, vet, build` | golangci-lint on changed packages (same rules and per-package invocation as the mega `Go lint` shards), gofmt, vet, repo-wide build, PR-4a fix-has-test | `ci-light.yml:lint` |
+| `light: lint, vet, build` | golangci-lint (govet included) on changed packages, gofmt, PR-4a fix-has-test | `ci-light.yml:lint` |
 | `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
-| `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
-| `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
-| `light: tests (shard 3)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants; when `cmd/gregale` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
+| `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/state` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
+| `light: tests (shard 3)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/apid/apidserver` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
 | `boot-contract (production config)` | Daemons boot from production-rendered config with production capabilities (issue #1529 / ADR-075) | `ci-light.yml:boot-contract` (same name in `ci.yml`) |
-| `runtime-contract-gate` | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml` |
 
 A light test shard with no affected packages succeeds immediately, so a
 docs-only change still reports every required context.
 
 ## Not required (deliberately or not yet)
+
+`runtime-contract-gate` (`images.yml`: runtime image, source-artifact,
+adapter and operator-doc contracts) stopped being required on 2026-10-17 so
+pull requests do not wait for the images workflow; it still runs and reports.
 
 Every `ci.yml` job (`Go lint` shards, `lint + build`, the unit, state, e2e and
 migration-history shards, `checks (drift + contract gates)`, load, SDK and

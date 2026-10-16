@@ -67,8 +67,10 @@ jobs:
     runs-on: ubuntu-latest
     # Light-tier budget: about 10 minutes. golangci-lint (govet included) runs
     # on the changed packages; compiling their importers moved to the mega
-    # tier, because a pkg/api change recompiles most of the module.
-    timeout-minutes: 20
+    # tier, because a pkg/api change recompiles most of the module. Main
+    # pushes also lint the three large packages to keep their analysis in
+    # the cache, which takes longer.
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -155,20 +157,39 @@ jobs:
         if: steps.select.outputs.changed != ''
         env:
           PKGS: ${{ steps.select.outputs.changed }}
-          GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 50
-          GOMAXPROCS: 2
+          # The mega tier's lint bounds: the whole 4-core, 16 GB runner.
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
         run: |
           failed=()
           for pkg in $PKGS; do
             echo "Checking $pkg"
-            golangci-lint run --concurrency=2 --timeout=20m "$pkg" || failed+=("$pkg")
+            golangci-lint run --timeout=20m "$pkg" || failed+=("$pkg")
           done
           if (( ${#failed[@]} )); then
             echo "::error::lint failed for: ${failed[*]}"
             exit 1
           fi
+      # Main pushes lint cmd/gregale, pkg/state and pkg/apid/apidserver even
+      # when unchanged, so the saved cache holds their dependencies' export
+      # data and analysis facts: a pull request touching one of them then
+      # re-analyses only what it changed (about a minute, not ten).
+      - name: warm the large packages' lint cache (main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
+        run: |
+          for shard in 1 2 3; do
+            pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$shard" --shards 3 < /dev/null)"
+            echo "Warming $pkg"
+            golangci-lint run --timeout=20m "$pkg" >/dev/null \
+              || echo "::warning::golangci-lint reports findings in $pkg on main; the mega tier's lint shards fail on them"
+          done
       - name: save Go build + lint cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
@@ -457,38 +478,10 @@ jobs:
           fi
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
-      - name: PostgreSQL fixture API and guest compilation (no KVM)
-        if: matrix.shard == 3
-        env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
-          GOGC: 10
-          GOMEMLIMIT: 2GiB
-          GOMAXPROCS: 2
-        run: |
-          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
-            exit 0
-          fi
-          python3 scripts/ci/managed-postgres-native-verdict_test.py
-          # No -race: an apidserver race build alone exceeds the light budget;
-          # the mega tier keeps the race variants.
-          go test -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
-          go test -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
-      - name: GitOps source approval and native graph compilation (no KVM)
-        if: matrix.shard == 3
-        env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
-          GOGC: 10
-          GOMEMLIMIT: 2GiB
-          GOMAXPROCS: 2
-          GREGALE_GITOPS_ACCEPTANCE: '1'
-        run: |
-          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(fakeregistry|testdata/helloserver/)|scripts/test-environment-gitops-native|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
-            exit 0
-          fi
-          # TestMain prepares the shared daemons before the HTTP case starts.
-          go test -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
-          go test -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
-          rm -f "$RUNNER_TEMP/gitops-native.test"
+      # The managed-Postgres fixture API check and the GitOps native e2e
+      # compile build apidserver and cmd/e2e under extra build tags, which
+      # nothing caches: 18 minutes on their own. The mega tier runs both (pg
+      # shard 2b), nightly and before every release.
       # Two kinds of package per shard:
       #   - changed packages (and the §6.2 invariants in tests/property when
       #     anything in their import tree changed) run in full with -race;
