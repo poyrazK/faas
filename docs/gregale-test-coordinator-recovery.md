@@ -365,3 +365,46 @@ local TCP proxy, independently of the parent SQL oracle, and tests an HTTP API
 outage. Both must exhaust the read budget without mutations, retain unresolved
 inventory, reject completion and finish safely after connectivity is restored.
 This tests connectivity loss while PostgreSQL remains running.
+
+### Opt-in cleanup watcher
+
+For a local interrupted campaign with its original process-aware `runner.lock`:
+
+```sh
+gregale test policy cleanup-watch \
+  --plan campaign-plan.json --policy campaign-policy.yaml \
+  --manifest gregale-test.yaml --directory /private/campaign \
+  --execute --grace 1m --interval 30s --attempts 120
+```
+
+For an activated portable import, also supply its `--handoff` index. The watcher
+never discovers arbitrary directories: it monitors only this explicit target.
+It requires the coordinator and every recorded worker to be verifiably terminated
+with unchanged ownership evidence throughout the grace period. Elapsed resource
+expiry is not authority. Gregale currently has process ownership proofs rather
+than a renewable server owner lease.
+
+The worker invokes `recover-lock --execute`, then the existing
+`cleanup --journal --faults --fault-history --execute` path. That path reacquires
+claim and runner exclusion, verifies the entire inventory and recovery lineage,
+and persists cleanup observations separately from immutable execution evidence.
+API/database outages retain unverified resources; later attempts inspect durable
+outcomes before issuing further mutations. Each cleanup invocation retains the
+existing two-minute operation budget. Attempts include ownership polls; defaults
+are 120 attempts at 30-second intervals, plus time spent in cleanup operations.
+
+Standard output contains JSON assessments, cleanup observations, and watch-state
+records (`waiting_for_owner`, `owner_terminated_grace_period`,
+`cleanup_unresolved`, `cleanup_complete`, `manual_inspection_required`). Exit 0
+means the cleanup operation completed; exit 2 means it did not. This does not
+certify test execution or refund attempted budget. Redirect output to a protected
+operator log if watch-state history is required. Existing cleanup observations
+remain in the private work directory.
+
+Active or unverifiable processes are never displaced. Missing/legacy locks,
+remote-host identities, stale handoff claim exclusion, and changed or sealed
+lineage require operator inspection. The watcher does not automatically release
+handoff claim locks. After the watcher itself is interrupted following successful
+lock recovery, use the ordinary explicit cleanup command to continue: it does not
+invent ownership evidence when its original runner lock is gone. Ctrl-C stops
+between operations; an already running bounded cleanup operation finishes first.

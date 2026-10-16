@@ -33,6 +33,9 @@ type testCampaignPolicyInspection struct {
 }
 
 func cmdTestPolicy(args []string) int {
+	if len(args) > 0 && args[0] == "cleanup-watch" {
+		return cmdTestCampaignCleanupWatch(args[1:])
+	}
 	if len(args) > 0 && args[0] == "recover-claim" {
 		return cmdTestCampaignRecoverClaim(args[1:])
 	}
@@ -64,7 +67,7 @@ func cmdTestPolicy(args []string) int {
 		return cmdTestPolicyPlan(args[1:])
 	}
 	if len(args) == 0 || (args[0] != "lint" && args[0] != "preview") {
-		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan, preflight, run, reconcile, status, bundle, cancel, cleanup, recover, recover-lock or recover-claim"))
+		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan, preflight, run, reconcile, status, bundle, cancel, cleanup, cleanup-watch, recover, recover-lock or recover-claim"))
 	}
 	mode := args[0]
 	fs := newFlagSet("test policy "+mode, flag.ContinueOnError)

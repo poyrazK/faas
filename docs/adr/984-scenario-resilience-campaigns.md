@@ -279,3 +279,11 @@ resources remain explicitly unverified in recipient observations, with sanitized
 reason and attempt metadata. Availability failures never establish absence or
 execution success. HTTP outage and real API-to-PostgreSQL connection-cut acceptance
 must demonstrate nonmutating failure, preserved frozen evidence and safe resumption.
+
+The opt-in `test policy cleanup-watch` worker monitors one explicitly selected
+private campaign. A stable grace period begins only after process identity
+verification proves coordinator and worker termination; resource deadlines never
+supply that proof. It reuses runner-lock recovery and full-history fault cleanup,
+with finite attempts and existing bounded recovery I/O. Missing ownership proofs
+or claim exclusion remain manual recovery cases. Watch success establishes cleanup
+only, preserving all execution uncertainty and immutable evidence.

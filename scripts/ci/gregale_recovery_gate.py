@@ -19,6 +19,9 @@ FILTER = (
     "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
+    "TestCampaignCleanupWatchOwnership",
+    "TestCampaignCleanupWatchExhaustion",
+    "TestCampaignCleanupWatchCancellationAfterRecovery",
     "TestCampaignFaultRecoveryReadBudget",
     "TestCampaignFaultRecoveryOutageResume",
     "TestCampaignFaultConsumerIntentRecovery",
