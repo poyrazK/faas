@@ -6808,6 +6808,15 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
+	// The live stream reads only running instances. Print what instances
+	// that parked inside an explicit --since window wrote first, from the
+	// retained archive (H10-100).
+	retainedLines := 0
+	if archive == nil && !follow && !jsonOutput && deployment == "" && filter.Since != "" {
+		if since, err := time.Parse(time.RFC3339Nano, filter.Since); err == nil {
+			retainedLines = printParkedWindowLogs(ctx, client, slug, filter, since, osStdout, osStderr)
+		}
+	}
 	var body io.ReadCloser
 	if archive != nil {
 		body, err = client.StreamAppArchivedLogs(ctx, slug, *archive)
@@ -6837,7 +6846,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	if explain {
 		collector = newExplainCollector(slug, deployment)
 	}
-	printedLines := 0
+	printedLines := retainedLines
 	parkedFallback := false
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
@@ -6906,6 +6915,9 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 		return printErr("Stream closed", streamErr)
 	}
 	if parkedFallback {
+		if retainedLines > 0 {
+			return 0
+		}
 		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
