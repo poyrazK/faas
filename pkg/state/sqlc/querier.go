@@ -1096,12 +1096,22 @@ type Querier interface {
 	FinancialBudgetRevisionInsert(ctx context.Context, db DBTX, arg FinancialBudgetRevisionInsertParams) error
 	FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg FinancialBudgetRevisionListParams) ([]FinancialBudgetRevision, error)
 	FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error)
+	FinancialBudgetStopActive(ctx context.Context, db DBTX, arg FinancialBudgetStopActiveParams) ([]FinancialBudgetStopActiveRow, error)
+	FinancialBudgetStopInsert(ctx context.Context, db DBTX, arg FinancialBudgetStopInsertParams) error
+	FinancialBudgetStopTargetList(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetListParams) ([]FinancialBudgetStopTarget, error)
+	FinancialBudgetStopTargetPut(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetPutParams) (int64, error)
 	FinancialBudgetUpdate(ctx context.Context, db DBTX, arg FinancialBudgetUpdateParams) (FinancialBudgetPolicy, error)
 	FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error)
 	FinancialEvidenceAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	FinancialEvidenceBySource(ctx context.Context, db DBTX, arg FinancialEvidenceBySourceParams) (FinancialUsageEvidence, error)
 	FinancialEvidenceCoverage(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	FinancialEvidenceHead(ctx context.Context, db DBTX, arg FinancialEvidenceHeadParams) (int64, error)
+	FinancialPreviewCommandActivate(ctx context.Context, db DBTX, arg FinancialPreviewCommandActivateParams) (int64, error)
+	FinancialPreviewCommandHeld(ctx context.Context, db DBTX, arg FinancialPreviewCommandHeldParams) (bool, error)
+	FinancialPreviewCommandList(ctx context.Context, db DBTX, arg FinancialPreviewCommandListParams) ([]FinancialPreviewCommandRuntime, error)
+	FinancialPreviewCommandRegister(ctx context.Context, db DBTX, arg FinancialPreviewCommandRegisterParams) (int64, error)
+	FinancialPreviewCommandRetire(ctx context.Context, db DBTX, arg FinancialPreviewCommandRetireParams) (int64, error)
+	FinancialPreviewCommandUnowned(ctx context.Context, db DBTX, arg FinancialPreviewCommandUnownedParams) ([]FinancialPreviewCommandUnownedRow, error)
 	FinancialPriceSnapshotPut(ctx context.Context, db DBTX, arg FinancialPriceSnapshotPutParams) (pgtype.Timestamptz, error)
 	FinancialPriceSnapshotsList(ctx context.Context, db DBTX, arg FinancialPriceSnapshotsListParams) ([]FinancialPriceSnapshotsListRow, error)
 	FinancialSamplingCoverage(ctx context.Context, db DBTX, arg FinancialSamplingCoverageParams) (FinancialSamplingCoverageRow, error)

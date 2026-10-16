@@ -10403,6 +10403,35 @@ END $$;
 
 
 --
+-- Name: financial_preview_command_held(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_preview_command_held(target_app uuid, target_deployment uuid, observed_at timestamp with time zone) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS (
+  SELECT 1 FROM apps a
+  JOIN financial_budget_stops s ON s.account_id = a.account_id
+  JOIN financial_budget_policies p ON p.account_id=s.account_id AND p.id=s.policy_id AND p.revision=s.revision
+  LEFT JOIN deployments d ON d.id=target_deployment AND d.app_id=a.id
+  LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
+  LEFT JOIN project_environments environment ON environment.id=nullif(p.spec->'scope'->>'id','')::uuid
+  WHERE a.id=target_app AND a.preview_of_slug IS NOT NULL AND a.preview_of_slug!=''
+   AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
+   AND s.requested_at<=observed_at AND (s.resume_rule='manual' OR s.period_end>observed_at)
+   AND CASE p.spec->'scope'->>'kind'
+    WHEN 'account' THEN true
+    WHEN 'app' THEN (p.spec->'scope'->>'id')::uuid=a.id
+    WHEN 'project' THEN (p.spec->'scope'->>'id')::uuid=a.project_id
+    WHEN 'environment' THEN environment.account_id=a.account_id AND environment.project_id=a.project_id
+      AND (owner.environment_id=environment.id OR owner.deployment_id IS NULL AND
+        (environment.slug=CASE WHEN coalesce(nullif(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END))
+    ELSE false END
+ )
+$$;
+
+
+--
 -- Name: forbid_runtime_upgrade_native_public_startup_truncate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27478,6 +27507,50 @@ CREATE TABLE public.financial_budget_revisions (
 
 
 --
+-- Name: financial_budget_stop_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_stop_targets (
+    stop_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    resident_count integer NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_stop_targets_check CHECK (((resident_count >= 0) AND ((state <> 'enforced'::text) OR (resident_count = 0)))),
+    CONSTRAINT financial_budget_stop_targets_environment_id_check CHECK (((environment_id = ''::text) OR (environment_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT financial_budget_stop_targets_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'runtime_identity_unavailable'::text, 'vm_teardown_failed'::text, 'instance_settlement_failed'::text]))),
+    CONSTRAINT financial_budget_stop_targets_state_check CHECK ((state = ANY (ARRAY['requested'::text, 'draining'::text, 'enforced'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: financial_budget_stops; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_stops (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    drain_deadline timestamp with time zone NOT NULL,
+    resume_rule text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_budget_stops_check CHECK ((period_end = (((period_start AT TIME ZONE 'UTC'::text) + '1 mon'::interval) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_stops_check1 CHECK (((requested_at >= period_start) AND (requested_at < period_end))),
+    CONSTRAINT financial_budget_stops_check2 CHECK (((drain_deadline >= requested_at) AND (drain_deadline <= (requested_at + '00:05:00'::interval)))),
+    CONSTRAINT financial_budget_stops_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_budget_stops_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_stops_resume_rule_check CHECK ((resume_rule = ANY (ARRAY['manual'::text, 'next_period'::text]))),
+    CONSTRAINT financial_budget_stops_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
 -- Name: financial_evidence_coverage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27485,6 +27558,32 @@ CREATE TABLE public.financial_evidence_coverage (
     singleton boolean DEFAULT true NOT NULL,
     retained_from timestamp with time zone NOT NULL,
     CONSTRAINT financial_evidence_coverage_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: financial_preview_command_runtimes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_preview_command_runtimes (
+    task_id uuid NOT NULL,
+    lease_token uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    environment_id uuid,
+    phase text NOT NULL,
+    ram_mb integer NOT NULL,
+    cpu_millicores integer NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retired_at timestamp with time zone,
+    prepare_until timestamp with time zone NOT NULL,
+    CONSTRAINT financial_preview_command_prepare_deadline_check CHECK ((prepare_until >= recorded_at)),
+    CONSTRAINT financial_preview_command_runtimes_check CHECK (((phase = 'retired'::text) = (retired_at IS NOT NULL))),
+    CONSTRAINT financial_preview_command_runtimes_cpu_millicores_check CHECK ((cpu_millicores > 0)),
+    CONSTRAINT financial_preview_command_runtimes_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'active'::text, 'retired'::text]))),
+    CONSTRAINT financial_preview_command_runtimes_ram_mb_check CHECK ((ram_mb > 0))
 );
 
 
@@ -41634,11 +41733,43 @@ ALTER TABLE ONLY public.financial_budget_revisions
 
 
 --
+-- Name: financial_budget_stop_targets financial_budget_stop_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stop_targets
+    ADD CONSTRAINT financial_budget_stop_targets_pkey PRIMARY KEY (stop_id, app_id, environment_id);
+
+
+--
+-- Name: financial_budget_stops financial_budget_stops_account_id_policy_id_revision_period_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stops
+    ADD CONSTRAINT financial_budget_stops_account_id_policy_id_revision_period_key UNIQUE (account_id, policy_id, revision, period_start);
+
+
+--
+-- Name: financial_budget_stops financial_budget_stops_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stops
+    ADD CONSTRAINT financial_budget_stops_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: financial_evidence_coverage financial_evidence_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.financial_evidence_coverage
     ADD CONSTRAINT financial_evidence_coverage_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_pkey PRIMARY KEY (task_id, lease_token);
 
 
 --
@@ -49665,6 +49796,27 @@ CREATE INDEX financial_budget_alert_due_idx ON public.financial_budget_alerts US
 --
 
 CREATE INDEX financial_budget_policies_account_idx ON public.financial_budget_policies USING btree (account_id, id) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: financial_budget_stops_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_stops_account_idx ON public.financial_budget_stops USING btree (account_id, policy_id, revision);
+
+
+--
+-- Name: financial_preview_command_active_task_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX financial_preview_command_active_task_idx ON public.financial_preview_command_runtimes USING btree (task_id) WHERE (phase <> 'retired'::text);
+
+
+--
+-- Name: financial_preview_command_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_preview_command_app_idx ON public.financial_preview_command_runtimes USING btree (account_id, app_id) WHERE (phase <> 'retired'::text);
 
 
 --
@@ -62905,6 +63057,70 @@ ALTER TABLE ONLY public.financial_budget_policies
 
 ALTER TABLE ONLY public.financial_budget_revisions
     ADD CONSTRAINT financial_budget_revisions_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_stop_targets financial_budget_stop_targets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stop_targets
+    ADD CONSTRAINT financial_budget_stop_targets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_stop_targets financial_budget_stop_targets_stop_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stop_targets
+    ADD CONSTRAINT financial_budget_stop_targets_stop_id_fkey FOREIGN KEY (stop_id) REFERENCES public.financial_budget_stops(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_stops financial_budget_stops_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stops
+    ADD CONSTRAINT financial_budget_stops_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --

@@ -39,7 +39,7 @@ func (s *PgStore) RecordFinancialBudgetEvaluation(ctx context.Context, account, 
 	if err != nil {
 		return err
 	}
-	if p.Revision != revision || p.DeletedAt != nil || !p.Spec.Enabled || !financial.NotificationOnly(p.Spec) {
+	if p.Revision != revision || p.DeletedAt != nil || !p.Spec.Enabled || !financial.Monitored(p.Spec) {
 		return ErrConflict
 	}
 	e = cloneFinancialBudgetEvaluation(e)
@@ -61,6 +61,11 @@ func (s *PgStore) RecordFinancialBudgetEvaluation(ctx context.Context, account, 
 		}
 		alertID, _ := parsePgUUID(alert.ID)
 		if err := q.FinancialBudgetAlertInsert(ctx, tx, sqlc.FinancialBudgetAlertInsertParams{ID: alertID, AccountID: aid, PolicyID: pid, Revision: revision, PeriodStart: financialTimestamp(e.PeriodStart), ThresholdMillicents: alert.ThresholdMillicents, Payload: payload, NextAttemptAt: financialTimestamp(e.EvaluatedAt)}); err != nil {
+			return err
+		}
+	}
+	if stop, crossed := financialBudgetStop(p, e); crossed {
+		if err := insertFinancialBudgetStop(ctx, tx, stop); err != nil {
 			return err
 		}
 	}
@@ -138,7 +143,7 @@ func (s *PgStore) ClaimFinancialBudgetAlert(ctx context.Context, now time.Time) 
 	if err != nil {
 		return a, err
 	}
-	if p.Revision != a.PolicyRevision || p.DeletedAt != nil || !p.Spec.Enabled || !financial.NotificationOnly(p.Spec) {
+	if p.Revision != a.PolicyRevision || p.DeletedAt != nil || !p.Spec.Enabled || !financial.Monitored(p.Spec) {
 		return a, ErrConflict
 	}
 	a.Spec = p.Spec

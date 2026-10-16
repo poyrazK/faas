@@ -34,8 +34,10 @@ type BudgetAlert struct {
 	LastError           string           `json:"last_error,omitempty"`
 }
 
-// BudgetRuntime is scoped to the current policy revision and UTC usage month.
+// BudgetRuntime uses the current policy revision. Evaluation and alerts cover
+// the current UTC month; active manual stops may carry over from earlier months.
 type BudgetRuntime struct {
 	Evaluation *BudgetEvaluation `json:"evaluation,omitempty"`
 	Alerts     []BudgetAlert     `json:"alerts"`
+	Stops      []BudgetStop      `json:"stops,omitempty"`
 }

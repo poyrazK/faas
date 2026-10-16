@@ -218,6 +218,8 @@ type MemStore struct {
 	financialBudgetRevisions                   map[string][]FinancialBudgetRevision
 	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
 	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
 	financialRetainedFrom                      time.Time
 	environmentExternalOwners                  map[string]environmentExternalFieldOwner
 	checkedRollbacks                           map[string]api.RollbackOperation
@@ -22426,6 +22428,16 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, alert := range m.financialBudgetAlerts {
 		if alert.AccountID == id {
 			delete(m.financialBudgetAlerts, key)
+		}
+	}
+	for key, stop := range m.financialBudgetStops {
+		if stop.AccountID == id {
+			delete(m.financialBudgetStops, key)
+		}
+	}
+	for key, command := range m.financialPreviewCommands {
+		if command.AccountID == id {
+			delete(m.financialPreviewCommands, key)
 		}
 	}
 	delete(m.accounts, id)

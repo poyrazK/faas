@@ -27,7 +27,7 @@ func (m *MemStore) RecordFinancialBudgetEvaluation(_ context.Context, account, i
 	if !ok || p.AccountID != account {
 		return ErrNotFound
 	}
-	if p.DeletedAt != nil || p.Revision != revision || !p.Spec.Enabled || !financial.NotificationOnly(p.Spec) {
+	if p.DeletedAt != nil || p.Revision != revision || !p.Spec.Enabled || !financial.Monitored(p.Spec) {
 		return ErrConflict
 	}
 	old := m.financialBudgetEvaluations[id]
@@ -39,6 +39,7 @@ func (m *MemStore) RecordFinancialBudgetEvaluation(_ context.Context, account, i
 		m.financialBudgetAlerts = map[string]FinancialBudgetAlertDelivery{}
 	}
 	m.financialBudgetEvaluations[id] = financialBudgetMemoryEvaluation{revision, cloneFinancialBudgetEvaluation(e)}
+	m.recordFinancialBudgetStopLocked(p, e)
 	for _, alert := range financialBudgetAlerts(p, e) {
 		if _, exists := m.financialBudgetAlerts[alert.ID]; !exists {
 			m.financialBudgetAlerts[alert.ID] = alert
@@ -83,7 +84,7 @@ func (m *MemStore) ClaimFinancialBudgetAlert(_ context.Context, now time.Time) (
 	var next FinancialBudgetAlertDelivery
 	for _, a := range m.financialBudgetAlerts {
 		p := m.financialBudgets[a.PolicyID]
-		if p.DeletedAt != nil || p.Revision != a.PolicyRevision || !p.Spec.Enabled || !financial.NotificationOnly(p.Spec) || a.State == "delivered" || a.NextAttemptAt.After(now) {
+		if p.DeletedAt != nil || p.Revision != a.PolicyRevision || !p.Spec.Enabled || !financial.Monitored(p.Spec) || a.State == "delivered" || a.NextAttemptAt.After(now) {
 			continue
 		}
 		if next.ID == "" || a.NextAttemptAt.Before(next.NextAttemptAt) || a.NextAttemptAt.Equal(next.NextAttemptAt) && a.ID < next.ID {

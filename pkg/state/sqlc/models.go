@@ -3949,9 +3949,48 @@ type FinancialBudgetRevision struct {
 	RecordedAt pgtype.Timestamptz
 }
 
+type FinancialBudgetStop struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	Revision      int64
+	PeriodStart   pgtype.Timestamptz
+	PeriodEnd     pgtype.Timestamptz
+	RequestedAt   pgtype.Timestamptz
+	DrainDeadline pgtype.Timestamptz
+	ResumeRule    string
+	Payload       []byte
+}
+
+type FinancialBudgetStopTarget struct {
+	StopID        pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID string
+	State         string
+	ObservedAt    pgtype.Timestamptz
+	ResidentCount int32
+	LastError     string
+}
+
 type FinancialEvidenceCoverage struct {
 	Singleton    bool
 	RetainedFrom pgtype.Timestamptz
+}
+
+type FinancialPreviewCommandRuntime struct {
+	TaskID        pgtype.UUID
+	LeaseToken    pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Phase         string
+	RamMb         int32
+	CpuMillicores int32
+	RecordedAt    pgtype.Timestamptz
+	RetiredAt     pgtype.Timestamptz
+	PrepareUntil  pgtype.Timestamptz
 }
 
 type FinancialPriceSnapshot struct {

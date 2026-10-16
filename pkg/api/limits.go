@@ -650,6 +650,8 @@ const (
 	FinancialBudgetAlertRetryBase    = time.Minute
 	FinancialBudgetAlertRetryMax     = time.Hour
 	FinancialBudgetAlertAttemptsMax  = 2147483647
+	FinancialBudgetResidentCountMax  = 2147483647
+	FinancialBudgetCommandClockGrace = 5 * time.Second
 	FinancialSourceIDBytes           = 512
 	FinancialAdjustmentActorBytes    = 256
 	FinancialAdjustmentReasonBytes   = 512

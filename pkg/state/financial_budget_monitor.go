@@ -12,7 +12,8 @@ import (
 )
 
 // FinancialBudgetMonitorStore atomically retains an observation and its outbox
-// events against an unchanged policy revision. Claims and settlements are fenced.
+// events and stop decisions against an unchanged policy revision. Claims and
+// settlements are fenced.
 type FinancialBudgetMonitorStore interface {
 	RecordFinancialBudgetEvaluation(context.Context, string, string, int64, financial.BudgetEvaluation) error
 	FinancialBudgetRuntime(context.Context, string, string, int64, time.Time) (financial.BudgetRuntime, error)

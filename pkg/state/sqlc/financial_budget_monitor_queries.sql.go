@@ -17,7 +17,7 @@ WITH candidate AS (
   JOIN financial_budget_policies p ON p.account_id = a.account_id AND p.id = a.policy_id AND p.revision = a.revision
   WHERE a.state != 'delivered' AND a.next_attempt_at <= $3::timestamptz
     AND p.deleted_at IS NULL AND p.spec->>'enabled' = 'true'
-    AND p.spec->>'mode' = 'monitored' AND p.spec->>'action' = 'notify'
+    AND p.spec->>'mode' = 'monitored' AND p.spec->>'action' IN ('notify', 'stop_previews')
   ORDER BY a.next_attempt_at, a.id FOR UPDATE OF a SKIP LOCKED LIMIT 1
 )
 UPDATE financial_budget_alerts a SET state = 'sending', attempts = LEAST(a.attempts::bigint + 1, 2147483647)::integer,
