@@ -9,10 +9,11 @@ import (
 )
 
 // H10-94: an account purge cascades to both projects and the clone
-// configuration guard, in trigger-name (OID) order. Removing the guard first
-// pins the losing order that made the ParentPurges/account tests flake: the
-// project's BEFORE DELETE fence must accept the admitted purge, while a live
-// project in a live account without its guard still fails closed.
+// configuration guard, in trigger-name (OID) order. A test-local BEFORE DELETE
+// trigger on accounts removes the guard first, pinning the losing order that
+// made the ParentPurges/account tests flake: the project's BEFORE DELETE fence
+// must accept the admitted purge, while a live project in a live account
+// without its guard still fails closed.
 func TestPgAccountPurgeToleratesGuardCascadedBeforeProject(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)
@@ -24,11 +25,31 @@ func TestPgAccountPurgeToleratesGuardCascadedBeforeProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(t.Context(), `delete from project_environment_clone_configuration_guards where project_id=$1`, lease.Source.ProjectID); err != nil {
+
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(t.Context(), `select assert_clone_configuration_mutable($1)`, lease.Source.ProjectID); err == nil || !strings.Contains(err.Error(), "project configuration guard is missing") {
+	if _, err := tx.Exec(t.Context(), `delete from project_environment_clone_configuration_guards where project_id=$1`, lease.Source.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `select assert_clone_configuration_mutable($1)`, lease.Source.ProjectID); err == nil || !strings.Contains(err.Error(), "project configuration guard is missing") {
 		t.Fatalf("live project without guard must fail closed: %v", err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pool.Exec(t.Context(), `
+CREATE FUNCTION h10_94_drop_guard_first() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM project_environment_clone_configuration_guards WHERE account_id = OLD.id;
+    RETURN OLD;
+END;
+$$;
+CREATE TRIGGER h10_94_drop_guard_first BEFORE DELETE ON accounts
+FOR EACH ROW EXECUTE FUNCTION h10_94_drop_guard_first();`); err != nil {
+		t.Fatal(err)
 	}
 	if err := store.MarkAccountDeletionPending(t.Context(), lease.Source.AccountID); err != nil {
 		t.Fatal(err)
