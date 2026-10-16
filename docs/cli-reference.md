@@ -12999,7 +12999,7 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 Show the running Auth settings, or change them and restart the app
 
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--scope <SCOPE>] <name>`
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--scope <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13016,6 +13016,15 @@ Show the running Auth settings, or change them and restart the app
 | `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
 | `--authz <FILE>` | JSON file declaring custom roles and policies (applied on restart) |  |
 | `--events <on|off>` | publish user lifecycle events (auth.user.*) to Gregale&#39;s event bus | one of `on` · `off` |
+| `--passkeys <on|off>` | let users sign in with a passkey | one of `on` · `off` |
+| `--passkey-rp-id <DOMAIN>` | parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app&#39;s host |  |
+| `--brand-name <NAME>` | name shown on the hosted pages and in emails, or none for the site&#39;s host |  |
+| `--brand-color <#RRGGBB>` | #rrggbb accent colour for the hosted pages, or none |  |
+| `--brand-logo-url <URL>` | HTTPS URL of the logo on the hosted pages, or none |  |
+| `--captcha <PROVIDER>` | CAPTCHA on sign-up and sign-in: turnstile, hcaptcha or off | one of `turnstile` · `hcaptcha` · `off` |
+| `--captcha-site-key <KEY>` | the CAPTCHA provider&#39;s site key (public) |  |
+| `--captcha-secret-stdin` | read the CAPTCHA provider&#39;s secret key from stdin (prompted on a terminal) |  |
+| `--activity-retention <DAYS>` | days to keep sign-in activity, or forever |  |
 | `--scope <SCOPE>` | environment scope |  |
 
 Examples:

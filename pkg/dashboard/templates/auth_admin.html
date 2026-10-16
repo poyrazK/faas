@@ -9,7 +9,7 @@
 {{if .Data.AuthOrigin}}
 <section id="settings" aria-labelledby="settings-heading"><h2 id="settings-heading">Settings</h2>
 {{if .Data.Error}}<p class="danger" role="alert">{{.Data.Error}}</p>{{end}}
-{{if eq .Data.Changed "unchanged"}}<p role="status">Nothing changed.</p>{{else if .Data.Changed}}<p role="status">Saved. {{.Data.Slug}} restarts to apply the change; the values below are read from the running app.</p>{{end}}
+{{if eq .Data.Changed "unchanged"}}<p role="status">Nothing changed.</p>{{else if .Data.RestartPending}}<p role="status">Saved, but {{.Data.Slug}} was already restarting, so the change may not be loaded yet. If the values below don't show it within a minute, restart the app from its page.</p>{{else if .Data.Changed}}<p role="status">Saved. {{.Data.Slug}} restarts to apply the change; the values below are read from the running app.</p>{{end}}
 <p id="settings-status" role="status" aria-live="polite">Reading the running app's settings…</p>
 <form id="settings-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/settings" hidden>
 <input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
@@ -22,6 +22,18 @@
 <input type="hidden" name="password_require">
 <label>Refuse passwords found in known breaches (Have I Been Pwned)<select name="leaked_password_check"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Authenticator-app (TOTP) MFA<select name="mfa"><option value="on">Users may enrol</option><option value="off">No new enrolments; enrolled users keep using it</option></select></label>
+<label>Passkeys<select name="passkeys"><option value="off">Off</option><option value="on">Users may sign in with a passkey</option></select></label>
+<fieldset><legend>Hosted pages</legend>
+<label>Display name (also used in emails)<input name="brand_name" maxlength="60"></label>
+<label>Accent colour (#rrggbb; empty for the default)<input name="brand_color" pattern="#[0-9a-fA-F]{6}" maxlength="7" placeholder="#1d4ed8"></label>
+<label>Logo URL (HTTPS; empty for none)<input name="brand_logo_url" type="url" maxlength="2048" placeholder="https://cdn.example.com/logo.svg"></label>
+</fieldset>
+<fieldset><legend>CAPTCHA on sign-up, sign-in and password reset</legend>
+<label>Provider<select name="captcha_provider"><option value="">Off</option><option value="turnstile">Cloudflare Turnstile</option><option value="hcaptcha">hCaptcha</option></select></label>
+<label>Site key<input name="captcha_site_key" autocomplete="off" spellcheck="false" maxlength="100"></label>
+<label>Secret key (required whenever you change CAPTCHA)<input name="captcha_secret" type="password" autocomplete="off" maxlength="4096"></label>
+</fieldset>
+<label>Keep sign-in activity for this many days (empty keeps it forever)<input name="activity_retention_days" type="number" min="1" max="3650"></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -49,7 +61,7 @@
 <p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
 <section id="workspace" hidden>
 <nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" id="forget">Forget key</button></nav>
-<form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button></form>
+<form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button><button type="button" id="export" hidden>Export CSV</button></form>
 <p id="status" role="status" aria-live="polite"></p>
 <table id="list"><thead></thead><tbody></tbody></table>
 <nav aria-label="Pages"><button type="button" id="prev">Previous</button><span id="position" class="muted"></span><button type="button" id="next">Next</button></nav>
@@ -305,11 +317,39 @@
       tab = tabButton.dataset.tab
       page = 1
       for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
+      $('export').hidden = tab !== 'activity'
       $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login' }[tab]
       load()
     })
   }
   $('search').addEventListener('submit', event => { event.preventDefault(); search = $('query').value.trim(); page = 1; load() })
+  // The export is built in this browser from the Auth app's activity pages,
+  // like every other view here; nothing passes through Gregale.
+  const csvCell = value => {
+    let text = String(value ?? '')
+    if (/^[=+\-@\t\r]/.test(text)) text = "'" + text
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
+  }
+  $('export').addEventListener('click', async () => {
+    const button = $('export')
+    button.disabled = true
+    say('Exporting…')
+    try {
+      const rows = [['time', 'event', 'by', 'user_id', 'email']]
+      for (let p = 1; p <= 100; p++) {
+        const data = await call('GET', '/admin/v1/activity?' + new URLSearchParams({ page: String(p), per_page: '100', ...(search ? { search } : {}) }))
+        for (const entry of data.entries) rows.push([entry.created_at, entry.action, entry.actor, entry.user_id, entry.email])
+        if (!data.more) break
+      }
+      const url = URL.createObjectURL(new Blob([rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n'], { type: 'text/csv' }))
+      const link = el('a', null, { href: url, download: root.dataset.slug + '-activity.csv' })
+      document.body.append(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      say('Exported ' + (rows.length - 1) + ' entries' + (rows.length - 1 >= 10000 ? ' (the first 10,000; narrow the search for more).' : '.'))
+    } catch (error) { say(error.message) } finally { button.disabled = false }
+  })
   $('prev').addEventListener('click', () => { page = Math.max(1, page - 1); load() })
   $('next').addEventListener('click', () => { page += 1; load() })
   $('query').placeholder = 'Email or name'
@@ -335,6 +375,10 @@
       site_url: settings.site_url, redirect_urls: settings.redirect_urls.join('\n'), signup: settings.signup.enabled ? 'on' : 'off',
       autoconfirm: settings.signup.autoconfirm ? 'on' : 'off', password_min_length: String(settings.password.min_length),
       leaked_password_check: settings.password.leaked_password_check ? 'on' : 'off', mfa: settings.mfa.totp ? 'on' : 'off',
+      passkeys: settings.passkeys?.enabled ? 'on' : 'off',
+      brand_name: settings.branding?.name ?? '', brand_color: settings.branding?.color ?? '', brand_logo_url: settings.branding?.logo_url ?? '',
+      captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',
+      activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
@@ -362,6 +406,8 @@
     control('password_require').value = requireValue()
     const changed = [...form.elements].filter(field => field.name && field.dataset.initial !== undefined && field.value !== field.dataset.initial)
     if (!changed.length) { event.preventDefault(); $('settings-status').textContent = 'Nothing changed.'; return }
+    // The CAPTCHA provider, site key and secret are saved together.
+    if (changed.some(field => field.name.startsWith('captcha_'))) for (const name of ['captcha_provider', 'captcha_site_key', 'captcha_secret']) if (!changed.includes(control(name))) changed.push(control(name))
     for (const field of form.elements) if (field.dataset.initial !== undefined && !changed.includes(field)) field.disabled = true
   })
   loadSettings()

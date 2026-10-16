@@ -36,6 +36,10 @@ var (
 	// authAdminHTTPClient talks to the Auth app itself; it never follows a
 	// redirect, so the admin key cannot be forwarded to another host.
 	authAdminHTTPClient = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// authRestartRetryWindow and authRestartRetryPause pace restarts refused
+	// because one is already running; tests shorten them.
+	authRestartRetryWindow = time.Minute
+	authRestartRetryPause  = 2 * time.Second
 )
 
 func cmdAuthAdminKey(args []string) int {
@@ -137,9 +141,26 @@ func authAdminKeyRevoke(ctx context.Context, client *api.Client, app, id, scope 
 }
 
 // restartAuthApp loads changed keys into running instances.
+// A restart already in progress may have read the configuration before this
+// change, so a refused restart is retried until it is accepted.
 func restartAuthApp(ctx context.Context, client *api.Client, app string) {
-	if _, err := client.RestartAppFresh(ctx, app); err != nil {
-		PrintWarn(osStderr, "restarting %s failed (%v); run `gregale app %s restart --fresh` to apply the change", app, err, app)
+	deadline := time.Now().Add(authRestartRetryWindow)
+	for {
+		_, err := client.RestartAppFresh(ctx, app)
+		var problem *api.APIError
+		if err == nil {
+			return
+		}
+		if !errors.As(err, &problem) || problem.Problem.Status != http.StatusConflict || time.Now().After(deadline) {
+			PrintWarn(osStderr, "restarting %s failed (%v); run `gregale app %s restart --fresh` to apply the change", app, err, app)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			PrintWarn(osStderr, "a restart of %s was already in progress; run `gregale app %s restart --fresh` once it finishes to apply the change", app, app)
+			return
+		case <-time.After(authRestartRetryPause):
+		}
 	}
 }
 

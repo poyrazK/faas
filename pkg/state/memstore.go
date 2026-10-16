@@ -7140,7 +7140,8 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 // (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
-// PgStore holds.
+// PgStore holds. Installation ownership is globally exclusive, just as the
+// PostgreSQL unique index requires.
 func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) error {
 	if inst.AccountID == "" {
 		return ErrNotFound
@@ -7153,6 +7154,11 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.githubInstalls {
+		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
+			return ErrConflict
+		}
+	}
 	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }

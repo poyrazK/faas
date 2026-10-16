@@ -228,6 +228,8 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
 		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys,
+		"uiNameChars": api.AuthUINameMaxChars, "auditRetentionMaxDays": api.AuthAuditRetentionMaxDays, "auditPruneBatch": api.AuthAuditPruneBatch,
+		"auditPruneBatches": api.AuthAuditPruneBatches, "auditPruneIntervalSeconds": api.AuthAuditPruneIntervalSeconds,
 		"eventBatch": api.AuthEventBatch, "eventLeaseSeconds": api.AuthEventLeaseSeconds, "eventMaxBackoffSeconds": api.AuthEventMaxBackoffSeconds, "eventRetentionSeconds": api.AuthEventRetentionSeconds} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)

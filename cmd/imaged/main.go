@@ -659,6 +659,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
 	}
+	h.WithLegacyParentDeferral(prestageOnlyFromEnv(getenv))
 	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
 	if err != nil {
 		return err
@@ -675,6 +676,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
+			"deferred_to_serving_imaged", assignedBases.Deferred,
 		)
 		return nil
 	}
