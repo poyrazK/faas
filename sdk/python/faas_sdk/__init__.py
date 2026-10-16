@@ -596,3 +596,13 @@ __all__ += (
 from ._event_deadline_policy import EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, EventDeadlineRatioOptions
 
 __all__ += ("EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX", "EventDeadlineRatioOptions")
+
+from .event_deadline_investigation import (
+    EventDeadlineInvestigationOptions,
+    EventDeadlineInvestigationReadError,
+    ainvestigate_event_deadline_alert,
+)
+
+__all__ += (
+    "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)

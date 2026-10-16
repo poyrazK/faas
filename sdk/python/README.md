@@ -2526,3 +2526,10 @@ recovery_basis_points=500, minimum_recipients=100)` adds an expired backlog rati
 condition with exact integer comparisons and retained source samples. Ratio watches
 use version 2 Python checkpoints; count-only checkpoints remain version 1. See
 [ratio policy and compatibility](../../docs/event-deadline-python-watch.md#expired-backlog-ratio-conditions).
+
+`ainvestigate_event_deadline_alert(client.inner, checkpoint, reference, options)`
+maps an exact retained Python incident/sequence pair to one current read-only triage
+page. `EventDeadlineInvestigationOptions` controls page size, opaque continuation
+and a cancellable read budget up to five seconds. Saved notification timestamps and
+ratio samples remain separate from current observations. See
+[investigation, validation and pagination](../../docs/event-deadline-python-investigation.md).

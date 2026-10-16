@@ -131,3 +131,8 @@ Node consumers can use `investigateEventDeadlineAlert(checkpoint, reference, opt
 with an exact retained incident/sequence pair. It derives the query from validated
 checkpoint policy and returns one current page with separate notification and
 observation clocks. See [Node investigation](event-deadline-node-investigation.md).
+
+Python consumers can use `ainvestigate_event_deadline_alert(client, checkpoint, reference, options)`
+with a retained Python alert. It preserves nanosecond validation, current membership
+and bounded continuation with task cancellation. See
+[Python investigation](event-deadline-python-investigation.md).

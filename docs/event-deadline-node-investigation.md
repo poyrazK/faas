@@ -125,3 +125,6 @@ The helper performs no acknowledgment, checkpoint update, notification, retry,
 replay or control mutation. See [Node watch semantics](event-deadline-node-watch.md),
 [triage coverage and retention](event-subscription-deadline-triage.md) and the
 separate [Go/CLI investigation helper](event-deadline-alert-investigation.md).
+Python consumers have a separate
+[`ainvestigate_event_deadline_alert`](event-deadline-python-investigation.md) helper
+for Python checkpoints with the same current-membership semantics.

@@ -41,6 +41,11 @@ Node consumers have a separate
 selects an exact retained incident/sequence pair from a validated Node checkpoint.
 It preserves the same current-membership distinction using Node's checkpoint format.
 
+Python consumers can use
+[`ainvestigate_event_deadline_alert`](event-deadline-python-investigation.md) with a
+validated Python checkpoint and exact retained incident/sequence pair. It preserves
+nanosecond timestamps and supports task cancellation and opaque continuation.
+
 ## Selection from the metric
 
 | Alert metric | Current triage selection |

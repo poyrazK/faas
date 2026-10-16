@@ -6,6 +6,11 @@ change subscription controls, replay deliveries, create files or send notificati
 Use the SDK's authenticated generated client, normally `client.inner` from a
 configured `FaaSClient`.
 
+Use [`ainvestigate_event_deadline_alert`](event-deadline-python-investigation.md)
+with a saved Python checkpoint and exact incident/sequence pair to inspect current
+matching recipient identities. It derives filters and reads one bounded page
+without modifying checkpoints or delivery state.
+
 ```python
 from faas_sdk import (
     EventDeadlineTarget,
