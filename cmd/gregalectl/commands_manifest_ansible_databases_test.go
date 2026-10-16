@@ -70,6 +70,8 @@ func TestRenderManifestAnsibleFiles_DatabaseNodes(t *testing.T) {
 		"    - id: \"db-1\"\n      target_url: \"tcp://10.42.0.5:50051\"\n      admission_ceiling_mb: 48000\n      volume_capacity_bytes: 3000000000000\n      boot_slots: 8\n      postgres_majors: [16, 17]\n",
 		"    - id: \"db-2\"\n      target_url: \"tcp://10.42.0.6:50051\"\n      admission_ceiling_mb: 24000\n      volume_capacity_bytes: 1000000000000\n",
 		`faas_postgres_pgproxyd_cidrs: ["10.42.0.5/32", "10.42.0.6/32"]`,
+		`faas_database_allowed_cidrs: ["10.42.0.5/32", "10.42.0.6/32"]`,
+		"faas_database_allowed_ports: [5432, 7100]\n",
 		"prom_database_targets:\n  - node: \"db-1\"\n    host: \"10.42.0.5\"\n  - node: \"db-2\"\n    host: \"10.42.0.6\"\n",
 	} {
 		if !strings.Contains(cp, want) {

@@ -49,19 +49,21 @@ type manifestDatabases struct {
 	nodes       []manifestDatabase
 	overlayCIDR string
 	// controlPlane is the control plane's address, where pgproxyd reads
-	// role verifiers from PostgreSQL as faas_pgproxyd.
+	// role verifiers from PostgreSQL as faas_pgproxyd; scheddPort is its
+	// schedd listener, which pgproxyd wakes databases through.
 	controlPlane string
+	scheddPort   int
 }
 
 func renderManifestDatabases(m *manifest.Manifest) (manifestDatabases, error) {
 	out := manifestDatabases{config: m.ManagedPostgres, overlayCIDR: m.Overlay.CIDR}
 	for _, h := range m.Fleet.Hosts {
 		if h.Role == roleControlPlane && out.controlPlane == "" {
-			address, _, err := manifest.ParseHostPort(h.Address)
+			address, port, err := manifest.ParseHostPort(h.Address)
 			if err != nil {
 				return manifestDatabases{}, fmt.Errorf("control plane %s: %w", h.Name, err)
 			}
-			out.controlPlane = address
+			out.controlPlane, out.scheddPort = address, port
 		}
 	}
 	for i, h := range m.Fleet.DatabaseHosts() {
@@ -126,8 +128,12 @@ func (d manifestDatabases) controlPlaneVars() string {
 		}
 		cidrs = appendHostCIDR(cidrs, n.address, d.overlayCIDR)
 	}
-	// pgproxyd reads role verifiers as faas_pgproxyd from these sources.
+	// pgproxyd reads role verifiers as faas_pgproxyd from these sources,
+	// and the control plane's firewall admits them to PostgreSQL and
+	// schedd only (the compute allow-lists name compute nodes).
 	fmt.Fprintf(&b, "faas_postgres_pgproxyd_cidrs: [%s]\n", quotedYAMLList(cidrs))
+	fmt.Fprintf(&b, "faas_database_allowed_cidrs: [%s]\n", quotedYAMLList(cidrs))
+	fmt.Fprintf(&b, "faas_database_allowed_ports: [%d, %d]\n", manifestControlPlanePostgresPort, d.scheddPort)
 	// Database nodes are schedd's, not compute-registry rows, so
 	// Prometheus scrapes them from this static list.
 	if serving := d.serving(); len(serving) == 0 {

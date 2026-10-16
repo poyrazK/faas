@@ -459,6 +459,10 @@ ansible` derives the rest from the hosts' addresses:
   `/etc/faas/schedd-database.toml`; schedd reads it through
   `FAAS_SCHEDD_DATABASE_CONFIG`, and refuses the table in both files),
   and `faas_postgres_pgproxyd_cidrs`.
+  - `faas_database_allowed_cidrs` and `faas_database_allowed_ports`
+    (PostgreSQL and schedd's port) open the control plane's firewall to
+    the database nodes. Its other allow-lists name compute nodes only, so
+    pgproxyd could not reach schedd or the verifier table.
 - **Compute nodes, with `app_route`:** the nftables and vmmd switches
   (`FAAS_VMMD_DATABASE_ROUTE_ENABLED`) and gatewayd-internal's forwarder
   on port 10083 of its service-proxy address, with every pgproxyd as an

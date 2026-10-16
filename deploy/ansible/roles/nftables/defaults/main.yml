@@ -55,6 +55,11 @@ faas_compute_allowed_ports:
   - 9091
   - 9093
   - 50053
+# ADR-1027: control-plane ingress from database nodes. pgproxyd reads role
+# verifiers from PostgreSQL and wakes databases through schedd; the
+# manifest generator renders both lists from the database hosts.
+faas_database_allowed_cidrs: []
+faas_database_allowed_ports: [5432]
 # Control-plane ingress to compute services. The manifest generator sets
 # these only on compute-only hosts; an empty list keeps the one-box policy.
 faas_control_plane_allowed_cidrs: []
