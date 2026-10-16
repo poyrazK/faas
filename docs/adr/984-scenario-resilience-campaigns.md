@@ -269,3 +269,13 @@ read-only lookups recover receipts and cancellation proofs before recipient
 cleanup resumes. Both creation/cancellation orderings must pass across restarts,
 including a delayed request reaching the replacement API and revoked credentials
 remaining disabled. No database crash or VM restart is inferred from this evidence.
+
+Recovery I/O uses a two-minute operation budget, five-second request deadlines
+and at most three transient read attempts with bounded exponential backoff.
+Server Retry-After delays are honored or deferred to a later invocation when
+they exceed the local wait limit. Mutations are never automatically retried:
+a subsequent recovery observes the committed outcome first. Failed and unvisited
+resources remain explicitly unverified in recipient observations, with sanitized
+reason and attempt metadata. Availability failures never establish absence or
+execution success. HTTP outage and real API-to-PostgreSQL connection-cut acceptance
+must demonstrate nonmutating failure, preserved frozen evidence and safe resumption.

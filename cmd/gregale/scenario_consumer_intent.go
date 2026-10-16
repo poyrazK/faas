@@ -38,17 +38,24 @@ func verifiedTestConsumerReceipt(receipt api.ScenarioTestConsumerReceipt, run, n
 
 func readTestCampaignConsumer(ctx context.Context, client testCampaignFaultClient, run, name string, c testCampaignFaultConsumer) (api.APIConsumerResponse, error) {
 	if c.CreationIntentSHA256 == "" {
-		return client.GetAPIConsumer(ctx, c.AppSlug, c.ID)
+		return testCampaignRecoveryRead(ctx, func(request context.Context) (api.APIConsumerResponse, error) {
+			return client.GetAPIConsumer(request, c.AppSlug, c.ID)
+		})
 	}
 	lookup, ok := client.(testScenarioConsumerLookup)
 	if !ok {
 		return api.APIConsumerResponse{}, errors.New("consumer intent lookup capability unavailable")
 	}
 	req := api.ScenarioTestConsumerRequest{AppID: c.AppID, ExpiresAt: c.ExpiresAt}
-	receipt, err := lookup.LookupScenarioTestConsumer(ctx, run, name, req)
+	receipt, err := testCampaignRecoveryRead(ctx, func(request context.Context) (api.ScenarioTestConsumerReceipt, error) {
+		return lookup.LookupScenarioTestConsumer(request, run, name, req)
+	})
 	if err != nil {
 		// Unsupported routes (including 404) cannot become consumer absence.
-		return api.APIConsumerResponse{}, fmt.Errorf("consumer intent lookup failed: %v", err)
+		if isNotFound(err) {
+			return api.APIConsumerResponse{}, errors.New("consumer intent lookup capability unavailable")
+		}
+		return api.APIConsumerResponse{}, fmt.Errorf("consumer intent lookup failed: %w", err)
 	}
 	if validTestConsumerCancellation(receipt, c) {
 		return api.APIConsumerResponse{}, errTestConsumerCancelled
@@ -61,7 +68,9 @@ func readTestCampaignConsumer(ctx context.Context, client testCampaignFaultClien
 		// A saved immutable ID permits a separate absence check. An unknown
 		// ID with no receipt remains uncertain.
 		if c.ID != "" && (receipt.SchemaVersion == 1 || receipt.SchemaVersion == 2) && receipt.IntentSHA256 == c.CreationIntentSHA256 && receipt.Consumer == nil && receipt.ExpiresAt.Equal(c.ExpiresAt.UTC().Truncate(time.Microsecond)) {
-			_, missing := client.GetAPIConsumer(ctx, c.AppSlug, c.ID)
+			_, missing := testCampaignRecoveryRead(ctx, func(request context.Context) (api.APIConsumerResponse, error) {
+				return client.GetAPIConsumer(request, c.AppSlug, c.ID)
+			})
 			if isNotFound(missing) {
 				return api.APIConsumerResponse{}, missing
 			}
@@ -75,6 +84,11 @@ func readTestCampaignConsumer(ctx context.Context, client testCampaignFaultClien
 }
 
 func revokeTestCampaignConsumer(ctx context.Context, client testCampaignFaultClient, run, name string, c testCampaignFaultConsumer) (api.APIConsumerResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, testCampaignRecoveryIOPolicy(ctx).Timeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return api.APIConsumerResponse{}, err
+	}
 	if c.CreationIntentSHA256 == "" {
 		return client.RevokeAPIConsumer(ctx, c.AppSlug, c.ID)
 	}
@@ -109,6 +123,11 @@ func validTestConsumerCancellation(r api.ScenarioTestConsumerReceipt, c testCamp
 }
 
 func cancelTestCampaignConsumer(ctx context.Context, client testCampaignFaultClient, run, name string, c testCampaignFaultConsumer) error {
+	ctx, cancelRequest := context.WithTimeout(ctx, testCampaignRecoveryIOPolicy(ctx).Timeout)
+	defer cancelRequest()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cancel, ok := client.(testScenarioConsumerCancel)
 	if !ok {
 		return errors.New("consumer intent cancellation capability unavailable")

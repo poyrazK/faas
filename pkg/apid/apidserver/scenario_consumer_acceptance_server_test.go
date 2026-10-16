@@ -28,7 +28,10 @@ func TestScenarioConsumerAcceptanceServer(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Fatal("acceptance requires PostgreSQL")
 	}
-	var input struct{ Database, Schema string }
+	var input struct {
+		Database, Schema, Host string
+		Port                   uint16
+	}
 	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil || input.Database == "" || input.Schema == "" {
 		t.Fatal("invalid fixture database selection")
 	}
@@ -37,6 +40,14 @@ func TestScenarioConsumerAcceptanceServer(t *testing.T) {
 		t.Fatal("invalid acceptance database config")
 	}
 	cfg.ConnConfig.Database = input.Database
+	if input.Host != "" {
+		cfg.ConnConfig.Host = input.Host
+		cfg.ConnConfig.Port = input.Port
+		for _, fallback := range cfg.ConnConfig.Fallbacks {
+			fallback.Host = input.Host
+			fallback.Port = input.Port
+		}
+	}
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}

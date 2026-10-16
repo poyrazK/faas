@@ -24,6 +24,7 @@ type testCampaignFaultSource struct {
 }
 
 type testCampaignFaultHistory struct {
+	Issue          *testCampaignRecoveryIssue     `json:"issue,omitempty"`
 	SchemaVersion  int                            `json:"schema_version"`
 	PlanSHA256     string                         `json:"plan_sha256"`
 	SnapshotSHA256 string                         `json:"snapshot_sha256"`
@@ -220,6 +221,8 @@ func cleanupTestCampaignFaultHistory(ctx context.Context, client interface {
 	testCampaignFaultClient
 	testCampaignCleanupClient
 }, plan testCampaignPolicyPlan, cp testCampaignCheckpoint, scenarios map[string]testScenario, directory string, resolver *testCampaignBundleResolver, execute bool) (result testCampaignFaultHistory, err error) {
+	ctx, cancel := context.WithTimeout(ctx, testCampaignRecoveryBudget)
+	defer cancel()
 	result = testCampaignFaultHistory{SchemaVersion: 1, PlanSHA256: testCampaignJSONHash(plan), Executed: execute}
 	sources, err := collectTestCampaignFaultHistory(plan, cp, scenarios, directory, resolver)
 	if err != nil {
@@ -228,6 +231,9 @@ func cleanupTestCampaignFaultHistory(ctx context.Context, client interface {
 	result.Sources = sources
 	result.SnapshotSHA256 = testCampaignJSONHash(sources)
 	defer func() {
+		if err != nil {
+			result.Issue = testCampaignRecoveryIssueFor("fault-history", "cleanup", err)
+		}
 		path := filepath.Join(directory, "fault-history-cleanup-"+time.Now().UTC().Format("20060102T150405.000000000")+".json")
 		if saveErr := persistTestCampaignProcess(path, result); saveErr != nil && err == nil {
 			err = saveErr
@@ -250,6 +256,14 @@ func cleanupTestCampaignFaultHistory(ctx context.Context, client interface {
 			targets[key] = target
 		}
 	}
+	for _, target := range targets {
+		target.Status = "unverified"
+		target.Issue = nil
+		result.Sessions = append(result.Sessions, target)
+	}
+	sort.Slice(result.Sessions, func(i, j int) bool {
+		return result.Sessions[i].Project+"/"+result.Sessions[i].RunID < result.Sessions[j].Project+"/"+result.Sessions[j].RunID
+	})
 	result.Faults, err = inspectTestCampaignFaults(ctx, client, journals, false, false)
 	if err != nil {
 		return result, err

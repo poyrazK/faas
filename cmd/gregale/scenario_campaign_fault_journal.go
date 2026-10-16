@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,12 +48,13 @@ type testCampaignFaultClient interface {
 	RevokeAPIConsumer(context.Context, string, string) (api.APIConsumerResponse, error)
 }
 type testCampaignFaultObservation struct {
-	RunID                   string            `json:"run_id"`
-	Registration            string            `json:"registration"`
-	Consumers               map[string]string `json:"consumers"`
-	RegistrationExpiresAt   *time.Time        `json:"registration_expires_at,omitempty"`
-	RegistrationExpiryState string            `json:"registration_expiry_state"`
-	ConsumerIDs             map[string]string `json:"consumer_ids,omitempty"`
+	Issues                  []*testCampaignRecoveryIssue `json:"issues,omitempty"`
+	RunID                   string                       `json:"run_id"`
+	Registration            string                       `json:"registration"`
+	Consumers               map[string]string            `json:"consumers"`
+	RegistrationExpiresAt   *time.Time                   `json:"registration_expires_at,omitempty"`
+	RegistrationExpiryState string                       `json:"registration_expiry_state"`
+	ConsumerIDs             map[string]string            `json:"consumer_ids,omitempty"`
 }
 
 // Read and validate all journals before issuing even the first mutation.
@@ -124,15 +126,36 @@ func validateTestCampaignFaultJournal(j testCampaignRunJournal, scenario testSce
 	return nil
 }
 func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClient, journals []testCampaignRunJournal, execute bool, registrationOnly bool) ([]testCampaignFaultObservation, error) {
+	ctx, cancel := context.WithTimeout(ctx, testCampaignRecoveryBudget)
+	defer cancel()
 	observations := []testCampaignFaultObservation{}
 	for _, j := range journals {
-		observation := testCampaignFaultObservation{RunID: j.RunID, Consumers: map[string]string{}, ConsumerIDs: map[string]string{}}
+		out := testCampaignFaultObservation{RunID: j.RunID, Registration: "unverified", RegistrationExpiryState: "unknown", Consumers: map[string]string{}, ConsumerIDs: map[string]string{}}
+		for name, c := range j.Faults.Consumers {
+			out.Consumers[name] = "unverified"
+			out.ConsumerIDs[name] = c.ID
+		}
+		observations = append(observations, out)
+	}
+	for index, j := range journals {
+		observation := &observations[index]
+		resource, operation := "registration", "lookup"
+		fail := func(err error) ([]testCampaignFaultObservation, error) {
+			if resource == "registration" {
+				observation.Registration = "unverified"
+			} else {
+				observation.Consumers[strings.TrimPrefix(resource, "consumer/")] = "unverified"
+			}
+			observation.Issues = append(observation.Issues, testCampaignRecoveryIssueFor(resource, operation, err))
+			return observations, err
+		}
 		names := []string{}
 		for name := range j.Faults.Consumers {
 			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
+			resource, operation = "consumer/"+name, "lookup"
 			c := j.Faults.Consumers[name]
 			live, err := readTestCampaignConsumer(ctx, client, j.RunID, name, c)
 			if errors.Is(err, errTestConsumerCancelled) {
@@ -142,8 +165,9 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 			if errors.Is(err, errTestConsumerPending) {
 				observation.Consumers[name] = "pending"
 				if execute && !registrationOnly {
+					operation = "cancel"
 					if err := cancelTestCampaignConsumer(ctx, client, j.RunID, name, c); err != nil {
-						return observations, err
+						return fail(err)
 					}
 					observation.Consumers[name] = "cancelled"
 				}
@@ -158,10 +182,10 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 				continue
 			}
 			if err != nil {
-				return observations, err
+				return fail(err)
 			}
 			if live.ID != c.ID || live.AppID != c.AppID || live.ExternalRef != c.ExternalRef {
-				return observations, errors.New("consumer identity changed")
+				return fail(errors.New("consumer identity changed"))
 			}
 			if live.Status == "revoked" {
 				observation.Consumers[name] = "revoked"
@@ -169,59 +193,65 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 			}
 			observation.Consumers[name] = "active"
 			if execute && !registrationOnly {
+				operation = "revoke"
 				revoked, err := revokeTestCampaignConsumer(ctx, client, j.RunID, name, c)
 				if err != nil {
-					return observations, err
+					return fail(err)
 				}
 				if revoked.ID != c.ID || revoked.AppID != c.AppID || revoked.ExternalRef != c.ExternalRef || revoked.Status != "revoked" {
-					return observations, errors.New("consumer revocation was not confirmed")
+					return fail(errors.New("consumer revocation was not confirmed"))
 				}
 				observation.Consumers[name] = "revoked"
 			}
 		}
-		live, err := client.GetScenarioTestRegistration(ctx, j.RunID)
+		resource, operation = "registration", "lookup"
+		live, err := readTestCampaignRecoveryRegistration(ctx, client, j.RunID)
 		if err != nil {
-			return observations, err
+			return fail(err)
 		} else if live.SchemaVersion != 1 || live.Members == nil {
-			return observations, errors.New("registration lookup capability unavailable")
+			return fail(errors.New("registration lookup capability unavailable"))
 		}
-		if err := observeTestCampaignRegistrationExpiry(&observation, live); err != nil {
-			return observations, err
+		if err := observeTestCampaignRegistrationExpiry(observation, live); err != nil {
+			return fail(err)
 		}
 		if len(live.Members) == 0 {
 			observation.Registration = "absent"
 		} else {
 			if j.Faults.Registration == "pending" || j.Faults.Registration == "deleted" {
-				return observations, errors.New("registration exists outside journaled intent")
+				return fail(errors.New("registration exists outside journaled intent"))
 			}
 			members := map[string]string{}
 			for name, w := range j.Workloads {
 				if w.AppID == "" {
-					return observations, errors.New("registration membership incomplete")
+					return fail(errors.New("registration membership incomplete"))
 				}
 				members[name] = w.AppID
 			}
 			digest := api.ScenarioTestRegistrationSHA256(members)
 			if api.ScenarioTestRegistrationSHA256(live.Members) != digest {
-				return observations, errors.New("registration membership changed")
+				return fail(errors.New("registration membership changed"))
 			}
 			observation.Registration = "present"
 			if execute && registrationOnly {
-				err = client.DeleteScenarioTestRegistration(ctx, j.RunID, digest)
+				operation = "delete"
+				err = deleteTestCampaignRecoveryRegistration(ctx, client, j.RunID, digest)
 				if err != nil && !isNotFound(err) {
-					return observations, err
+					return fail(err)
 				}
-				confirmed, lookupErr := client.GetScenarioTestRegistration(ctx, j.RunID)
-				if lookupErr != nil || confirmed.SchemaVersion != 1 || confirmed.Members == nil || len(confirmed.Members) != 0 {
-					return observations, errors.New("registration absence not confirmed")
+				operation = "confirm_absence"
+				confirmed, lookupErr := readTestCampaignRecoveryRegistration(ctx, client, j.RunID)
+				if lookupErr != nil {
+					return fail(lookupErr)
+				}
+				if confirmed.SchemaVersion != 1 || confirmed.Members == nil || len(confirmed.Members) != 0 {
+					return fail(errors.New("registration absence not confirmed"))
 				}
 				observation.Registration = "absent"
-				if err := observeTestCampaignRegistrationExpiry(&observation, confirmed); err != nil {
-					return observations, err
+				if err := observeTestCampaignRegistrationExpiry(observation, confirmed); err != nil {
+					return fail(err)
 				}
 			}
 		}
-		observations = append(observations, observation)
 	}
 	return observations, nil
 }
@@ -263,6 +293,8 @@ func persistTestCampaignFaultObservation(directory string, observations []testCa
 }
 
 func applyTestCampaignFaultCompletion(ctx context.Context, completion *testCampaignRecoveryCompletion, reader testCampaignCleanupReader, plan testCampaignPolicyPlan, cp testCampaignCheckpoint, scenarios map[string]testScenario, directory string, hasAncestors bool, resolvers ...*testCampaignBundleResolver) {
+	ctx, cancel := context.WithTimeout(ctx, testCampaignRecoveryBudget)
+	defer cancel()
 	completion.FaultResourcesVerified = false
 	completion.FaultResourcesAbsent = false
 	fail := func() {
@@ -318,7 +350,7 @@ func applyTestCampaignFaultCompletion(ctx context.Context, completion *testCampa
 				continue
 			}
 			completion.LiveLookups++
-			_, err := reader.GetDevSession(ctx, target.Project, target.RunID)
+			_, err := readTestCampaignRecoverySession(ctx, reader, target.Project, target.RunID)
 			if !isNotFound(err) {
 				completion.KnownSessionsAbsent = false
 				if err != nil {

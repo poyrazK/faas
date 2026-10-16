@@ -334,3 +334,34 @@ before the crash must remain unusable after restart. The recipient then repeats
 cleanup with unchanged frozen evidence and verifies resource absence without
 claiming test execution completed. The gate requires all three crash boundaries
 for each ordering. PostgreSQL stays running; this does not test database crashes.
+
+### Recovery during outages
+
+Cleanup and fault completion have a two-minute operation budget. Each lookup or
+mutation has a five-second request deadline. Transient read failures (timeouts,
+connection failures, HTTP 408/429/500/502/503/504 and truncated responses) receive
+at most three attempts, with 250 ms then 500 ms backoff. Cancellation and the
+operation deadline stop further attempts. Numeric and HTTP-date `Retry-After`
+values are respected; a requested delay above the two-second local wait limit
+leaves the lookup unresolved for a later invocation instead of retrying early.
+Authentication, ownership conflicts, malformed proofs and unsupported capabilities
+are not retried.
+
+Mutations are attempted once. A failed cancellation, revocation or deletion may
+already have committed, so cleanup stops and the next invocation observes the
+current durable proof before deciding whether another mutation is needed. Resume
+with the same cleanup command after connectivity returns. Recovery never creates
+a consumer or key to resolve an outage.
+
+Failure observations retain every journaled consumer, registration and session.
+Unvisited resources and failed observations remain `unverified`; they cannot
+prove absence or completion. Issues record the resource, operation, stable reason,
+lookup attempt count and whether a later attempt may succeed. Raw server error
+bodies and credential values are excluded. Observations live in the recipient's
+work directory; frozen journals and imported artifacts remain unchanged.
+
+The PostgreSQL gate also cuts the API fixture's real SQL connections through a
+local TCP proxy, independently of the parent SQL oracle, and tests an HTTP API
+outage. Both must exhaust the read budget without mutations, retain unresolved
+inventory, reject completion and finish safely after connectivity is restored.
+This tests connectivity loss while PostgreSQL remains running.

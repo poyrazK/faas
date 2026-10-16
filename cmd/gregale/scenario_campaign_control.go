@@ -44,10 +44,11 @@ type testCampaignCleanupClient interface {
 }
 
 type testCampaignCleanupAction struct {
-	Project string `json:"project"`
-	RunID   string `json:"run_id"`
-	AppID   string `json:"app_id"`
-	Status  string `json:"status"`
+	Issue   *testCampaignRecoveryIssue `json:"issue,omitempty"`
+	Project string                     `json:"project"`
+	RunID   string                     `json:"run_id"`
+	AppID   string                     `json:"app_id"`
+	Status  string                     `json:"status"`
 }
 
 // Only complete, configuration-bound receipt identities can authorize cleanup.
@@ -94,6 +95,8 @@ func testCampaignReceiptCleanupTargets(scenario testScenario, leaves []testRunRe
 }
 
 func testCampaignRetryCleanupTargets(ctx context.Context, client testCampaignCleanupClient, targets map[string]testCampaignCleanupAction, execute bool) ([]testCampaignCleanupAction, error) {
+	ctx, cancel := context.WithTimeout(ctx, testCampaignRecoveryBudget)
+	defer cancel()
 	actions := []testCampaignCleanupAction{}
 	if len(targets) == 0 || len(targets) > 1024 {
 		return nil, errors.New("cleanup requires 1..1024 verified workload identities")
@@ -103,20 +106,27 @@ func testCampaignRetryCleanupTargets(ctx context.Context, client testCampaignCle
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	// Preflight every identity before the first mutation.
 	for _, key := range keys {
 		target := targets[key]
-		session, err := client.GetDevSession(ctx, target.Project, target.RunID)
+		target.Status = "unverified"
+		target.Issue = nil
+		actions = append(actions, target)
+	}
+	// Preflight every identity before the first mutation.
+	for index := range actions {
+		target := &actions[index]
+		session, err := readTestCampaignRecoverySession(ctx, client, target.Project, target.RunID)
 		if isNotFound(err) {
 			target.Status = "absent"
 		} else if err != nil {
-			return nil, errors.New("live cleanup lookup failed")
+			target.Issue = testCampaignRecoveryIssueFor("session", "lookup", err)
+			return actions, fmt.Errorf("live cleanup lookup failed: %w", err)
 		} else if session.App.ID != target.AppID {
-			return nil, errors.New("live session app ID differs from receipt; refusing cleanup")
+			target.Issue = testCampaignRecoveryIssueFor("session", "verify_identity", errors.New("identity changed"))
+			return actions, errors.New("live session app ID differs from receipt; refusing cleanup")
 		} else {
 			target.Status = "present"
 		}
-		actions = append(actions, target)
 	}
 	for i := range actions {
 		target := &actions[i]
@@ -124,22 +134,33 @@ func testCampaignRetryCleanupTargets(ctx context.Context, client testCampaignCle
 			continue
 		}
 		// Recheck immediately before deletion; never use the shared default workspace.
-		session, err := client.GetDevSession(ctx, target.Project, target.RunID)
+		session, err := readTestCampaignRecoverySession(ctx, client, target.Project, target.RunID)
 		if isNotFound(err) {
 			target.Status = "absent"
 			continue
 		}
-		if err != nil || session.App.ID != target.AppID {
+		if err != nil {
+			target.Status = "unverified"
+			target.Issue = testCampaignRecoveryIssueFor("session", "recheck", err)
+			return actions, fmt.Errorf("cleanup identity could not be reverified: %w", err)
+		}
+		if session.App.ID != target.AppID {
 			target.Status = "identity_changed"
+			target.Issue = testCampaignRecoveryIssueFor("session", "verify_identity", errors.New("identity changed"))
 			return actions, errors.New("cleanup identity could not be reverified")
 		}
-		if err := client.DestroyDevSession(ctx, target.Project, target.RunID); err != nil && !isNotFound(err) {
+		if err := deleteTestCampaignRecoverySession(ctx, client, target.Project, target.RunID); err != nil && !isNotFound(err) {
 			target.Status = "delete_failed"
-			return actions, errors.New("session cleanup failed")
+			target.Issue = testCampaignRecoveryIssueFor("session", "delete", err)
+			return actions, fmt.Errorf("session cleanup failed: %w", err)
 		}
-		_, err = client.GetDevSession(ctx, target.Project, target.RunID)
+		_, err = readTestCampaignRecoverySession(ctx, client, target.Project, target.RunID)
 		if !isNotFound(err) {
 			target.Status = "unconfirmed"
+			if err == nil {
+				err = errors.New("session remains present")
+			}
+			target.Issue = testCampaignRecoveryIssueFor("session", "confirm_absence", err)
 			return actions, errors.New("session absence could not be confirmed")
 		}
 		target.Status = "deleted"

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,6 +37,7 @@ type consumerAcceptanceBackend struct {
 	process                          *consumerAcceptanceProcess
 	crashes                          atomic.Int32
 	restarts                         int
+	databaseProxy                    *consumerAcceptanceDatabaseProxy
 }
 
 type consumerAcceptanceProcess struct {
@@ -83,7 +85,7 @@ func (p *consumerAcceptanceProcess) stop(crash bool) error {
 	return p.err
 }
 
-func startConsumerAcceptanceBackend(t *testing.T) *consumerAcceptanceBackend {
+func startConsumerAcceptanceBackend(t *testing.T, databaseProxy ...bool) *consumerAcceptanceBackend {
 	t.Helper()
 	if os.Getenv("GREGALE_CONSUMER_ACCEPTANCE_BINARY") == "" {
 		t.Skip("run make test-gregale-recovery-postgres")
@@ -109,6 +111,9 @@ func startConsumerAcceptanceBackend(t *testing.T) *consumerAcceptanceBackend {
 	b.token = plain
 	if err := pool.QueryRow(ctx, `select current_database(),current_schema()`).Scan(&b.database, &b.schema); err != nil {
 		t.Fatal(err)
+	}
+	if len(databaseProxy) > 0 && databaseProxy[0] {
+		b.databaseProxy = startConsumerAcceptanceDatabaseProxy(t, pool.Config())
 	}
 	b.start(t)
 	return b
@@ -146,7 +151,17 @@ func (b *consumerAcceptanceBackend) start(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := json.NewEncoder(p.stdin).Encode(struct{ Database, Schema string }{b.database, b.schema}); err != nil {
+	host := ""
+	var port uint16
+	if b.databaseProxy != nil {
+		address := b.databaseProxy.listener.Addr().(*net.TCPAddr)
+		host = "127.0.0.1"
+		port = uint16(address.Port)
+	}
+	if err := json.NewEncoder(p.stdin).Encode(struct {
+		Database, Schema, Host string
+		Port                   uint16
+	}{b.database, b.schema, host, port}); err != nil {
 		t.Fatal("select API fixture database", err)
 	}
 	var ready struct {
@@ -215,6 +230,7 @@ type consumerAcceptanceDelivery struct {
 	target                         *url.URL
 	createFirst                    bool
 	crashAfterCommit               func() error
+	unavailable                    bool
 	lostRun, delayedRun            string
 	entered, release, committed    chan struct{}
 	releaseOnce                    sync.Once
@@ -228,6 +244,13 @@ type consumerAcceptanceDelivery struct {
 func (d *consumerAcceptanceDelivery) releaseCreation() { d.releaseOnce.Do(func() { close(d.release) }) }
 
 func (d *consumerAcceptanceDelivery) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	unavailable := d.unavailable
+	d.mu.Unlock()
+	if unavailable {
+		http.Error(w, "API unavailable", 503)
+		return
+	}
 	park, cancelling, ok := d.beforeForward(r)
 	if !ok {
 		return
@@ -286,9 +309,20 @@ func TestScenarioConsumerPostgresRestartRecovery(t *testing.T) {
 	}
 }
 
-func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart bool) {
+func TestScenarioConsumerPostgresOutageRecovery(t *testing.T) {
+	// adr: 984 — an interrupted recipient stays unresolved until API/SQL connectivity returns.
+	for _, mode := range []string{"api-unavailable", "database-unavailable"} {
+		t.Run(mode, func(t *testing.T) { testConsumerPostgresPortableRecovery(t, false, false, mode) })
+	}
+}
+
+func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart bool, outages ...string) {
 	t.Helper()
-	backend := startConsumerAcceptanceBackend(t)
+	outage := ""
+	if len(outages) > 0 {
+		outage = outages[0]
+	}
+	backend := startConsumerAcceptanceBackend(t, outage == "database-unavailable")
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	f := newCampaignFaultHistoryFixture(t)
@@ -398,6 +432,44 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart boo
 	}
 	frozen := campaignFaultFrozenBytes(t, []string{filepath.Join(root, "artifacts")})
 	work := filepath.Join(root, "work")
+	if outage != "" {
+		setOutage := func(active bool) {
+			if backend.databaseProxy != nil {
+				backend.databaseProxy.setOnline(!active)
+			} else {
+				delivery.mu.Lock()
+				delivery.unavailable = active
+				delivery.mu.Unlock()
+			}
+		}
+		setOutage(true)
+		failed, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
+		if err == nil || failed.Complete || failed.Issue == nil || !failed.Issue.Retryable || len(failed.Faults) != 3 || len(failed.Sessions) != 3 {
+			t.Fatal("outage did not preserve unresolved recovery inventory")
+		}
+		for _, o := range failed.Faults {
+			if o.Consumers["customer"] != "unverified" || o.Registration != "unverified" {
+				t.Fatal("outage became resource absence")
+			}
+		}
+		if len(failed.Faults[0].Issues) != 1 || failed.Faults[0].Issues[0].Attempts != 3 {
+			t.Fatal("lookup retry budget was not enforced")
+		}
+		completion := testCampaignRecoveryCompletion{ResourceEvidenceComplete: true, KnownSessionsAbsent: true}
+		applyTestCampaignFaultCompletion(ctx, &completion, client, f.plan, f.cp, f.scenarios, work, true, resolver)
+		if completion.FaultResourcesVerified || completion.FaultResourcesAbsent || completion.RecoveryComplete {
+			t.Fatal("outage certified recovery completion")
+		}
+		delivery.mu.Lock()
+		cancels := delivery.cancels
+		keys := delivery.keys
+		delivery.mu.Unlock()
+		if cancels != 0 || keys != 1 {
+			t.Fatal("outage preflight mutated resources")
+		}
+		assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, true)
+		setOutage(false)
+	}
 	inspect, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, false)
 	if err != nil {
 		t.Fatal("read-only inspection", err)
