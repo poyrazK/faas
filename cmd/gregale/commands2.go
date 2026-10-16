@@ -5350,26 +5350,7 @@ func cmdCrons(args []string) int {
 	case "cancel":
 		return cmdCronsCancel(args[1:])
 	case subRm:
-		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale crons rm <id>", "crons")
-			return 1
-		}
-		client, err := authedClient()
-		if err != nil {
-			return printErr("Not logged in", err)
-		}
-		if err := client.DeleteCron(context.Background(), args[1]); err != nil {
-			return printErr("Delete failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(map[string]any{
-				"id":      args[1],
-				"status":  "deleted",
-				"deleted": true,
-			}))
-		}
-		PrintOK(osStdout, "Removed")
-		return 0
+		return cmdCronsRm(args[1:])
 	case "run":
 		// PR-C / issue #791: `gregale crons run <id>` enqueues a
 		// fire-now request. Implementation lives in

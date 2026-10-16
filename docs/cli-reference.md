@@ -5072,7 +5072,11 @@ gregale crons update --app my-api --interactive
 
 Delete one cron rule
 
-`gregale crons rm <id>`
+`gregale crons rm [--yes] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | accepted for scripts; crons rm does not prompt |  |
 
 ### crons run
 

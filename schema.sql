@@ -4332,10 +4332,14 @@ BEGIN
     SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
     WHERE project_id = project FOR SHARE;
     IF NOT FOUND THEN
-        -- The project BEFORE DELETE guard already admitted this deletion.
-        -- FK cascades can remove the guard before dependent rows are cleaned.
-        -- A live project with missing evidence must still fail closed.
-        IF NOT EXISTS (SELECT 1 FROM projects WHERE id = project) THEN RETURN; END IF;
+        -- The project or account BEFORE DELETE guard already admitted this
+        -- deletion. FK cascades can remove the guard before dependent rows,
+        -- or before the project itself, are cleaned. A live project in a
+        -- live account with missing evidence must still fail closed.
+        IF NOT EXISTS (
+            SELECT 1 FROM projects p JOIN accounts a ON a.id = p.account_id
+            WHERE p.id = project
+        ) THEN RETURN; END IF;
         RAISE EXCEPTION 'project configuration guard is missing'
             USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
     END IF;
