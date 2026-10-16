@@ -1007,6 +1007,9 @@ var cliCommands = []cliCommand{
 				Name: subObsRuleCoverage, Short: "Compare explicitly selected expected alert definitions", Flags: []cliFlag{{Name: "expected-set", Short: "explicit expected set (unset means unknown)", ClosedSet: []string{"gregale-core-v1", "gregale-full-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
 			},
 			{
+				Name: subObsRecordingCoverage, Short: "Compare expected recording rules and catalog alert references", Flags: []cliFlag{{Name: "expected-set", Short: "explicit expected set (unset means unknown)", ClosedSet: []string{"gregale-core-v1", "gregale-full-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
 				Name:  subObsSummary,
 				Short: "Summarize all retained platform alert workload and freshness",
 				Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},

@@ -1,6 +1,7 @@
 package promql
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ type AlertRule struct {
 	DurationReported bool              `json:"-"`
 	KeepFiringFor    *float64          `json:"keepFiringFor,omitempty"`
 	Labels           map[string]string `json:"labels"`
+	LabelsNull       bool              `json:"-"`
 	Annotations      map[string]string `json:"annotations"`
 	State            string            `json:"state"`
 	Health           string            `json:"health"`
@@ -36,7 +38,8 @@ func (r *AlertRule) UnmarshalJSON(data []byte) error {
 	type wire AlertRule
 	var decoded struct {
 		*wire
-		Duration *float64 `json:"duration"`
+		Duration *float64        `json:"duration"`
+		Labels   json.RawMessage `json:"labels"`
 	}
 	out := AlertRule{}
 	decoded.wire = (*wire)(&out)
@@ -47,6 +50,12 @@ func (r *AlertRule) UnmarshalJSON(data []byte) error {
 		out.Duration = *decoded.Duration
 		out.DurationReported = true
 	}
+	if len(decoded.Labels) > 0 {
+		out.LabelsNull = bytes.Equal(bytes.TrimSpace(decoded.Labels), []byte("null"))
+		if err := json.Unmarshal(decoded.Labels, &out.Labels); err != nil {
+			return err
+		}
+	}
 	*r = out
 	return nil
 }
@@ -54,12 +63,22 @@ func (r *AlertRule) UnmarshalJSON(data []byte) error {
 // AlertRules requires a complete bounded envelope. Warnings or absent arrays
 // cannot authorize inferred recovery from an apparently empty result.
 func (c *Client) AlertRules(ctx context.Context) ([]AlertRuleGroup, error) {
+	return c.ruleInventory(ctx, "alert")
+}
+
+// RecordingRules uses the same strict bounds as alert reads. Prometheus omits
+// empty recording labels; explicit null remains distinguishable from omission.
+func (c *Client) RecordingRules(ctx context.Context) ([]AlertRuleGroup, error) {
+	return c.ruleInventory(ctx, "record")
+}
+
+func (c *Client) ruleInventory(ctx context.Context, ruleType string) ([]AlertRuleGroup, error) {
 	if c == nil || c.baseURL == "" {
 		return nil, fmt.Errorf("prometheus rules: not configured")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/rules?type=alert", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/rules?type="+ruleType, nil)
 	if err != nil {
 		return nil, err
 	}

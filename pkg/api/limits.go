@@ -8944,6 +8944,9 @@ const (
 	ObsRuleCoverageLabelNameMaxBytes  = 128
 	ObsRuleCoverageLabelValueMaxBytes = 2048
 	ObsRuleCatalogMaxBytes            = 4 << 20
+	ObsRecordingDependentAlertsMax    = 5
+	ObsRecordingUnknownAlertsMax      = 5
+	ObsRecordingDependencyLinksMax    = 16384
 
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared

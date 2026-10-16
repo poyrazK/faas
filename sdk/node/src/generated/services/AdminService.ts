@@ -28,6 +28,7 @@ import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
+import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
 import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
@@ -1219,6 +1220,67 @@ export class AdminService {
         400: `Unknown or empty or repeated expected_set or another query parameter.`,
         401: `code: unauthorized`,
         403: `Rule coverage read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare expected recording definitions and their catalog alert references.
+   * Requires operator read scope, MFA and the operator allowlist. Select a
+   * minimum expected file set explicitly with expected_set. Core selects
+   * faas.rules.yml; full also selects bridge.rules.yml, pg_backup.rules.yml
+   * and data_placement.yaml. Without selection, returns unknown with available
+   * metadata and makes no Prometheus request. Catalog presence is not
+   * deployment intent. This recording catalog has its own exact revision.
+   * Reads one complete bounded /api/v1/rules?type=record source and compares
+   * canonical expressions and rule labels under a shared three-second budget.
+   * Omitted recording labels mean empty per the Prometheus wire contract;
+   * explicit null labels or unsupported definitions remain unknown. Identity
+   * uses file basename, group and recording name. Duplicate candidates or
+   * basename/group collisions are ambiguous. Additional valid identities are
+   * allowed. A complete empty source has known missing expected definitions.
+   * Definition totals precede a 200-item preview ordered ambiguous, changed,
+   * missing, unknown, matching and then identity hash. Recording comparisons
+   * only report expression or labels as changed fields.
+   * Each item includes at most five syntactically dependent expected alerts,
+   * including transitive recording chains, with known-reference count and truncation.
+   * Dependency metadata binds the exact expected alert catalog revision.
+   * Nonexact metric selectors, duplicate producer names and reachable cycles
+   * leave explicit mapping uncertainty; its alert preview is also capped at
+   * five with full counts. Known references can coexist with uncertain links.
+   * Dependencies describe selected expected catalog syntax, not current
+   * deployed alert definitions, series presence, execution impact or cause.
+   * Covered definitions do not prove evaluation or input or notification
+   * health. Group intervals, offsets and annotations are outside comparison.
+   * Source failures return unknown with null totals; selected catalog mapping
+   * remains independently available. Raw queries, labels, errors, source URLs
+   * and absolute paths are omitted. No collection, history or triage writes.
+   *
+   * @returns ObsRecordingCoverage Recording definition comparison and independently scoped expected alert references.
+   * @throws ApiError
+   */
+  public static getObsRecordingCoverage({
+    expectedSet,
+  }: {
+    /**
+     * Select exactly one known minimum file-set expectation for recording definitions and expected alert references.
+     */
+    expectedSet?: 'gregale-core-v1' | 'gregale-full-v1',
+  }): CancelablePromise<ObsRecordingCoverage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/recording-coverage',
+      query: {
+        'expected_set': expectedSet,
+      },
+      errors: {
+        400: `Unknown or empty or repeated expected_set or another recording coverage query key.`,
+        401: `code: unauthorized`,
+        403: `Recording coverage read denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

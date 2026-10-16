@@ -56,13 +56,17 @@ func coverageSourceIndex(groups []promql.AlertRuleGroup, expected obsrulecatalog
 }
 
 func assessRuleCoverage(ctx context.Context, groups []promql.AlertRuleGroup, expected obsrulecatalog.Set, out api.ObsRuleCoverage) (api.ObsRuleCoverage, error) {
+	return assessDefinitionCoverage(ctx, groups, expected, out, "alerting")
+}
+
+func assessDefinitionCoverage(ctx context.Context, groups []promql.AlertRuleGroup, expected obsrulecatalog.Set, out api.ObsRuleCoverage, kind string) (api.ObsRuleCoverage, error) {
 	source := coverageSourceIndex(groups, expected)
 	t := &api.ObsRuleCoverageTotals{ExpectedRules: len(expected.Rules), ObservedRules: source.observed, AdditionalRules: source.additional, InvalidObservedRules: source.invalidRules, InvalidObservedGroups: source.invalidGroups}
 	for _, r := range expected.Rules {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		item := coverageRule(r, source)
+		item := coverageRuleKind(r, source, kind)
 		switch item.State {
 		case "matching":
 			t.Matching++
@@ -102,7 +106,7 @@ func assessRuleCoverage(ctx context.Context, groups []promql.AlertRuleGroup, exp
 	return out, ctx.Err()
 }
 
-func coverageRule(expected obsrulecatalog.Rule, source coverageSource) api.ObsRuleCoverageItem {
+func coverageRuleKind(expected obsrulecatalog.Rule, source coverageSource, kind string) api.ObsRuleCoverageItem {
 	candidates := source.candidates[expected.ID]
 	out := api.ObsRuleCoverageItem{ID: expected.ID, FileName: expected.FileName, GroupName: expected.GroupName, RuleName: expected.RuleName, State: "missing", Reason: "rule_missing", ExpectedFingerprint: expected.Definition.Fingerprint, ObservedCandidates: len(candidates), ChangedFields: []string{}}
 	if len(candidates) == 0 {
@@ -117,11 +121,15 @@ func coverageRule(expected obsrulecatalog.Rule, source coverageSource) api.ObsRu
 		return out
 	}
 	r := candidate.rule
-	if r.Type != "alerting" || !r.DurationReported || r.KeepFiringFor == nil || r.Labels == nil || candidate.groupLabels {
+	if r.Type != kind || candidate.groupLabels || (kind == "alerting" && (!r.DurationReported || r.KeepFiringFor == nil || r.Labels == nil)) || (kind == "recording" && r.LabelsNull) {
 		out.State, out.Reason = "unknown", "definition_unavailable"
 		return out
 	}
-	definition, err := obsrulecatalog.Normalize(r.Query, r.Duration, *r.KeepFiringFor, r.Labels)
+	hold, keep := 0.0, 0.0
+	if kind == "alerting" {
+		hold, keep = r.Duration, *r.KeepFiringFor
+	}
+	definition, err := obsrulecatalog.Normalize(r.Query, hold, keep, r.Labels)
 	if err != nil {
 		out.State, out.Reason = "unknown", "definition_unavailable"
 		return out

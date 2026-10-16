@@ -19,23 +19,28 @@ func main() {
 		fmt.Fprintln(os.Stderr, "obs-rule-catalog: no positional arguments accepted")
 		os.Exit(2)
 	}
-	generated, err := obsrulecatalog.Generate(*root)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "obs-rule-catalog:", err)
-		os.Exit(1)
-	}
-	destination := filepath.Join(*root, "pkg/obsrulecatalog/catalog.json")
-	if *check {
-		existing, readErr := os.ReadFile(destination)
-		if readErr != nil || !bytes.Equal(existing, generated) {
-			fmt.Fprintln(os.Stderr, "expected rule catalog differs; run make obs-rule-catalog-generate")
+	for _, catalog := range []struct {
+		name     string
+		generate func(string) ([]byte, error)
+	}{
+		{"catalog.json", obsrulecatalog.Generate}, {"recordings.json", obsrulecatalog.GenerateRecordings},
+	} {
+		generated, err := catalog.generate(*root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "obs-rule-catalog:", err)
 			os.Exit(1)
 		}
-		fmt.Println("expected rule catalog: current")
-		return
-	}
-	if err := os.WriteFile(destination, generated, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, "write expected rule catalog:", err)
-		os.Exit(1)
+		destination := filepath.Join(*root, "pkg/obsrulecatalog", catalog.name)
+		if *check {
+			existing, err := os.ReadFile(destination)
+			if err != nil || !bytes.Equal(existing, generated) {
+				fmt.Fprintln(os.Stderr, "expected rule catalog differs; run make obs-rule-catalog-generate")
+				os.Exit(1)
+			}
+			fmt.Println(catalog.name + ": current")
+		} else if err := os.WriteFile(destination, generated, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "write expected rule catalog:", err)
+			os.Exit(1)
+		}
 	}
 }

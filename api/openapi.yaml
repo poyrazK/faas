@@ -45129,6 +45129,58 @@ paths:
         '403': { description: Rule coverage read denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/recording-coverage:
+    get:
+      tags: [admin]
+      operationId: getObsRecordingCoverage
+      summary: Compare expected recording definitions and their catalog alert references.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Select a
+        minimum expected file set explicitly with expected_set. Core selects
+        faas.rules.yml; full also selects bridge.rules.yml, pg_backup.rules.yml
+        and data_placement.yaml. Without selection, returns unknown with available
+        metadata and makes no Prometheus request. Catalog presence is not
+        deployment intent. This recording catalog has its own exact revision.
+        Reads one complete bounded /api/v1/rules?type=record source and compares
+        canonical expressions and rule labels under a shared three-second budget.
+        Omitted recording labels mean empty per the Prometheus wire contract;
+        explicit null labels or unsupported definitions remain unknown. Identity
+        uses file basename, group and recording name. Duplicate candidates or
+        basename/group collisions are ambiguous. Additional valid identities are
+        allowed. A complete empty source has known missing expected definitions.
+        Definition totals precede a 200-item preview ordered ambiguous, changed,
+        missing, unknown, matching and then identity hash. Recording comparisons
+        only report expression or labels as changed fields.
+        Each item includes at most five syntactically dependent expected alerts,
+        including transitive recording chains, with known-reference count and truncation.
+        Dependency metadata binds the exact expected alert catalog revision.
+        Nonexact metric selectors, duplicate producer names and reachable cycles
+        leave explicit mapping uncertainty; its alert preview is also capped at
+        five with full counts. Known references can coexist with uncertain links.
+        Dependencies describe selected expected catalog syntax, not current
+        deployed alert definitions, series presence, execution impact or cause.
+        Covered definitions do not prove evaluation or input or notification
+        health. Group intervals, offsets and annotations are outside comparison.
+        Source failures return unknown with null totals; selected catalog mapping
+        remains independently available. Raw queries, labels, errors, source URLs
+        and absolute paths are omitted. No collection, history or triage writes.
+      parameters:
+        - name: expected_set
+          in: query
+          required: false
+          description: Select exactly one known minimum file-set expectation for recording definitions and expected alert references.
+          schema: { type: string, enum: [gregale-core-v1, gregale-full-v1] }
+      responses:
+        '200':
+          description: Recording definition comparison and independently scoped expected alert references.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRecordingCoverage' }
+        '400': { description: Unknown or empty or repeated expected_set or another recording coverage query key. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Recording coverage read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/notification-health:
     get:
       tags: [admin]
@@ -64554,6 +64606,93 @@ components:
           uniqueItems: true
           description: Changed fields in expression then for then keep_firing_for then labels order; empty unless comparison is known changed.
           items: { type: string, enum: [expression, for, keep_firing_for, labels] }
+
+    ObsRecordingCoverage:
+      type: object
+      description: Recording definition coverage with separately scoped expected syntactic alert dependencies.
+      required: [generated_at, scope, fingerprint_algorithm, selection_source, state, expected_set, available_sets, totals, items, total_items, limit, truncated, dependencies, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: selected_expected_recording_rules }
+        fingerprint_algorithm: { type: string, const: promql_ast_v1 }
+        selection_source: { type: string, enum: [none, explicit_request] }
+        state: { type: string, enum: [covered, degraded, partial, unknown] }
+        reason:
+          type: string
+          enum: [expected_set_not_selected, expected_catalog_unavailable, expected_set_unavailable, prometheus_not_configured, source_unavailable, deadline_exceeded, expected_rules_differ, comparison_incomplete]
+        expected_set:
+          description: Recording expectation profile metadata; null before selection or when its catalog cannot be loaded.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+            - { type: 'null' }
+        available_sets:
+          type: array
+          maxItems: 8
+          description: Recording profile choices embedded in this binary; choices do not establish installed inventory.
+          items: { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+        totals:
+          description: Unknown without a comparable selected recording source; a complete source with zero rows has known missing rules.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          description: Recording comparisons sorted by ambiguity then change then absence then unknown then match and finally identity hash.
+          items: { $ref: '#/components/schemas/ObsRecordingCoverageItem' }
+        total_items: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean }
+        dependencies:
+          description: Independent expected syntax mapping available once a valid catalog set is selected; null without a usable selection.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRecordingDependencyMapping' }
+            - { type: 'null' }
+        limitations:
+          type: array
+          items:
+            type: string
+            enum: [expectation_selected_per_request_not_deployment_evidence, selected_set_is_a_minimum_not_an_exclusive_inventory, recording_definitions_not_evaluation_or_metric_health, dependencies_are_expected_catalog_syntax_not_proven_impact, nonexact_selectors_duplicate_names_and_cycles_leave_uncertainty, missing_recording_labels_are_empty_per_prometheus_wire_contract, group_intervals_offsets_annotations_and_source_paths_not_compared, raw_queries_labels_and_errors_excluded, previews_bounded_totals_cover_complete_inputs]
+    ObsRecordingCoverageItem:
+      type: object
+      description: One expected recording definition and its bounded direct or transitive expected alert references; references do not prove runtime impact.
+      required: [comparison, dependent_alerts]
+      properties:
+        comparison: { $ref: '#/components/schemas/ObsRuleCoverageItem' }
+        dependent_alerts:
+          description: Known expected syntactic references; partial mapping can leave additional unresolved dependencies.
+          $ref: '#/components/schemas/ObsRecordingAlertReferences'
+    ObsRecordingAlertReference:
+      type: object
+      description: Safe expected alert identity from the selected catalog; independent of historical episode keys.
+      required: [id, file_name, group_name, rule_name]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        file_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        group_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        rule_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$' }
+    ObsRecordingAlertReferences:
+      type: object
+      description: Complete count of this known catalog reference list before its five-item preview; unresolved dependencies can remain outside a dependent-alert list.
+      required: [items, total_items, limit, truncated]
+      properties:
+        items:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ObsRecordingAlertReference' }
+        total_items: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, const: 5 }
+        truncated: { type: boolean }
+    ObsRecordingDependencyMapping:
+      type: object
+      description: Expected catalog reference completeness; partial means some selected alerts have unresolved syntactic recording dependencies.
+      required: [scope, state, alert_set_revision, total_alerts, uncertain_alerts]
+      properties:
+        scope: { type: string, const: selected_expected_catalog_syntax }
+        state: { type: string, enum: [complete, partial] }
+        alert_set_revision: { type: string, pattern: '^[0-9a-f]{64}$' }
+        total_alerts: { type: integer, minimum: 1, maximum: 4096 }
+        uncertain_alerts: { $ref: '#/components/schemas/ObsRecordingAlertReferences' }
 
     ObsNotificationHealth:
       type: object

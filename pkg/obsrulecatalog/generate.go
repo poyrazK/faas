@@ -37,28 +37,13 @@ func Generate(root string) ([]byte, error) {
 	core := Set{ID: CoreSetID, Files: []string{"faas.rules.yml"}, Rules: []Rule{}}
 	full := Set{ID: FullSetID, Files: []string{}, Rules: []Rule{}}
 	for _, rel := range sourceFiles {
-		raw, err := os.ReadFile(filepath.Join(root, rel))
+		groups, err := readSourceGroups(root, rel)
 		if err != nil {
-			return nil, fmt.Errorf("read catalog source: %w", err)
-		}
-		if len(raw) > api.ObsRuleCatalogMaxBytes {
-			return nil, ErrInvalidCatalog
-		}
-		var doc struct {
-			Groups []sourceGroup `yaml:"groups"`
-		}
-		if yaml.Unmarshal(raw, &doc) != nil || doc.Groups == nil {
-			return nil, ErrInvalidCatalog
+			return nil, err
 		}
 		file := filepath.Base(rel)
 		full.Files = append(full.Files, file)
-		seenGroups := map[string]bool{}
-		for _, group := range doc.Groups {
-			// Group label inheritance is outside this v1 comparison contract.
-			if !SafeIdentity(group.Name) || seenGroups[group.Name] || len(group.Labels) > 0 || group.Rules == nil {
-				return nil, ErrInvalidCatalog
-			}
-			seenGroups[group.Name] = true
+		for _, group := range groups {
 			for _, r := range group.Rules {
 				if r.Record != "" {
 					if r.Alert != "" {
@@ -108,6 +93,31 @@ func Generate(root string) ([]byte, error) {
 		return nil, err
 	}
 	return encoded, nil
+}
+
+func readSourceGroups(root, rel string) ([]sourceGroup, error) {
+	raw, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		return nil, fmt.Errorf("read catalog source: %w", err)
+	}
+	if len(raw) > api.ObsRuleCatalogMaxBytes {
+		return nil, ErrInvalidCatalog
+	}
+	var doc struct {
+		Groups []sourceGroup `yaml:"groups"`
+	}
+	if yaml.Unmarshal(raw, &doc) != nil || doc.Groups == nil {
+		return nil, ErrInvalidCatalog
+	}
+	seen := map[string]bool{}
+	for _, group := range doc.Groups {
+		// Group label inheritance is outside this v1 comparison contract.
+		if !SafeIdentity(group.Name) || seen[group.Name] || len(group.Labels) > 0 || group.Rules == nil {
+			return nil, ErrInvalidCatalog
+		}
+		seen[group.Name] = true
+	}
+	return doc.Groups, nil
 }
 
 func durationSeconds(raw string) (float64, error) {

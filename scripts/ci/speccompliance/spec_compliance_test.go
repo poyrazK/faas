@@ -153,6 +153,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
+	"GET /v1/admin/obs/recording-coverage":                           true, // private explicitly selected recording coverage
 	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
 	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
 	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context
@@ -1259,6 +1260,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_notifications.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
+		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),

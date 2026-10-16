@@ -1,4 +1,4 @@
-// Package obsrulecatalog owns explicitly selected expected alert-rule definitions.
+// Package obsrulecatalog owns explicitly selected expected rule definitions.
 package obsrulecatalog
 
 import (

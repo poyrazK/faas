@@ -1173,6 +1173,11 @@ export type { ObsNotificationAPIStatus } from './models/ObsNotificationAPIStatus
 export type { ObsNotificationHealth } from './models/ObsNotificationHealth.js';
 export type { ObsNotificationIntegration } from './models/ObsNotificationIntegration.js';
 export type { ObsNotificationSignal } from './models/ObsNotificationSignal.js';
+export type { ObsRecordingAlertReference } from './models/ObsRecordingAlertReference.js';
+export type { ObsRecordingAlertReferences } from './models/ObsRecordingAlertReferences.js';
+export type { ObsRecordingCoverage } from './models/ObsRecordingCoverage.js';
+export type { ObsRecordingCoverageItem } from './models/ObsRecordingCoverageItem.js';
+export type { ObsRecordingDependencyMapping } from './models/ObsRecordingDependencyMapping.js';
 export type { ObsRuleCoverage } from './models/ObsRuleCoverage.js';
 export type { ObsRuleCoverageItem } from './models/ObsRuleCoverageItem.js';
 export type { ObsRuleCoverageSet } from './models/ObsRuleCoverageSet.js';

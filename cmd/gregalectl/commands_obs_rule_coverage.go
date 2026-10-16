@@ -67,7 +67,11 @@ func cmdObsRuleCoverage(args []string) int {
 }
 
 func writeObsRuleCoverage(w io.Writer, out api.ObsRuleCoverage) {
-	_, _ = fmt.Fprintf(w, "rule_coverage=%s reason=%s scope=%s selection=%s generated_at=%s\n", out.State, out.Reason, out.Scope, out.SelectionSource, out.GeneratedAt.UTC().Format(time.RFC3339Nano))
+	writeDefinitionCoverage(w, out, "rule_coverage")
+}
+
+func writeDefinitionCoverage(w io.Writer, out api.ObsRuleCoverage, name string) {
+	_, _ = fmt.Fprintf(w, "%s=%s reason=%s scope=%s selection=%s generated_at=%s\n", name, out.State, out.Reason, out.Scope, out.SelectionSource, out.GeneratedAt.UTC().Format(time.RFC3339Nano))
 	if out.ExpectedSet != nil {
 		s := out.ExpectedSet
 		_, _ = fmt.Fprintf(w, "expected_set=%s revision=%s files=%s expected_rules=%d\n", s.ID, s.Revision, strings.Join(s.Files, ","), s.ExpectedRules)

@@ -863,3 +863,36 @@ offsets and annotations are outside this comparison. Use `obs rule-health` and
 `obs notification-health` for their respective evidence. Repository maintainers
 update the catalog with `make obs-rule-catalog-generate` after source-rule edits;
 `make obs-rule-catalog-check` and Go tests detect drift.
+
+### Check recording definitions and their expected alert references
+
+Run `gregalectl obs recording-coverage --expected-set gregale-full-v1 --json`
+or select `gregale-core-v1` for the core file profile. Without `--expected-set`,
+the command lists available metadata, stays unknown and does not read Prometheus.
+The API is `GET /v1/admin/obs/recording-coverage?expected_set=gregale-full-v1`,
+with existing operator authorization. This minimum file selection is explicit;
+it does not establish installation intent or reject additional valid rules.
+
+The recording catalog has its own exact revision. Definitions compare canonical
+expressions and rule labels, reporting matching, missing, changed, ambiguous or
+unknown. Prometheus may omit empty recording labels; explicit null stays unknown.
+Totals cover the full bounded source and expected set before a 200-item preview.
+An unavailable source has null totals; a complete empty source has known missing
+recording definitions. Evaluation health, metric inputs, group intervals/offsets
+and annotations remain outside this comparison.
+
+Each item includes `dependent_alerts`: direct and transitive expected catalog
+references, with the full known-reference count, at most five items and explicit
+truncation. Uncertain mappings may leave additional unresolved dependencies. The
+`dependencies` object binds the expected alert catalog revision and reports
+complete/partial mapping, including full uncertain-alert counts and a five-alert
+preview. Nonexact selectors, duplicate producer names and reachable cycles leave
+uncertainty. Known references can coexist with unknown links. This expected
+syntax mapping stays available during a live-source failure; it does not prove
+deployed alerts, matching label sets, runtime impact or an incident's cause.
+Covered definitions can coexist with partial mapping or unhealthy evaluations.
+
+The read shares the three-second inventory budget and excludes raw queries,
+labels, errors and absolute paths. It never writes incident or collection state.
+Existing catalog generation/check targets now cover both generated catalogs;
+Go tests also detect recording definition or dependency drift.
