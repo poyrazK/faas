@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 
@@ -8,7 +8,7 @@ export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migr
 // Customers configure sign-in providers, MFA, password rules and CAPTCHA by
 // setting these GoTrue variables as app secrets. Everything else is owned by
 // Gregale; any other GOTRUE_ variable fails startup instead of being ignored.
-const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_']
+const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_', 'GOTRUE_PASSKEY_']
 
 // OAuth providers `gregale auth providers` configures; GoTrue v2.197.0 names.
 // Mirrored by cmd/gregale (TestAuthTemplateSettingsContract).
@@ -102,6 +102,70 @@ export function signingKeys(env) {
   }
 }
 
+const hostname = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/
+
+// webauthnEnv derives GoTrue's WebAuthn relying party. Passkeys belong to the
+// Auth app's host unless AUTH_PASSKEY_RP_ID names a parent domain that the
+// Auth app shares with the site (auth.example.com and shop.example.com share
+// example.com), so the hosted pages and the site use the same passkeys. Only
+// HTTPS origins on that domain may use them, or HTTP on localhost during
+// development. Gregale owns these settings.
+export function webauthnEnv(env, external, site, redirects) {
+  const host = new URL(external).hostname
+  const rpID = env.AUTH_PASSKEY_RP_ID || host
+  if (!hostname.test(rpID) || !rpID.includes('.') && rpID !== 'localhost') throw new Error('AUTH_PASSKEY_RP_ID must be a domain name')
+  const within = name => name === rpID || name.endsWith('.' + rpID)
+  if (!within(host)) throw new Error(`AUTH_PASSKEY_RP_ID must be ${host} or a parent domain of it`)
+  const origins = [...new Set([external, site, ...redirects].map(value => new URL(value)))]
+    .filter(url => within(url.hostname) && (url.protocol === 'https:' || url.hostname === 'localhost'))
+    .map(url => url.origin)
+  return {
+    GOTRUE_WEBAUTHN_RP_ID: rpID,
+    GOTRUE_WEBAUTHN_RP_ORIGINS: [...new Set(origins)].join(','),
+    GOTRUE_WEBAUTHN_RP_DISPLAY_NAME: brandingConfig(env, site).name,
+  }
+}
+
+// The hosted pages' branding: a display name, an accent colour and a logo
+// loaded from an HTTPS URL, whose exact origin the pages' policy allows.
+export function brandingConfig(env, site) {
+  const name = env.AUTH_UI_NAME ?? ''
+  if (name.length > limits.uiNameChars || /[\u0000-\u001f\u007f<>]/.test(name)) throw new Error(`AUTH_UI_NAME must be 1 to ${limits.uiNameChars} characters without control characters or angle brackets`)
+  const color = env.AUTH_UI_COLOR ?? ''
+  if (color && !/^#[0-9a-f]{6}$/.test(color)) throw new Error('AUTH_UI_COLOR must be a lowercase #rrggbb colour')
+  let logo = null
+  if (env.AUTH_UI_LOGO_URL) {
+    try { logo = new URL(env.AUTH_UI_LOGO_URL) } catch { throw new Error('Invalid AUTH_UI_LOGO_URL') }
+    if (logo.protocol !== 'https:' || logo.username || logo.password || env.AUTH_UI_LOGO_URL.length > 2048) throw new Error('AUTH_UI_LOGO_URL must be an HTTPS URL without credentials')
+  }
+  return { name: name || new URL(site).host, color: color || null, logoURL: logo?.toString() ?? null, logoOrigin: logo?.origin ?? null }
+}
+
+// GoTrue verifies CAPTCHA tokens with the provider; the hosted pages render
+// the provider's widget, which needs its script and frame origins allowed.
+export const captchaProviders = Object.freeze({
+  turnstile: { script: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit', sources: ['https://challenges.cloudflare.com'] },
+  hcaptcha: { script: 'https://js.hcaptcha.com/1/api.js?render=explicit&recaptchacompat=off', sources: ['https://hcaptcha.com', 'https://*.hcaptcha.com'] },
+})
+
+export function captchaConfig(env) {
+  if (env.GOTRUE_SECURITY_CAPTCHA_ENABLED !== 'true') return null
+  const provider = env.GOTRUE_SECURITY_CAPTCHA_PROVIDER
+  if (!captchaProviders[provider]) throw new Error('GOTRUE_SECURITY_CAPTCHA_PROVIDER must be turnstile or hcaptcha')
+  if (!env.GOTRUE_SECURITY_CAPTCHA_SECRET) throw new Error('GOTRUE_SECURITY_CAPTCHA_SECRET is required with CAPTCHA')
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(env.AUTH_CAPTCHA_SITE_KEY ?? '')) throw new Error('AUTH_CAPTCHA_SITE_KEY is required with CAPTCHA')
+  return { provider, siteKey: env.AUTH_CAPTCHA_SITE_KEY, script: captchaProviders[provider].script, sources: captchaProviders[provider].sources }
+}
+
+// pagePolicy is the hosted pages' content security policy: only this origin,
+// plus the logo's origin and the CAPTCHA provider when configured.
+export function pagePolicy(branding, captcha) {
+  const extra = captcha?.sources ?? []
+  const img = ["'self'", ...(branding.logoOrigin ? [branding.logoOrigin] : [])]
+  return ["default-src 'none'", `script-src 'self' ${extra.join(' ')}`.trim(), `style-src 'self' ${extra.join(' ')}`.trim(), `connect-src 'self' ${extra.join(' ')}`.trim(),
+    `img-src ${img.join(' ')}`, ...(extra.length ? [`frame-src ${extra.join(' ')}`] : []), "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'"].join('; ')
+}
+
 export function runtimeConfig(env) {
   const external = httpsOrigin(env.AUTH_EXTERNAL_URL, 'AUTH_EXTERNAL_URL')
   const site = redirectURL(env.AUTH_SITE_URL, 'AUTH_SITE_URL')
@@ -109,7 +173,7 @@ export function runtimeConfig(env) {
   if (redirects.length > limits.redirectURLs) throw new Error('Too many AUTH_REDIRECT_URLS')
   redirects.forEach(value => redirectURL(value, 'AUTH_REDIRECT_URLS'))
   if (typeof env.AUTH_JWT_SECRET !== 'string' || env.AUTH_JWT_SECRET.length < 32) throw new Error('AUTH_JWT_SECRET must hold at least 32 characters')
-  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP']) {
+  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS']) {
     if (env[flag] !== undefined && env[flag] !== '1' && env[flag] !== '0') throw new Error(`Invalid ${flag}`)
   }
   const passthrough = {}
@@ -128,6 +192,7 @@ export function runtimeConfig(env) {
   }
   const gotrueEnv = {
     ...callbacks,
+    ...webauthnEnv(env, external, site, redirects),
     ...passthrough,
     GOTRUE_API_HOST: gotrue.host,
     PORT: String(gotrue.port),
@@ -157,7 +222,11 @@ export function runtimeConfig(env) {
     GOTRUE_LOG_LEVEL: 'warn',
   }
   const email = emailConfig(env)
-  const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: new URL(site).host }
+  const branding = brandingConfig(env, site)
+  const captcha = captchaConfig(env)
+  const retention = env.AUTH_AUDIT_RETENTION_DAYS ?? ''
+  if (retention !== '' && (!/^[1-9][0-9]{0,3}$/.test(retention) || Number(retention) > limits.auditRetentionMaxDays)) throw new Error(`AUTH_AUDIT_RETENTION_DAYS must be 1 to ${limits.auditRetentionMaxDays}`)
+  const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention) }
   return { ...config, settings: publicSettings(config) }
 }
 
@@ -165,7 +234,8 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays }) {
+  const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
     .map(chars => Object.keys(characterClasses).find(name => characterClasses[name] === chars) ?? 'custom')
@@ -179,7 +249,12 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app }) {
     // `--mfa off` stops enrolment only; enrolled users keep verifying.
     password: { min_length: Number(g.GOTRUE_PASSWORD_MIN_LENGTH ?? 6), required, leaked_password_check: flag(g.GOTRUE_PASSWORD_HIBP_ENABLED, false) },
     mfa: { totp: flag(g.GOTRUE_MFA_TOTP_ENROLL_ENABLED, true) },
-    email: { configured: email !== null },
+    email: { configured: email !== null, provider: email?.provider ?? null, from: email?.from ?? null },
+    events: { lifecycle: lifecycleEvents },
+    activity: { retention_days: auditRetentionDays },
+    passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },
+    branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
+    captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,
     keys,
   }
 }

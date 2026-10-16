@@ -675,19 +675,23 @@ func extractEmailFromRequest(r *http.Request) string {
 // DummyPHC pad exists specifically to make the no-account /
 // wrong-password / no-password-row paths identical in CPU cost.
 func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string) (state.Account, bool) {
+	return s.verifyPasswordOrPadWith(ctx, email, password, auth.Verify)
+}
+
+func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password string, verify func(string, string) (bool, error)) (state.Account, bool) {
 	acct, err := s.store.AccountByEmail(ctx, email)
 	if err != nil {
 		// Email unbound. Run the Argon2id pad and return.
-		_, _ = auth.Verify(auth.DummyPHC, password)
+		_, _ = verify(auth.DummyPHC, password)
 		return state.Account{}, false
 	}
 	hash, err := s.store.AccountPasswordByAccountID(ctx, acct.ID)
 	if err != nil {
 		// Bound account, no password row (OAuth-only). Pad.
-		_, _ = auth.Verify(auth.DummyPHC, password)
+		_, _ = verify(auth.DummyPHC, password)
 		return state.Account{}, false
 	}
-	ok, err := auth.Verify(hash, password)
+	ok, err := verify(hash, password)
 	if err != nil || !ok {
 		return state.Account{}, false
 	}

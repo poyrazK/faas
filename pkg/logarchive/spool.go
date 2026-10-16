@@ -114,6 +114,13 @@ type Spool struct {
 	mu      sync.Mutex
 	files   map[spoolKey]*fileHandle
 	written int64 // current local-spool size
+
+	// counted turns true once CountExisting has added the unshipped bytes
+	// an earlier process left on disk. Before that, openLocked counts a
+	// reopened file's existing bytes itself and records its path in
+	// preCounted so the walk does not count them twice.
+	counted    bool
+	preCounted map[string]struct{}
 }
 
 // NewSpool constructs a Spool rooted at root. maxBytes is the
@@ -121,38 +128,89 @@ type Spool struct {
 // (instance, day) keys (DefaultLocalBytesMax when 0). The
 // directory tree is created lazily on first write to avoid
 // touching the filesystem when no lines have flowed yet.
+//
+// NewSpool does not read the spool root; CountExisting does, from
+// the shipper's goroutine.
 func NewSpool(root string, maxBytes int64) *Spool {
 	if maxBytes <= 0 {
 		maxBytes = DefaultLocalBytesMax
 	}
 	return &Spool{
-		root:     root,
-		maxBytes: maxBytes,
-		bufBytes: DefaultBufferBytes,
-		files:    make(map[spoolKey]*fileHandle),
-		written:  existingUnshippedBytes(root),
+		root:       root,
+		maxBytes:   maxBytes,
+		bufBytes:   DefaultBufferBytes,
+		files:      make(map[spoolKey]*fileHandle),
+		preCounted: make(map[string]struct{}),
 	}
 }
 
-func existingUnshippedBytes(root string) int64 {
-	var total int64
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if !strings.HasSuffix(name, spoolPartialSuffix) && !strings.HasSuffix(name, spoolUploadSuffix) {
-			return nil
-		}
-		if info, err := d.Info(); err == nil {
-			total += info.Size()
+// CountExisting adds the unshipped bytes an earlier process left in the
+// spool to the local-size tally, once. The walk covers every retained
+// {instance}/{YYYY}/{MM} directory: shipped .jsonl.gz markers stay for the
+// retention window, one tree per instance, and on 2026-10-15 a node held
+// 18.7k of them (56k directories). With a cold dentry cache that walk took
+// 130 s, and while NewSpool ran it vmmd could not serve (hunt #10, H10-80).
+// The shipper calls this before its first flush instead; until it finishes,
+// the size cap sees this process's writes and any file it reopened.
+func (s *Spool) CountExisting() {
+	s.mu.Lock()
+	done := s.counted
+	s.mu.Unlock()
+	if done {
+		return
+	}
+	var paths []string
+	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr == nil && !d.IsDir() {
+			if name := d.Name(); strings.HasSuffix(name, spoolPartialSuffix) || strings.HasSuffix(name, spoolUploadSuffix) {
+				paths = append(paths, path)
+			}
 		}
 		return nil
 	})
-	return total
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.counted {
+		return
+	}
+	for _, path := range paths {
+		if _, ok := s.preCounted[path]; ok {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil {
+			s.written += info.Size()
+		}
+	}
+	s.counted = true
+	s.preCounted = nil
+}
+
+// PruneEmptyDirs removes every empty directory under the spool root, deepest
+// first, and returns how many it removed. The purger deletes shipped
+// .jsonl.gz markers but leaves their {instance}/{YYYY}/{MM} directories
+// behind (hunt #10, H10-80). The walk runs without the spool lock, so writes
+// are not held behind a slow traversal; the removals run under it, where
+// writes create their directories, so a write never loses the directory it
+// just made, and a directory that gained a file since the walk fails to
+// remove and stays.
+func (s *Spool) PruneEmptyDirs() int {
+	var dirs []string
+	_ = filepath.WalkDir(s.root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr == nil && d.IsDir() && path != s.root {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for i := len(dirs) - 1; i >= 0; i-- {
+		// Remove fails on a non-empty directory, which keeps it.
+		if os.Remove(dirs[i]) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 // Write persists one evicted log line to disk. Safe for
@@ -233,6 +291,10 @@ func (s *Spool) openLocked(key spoolKey) (*fileHandle, error) {
 	if err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("logarchive: stat %s: %w", path, err)
+	}
+	if !s.counted {
+		s.written += stat.Size()
+		s.preCounted[path] = struct{}{}
 	}
 	bw := bufio.NewWriterSize(f, s.bufBytes)
 	fh := &fileHandle{bw: bw, file: f, path: path, size: stat.Size()}

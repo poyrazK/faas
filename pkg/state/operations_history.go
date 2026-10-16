@@ -47,7 +47,7 @@ func prepareOperationHistoryQuery(account, tenant string, opts api.OperationList
 		return opts, cursor, ErrInvalidArgument
 	}
 	switch opts.State {
-	case "", api.OperationAccepted, api.OperationRunning, api.OperationSucceeded, api.OperationFailed, api.OperationCancelled, api.OperationRequiresReconciliation:
+	case "", api.OperationAccepted, api.OperationRunning, api.OperationWaiting, api.OperationSucceeded, api.OperationFailed, api.OperationCancelled, api.OperationRequiresReconciliation:
 	default:
 		return opts, cursor, ErrInvalidArgument
 	}

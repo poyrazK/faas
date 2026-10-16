@@ -2,7 +2,7 @@
 
 - **Status:** accepted for implementation; deployed qualification pending
 - **Date:** 2026-10-15
-- **Amends:** ADR-1190 and ADR-1331
+- **Amends:** ADR-1190 and ADR-1345
 - **Decision:** Carry a verified session identity into retained WebSocket and SSE
   authorization callbacks, and refresh retained WebSocket JWT verification.
 - **Why:** A callback that checks whether a user has any live session allows a
@@ -48,7 +48,7 @@ Deploy the daemon before redeploying Auth apps from the updated template, then
 reconnect retained clients. An updated Auth app rejects callbacks from older
 daemons that omit the session. Until the Auth app is updated, its older callback
 still has the subject-level contract. Logout is enforced at the next channel
-grant refresh, including ADR-1331's idle cleanup delays. Inbox/direct-message
+grant refresh, including ADR-1345's idle cleanup delays. Inbox/direct-message
 session authorization and subscription-ticket issuance/revocation keep their
 existing contracts; JWT validity now guards all output on retained JWT sockets.
 Existing preview and provider/native qualification gates remain in force.

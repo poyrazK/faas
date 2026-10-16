@@ -220,7 +220,9 @@ func TestMetalEgressAllowlist_LivePatchV6(t *testing.T) {
 }
 
 // allowlistReplaceArgv renders c's allowlist accept for cidr and turns it
-// into the `nft replace rule … handle <h>` pkg/fcvm runs on a live patch.
+// into the one-transaction `nft insert rule … handle <h> <spec> ; delete rule
+// … handle <h>` pkg/fcvm runs on a live patch (swapRuleArgv: nftables 1.0.9
+// aborts on `replace rule` with an anonymous set).
 func allowlistReplaceArgv(t *testing.T, c Config, family, cidr, handle string) []string {
 	t.Helper()
 	for _, argv := range c.NftCommands() {
@@ -230,8 +232,9 @@ func allowlistReplaceArgv(t *testing.T, c Config, family, cidr, handle string) [
 		for i := 0; i+5 <= len(argv); i++ {
 			if argv[i] == "add" && argv[i+1] == "rule" && argv[i+2] == family {
 				out := append([]string{}, argv[:i]...)
-				out = append(out, "replace", "rule", family, "faas", "forward", "handle", handle)
-				return append(out, argv[i+5:]...)
+				out = append(out, "insert", "rule", family, "faas", "forward", "handle", handle)
+				out = append(out, argv[i+5:]...)
+				return append(out, ";", "delete", "rule", family, "faas", "forward", "handle", handle)
 			}
 		}
 	}

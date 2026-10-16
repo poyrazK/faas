@@ -980,6 +980,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,
 			StartupDeadlineS:             a.Manifest.StartupDeadlineS,

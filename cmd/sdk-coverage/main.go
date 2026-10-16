@@ -283,6 +283,32 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent":                   "SetApplicationStandardLocalIntent",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":                    "ApproveApplicationStandardException",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke": "RevokeApplicationStandardException",
+	// ADR-435: these hyphenated routes use the existing typed client names.
+	"POST /v1/orgs/{slug}/application-standard-reviews/{review}/approve":      "ApproveApplicationStandardReview",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/pause":  "PauseApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume": "ResumeApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort":  "AbortApplicationStandardOperation",
+
+	"GET /v1/orgs/{slug}/application-standard-assignments":              "ListApplicationStandardAssignments",
+	"GET /v1/orgs/{slug}/application-standard-assignments/{assignment}": "GetApplicationStandardAssignment",
+
+	"POST /v1/orgs/{slug}/application-standard-reviews":                              "PreviewApplicationStandardAssignment",
+	"GET /v1/orgs/{slug}/application-standard-reviews/{review}":                      "GetApplicationStandardReview",
+	"GET /v1/orgs/{slug}/application-standard-operations/{operation}":                "GetApplicationStandardOperation",
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":          "ListApplicationStandardExceptions",
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}":                     "GetApplicationStandardEnrollment",
+	"GET /v1/orgs/{slug}/application-standards":                                      "ListApplicationStandards",
+	"GET /v1/orgs/{slug}/application-standards/{standard}":                           "GetApplicationStandardVersion",
+	"POST /v1/orgs/{slug}/application-standards/{standard}/versions":                 "PublishApplicationStandardVersion",
+	"GET /v1/orgs/{slug}/application-standard-log-destinations":                      "ListApplicationStandardLogDestinations",
+	"POST /v1/orgs/{slug}/application-standard-log-destinations":                     "CreateApplicationStandardLogDestination",
+	"GET /v1/orgs/{slug}/application-standard-log-destinations/{resource}":           "GetApplicationStandardLogDestination",
+	"GET /v1/orgs/{slug}/application-standard-publishers":                            "ListApplicationStandardPublishers",
+	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
+	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
@@ -379,6 +405,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
 	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
 
+	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
+	"GET /v1/service-map": "GetServiceMap",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
@@ -533,6 +561,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/operations":                                                   "ListAccountOperations",
 	"GET /v1/apps/{slug}/operations/{id}/events":                                       "GetAccountOperationEvents",
 	"GET /v1/apps/{slug}/operations/{id}/executions":                                   "GetOperationExecutions",
+	"GET /v1/apps/{slug}/operations/{id}/timeline":                                     "GetOperationTimeline",
+	"POST /v1/apps/{slug}/operations/{id}/signals":                                     "SignalOperation",
+	"POST /v1/apps/{slug}/operation-signals":                                           "SignalOperationsBySubject",
 	"POST /v1/apps/{slug}/operations/{id}/retry-delivery":                              "RetryOperationDelivery",
 	"GET /v1/apps/{slug}/operations/{id}/recovery-inspection":                          "InspectOperationRecovery",
 	"POST /v1/apps/{slug}/operations/{id}/recovery-preview":                            "PreviewOperationRecovery",
@@ -562,11 +593,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/runtime/operations/{id}/workflow-states/validate":                        "ValidateOperationWorkflowStates",
 	"GET /v1/apps/{slug}/operations/{id}":                                              "GetOperation",
 	"POST /v1/apps/{slug}/operations/{id}/cancel":                                      "CancelOperation",
+	"POST /v1/apps/{slug}/operations/{id}/approvals/{step}":                            "DecideOperationApproval",
 	"POST /v1/platform-tenant-self/customer-operations":                                "StartPlatformTenantSelfOperation",
 	"GET /v1/platform-tenant-self/customer-operations":                                 "ListPlatformTenantSelfOperations",
 	"GET /v1/platform-tenant-self/customer-operations/{id}":                            "GetPlatformTenantSelfOperation",
 	"GET /v1/platform-tenant-self/customer-operations/{id}/events":                     "GetPlatformTenantSelfOperationEvents",
 	"POST /v1/platform-tenant-self/customer-operations/{id}/cancel":                    "CancelPlatformTenantSelfOperation",
+	"POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}":          "DecidePlatformTenantSelfOperationApproval",
 	"POST /v1/apps/{slug}/operations":                                                  "SubmitExclusiveOperation",
 	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations":             "SubmitExclusiveOperation",
 	"POST /v1/platform-tenant-self/apps/{slug}/operations":                             "SubmitPlatformTenantExclusiveOperation",
@@ -1207,6 +1240,9 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "PutWebhookAutomationBinding",
 	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "GetWebhookAutomationBinding",
 	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":          "DeleteWebhookAutomationBinding",
+	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":              "PutOperationWebhookBinding",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":              "GetOperationWebhookBinding",
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":           "DeleteOperationWebhookBinding",
 	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}": "GetWebhookAutomationReceipt",
 	"GET /v1/apps/{slug}/inbound-webhooks":                                     "ListInboundWebhookEndpoints",
 	"POST /v1/apps/{slug}/inbound-webhooks":                                    "CreateInboundWebhookEndpoint",
@@ -1438,7 +1474,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invocations":                                                    "ListInvocations",
 	"GET /v1/invocations/{id}":                                               "GetInvocation",
 
-	// ADR-638: historical subscription replay is a metadata-only preview.
+	// ADR-645: historical subscription replay is a metadata-only preview.
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
 	// ADR-639: historical subscription replay is a bounded durable backfill.
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays": "CreateEventReplayBackfill",

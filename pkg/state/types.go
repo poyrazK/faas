@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"maps"
 	"net/netip"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -1875,12 +1875,15 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *api.ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *api.TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                       `json:"max_retries,omitempty"`
-	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string                    `json:"stop_signal,omitempty"`
+	// Pause is the app's declared pause value (ADR-1151); empty selects the
+	// default for the app's type (api.EffectivePause).
+	Pause            string               `json:"pause,omitempty"`
+	Profiling        *api.ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *api.TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS int                  `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                  `json:"max_retries,omitempty"`
+	StopGracePeriodS int                  `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string               `json:"stop_signal,omitempty"`
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
@@ -1940,7 +1943,7 @@ func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil && m.Tracing == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -6216,12 +6219,12 @@ type UpdateAppParams struct {
 	// an app during a deploy rollback or a billing investigation.
 	MaintenanceMode    *bool
 	SetMaintenanceMode bool
-	// RequireSigned (issue #472 / ADR-054) gates OCI image deploys
-	// on a valid cosign signature from a trusted publisher. SetRequireSigned
+	// RequireSigned (ADR-054, ADR-435) gates OCI image deploys and source-build
+	// publication on an explicitly approved publisher. SetRequireSigned
 	// distinguishes "unset" (don't touch) from "explicit false"
 	// (opt out of signature enforcement). Admin-only via PATCH
-	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source-tarball
-	// deploys are unaffected.
+	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source builds need
+	// the separately configured build publisher, never implicit platform trust.
 	RequireSigned    *bool
 	SetRequireSigned bool
 	// SecurityPolicy controls the deploy-time posture guard. It is an
@@ -6491,10 +6494,13 @@ type Snapshot struct {
 	// test fixtures that bypass the storage contract. Wake sends
 	// StorageKey on the wire; vmmd resolves it through the
 	// configured StorageBackend.
-	StorageKey    string
-	Stale         bool
-	DeletePending bool
-	CreatedAt     time.Time
+	StorageKey string
+	// ApplicationStandardCaptureToken identifies immutable, published capture
+	// history. Empty means legacy cache data; this reference is not restore authority.
+	ApplicationStandardCaptureToken string
+	Stale                           bool
+	DeletePending                   bool
+	CreatedAt                       time.Time
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -9147,6 +9153,7 @@ const (
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
 // is age/X25519 ciphertext and is never returned by the API.
 type AppLogDrain struct {
+	StandardBinding  *ApplicationStandardLogDrainBinding `json:"-"`
 	ID               string
 	AppID            string
 	AccountID        string

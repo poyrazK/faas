@@ -232,8 +232,14 @@ func TestPostgresCutoverAdmissionFencesOldTransactions(t *testing.T) {
 			}
 			err = admissionErr
 			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || (pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" && pgErr.Code != "40001") {
+			if !errors.As(err, &pgErr) || (pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" && pgErr.Code != "40001" && !(!waiting && pgErr.Code == "55P03" && pgErr.ConstraintName == "application_standard_runtime_busy")) {
 				t.Fatalf("old transaction admitted a VM: %v", err)
+			}
+			// A NOWAIT standards guard may refuse before the cutover lock. A
+			// fresh transaction must still observe the committed cutover fence.
+			_, err = s.pool.Exec(ctx, `INSERT INTO instances(app_id,state,ram_mb,node_id) VALUES($1,'cold_booting',256,$2)`, c.AppID, node.ID)
+			if !errors.As(err, &pgErr) || pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" {
+				t.Fatalf("committed cutover did not fence fresh admission: %v", err)
 			}
 		})
 	}

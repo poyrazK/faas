@@ -9,7 +9,7 @@ Capability promotion continues to follow `pkg/productcap/catalog.json` and
 | Priority | Work | Completion evidence | State |
 | --- | --- | --- | --- |
 | P0 | Qualify one supported managed PostgreSQL/Data API/Auth journey | Current provider v8 report, matching native guest report and hosted customer canary, including rotation, migrations, park/restore and cleanup | Pending isolated provider, account and native-host setup |
-| P1 | Bound existing realtime channel grants | Idle and buffered-delivery revocation, callback outage recovery, endpoint changes, focused tests and race checks | First implementation: ADR-1331; deployed qualification pending |
+| P1 | Bound existing realtime channel grants | Idle and buffered-delivery revocation, callback outage recovery, endpoint changes, focused tests and race checks | First implementation: ADR-1345; deployed qualification pending |
 | P1 | Complete restore-to-serving activation | Writer/session drain evidence, atomic binding publication, snapshot invalidation, application checks and explicit recovery/backout procedure | Pending; keep customer activation unavailable |
 | P1 | Establish production data capacity and health contracts | Aggregate connection budgets, pool/query timing, controlled SQL probes and concurrent app/database wake load tests | Data API admission, health, gateway timings, pool counts, response limits, per-user rates, a local load/recovery verifier and read-only connection-budget estimates implemented; verified capacity, budget enforcement, SQL/pool-wait timing and deployed load qualification pending |
 | P1 | Release supported client packages | Owner-approved SDK licensing, immutable versioned releases, provenance and tested CLI/runtime compatibility | Pending licensing and registry decisions |
@@ -19,7 +19,7 @@ Capability promotion continues to follow `pkg/productcap/catalog.json` and
 
 ## First slice: retained channel authorization
 
-ADR-1331 refreshes the existing application callback for retained WebSocket
+ADR-1345 refreshes the existing application callback for retained WebSocket
 channels using SSE's 30-second positive grant lifetime. Idle polling and outbound
 delivery enforce expiry; callback denials remove subscriptions while outages
 close the connection for retry. Existing ticket and durable access controls keep

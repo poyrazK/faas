@@ -679,6 +679,11 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit debug metadata for API and newly instrumented state; keep optimization.
@@ -699,6 +704,10 @@ jobs:
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
           go test -json -race -count=1 -p 4 -timeout=45m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
+
+      - name: application-standard ledger recovery tests
+        # This recovery API deliberately refuses TCP, including localhost.
+        run: scripts/ci/with-pg16-unix.sh go test -race -count=1 -p 1 -timeout=20m ./pkg/db -run '^TestApplicationStandardLedgerRecovery'
 
       - name: upload public API state-adapter coverage
         uses: actions/upload-artifact@v4
@@ -867,10 +876,18 @@ jobs:
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
           go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -check -list-file=coverage/state-inventory.txt
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: state tests (shard ${{ matrix.shard }})
         run: |
+          # Recovery with an actual serving receipt requires local database authority.
+          scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@v4
         with:
@@ -2150,7 +2167,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install ruamel.yaml 'openapi-python-client==0.29.0' pytest pytest-asyncio httpx
-          python -m pip install -e .
+          python -m pip install -e '.[auth]'
       - name: gen + assert clean diff
         working-directory: sdk/python
         run: |
@@ -2402,7 +2419,7 @@ jobs:
       - name: migrations replay-safety (new migrations only)
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: bash scripts/ci/migrations-replay-safety.sh
 
       - name: migration full-suite impact checker tests
         run: scripts/ci/migration-full-suite-needed_test.sh
