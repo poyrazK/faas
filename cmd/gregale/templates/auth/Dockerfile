@@ -19,7 +19,7 @@ RUN cd /app/gotrue-migrations \
  && rm -r /app/overlay /app/migrations.sha256
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY config.mjs server.mjs authz.mjs admin.mjs email.mjs events.mjs logs.mjs retention.mjs realtime.mjs storage.mjs workflows.mjs migrate.mjs ./
+COPY config.mjs server.mjs authz.mjs admin.mjs email.mjs events.mjs logs.mjs retention.mjs realtime.mjs sso.mjs storage.mjs workflows.mjs migrate.mjs ./
 COPY sql/ ./sql/
 COPY ui/ ./ui/
 EXPOSE 8080
