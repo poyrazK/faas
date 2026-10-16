@@ -1,0 +1,26 @@
+---
+# ADR-1343: the app edge on a compute node. The manifest's
+# public_edge.compute_nodes sets this per cell; off removes the edge again.
+faas_edge_on_compute_nodes: false
+
+# The control plane's private gatewayd-public listener, which receives public
+# object reads, uploads and the OTLP endpoint from this edge. Rendered by the
+# manifest as http://<control-plane private address>:8090.
+faas_edge_control_plane_target: ''
+
+# Cloudflare Tunnel connector, pinned by version and per-architecture SHA-256
+# (cloudflare/cloudflared release notes, matching GitHub's asset digests).
+# --token-file needs 2025.4.0 or later.
+faas_cloudflared_version: "2026.9.3"
+faas_cloudflared_sha256:
+  amd64: 77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2
+  arm64: aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d
+faas_cloudflared_install_dir: "/opt/faas/cloudflared/{{ faas_cloudflared_version }}"
+
+# The cell's tunnel token, provisioned by the operator. The connector stays
+# stopped until the file exists (ConditionPathExists) and reads it through
+# systemd LoadCredential, so it never appears in the unit or the process list.
+faas_cloudflared_token_path: /etc/faas/secrets/cloudflared/tunnel-token
+
+# Prometheus endpoint of the connector, loopback until per-node scraping lands.
+faas_cloudflared_metrics_addr: 127.0.0.1:20241

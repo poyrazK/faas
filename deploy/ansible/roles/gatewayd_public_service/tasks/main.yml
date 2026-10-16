@@ -121,6 +121,27 @@
     mode: "0644"
   notify: restart faas-gatewayd-public
 
+# ADR-1343: with the app edge on compute nodes, this control-plane edge also
+# listens on its private address for the routes those edges forward (public
+# object reads, uploads, OTLP) and trusts their single forwarded client
+# address. Removed again when the cell turns the compute edge off.
+- name: gatewayd_public_service — install compute-edge private listener drop-in
+  ansible.builtin.template:
+    src: 99-faas-edge-private.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-edge-private.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_edge_on_compute_nodes | default(false) | bool
+  notify: restart faas-gatewayd-public
+
+- name: gatewayd_public_service — remove compute-edge private listener drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-edge-private.conf
+    state: absent
+  when: not (faas_edge_on_compute_nodes | default(false) | bool)
+  notify: restart faas-gatewayd-public
+
 # ADR-520: rendered unconditionally so turning the feature off removes the
 # ask endpoint on the next converge.
 - name: gatewayd_public_service — install custom-domain TLS drop-in

@@ -1,0 +1,8 @@
+# Managed by Ansible (gatewayd_public_service). Local edits are overwritten.
+# ADR-1343: compute-node app edges forward public object reads, uploads and
+# the OTLP endpoint here. nftables admits only the compute nodes' addresses
+# on this port, and those addresses may supply one forwarded client address.
+[Service]
+Environment=FAAS_PUBLIC_PRIVATE_LISTEN_ADDR={{ faas_edge_private_listen_addr }}
+Environment=FAAS_TRUSTED_INGRESS_CIDRS=127.0.0.0/8,::1/128{% for cidr in faas_compute_allowed_cidrs | default([]) %},{{ cidr }}{% endfor %}
+
